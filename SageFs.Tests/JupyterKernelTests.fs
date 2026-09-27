@@ -1,0 +1,893 @@
+module SageFs.Tests.JupyterKernelTests
+
+open System
+open System.Text
+open System.Text.Json
+open Expecto
+open Expecto.Flip
+open FsCheck
+open SageFs
+open SageFs.JupyterKernel
+
+// ── Helpers ──
+
+let sampleKey = "test-key-1234567890abcdef"
+let sampleSessionId = Guid.NewGuid().ToString()
+
+let mkHeader msgType =
+  { MsgId = Guid.NewGuid().ToString()
+    Session = sampleSessionId
+    Username = "test-user"
+    Date = DateTimeOffset.UtcNow
+    MsgType = msgType
+    Version = "5.3" }
+
+let mkExecRequest code =
+  { Header = mkHeader "execute_request"
+    ParentHeader = None
+    Metadata = Map.empty
+    Content = MessageContent.ExecuteRequest { Code = code; Silent = false; StoreHistory = true; AllowStdin = false } }
+
+let mkKernelInfoRequest () =
+  { Header = mkHeader "kernel_info_request"
+    ParentHeader = None
+    Metadata = Map.empty
+    Content = MessageContent.KernelInfoRequest }
+
+let mkCompleteRequest code pos =
+  { Header = mkHeader "complete_request"
+    ParentHeader = None
+    Metadata = Map.empty
+    Content = MessageContent.CompleteRequest { Code = code; CursorPos = pos } }
+
+// ── Tests ──
+
+[<Tests>]
+let jupyterKernelTests =
+  testList "JupyterKernel" [
+
+    testList "MessageType parsing" [
+      test "execute_request parses" {
+        MessageType.parse "execute_request"
+        |> Expect.equal "should parse" (Some MessageType.ExecuteRequest)
+      }
+      test "execute_reply parses" {
+        MessageType.parse "execute_reply"
+        |> Expect.equal "should parse" (Some MessageType.ExecuteReply)
+      }
+      test "kernel_info_request parses" {
+        MessageType.parse "kernel_info_request"
+        |> Expect.equal "should parse" (Some MessageType.KernelInfoRequest)
+      }
+      test "kernel_info_reply parses" {
+        MessageType.parse "kernel_info_reply"
+        |> Expect.equal "should parse" (Some MessageType.KernelInfoReply)
+      }
+      test "complete_request parses" {
+        MessageType.parse "complete_request"
+        |> Expect.equal "should parse" (Some MessageType.CompleteRequest)
+      }
+      test "complete_reply parses" {
+        MessageType.parse "complete_reply"
+        |> Expect.equal "should parse" (Some MessageType.CompleteReply)
+      }
+      test "status parses" {
+        MessageType.parse "status"
+        |> Expect.equal "should parse" (Some MessageType.Status)
+      }
+      test "stream parses" {
+        MessageType.parse "stream"
+        |> Expect.equal "should parse" (Some MessageType.Stream)
+      }
+      test "shutdown_request parses" {
+        MessageType.parse "shutdown_request"
+        |> Expect.equal "should parse" (Some MessageType.ShutdownRequest)
+      }
+      test "unknown returns None" {
+        MessageType.parse "bogus_message"
+        |> Expect.isNone "should be None for unknown"
+      }
+    ]
+
+    testList "MessageType roundtrip" [
+      test "all message types survive wire→parse" {
+        let allTypes = [
+          MessageType.ExecuteRequest; MessageType.ExecuteReply
+          MessageType.KernelInfoRequest; MessageType.KernelInfoReply
+          MessageType.CompleteRequest; MessageType.CompleteReply
+          MessageType.Status; MessageType.Stream
+          MessageType.ExecuteResult; MessageType.ExecutionError
+          MessageType.ShutdownRequest; MessageType.ShutdownReply
+          MessageType.CheckCompleteRequest; MessageType.CheckCompleteReply
+          MessageType.InterruptRequest; MessageType.InterruptReply
+        ]
+        for mt in allTypes do
+          let wire = MessageType.toWire mt
+          match MessageType.parse wire with
+          | Some parsed ->
+            parsed |> Expect.equal (sprintf "%A roundtrips" mt) mt
+          | None ->
+            failtest (sprintf "MessageType %A failed to parse from wire '%s'" mt wire)
+      }
+    ]
+
+    testList "HMAC signing" [
+      test "sign produces 64-char hex string" {
+        let sig' = WireProtocol.sign sampleKey "header" "parent" "metadata" "content"
+        sig'.Length |> Expect.equal "64 hex chars" 64
+      }
+      test "sign is deterministic" {
+        let s1 = WireProtocol.sign sampleKey "h" "p" "m" "c"
+        let s2 = WireProtocol.sign sampleKey "h" "p" "m" "c"
+        s1 |> Expect.equal "same inputs → same sig" s2
+      }
+      test "different content → different sig" {
+        let s1 = WireProtocol.sign sampleKey "h" "p" "m" "content1"
+        let s2 = WireProtocol.sign sampleKey "h" "p" "m" "content2"
+        s1 |> Expect.notEqual "different content → different sig" s2
+      }
+      test "empty key produces empty sig (no auth)" {
+        let sig' = WireProtocol.sign "" "h" "p" "m" "c"
+        sig' |> Expect.equal "empty key → empty sig" ""
+      }
+    ]
+
+    testList "ConnectionInfo" [
+      test "parse valid connection file JSON" {
+        let json = """{
+          "transport": "tcp",
+          "ip": "127.0.0.1",
+          "shell_port": 55555,
+          "iopub_port": 55556,
+          "stdin_port": 55557,
+          "control_port": 55558,
+          "hb_port": 55559,
+          "key": "abc-123",
+          "signature_scheme": "hmac-sha256",
+          "kernel_name": "sagefs"
+        }"""
+        match ConnectionInfo.parse json with
+        | Ok info ->
+          info.Transport |> Expect.equal "transport" "tcp"
+          info.Ip |> Expect.equal "ip" "127.0.0.1"
+          info.ShellPort |> Expect.equal "shell" 55555
+          info.IoPubPort |> Expect.equal "iopub" 55556
+          info.StdinPort |> Expect.equal "stdin" 55557
+          info.ControlPort |> Expect.equal "control" 55558
+          info.HbPort |> Expect.equal "hb" 55559
+          info.Key |> Expect.equal "key" "abc-123"
+          info.SignatureScheme |> Expect.equal "scheme" "hmac-sha256"
+        | Error e -> failtest (sprintf "parse failed: %s" e)
+      }
+      test "invalid JSON returns Error" {
+        match ConnectionInfo.parse "not json" with
+        | Error _ -> ()
+        | Ok _ -> failtest "should fail on invalid JSON"
+      }
+      test "address builds correct ZMQ URI" {
+        let info = {
+          Transport = "tcp"; Ip = "127.0.0.1"
+          ShellPort = 55555; IoPubPort = 55556; StdinPort = 55557
+          ControlPort = 55558; HbPort = 55559
+          Key = "key"; SignatureScheme = "hmac-sha256"
+        }
+        ConnectionInfo.address info 55555
+        |> Expect.equal "address" "tcp://127.0.0.1:55555"
+      }
+    ]
+
+    testList "KernelInfo reply" [
+      test "produces correct protocol version" {
+        let reply = Protocol.kernelInfoReply ()
+        reply.ProtocolVersion |> Expect.equal "protocol" "5.3"
+      }
+      test "language info is F#" {
+        let reply = Protocol.kernelInfoReply ()
+        reply.LanguageInfo.Name |> Expect.equal "name" "fsharp"
+        reply.LanguageInfo.Version |> Expect.stringContains "version" "."
+        reply.LanguageInfo.MimeType |> Expect.equal "mime" "text/x-fsharp"
+        reply.LanguageInfo.FileExtension |> Expect.equal "ext" ".fsx"
+      }
+      test "banner mentions SageFs" {
+        let reply = Protocol.kernelInfoReply ()
+        reply.Banner |> Expect.stringContains "banner" "SageFs"
+      }
+    ]
+
+    testList "ExecuteRequest handling" [
+      testAsync "successful eval produces Ok reply" {
+        let handler : ExecuteHandler = fun _code _silent ->
+          async { return Ok { Output = "42"; MimeType = "text/plain" } }
+        let request = { Code = "1 + 41"; Silent = false; StoreHistory = true; AllowStdin = false }
+        let! result =
+          Protocol.handleExecuteRequest handler 1 request
+        match result with
+        | ExecuteReplyOk reply ->
+          reply.ExecutionCount |> Expect.equal "count" 1
+        | ExecuteReplyError _ -> failtest "expected Ok"
+      }
+
+      testAsync "WHY — the real eval output must reach the reply payload, because a Jupyter user needs to SEE the value, not a fixed placeholder" {
+        let handler : ExecuteHandler = fun _code _silent ->
+          async { return Ok { Output = "val it: int = 2"; MimeType = "text/plain" } }
+        let request = { Code = "1 + 1"; Silent = false; StoreHistory = true; AllowStdin = false }
+        let! result = Protocol.handleExecuteRequest handler 1 request
+        match result with
+        | ExecuteReplyOk reply ->
+          reply.Payload
+          |> Map.tryFind "text/plain"
+          |> Expect.equal "the real result text, not a fixed placeholder" (Some "val it: int = 2")
+        | ExecuteReplyError _ -> failtest "expected Ok"
+      }
+      testAsync "failed eval produces Error reply" {
+        let handler : ExecuteHandler = fun _code _silent ->
+          async { return Error { Ename = "CompileError"; Evalue = "FS0001"; Traceback = ["line 1: type mismatch"] } }
+        let request = { Code = "bad code"; Silent = false; StoreHistory = true; AllowStdin = false }
+        let! result =
+          Protocol.handleExecuteRequest handler 1 request
+        match result with
+        | ExecuteReplyError reply ->
+          reply.Ename |> Expect.equal "ename" "CompileError"
+          reply.Evalue |> Expect.equal "evalue" "FS0001"
+          reply.Traceback |> Expect.hasLength "traceback" 1
+        | ExecuteReplyOk _ -> failtest "expected Error"
+      }
+      testAsync "execution count increments" {
+        let handler : ExecuteHandler = fun _code _silent ->
+          async { return Ok { Output = "ok"; MimeType = "text/plain" } }
+        let request = { Code = "()"; Silent = false; StoreHistory = true; AllowStdin = false }
+        let! r1 = Protocol.handleExecuteRequest handler 5 request
+        match r1 with
+        | ExecuteReplyOk reply -> reply.ExecutionCount |> Expect.equal "count=5" 5
+        | _ -> failtest "expected Ok"
+      }
+      testAsync "silent execution suppresses output" {
+        let received = ref false
+        let handler : ExecuteHandler = fun _code silent ->
+          received.Value <- true
+          async { return Ok { Output = "42"; MimeType = "text/plain" } }
+        let request = { Code = "()"; Silent = true; StoreHistory = false; AllowStdin = false }
+        let! _r = Protocol.handleExecuteRequest handler 1 request
+        received.Value |> Expect.isTrue "handler was called"
+      }
+    ]
+
+    testList "CompleteRequest handling" [
+      testAsync "basic completion produces matches" {
+        let handler : CompleteHandler = fun code pos ->
+          async {
+            return {
+              Matches = ["List.map"; "List.filter"; "List.fold"]
+              CursorStart = pos - 4
+              CursorEnd = pos
+              Status = "ok"
+            }
+          }
+        let request = { Code = "List."; CursorPos = 5 }
+        let! result =
+          Protocol.handleCompleteRequest handler request
+        result.Matches |> Expect.hasLength "3 completions" 3
+        result.Status |> Expect.equal "status ok" "ok"
+      }
+      testAsync "empty completions" {
+        let handler : CompleteHandler = fun _code _pos ->
+          async { return { Matches = []; CursorStart = 0; CursorEnd = 0; Status = "ok" } }
+        let request = { Code = "xyz"; CursorPos = 3 }
+        let! result =
+          Protocol.handleCompleteRequest handler request
+        result.Matches |> Expect.isEmpty "no matches"
+      }
+    ]
+
+    testList "IsComplete handling" [
+      testAsync "complete code returns complete" {
+        let handler : IsCompleteHandler = fun code ->
+          async { return CompleteStatus.Complete }
+        let! result = Protocol.handleIsComplete handler "let x = 1"
+        result |> Expect.equal "complete" CompleteStatus.Complete
+      }
+      testAsync "incomplete code returns incomplete with indent" {
+        let handler : IsCompleteHandler = fun _code ->
+          async { return CompleteStatus.Incomplete "  " }
+        let! result = Protocol.handleIsComplete handler "let f x ="
+        match result with
+        | CompleteStatus.Incomplete indent ->
+          indent |> Expect.equal "indent" "  "
+        | _ -> failtest "expected Incomplete"
+      }
+      testAsync "invalid code returns invalid" {
+        let handler : IsCompleteHandler = fun _code ->
+          async { return CompleteStatus.Invalid }
+        let! result = Protocol.handleIsComplete handler "###"
+        result |> Expect.equal "invalid" CompleteStatus.Invalid
+      }
+    ]
+
+    testList "Kernel state machine" [
+      test "initial state is idle with count 0" {
+        let ks = KernelState.initial
+        ks.ExecutionCount |> Expect.equal "count" 0
+        ks.Status |> Expect.equal "status" KernelStatus.Idle
+      }
+      test "execute transitions to Busy then back to Idle" {
+        let ks = KernelState.initial
+        let busy = KernelState.beginExecution ks
+        busy.Status |> Expect.equal "busy" KernelStatus.Busy
+        busy.ExecutionCount |> Expect.equal "count incremented" 1
+        let idle = KernelState.endExecution busy
+        idle.Status |> Expect.equal "idle" KernelStatus.Idle
+        idle.ExecutionCount |> Expect.equal "count preserved" 1
+      }
+      test "shutdown transitions to ShuttingDown" {
+        let ks = KernelState.initial
+        let sd = KernelState.shutdown ks false
+        sd.Status |> Expect.equal "shutting down" KernelStatus.ShuttingDown
+      }
+    ]
+
+    testList "Wire serialization" [
+      test "header roundtrips through JSON" {
+        let h = mkHeader "execute_request"
+        let json = WireProtocol.serializeHeader h
+        let parsed = WireProtocol.deserializeHeader json
+        match parsed with
+        | Ok h2 ->
+          h2.MsgId |> Expect.equal "msg_id" h.MsgId
+          h2.Session |> Expect.equal "session" h.Session
+          h2.MsgType |> Expect.equal "msg_type" "execute_request"
+        | Error e -> failtest (sprintf "deserialize failed: %s" e)
+      }
+      test "execute_request content serializes correctly" {
+        let content = { Code = "let x = 42"; Silent = false; StoreHistory = true; AllowStdin = false }
+        let json = WireProtocol.serializeContent (MessageContent.ExecuteRequest content)
+        json |> Expect.stringContains "has code" "let x = 42"
+      }
+    ]
+
+    testList "Kernel spec" [
+      test "kernelspec has correct metadata" {
+        let spec = KernelSpec.generate "sagefs" "/path/to/sagefs"
+        spec.DisplayName |> Expect.stringContains "display name" "F#"
+        spec.Language |> Expect.equal "language" "fsharp"
+        spec.Argv |> Expect.isNonEmpty "has argv"
+      }
+      test "kernelspec argv includes connection file placeholder" {
+        let spec = KernelSpec.generate "sagefs" "/path/to/sagefs"
+        spec.Argv |> List.exists (fun a -> a.Contains("{connection_file}"))
+        |> Expect.isTrue "argv has {connection_file} placeholder"
+      }
+    ]
+
+    testList "property tests" [
+      testProperty "HMAC sign is deterministic" <| fun (h: NonEmptyString) (c: NonEmptyString) ->
+        let key = "test-key"
+        let s1 = WireProtocol.sign key h.Get "p" "m" c.Get
+        let s2 = WireProtocol.sign key h.Get "p" "m" c.Get
+        s1 = s2
+
+      testProperty "MessageType roundtrip is identity" <| fun () ->
+        let allTypes = [
+          MessageType.ExecuteRequest; MessageType.ExecuteReply
+          MessageType.KernelInfoRequest; MessageType.KernelInfoReply
+          MessageType.CompleteRequest; MessageType.CompleteReply
+          MessageType.Status; MessageType.Stream
+          MessageType.ExecuteResult; MessageType.ExecutionError
+          MessageType.ShutdownRequest; MessageType.ShutdownReply
+          MessageType.CheckCompleteRequest; MessageType.CheckCompleteReply
+          MessageType.InterruptRequest; MessageType.InterruptReply
+        ]
+        allTypes |> List.forall (fun mt ->
+          MessageType.parse (MessageType.toWire mt) = Some mt)
+
+      testProperty "execution count never decreases" <| fun (n: PositiveInt) ->
+        let mutable ks = KernelState.initial
+        for _ in 1..n.Get do
+          ks <- KernelState.beginExecution ks
+          ks <- KernelState.endExecution ks
+        ks.ExecutionCount = n.Get
+
+      testProperty "HMAC signature is exactly 64 hex chars for non-empty key" <| fun (NonEmptyString key) ->
+        let sig' = WireProtocol.sign key "h" "p" "m" "c"
+        sig'.Length = 64 && sig' |> Seq.forall (fun c -> Char.IsAsciiHexDigitLower c || Char.IsDigit c)
+    ]
+
+    testList "FsiBridge" [
+
+      testList "executeHandler" [
+        testAsync "successful eval maps to Jupyter Ok" {
+          let mockProxy : WorkerProtocol.SessionProxy = fun msg ->
+            async {
+              match msg with
+              | WorkerProtocol.WorkerMessage.EvalCode (code, replyId) ->
+                return WorkerProtocol.WorkerResponse.EvalResult(
+                  replyId, Ok "42", [], Map.empty)
+              | _ -> return failwith "unexpected message"
+            }
+          let handler = FsiBridge.executeHandler mockProxy
+          let! result = handler "1 + 41" false
+          match result with
+          | Ok output ->
+            output.Output |> Expect.equal "output" "42"
+            output.MimeType |> Expect.equal "mime" "text/plain"
+          | Error _ -> failtest "expected Ok"
+        }
+
+        testAsync "eval error maps to Jupyter Error with diagnostics as traceback" {
+          let diag : WorkerProtocol.WorkerDiagnostic = {
+            Severity = SageFs.Features.Diagnostics.DiagnosticSeverity.Blocking
+            Message = "type mismatch"
+            StartLine = 1; StartColumn = 5; EndLine = 1; EndColumn = 10
+            ErrorNumber = 1
+          }
+          let mockProxy : WorkerProtocol.SessionProxy = fun msg ->
+            async {
+              match msg with
+              | WorkerProtocol.WorkerMessage.EvalCode (_, replyId) ->
+                return WorkerProtocol.WorkerResponse.EvalResult(
+                  replyId, Error (SageFsError.EvalFailed "type mismatch"), [diag], Map.empty)
+              | _ -> return failwith "unexpected"
+            }
+          let handler = FsiBridge.executeHandler mockProxy
+          let! result = handler "bad" false
+          match result with
+          | Error err ->
+            err.Ename |> Expect.equal "ename" "FSharpError"
+            err.Traceback |> Expect.isNonEmpty "has traceback"
+            err.Traceback |> List.head |> Expect.stringContains "has location" "(1,5)"
+          | Ok _ -> failtest "expected Error"
+        }
+
+        testAsync "WorkerError maps to Jupyter Error" {
+          let mockProxy : WorkerProtocol.SessionProxy = fun _msg ->
+            async { return WorkerProtocol.WorkerResponse.WorkerError(SageFsError.PipeClosed) }
+          let handler = FsiBridge.executeHandler mockProxy
+          let! result = handler "code" false
+          match result with
+          | Error err -> err.Ename |> Expect.equal "ename" "WorkerError"
+          | Ok _ -> failtest "expected Error"
+        }
+      ]
+
+      testList "completeHandler" [
+        testAsync "maps worker completions to Jupyter format" {
+          let mockProxy : WorkerProtocol.SessionProxy = fun msg ->
+            async {
+              match msg with
+              | WorkerProtocol.WorkerMessage.GetCompletions (_, _, replyId) ->
+                return WorkerProtocol.WorkerResponse.CompletionResult(replyId, ["map"; "filter"; "fold"])
+              | _ -> return failwith "unexpected"
+            }
+          let handler = FsiBridge.completeHandler mockProxy
+          let! result = handler "List." 5
+          result.Matches |> Expect.hasLength "3 matches" 3
+          result.Status |> Expect.equal "status" "ok"
+        }
+
+        testAsync "unexpected response returns empty matches" {
+          let mockProxy : WorkerProtocol.SessionProxy = fun _msg ->
+            async { return WorkerProtocol.WorkerResponse.WorkerReady }
+          let handler = FsiBridge.completeHandler mockProxy
+          let! result = handler "x" 1
+          result.Matches |> Expect.isEmpty "empty"
+        }
+      ]
+
+      testList "isCompleteHandler" [
+        testAsync "code ending with ;; is complete" {
+          let handler = FsiBridge.isCompleteHandler ()
+          let! result = handler "let x = 42;;"
+          result |> Expect.equal "complete" CompleteStatus.Complete
+        }
+        testAsync "code ending with = is incomplete" {
+          let handler = FsiBridge.isCompleteHandler ()
+          let! result = handler "let f x ="
+          match result with
+          | CompleteStatus.Incomplete indent ->
+            indent |> Expect.equal "indent" "  "
+          | _ -> failtest "expected Incomplete"
+        }
+        testAsync "regular code is unknown" {
+          let handler = FsiBridge.isCompleteHandler ()
+          let! result = handler "let x = 42"
+          result |> Expect.equal "unknown" CompleteStatus.Unknown
+        }
+      ]
+
+      testList "fromProxy" [
+        test "returns all three handlers" {
+          let mockProxy : WorkerProtocol.SessionProxy = fun _msg ->
+            async { return WorkerProtocol.WorkerResponse.WorkerReady }
+          let exec, complete, isComplete = FsiBridge.fromProxy mockProxy
+          // Just verify they're callable (types check)
+          exec "code" false |> ignore
+          complete "code" 0 |> ignore
+          isComplete "code" |> ignore
+        }
+      ]
+    ]
+
+    testList "Router" [
+      testAsync "WHY — KernelInfoRequest's reply must carry the real kernel_info_reply body, because jupyter_client's wait_for_ready reads protocol_version from it and a bare '{}' kills the handshake before any code can ever be evaluated" {
+        let exec : ExecuteHandler = fun _ _ -> async { return Ok { Output = ""; MimeType = "text/plain" } }
+        let comp : CompleteHandler = fun _ _ -> async { return { Matches = []; CursorStart = 0; CursorEnd = 0; Status = "ok" } }
+        let isComp : IsCompleteHandler = fun _ -> async { return CompleteStatus.Complete }
+        let msg = mkKernelInfoRequest ()
+        let! result = Router.route exec comp isComp KernelState.initial msg
+        let replyJson =
+          match result.Reply with
+          | MessageContent.Raw json -> json
+          | other -> failtestf "expected Raw reply, got %A" other
+        replyJson |> Expect.stringContains "carries protocol_version" "\"protocol_version\":\"5.3\""
+        replyJson |> Expect.stringContains "carries language_info.name" "\"name\":\"fsharp\""
+      }
+
+      testAsync "KernelInfoRequest route produces IOPub status messages" {
+        let exec : ExecuteHandler = fun _ _ -> async { return Ok { Output = ""; MimeType = "text/plain" } }
+        let comp : CompleteHandler = fun _ _ -> async { return { Matches = []; CursorStart = 0; CursorEnd = 0; Status = "ok" } }
+        let isComp : IsCompleteHandler = fun _ -> async { return CompleteStatus.Complete }
+        let msg = mkKernelInfoRequest ()
+        let! result = Router.route exec comp isComp KernelState.initial msg
+        result.IOPub |> Expect.hasLength "2 IOPub messages" 2
+        result.IOPub |> List.head |> Expect.equal "busy" (IOPubMessage.StatusMessage KernelStatus.Busy)
+        result.IOPub |> List.last |> Expect.equal "idle" (IOPubMessage.StatusMessage KernelStatus.Idle)
+        result.NewState.Status |> Expect.equal "state unchanged" KernelStatus.Idle
+      }
+
+      testAsync "ExecuteRequest route transitions state and produces IOPub" {
+        let exec : ExecuteHandler = fun code _ ->
+          async { return Ok { Output = code; MimeType = "text/plain" } }
+        let comp : CompleteHandler = fun _ _ -> async { return { Matches = []; CursorStart = 0; CursorEnd = 0; Status = "ok" } }
+        let isComp : IsCompleteHandler = fun _ -> async { return CompleteStatus.Complete }
+        let msg = mkExecRequest "let x = 42"
+        let! result = Router.route exec comp isComp KernelState.initial msg
+        // Should have Busy, ExecuteResult, Idle
+        result.IOPub |> Expect.hasLength "3 IOPub messages" 3
+        result.IOPub |> List.head |> Expect.equal "busy" (IOPubMessage.StatusMessage KernelStatus.Busy)
+        result.IOPub |> List.last |> Expect.equal "idle" (IOPubMessage.StatusMessage KernelStatus.Idle)
+        result.NewState.ExecutionCount |> Expect.equal "count = 1" 1
+        result.NewState.Status |> Expect.equal "back to idle" KernelStatus.Idle
+      }
+
+      testAsync "WHY — Router.route's ExecuteResultMessage must carry the real eval output, because a hardcoded 'ok' would show a wrong value for every successful eval regardless of what the daemon actually returned" {
+        let exec : ExecuteHandler = fun _ _ -> async { return Ok { Output = "val it: int = 2"; MimeType = "text/plain" } }
+        let comp : CompleteHandler = fun _ _ -> async { return { Matches = []; CursorStart = 0; CursorEnd = 0; Status = "ok" } }
+        let isComp : IsCompleteHandler = fun _ -> async { return CompleteStatus.Complete }
+        let msg = mkExecRequest "1 + 1"
+        let! result = Router.route exec comp isComp KernelState.initial msg
+        let executeResult =
+          result.IOPub
+          |> List.tryPick (function
+            | IOPubMessage.ExecuteResultMessage (_, data) -> Some data
+            | _ -> None)
+        match executeResult with
+        | Some data ->
+          data |> Map.tryFind "text/plain" |> Expect.equal "the real eval output" (Some "val it: int = 2")
+        | None -> failtest "expected an ExecuteResultMessage in IOPub"
+      }
+
+      testAsync "failed ExecuteRequest produces ErrorOutput IOPub" {
+        let exec : ExecuteHandler = fun _ _ ->
+          async { return Error { Ename = "CompileError"; Evalue = "FS0001"; Traceback = ["error at line 1"] } }
+        let comp : CompleteHandler = fun _ _ -> async { return { Matches = []; CursorStart = 0; CursorEnd = 0; Status = "ok" } }
+        let isComp : IsCompleteHandler = fun _ -> async { return CompleteStatus.Complete }
+        let msg = mkExecRequest "bad code"
+        let! result = Router.route exec comp isComp KernelState.initial msg
+        let hasError = result.IOPub |> List.exists (function IOPubMessage.ErrorOutput _ -> true | _ -> false)
+        hasError |> Expect.isTrue "should have error IOPub"
+      }
+
+      testAsync "ShutdownRequest transitions to ShuttingDown" {
+        let exec : ExecuteHandler = fun _ _ -> async { return Ok { Output = ""; MimeType = "text/plain" } }
+        let comp : CompleteHandler = fun _ _ -> async { return { Matches = []; CursorStart = 0; CursorEnd = 0; Status = "ok" } }
+        let isComp : IsCompleteHandler = fun _ -> async { return CompleteStatus.Complete }
+        let msg =
+          { Header = mkHeader "shutdown_request"
+            ParentHeader = None
+            Metadata = Map.empty
+            Content = MessageContent.ShutdownRequest false }
+        let! result = Router.route exec comp isComp KernelState.initial msg
+        result.NewState.Status |> Expect.equal "shutting down" KernelStatus.ShuttingDown
+      }
+
+      // The inputs are fixed, so this is an example over each known message type.
+      testAsync "Router always returns IOPub list starting with Busy (for known message types)" {
+        let exec : ExecuteHandler = fun _ _ -> async { return Ok { Output = "ok"; MimeType = "text/plain" } }
+        let comp : CompleteHandler = fun _ _ -> async { return { Matches = []; CursorStart = 0; CursorEnd = 0; Status = "ok" } }
+        let isComp : IsCompleteHandler = fun _ -> async { return CompleteStatus.Complete }
+        let messages = [
+          mkKernelInfoRequest ()
+          mkExecRequest "1+1"
+          mkCompleteRequest "List." 5
+        ]
+        for msg in messages do
+          let! result = Router.route exec comp isComp KernelState.initial msg
+          result.IOPub
+          |> List.head
+          |> Expect.equal (sprintf "%s should start with Busy" msg.Header.MsgType) (IOPubMessage.StatusMessage KernelStatus.Busy)
+      }
+    ]
+
+    testList "IOPub types" [
+      test "StreamName roundtrips" {
+        StreamName.toWire StreamName.Stdout |> Expect.equal "stdout" "stdout"
+        StreamName.toWire StreamName.Stderr |> Expect.equal "stderr" "stderr"
+      }
+    ]
+
+    testList "KernelLifecycle" [
+      testAsync "processMessage for execute produces IOPub events and reply" {
+        let exec : ExecuteHandler = fun code _ ->
+          async { return Ok { Output = code; MimeType = "text/plain" } }
+        let comp : CompleteHandler = fun _ _ -> async { return { Matches = []; CursorStart = 0; CursorEnd = 0; Status = "ok" } }
+        let isComp : IsCompleteHandler = fun _ -> async { return CompleteStatus.Complete }
+        let msg = mkExecRequest "let x = 42"
+        let! events, newState =
+          KernelLifecycle.processMessage exec comp isComp KernelState.initial msg
+        // Should have: PublishIOPub(busy), PublishIOPub(execute_result), PublishIOPub(idle), SendReply
+        events |> List.exists (function KernelLifecycle.PublishIOPub ("status", s) -> s.Contains("busy") | _ -> false)
+        |> Expect.isTrue "has busy status"
+        events |> List.exists (function KernelLifecycle.PublishIOPub ("status", s) -> s.Contains("idle") | _ -> false)
+        |> Expect.isTrue "has idle status"
+        events |> List.exists (function KernelLifecycle.SendReply _ -> true | _ -> false)
+        |> Expect.isTrue "has reply"
+        newState.ExecutionCount |> Expect.equal "count = 1" 1
+      }
+
+      testAsync "processMessage for shutdown emits ShutdownRequested event" {
+        let exec : ExecuteHandler = fun _ _ -> async { return Ok { Output = ""; MimeType = "text/plain" } }
+        let comp : CompleteHandler = fun _ _ -> async { return { Matches = []; CursorStart = 0; CursorEnd = 0; Status = "ok" } }
+        let isComp : IsCompleteHandler = fun _ -> async { return CompleteStatus.Complete }
+        let msg =
+          { Header = mkHeader "shutdown_request"
+            ParentHeader = None; Metadata = Map.empty
+            Content = MessageContent.ShutdownRequest true }
+        let! events, newState =
+          KernelLifecycle.processMessage exec comp isComp KernelState.initial msg
+        events |> List.exists (function KernelLifecycle.ShutdownRequested true -> true | _ -> false)
+        |> Expect.isTrue "has shutdown event with restart=true"
+        newState.Status |> Expect.equal "shutting down" KernelStatus.ShuttingDown
+      }
+
+      test "renderKernelSpecJson produces valid JSON" {
+        let spec = KernelSpec.generate "test" "/usr/bin/sagefs"
+        let json = KernelLifecycle.renderKernelSpecJson spec
+        // Should parse as valid JSON
+        let doc = System.Text.Json.JsonDocument.Parse(json)
+        let root = doc.RootElement
+        root.GetProperty("language").GetString() |> Expect.equal "language" "fsharp"
+        root.GetProperty("display_name").GetString() |> Expect.stringContains "display" "F#"
+        let argv = root.GetProperty("argv")
+        (argv.GetArrayLength(), 0) |> Expect.isGreaterThan "has args"
+        let args = [for i in 0..argv.GetArrayLength()-1 -> argv.[i].GetString()]
+        args |> List.exists (fun a -> a.Contains("{connection_file}"))
+        |> Expect.isTrue "argv has {connection_file}"
+      }
+
+      // The inputs are fixed, so this is an example over each known message type.
+      testAsync "processMessage always emits at least one event" {
+        let exec : ExecuteHandler = fun _ _ -> async { return Ok { Output = "ok"; MimeType = "text/plain" } }
+        let comp : CompleteHandler = fun _ _ -> async { return { Matches = []; CursorStart = 0; CursorEnd = 0; Status = "ok" } }
+        let isComp : IsCompleteHandler = fun _ -> async { return CompleteStatus.Complete }
+        let messages = [
+          mkKernelInfoRequest ()
+          mkExecRequest "1+1"
+          mkCompleteRequest "List." 5
+        ]
+        for msg in messages do
+          let! events, _ =
+            KernelLifecycle.processMessage exec comp isComp KernelState.initial msg
+          events |> Expect.isNonEmpty (sprintf "%s should emit at least one event" msg.Header.MsgType)
+      }
+    ]
+
+    testList "CLI parsing" [
+      test "--jupyter parses to Jupyter case" {
+        Program.CliCommand.parse [| "--jupyter"; "conn.json" |]
+        |> Expect.equal "Jupyter" (Program.Jupyter "conn.json")
+      }
+
+      test "--jupyter without file falls back to ShowHelp" {
+        Program.CliCommand.parse [| "--jupyter" |]
+        |> Expect.equal "ShowHelp" Program.ShowHelp
+      }
+
+      test "--jupyter with path preserves full path" {
+        Program.CliCommand.parse [| "--jupyter"; @"C:\tmp\kernel-1234.json" |]
+        |> Expect.equal "full path" (Program.Jupyter @"C:\tmp\kernel-1234.json")
+      }
+
+      test "regular args don't match Jupyter" {
+        Program.CliCommand.parse [| "--no-watch" |]
+        |> function
+           | Program.Daemon _ -> ()
+           | other -> failtest (sprintf "Expected Daemon but got %A" other)
+      }
+
+      test "WHY — tui and gui commands are explicit deprecations because they must not silently enter daemon mode" {
+        Program.CliCommand.parse [| "tui" |]
+        |> Expect.equal "tui should be recognized as deprecated" (Program.DeprecatedClient "tui")
+        Program.CliCommand.parse [| "gui" |]
+        |> Expect.equal "gui should be recognized as deprecated" (Program.DeprecatedClient "gui")
+        Program.deprecatedClientMessage "tui"
+        |> Expect.stringContains "deprecation should direct users to the maintained UI" "/dashboard"
+      }
+
+      test "daemon launch decision starts new daemon when only default port is occupied" {
+        let defaultDaemon = {
+          Pid = 42
+          Port = 37749
+          DashboardPort = 37750
+          StartedAt = DateTime.UtcNow
+          WorkingDirectory = @"C:\Code\Repos\Elsewhere"
+          Version = "test"
+          ApiVersion = None
+          SessionCount = None
+          ComponentFailures = []
+        }
+
+        let readOnPort port =
+          match port with
+          | 37749 -> Some defaultDaemon
+          | _ -> None
+
+        Program.decideDaemonLaunch readOnPort 37849
+        |> Expect.equal "custom port should not attach to default-port daemon" Program.StartNewDaemon
+      }
+
+      test "daemon launch decision reuses daemon already running on requested port" {
+        let requestedDaemon = {
+          Pid = 43
+          Port = 37849
+          DashboardPort = 37850
+          StartedAt = DateTime.UtcNow
+          WorkingDirectory = @"C:\Code\Repos\SageFs"
+          Version = "test"
+          ApiVersion = None
+          SessionCount = None
+          ComponentFailures = []
+        }
+
+        let readOnPort port =
+          match port with
+          | 37849 -> Some requestedDaemon
+          | _ -> None
+
+        Program.decideDaemonLaunch readOnPort 37849
+        |> Expect.equal "requested-port daemon should be reused" (Program.AttachToExistingDaemon requestedDaemon)
+      }
+
+      test "waitForDaemonReady probes only the requested custom port" {
+        let requestedDaemon = {
+          Pid = 44
+          Port = 37849
+          DashboardPort = 37850
+          StartedAt = DateTime.UtcNow
+          WorkingDirectory = @"C:\Code\Repos\SageFs"
+          Version = "test"
+          ApiVersion = None
+          SessionCount = None
+          ComponentFailures = []
+        }
+
+        let probedPorts = System.Collections.Generic.List<int>()
+        let mutable attempts = 0
+
+        let readOnPort port =
+          probedPorts.Add(port)
+          attempts <- attempts + 1
+          match attempts with
+          | 3 -> Some requestedDaemon
+          | _ -> None
+
+        let sleepCalls = System.Collections.Generic.List<int>()
+        let sleep ms = sleepCalls.Add(ms)
+
+        Program.waitForDaemonReady sleep readOnPort 37849
+        |> Expect.equal "should return daemon on requested port" (Ok requestedDaemon)
+
+        probedPorts
+        |> Seq.distinct
+        |> Seq.toList
+        |> Expect.equal "should only probe requested port" [37849]
+
+        sleepCalls.Count
+        |> Expect.equal "should sleep once per probe until ready" 3
+      }
+
+      test "waitForDaemonReady times out after 30 probes on the requested port" {
+        let probedPorts = System.Collections.Generic.List<int>()
+        let readOnPort port =
+          probedPorts.Add(port)
+          None
+
+        let sleepCalls = System.Collections.Generic.List<int>()
+        let sleep ms = sleepCalls.Add(ms)
+
+        Program.waitForDaemonReady sleep readOnPort 37849
+        |> function
+           | Error (SageFsError.DaemonStartFailed msg) ->
+             msg |> Expect.stringContains "should describe timeout" "did not become ready"
+           | Ok _ -> failtest "expected timeout error"
+           | Error other -> failtestf "unexpected error: %A" other
+
+        probedPorts.Count
+        |> Expect.equal "should probe requested port 30 times" 30
+
+        probedPorts
+        |> Seq.distinct
+        |> Seq.toList
+        |> Expect.equal "should never probe the default port" [37849]
+
+        sleepCalls.Count
+        |> Expect.equal "should sleep once per probe attempt" 30
+      }
+    ]
+
+    testList "ZMQ transport framing" [
+      test "parseFrames rejects message without delimiter" {
+        let msg = NetMQ.NetMQMessage()
+        msg.Append("no-delimiter")
+        msg.Append("garbage")
+        match JupyterTransport.parseFrames "" msg with
+        | Error e -> e |> Expect.stringContains "has error" "delimiter"
+        | Ok _ -> failtest "should fail without delimiter"
+      }
+
+      test "parseFrames accepts well-formed message" {
+        let key = ""
+        let header = mkHeader "execute_request"
+        let headerJson = WireProtocol.serializeHeader header
+        let parentJson = "{}"
+        let metadataJson = "{}"
+        let contentJson = """{"code": "1+1", "silent": false, "store_history": true, "allow_stdin": false}"""
+        let hmac = WireProtocol.sign key headerJson parentJson metadataJson contentJson
+        let msg = NetMQ.NetMQMessage()
+        msg.Append("identity1")
+        msg.Append("<IDS|MSG>")
+        msg.Append(hmac)
+        msg.Append(headerJson)
+        msg.Append(parentJson)
+        msg.Append(metadataJson)
+        msg.Append(contentJson)
+        match JupyterTransport.parseFrames key msg with
+        | Error e -> failtest (sprintf "parseFrames failed: %s" e)
+        | Ok (ids, jupyterMsg) ->
+          ids.Length |> Expect.equal "one identity" 1
+          jupyterMsg.Header.MsgType |> Expect.equal "msg type" "execute_request"
+          match jupyterMsg.Content with
+          | MessageContent.ExecuteRequest r -> r.Code |> Expect.equal "code" "1+1"
+          | _ -> failtest "expected ExecuteRequest"
+      }
+
+      test "parseFrames rejects bad HMAC" {
+        let key = "secret-key"
+        let header = mkHeader "kernel_info_request"
+        let headerJson = WireProtocol.serializeHeader header
+        let msg = NetMQ.NetMQMessage()
+        msg.Append("<IDS|MSG>")
+        msg.Append("bad-hmac")
+        msg.Append(headerJson)
+        msg.Append("{}")
+        msg.Append("{}")
+        msg.Append("{}")
+        match JupyterTransport.parseFrames key msg with
+        | Error e -> e |> Expect.stringContains "hmac error" "HMAC"
+        | Ok _ -> failtest "should fail with bad HMAC"
+      }
+
+      test "buildReplyFrames produces correct frame structure" {
+        let parentHeader = mkHeader "execute_request"
+        let frames = JupyterTransport.buildReplyFrames "" [ "id1"B ] parentHeader "execute_reply" """{"status":"ok"}"""
+        // identity + delimiter + hmac + header + parent + metadata + content = 7
+        (frames.FrameCount, 6) |> Expect.isGreaterThan "at least 7 frames"
+        frames.[1].ConvertToString() |> Expect.equal "delimiter" "<IDS|MSG>"
+      }
+
+      test "buildIOPubFrames uses msg_type as topic" {
+        let parentHeader = mkHeader "execute_request"
+        let frames = JupyterTransport.buildIOPubFrames "" parentHeader "stream" """{"name":"stdout","text":"hello"}"""
+        frames.[0].ConvertToString() |> Expect.equal "topic = msg_type" "stream"
+        frames.[1].ConvertToString() |> Expect.equal "delimiter" "<IDS|MSG>"
+      }
+    ]
+  ]

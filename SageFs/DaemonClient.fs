@@ -1,0 +1,303 @@
+namespace SageFs
+
+open System
+open System.Net.Http
+open System.Text.Json
+open System.Threading
+
+/// State received from the daemon's /api/state SSE stream.
+type DaemonRegionData = {
+  Id: string
+  Content: string
+  Cursor: RegionCursor option
+  Completions: CompletionOverlay option
+  LineAnnotations: Features.LiveTesting.LineAnnotation array
+}
+
+module DaemonRegionData =
+  let toRenderRegion (d: DaemonRegionData) : RenderRegion =
+    { Id = d.Id
+      Flags = RegionFlags.None
+      Content = d.Content
+      Affordances = []
+      Cursor = d.Cursor
+      Completions = d.Completions
+      LineAnnotations = d.LineAnnotations }
+
+/// State event received from the daemon's /api/state SSE stream.
+type StateEvent = {
+  SessionId: string
+  SessionState: string
+  EvalCount: int
+  AvgMs: float
+  ActiveWorkingDir: string
+  LiveTestingStatus: string
+  WatchedCount: int
+  Regions: DaemonRegionData list
+  /// Test name → (filePath, startLine) for jump-to-source (F12).
+  TestSourceLocations: Map<string, string * int>
+  /// Current workflow label: "REPL" or "Live".
+  WorkflowLabel: string
+  /// Current REPL capability: "Full" or "ExpressionOnly".
+  ReplCapability: string
+  /// Whether browser hot reload is active in this session.
+  HotReloadActive: bool
+}
+
+/// Shared daemon client logic for both TUI and GUI.
+module DaemonClient =
+
+  /// Parse the JSON payload from the /api/state SSE stream.
+  let parseStateEvent (json: string) : StateEvent option =
+    try
+      use doc = JsonDocument.Parse(json)
+      let root = doc.RootElement
+      let sessionId =
+        match root.TryGetProperty("sessionId") with
+        | true, el -> el.GetString()
+        | _ -> ""
+      let sessionState = root.GetProperty("sessionState").GetString()
+      let evalCount = root.GetProperty("evalCount").GetInt32()
+      let regions =
+        root.GetProperty("regions").EnumerateArray()
+        |> Seq.map (fun el ->
+          let id = el.GetProperty("id").GetString()
+          let content = el.GetProperty("content").GetString()
+          let cursor =
+            match el.TryGetProperty("cursor") with
+            | true, cursorEl when cursorEl.ValueKind <> JsonValueKind.Null ->
+              Some { Line = cursorEl.GetProperty("line").GetInt32()
+                     Col = cursorEl.GetProperty("col").GetInt32() }
+            | _ -> None
+          let completions =
+            match el.TryGetProperty("completions") with
+            | true, compEl when compEl.ValueKind <> JsonValueKind.Null ->
+              let items =
+                compEl.GetProperty("items").EnumerateArray()
+                |> Seq.map (fun i -> i.GetString())
+                |> Seq.toList
+              let idx = compEl.GetProperty("selectedIndex").GetInt32()
+              Some { Items = items; SelectedIndex = idx }
+            | _ -> None
+          let lineAnnotations =
+            match el.TryGetProperty("lineAnnotations") with
+            | true, annEl when annEl.ValueKind = JsonValueKind.Array ->
+              annEl.EnumerateArray()
+              |> Seq.choose (fun a ->
+                try
+                  let line = a.GetProperty("line").GetInt32()
+                  let iconStr = a.GetProperty("icon").GetString()
+                  let tooltip =
+                    match a.TryGetProperty("tooltip") with
+                    | true, t -> t.GetString()
+                    | _ -> ""
+                  match Features.LiveTesting.GutterIcon.parseLabel iconStr with
+                  | Some icon ->
+                    Some { Features.LiveTesting.LineAnnotation.Line = line
+                           Features.LiveTesting.LineAnnotation.Icon = icon
+                           Features.LiveTesting.LineAnnotation.Tooltip = tooltip }
+                  | None -> None
+                with ex ->
+                  Utils.Log.warn "[DaemonClient] LineAnnotation parse failed: %s" ex.Message
+                  None)
+              |> Seq.toArray
+            | _ -> [||]
+          { Id = id; Content = content; Cursor = cursor; Completions = completions; LineAnnotations = lineAnnotations })
+        |> Seq.toList
+      let avgMs =
+        match root.TryGetProperty("avgMs") with
+        | true, el -> el.GetDouble()
+        | _ -> 0.0
+      let activeWorkingDir =
+        match root.TryGetProperty("activeWorkingDir") with
+        | true, el -> el.GetString()
+        | _ -> ""
+      let liveTestingStatus =
+        match root.TryGetProperty("liveTestingStatus") with
+        | true, el -> el.GetString()
+        | _ -> ""
+      let watchedCount =
+        match root.TryGetProperty("watchedCount") with
+        | true, el -> el.GetInt32()
+        | _ -> 0
+      let testSourceLocations =
+        match root.TryGetProperty("testSourceLocations") with
+        | true, el when el.ValueKind = JsonValueKind.Array ->
+          el.EnumerateArray()
+          |> Seq.choose (fun loc ->
+            try
+              let name = loc.GetProperty("testName").GetString()
+              let file = loc.GetProperty("filePath").GetString()
+              let line = loc.GetProperty("startLine").GetInt32()
+              Some (name, (file, line))
+            with _ -> None)
+          |> Map.ofSeq
+        | _ -> Map.empty
+      let workflowLabel =
+        match root.TryGetProperty("workflowLabel") with
+        | true, el -> el.GetString()
+        | _ -> "REPL"
+      let replCapability =
+        match root.TryGetProperty("replCapability") with
+        | true, el -> el.GetString()
+        | _ -> "Full"
+      let hotReloadActive =
+        match root.TryGetProperty("hotReloadActive") with
+        | true, el -> el.GetBoolean()
+        | _ -> false
+      Some {
+        SessionId = sessionId
+        SessionState = sessionState
+        EvalCount = evalCount
+        AvgMs = avgMs
+        ActiveWorkingDir = activeWorkingDir
+        LiveTestingStatus = liveTestingStatus
+        WatchedCount = watchedCount
+        Regions = regions
+        TestSourceLocations = testSourceLocations
+        WorkflowLabel = workflowLabel
+        ReplCapability = replCapability
+        HotReloadActive = hotReloadActive
+      }
+    with ex ->
+      Utils.Log.warn "[DaemonClient] parseStateEvent failed: %s\n%s" ex.Message (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
+      None
+
+  /// Map an EditorAction to a (name, value) pair for the dispatch API.
+  let actionToApi (action: EditorAction) : (string * string option) option =
+    match action with
+    | EditorAction.InsertChar c -> Some ("insertChar", Some (c.ToString()))
+    | EditorAction.NewLine -> Some ("newLine", None)
+    | EditorAction.Submit -> Some ("submit", None)
+    | EditorAction.Cancel -> Some ("cancel", None)
+    | EditorAction.DeleteBackward -> Some ("deleteBackward", None)
+    | EditorAction.DeleteForward -> Some ("deleteForward", None)
+    | EditorAction.DeleteWord -> Some ("deleteWord", None)
+    | EditorAction.MoveCursor Direction.Up -> Some ("moveUp", None)
+    | EditorAction.MoveCursor Direction.Down -> Some ("moveDown", None)
+    | EditorAction.MoveCursor Direction.Left -> Some ("moveLeft", None)
+    | EditorAction.MoveCursor Direction.Right -> Some ("moveRight", None)
+    | EditorAction.SetCursorPosition (line, col) -> Some ("setCursorPosition", Some (sprintf "%d,%d" line col))
+    | EditorAction.MoveWordForward -> Some ("moveWordForward", None)
+    | EditorAction.MoveWordBackward -> Some ("moveWordBackward", None)
+    | EditorAction.MoveToLineStart -> Some ("moveToLineStart", None)
+    | EditorAction.MoveToLineEnd -> Some ("moveToLineEnd", None)
+    | EditorAction.Undo -> Some ("undo", None)
+    | EditorAction.SelectAll -> Some ("selectAll", None)
+    | EditorAction.SelectWord -> Some ("selectWord", None)
+    | EditorAction.TriggerCompletion -> Some ("triggerCompletion", None)
+    | EditorAction.AcceptCompletion -> Some ("acceptCompletion", None)
+    | EditorAction.DismissCompletion -> Some ("dismissCompletion", None)
+    | EditorAction.NextCompletion -> Some ("nextCompletion", None)
+    | EditorAction.PreviousCompletion -> Some ("previousCompletion", None)
+    | EditorAction.HistoryPrevious -> Some ("historyPrevious", None)
+    | EditorAction.HistoryNext -> Some ("historyNext", None)
+    | EditorAction.DeleteToEndOfLine -> Some ("deleteToEndOfLine", None)
+    | EditorAction.Redo -> Some ("redo", None)
+    | EditorAction.ToggleSessionPanel -> Some ("toggleSessionPanel", None)
+    | EditorAction.ListSessions -> Some ("listSessions", None)
+    | EditorAction.SwitchSession id -> Some ("switchSession", Some id)
+    | EditorAction.CreateSession projects ->
+      Some ("createSession", Some (String.concat "," projects))
+    | EditorAction.ConfigureWarmupAutoOpen -> Some ("configureWarmupAutoOpen", None)
+    | EditorAction.StopSession id -> Some ("stopSession", Some id)
+    | EditorAction.HistorySearch s -> Some ("historySearch", Some s)
+    | EditorAction.ResetSession -> Some ("resetSession", None)
+    | EditorAction.HardResetSession -> Some ("hardResetSession", None)
+    | EditorAction.SmartReset -> Some ("smartReset", None)
+    | EditorAction.SessionNavUp -> Some ("sessionNavUp", None)
+    | EditorAction.SessionNavDown -> Some ("sessionNavDown", None)
+    | EditorAction.SessionSelect -> Some ("sessionSelect", None)
+    | EditorAction.SessionDelete -> Some ("sessionDelete", None)
+    | EditorAction.SessionStopOthers -> Some ("sessionStopOthers", None)
+    | EditorAction.ClearOutput -> Some ("clearOutput", None)
+    | EditorAction.SessionSetIndex idx -> Some ("sessionSetIndex", Some (idx.ToString()))
+    | EditorAction.SessionCycleNext -> Some ("sessionCycleNext", None)
+    | EditorAction.SessionCyclePrev -> Some ("sessionCyclePrev", None)
+    | EditorAction.PromptChar c -> Some ("promptChar", Some (c.ToString()))
+    | EditorAction.PromptBackspace -> Some ("promptBackspace", None)
+    | EditorAction.PromptConfirm -> Some ("promptConfirm", None)
+    | EditorAction.PromptCancel -> Some ("promptCancel", None)
+    | EditorAction.SwitchMode _ -> None
+
+  /// Send an EditorAction to the daemon via POST /api/dispatch.
+  let dispatchAction (client: HttpClient) (baseUrl: string) (actionName: string) (value: string option) = task {
+    let payload =
+      match value with
+      | Some v ->
+        JsonSerializer.Serialize({| action = actionName; value = v |})
+      | None ->
+        JsonSerializer.Serialize({| action = actionName |})
+    let content = new StringContent(payload, Text.Encoding.UTF8, "application/json")
+    try
+      let! resp = client.PostAsync(sprintf "%s/api/dispatch" baseUrl, content)
+      resp.EnsureSuccessStatusCode() |> ignore
+    with ex ->
+      Utils.Log.warn "[DaemonClient] dispatchAction '%s' failed: %s" actionName ex.Message
+      ()
+  }
+
+  /// Dispatch an EditorAction to the daemon (convenience wrapper).
+  let dispatch (client: HttpClient) (baseUrl: string) (action: EditorAction) = task {
+    match actionToApi action with
+    | Some (name, value) -> do! dispatchAction client baseUrl name value
+    | None -> ()
+  }
+
+  /// Verify daemon is reachable. Returns Ok baseUrl or Error message.
+  let verifyConnection (daemonInfo: DaemonInfo) = task {
+    let dashboardPort = daemonInfo.DashboardPort
+    let baseUrl = sprintf "http://localhost:%d" dashboardPort
+    use handler = new HttpClientHandler(AutomaticDecompression = System.Net.DecompressionMethods.All)
+    use client = new HttpClient(handler)
+    try
+      let! resp = client.GetAsync(sprintf "%s/dashboard" baseUrl)
+      resp.EnsureSuccessStatusCode() |> ignore
+      return Ok baseUrl
+    with ex ->
+      return Error (sprintf "Cannot connect to SageFs daemon at %s\n  %s" baseUrl ex.Message)
+  }
+
+  /// Callback invoked when new state arrives from the SSE stream.
+  type StateCallback = StateEvent -> RenderRegion list -> unit
+
+  /// Run SSE listener with auto-reconnect. Calls onState for each update.
+  /// Calls onReconnecting when connection drops. Blocks until cancelled.
+  let runSseListener
+    (baseUrl: string)
+    (onState: StateCallback)
+    (onReconnecting: string -> unit)
+    (ct: CancellationToken) = task {
+    let mutable retryDelay = 1000
+    let maxRetryDelay = 30000
+    while not ct.IsCancellationRequested do
+      try
+        use sseHandler = new HttpClientHandler(AutomaticDecompression = System.Net.DecompressionMethods.All)
+        use sseClient = new HttpClient(sseHandler)
+        sseClient.Timeout <- Timeouts.sseKeepAlive
+        let! stream = sseClient.GetStreamAsync(sprintf "%s/api/state" baseUrl, ct)
+        use reader = new IO.StreamReader(stream)
+        retryDelay <- 1000
+        while not ct.IsCancellationRequested do
+          let! line = reader.ReadLineAsync(ct)
+          match isNull line with
+          | true -> raise (IO.IOException("SSE stream ended"))
+          | false -> ()
+          match line.StartsWith("data: ", System.StringComparison.Ordinal) with
+          | true ->
+            let json = line.Substring(6)
+            match parseStateEvent json with
+            | Some event ->
+              let regions = event.Regions |> List.map DaemonRegionData.toRenderRegion
+              onState event regions
+            | None -> ()
+          | false -> ()
+      with
+      | :? OperationCanceledException -> ()
+      | _ when not ct.IsCancellationRequested ->
+        onReconnecting "reconnecting..."
+        try
+          do! Threading.Tasks.Task.Delay(retryDelay, ct)
+        with :? OperationCanceledException -> ()
+        retryDelay <- min (retryDelay * 2) maxRetryDelay
+  }

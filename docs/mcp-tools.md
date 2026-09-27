@@ -1,0 +1,238 @@
+# MCP Tools Reference
+
+SageFs runs a Model Context Protocol server on port 37749. Any MCP client
+(GitHub Copilot, Claude Code, Claude Desktop, Cursor, Windsurf, OpenCode)
+can connect and drive an F# session: run code, type-check it, list and verify
+tests, and read live status. This is the surface I actually use every day to
+work on SageFs itself, so if it's clunky, I feel it first.
+
+SageFs gates tools when you call them. `tools/list` always advertises the
+full catalog below, and SageFs doesn't filter what an MCP client sees there.
+Calling one is different: a call that doesn't apply to the current session
+state gets rejected with a structured error (`SageFs/Mcp.fs:686`,
+`enforceToolCallGate`), instead of a raw failure. Call `get_daemon_status`
+for daemon health, then `get_session_status` to see which tools currently
+apply. In a warming-up session, for example, it
+reports `send_fsharp_code` as not yet available, even though the tool is
+still listed. I went back and forth on filtering the list itself. For now
+the call-time gate is what's actually wired up, so that's what this doc
+promises.
+
+The full advertised set is 60 tools, grouped below. This is separate
+from the daemon's HTTP API (`/api/...`), which the editors and dashboard use
+for completions, coverage bitmaps, run policies, and event history. Those
+HTTP endpoints are not MCP tools.
+
+## Connect
+
+**stdio (recommended)**: your client spawns `sagefs mcp`, so there's no
+ordering to get wrong — no port to be missing, no cached connection
+failure, no race between your client starting and the daemon starting.
+`sagefs mcp` checks whether the daemon is up, starts it if it isn't, waits
+for it, then bridges your client's stdin/stdout to it.
+
+```
+claude mcp add sagefs -- sagefs mcp
+```
+
+For clients that take raw JSON config:
+```json
+{ "mcpServers": { "sagefs": { "command": "sagefs", "args": [ "mcp" ] } } }
+```
+
+**Streamable HTTP** (for a client that only speaks HTTP, or that's already
+started before you get to configure it — the daemon has to be running
+first):
+```json
+{ "mcpServers": { "sagefs": { "type": "streamable-http", "url": "http://localhost:37749/" } } }
+```
+
+**SSE** (for clients that don't support Streamable HTTP yet):
+```json
+{ "mcpServers": { "sagefs": { "type": "sse", "url": "http://localhost:37749/sse" } } }
+```
+
+### No SageFs tools in your client
+
+If your client shows no SageFs tools, or it shows them but every call
+fails, you almost certainly configured HTTP and started your client before
+the daemon. An HTTP-based MCP client that fails to connect on its first try
+usually caches that failure and never retries, even once the daemon comes
+up seconds later — restarting the client is the only fix, and nothing
+tells you that's what you need to do. Switch to stdio (`claude mcp add
+sagefs -- sagefs mcp`, above) and this stops happening: your client spawns
+the bridge itself, and the bridge makes sure the daemon is there before
+your client ever sees an empty tool list. If you want to stay on HTTP,
+check `sagefs status` — if it says no daemon is running, start one with
+`sagefs` and restart your client.
+
+## Execution and status
+
+| Tool | What it does |
+|:---|:---|
+| `send_fsharp_code` | Evaluate F# code in the session. Each `;;` is a transaction boundary: a failure discards that one statement and keeps everything before it. |
+| `check_fsharp_code` | Type-check a snippet without running it, in the current FSI context. Earlier `send_fsharp_code` definitions are in scope, but namespaces still need an explicit `open`. A "not defined" error here almost always just means you forgot the `open`, nothing more sinister. |
+| `cancel_eval` | Cancel a running evaluation. |
+| `get_daemon_status` | Daemon version, health, memory, process telemetry, and session counts, including with no active session. |
+| `get_session_status` | The selected session's lifecycle, loaded projects, progress, and tools available in the current state. |
+| `get_recent_fsi_events` | Recent evals, errors, and loads with timestamps. |
+
+## Sessions and lifecycle
+
+| Tool | What it does |
+|:---|:---|
+| `create_project_session` | Create an isolated session for one explicit `.fsproj`. Missing generated build state is rebuilt before the session is registered. |
+| `create_solution_session` | Create an isolated session for one explicit `.sln` or `.slnx`. |
+| `create_bare_session` | Create an isolated project-free REPL. It never auto-discovers. |
+| `list_sessions` | List active sessions. |
+| `switch_session` | Change which session your calls route to. |
+| `stop_session` | Stop a session by id. MCP-bound sessions can only be stopped by the connection that created them. |
+| `reset_fsi_session` | Soft reset: clears definitions, keeps loaded DLLs. |
+| `hard_reset_fsi_session` | Full reset: rebuilds the project, reloads, starts fresh. Needed after `.fsproj` or package changes. |
+| `get_available_projects` | Discover `.fsproj` / `.sln` / `.slnx` files under a directory. |
+| `list_runnable_projects` | List the session's projects and which ones `run_app` can run (`OutputType=Exe`). |
+| `switch_workflow` | Switch the session's workflow: `repl` (Interactive), `livetesting` (Live Testing), or `live` (Hot Reload, aliases `hotreload`/`weblive`/`web`, kept for backward compatibility). Creates a new session in the target workflow and stops the old one; VS Code and the dashboard's own `POST /api/sessions/{sid}/workflow` route restart the same session id in place instead. |
+
+## Hot reload and running apps
+
+| Tool | What it does |
+|:---|:---|
+| `enable_hot_reload` | Turn on file watching and hot reload for the session. |
+| `disable_hot_reload` | Turn it off. |
+| `reset_hot_reload_state` | List the live state a save kept when you edited its initializer (binding, kept value, waiting initializer), or pass a binding to run only that initializer in the running app. |
+| `set_reflection_read_mode` | Show how hot reload watches values read through reflection (the mode, whether the watch is on, and any question a hot reflective loop raised), or pass `exact-every-read`, `mark-on-reflect` or `probe-callers` to switch the running app. No restart. See [Hot Reload](hot-reload.md#reflection-reads). |
+| `run_app` | Run the session's executable project the way `dotnet run` would, with hot reload. Applies `launchSettings.json` (first "Project" profile) and picks a free loopback port when the project sets no URL. Restarts an Interactive session into the Hot Reload workflow first, so REPL bindings are lost. Saving source then hot-patches the running app, including a route table built once at startup. |
+| `stop_app` | Stop the app started by `run_app`. Its web host stops and frees its port; the session keeps running. |
+
+## Testing and verification
+
+| Tool | What it does |
+|:---|:---|
+| `list_tests` | List discovered tests, grouped by file with source locations. A compiled-project session's tests are ReflectionOnly and carry no file/line, so those come back under a separate `WithoutSourceLocation` field instead of being dropped. Optional pattern or file filter. |
+| `targeted_verify` | Plan a trustworthy verification pass for one changed behavior. Refuses to claim green when session trust is ambiguous or loaded code is stale. It doesn't run tests itself. It returns the next trustworthy move. |
+| `explain_test_failure` | Enriched failure context for a test that recently went from passing to failing. |
+
+There is no `run_tests` MCP tool, and I'm not sorry about it. Test runs are
+driven by the live-testing engine (save a file, or use the editor/dashboard
+run controls); agents read results through `list_tests`, `explain_test_failure`,
+and `diagnose`.
+
+## Analysis and diagnostics
+
+| Tool | What it does |
+|:---|:---|
+| `diagnose` | Full diagnostic report: test failures, cell staleness, ripple plan, suggestions. |
+| `coverage_intel` | Coverage-quality analysis: blind spots, correlated failures. |
+| `impact_forecast` | Forecast the performance impact and downstream blast radius of cells. |
+| `suggest_next_action` | Prioritized "what next" queue combining coverage, impact, and staleness. |
+| `suggest_next_cell` | Type-directed suggestions for what to evaluate next, from the bindings in scope. |
+| `suggest_repair` | Given a failing test, trace causal changes and suggest the symbol to fix. |
+| `plan_ripple` | Plan cascade re-evaluation for changed cells using the live dependency graph. |
+| `preview_what_if` | Preview what would change if a binding had a different value, without executing. |
+| `decompose_pipeline` | Break an F# pipeline into stages, each classified pure / effectful / unknown. |
+| `get_cell_dependencies` | The cell dependency graph with staleness annotations. |
+| `discover_features` | Context-aware feature discovery, ranked by relevance to the session state. |
+
+## Export and history
+
+| Tool | What it does |
+|:---|:---|
+| `export_notebook` | Export the session as a notebook-style `.fsx` with cell metadata. |
+| `export_session_transcript` | Export the session as a clean, topologically sorted `.fsx` transcript. |
+| `get_session_filmstrip` | Visual history of evaluations: each a frame with code, bindings, and duration. |
+| `get_eval_timeline` | Eval-duration sparkline and P50/P95/P99 statistics. |
+| `get_eval_diff` | Before/after diff of recent evaluation outputs. |
+| `get_message_journal` | Audit log of eval events, filterable by severity and source. |
+| `manage_scratch_pad` | View, export, or promote ephemeral snippets from session history. |
+
+## Friction telemetry (local only)
+
+These read and write a local log. They don't phone home. I have zero
+interest in your code or your keystrokes, and building a telemetry pipeline
+sounds like a chore anyway.
+
+| Tool | What it does |
+|:---|:---|
+| `get_friction_summary` | Compact summary of recorded MCP friction. |
+| `get_friction_report` | Structured JSON report of MCP pain points. |
+| `report_friction` | Record structured feedback about a confusing tool call. |
+| `manage_local_data` | See what SageFs stores under its data dir (rows, bytes, oldest row, retention rules), or clear it. |
+
+## Cohort and multi-agent coordination
+
+For running several agents against one repo at once. One implicit cohort per
+daemon; the first agent to join becomes its conductor. Every tool resolves
+the caller's identity from the MCP connection, not the `agentName` argument.
+Two connections that pass the same name are still two different members.
+
+| Tool | What it does |
+|:---|:---|
+| `join_cohort` | Join the daemon's shared coordination session. The first joiner becomes conductor. |
+| `leave_cohort` | Leave. Any claims you still hold are orphaned (the conductor must reassign them). |
+| `get_cohort_status` | Members, claims and fences, the test matrix, and the landing queue. Wait-free: reads a published snapshot. Also available on the `cohort://status` MCP resource for subscription. |
+| `acquire_claim` | Take an exclusive claim over a file or project (`file:<path>` or `project:<path>`) so others know it's yours to edit. |
+| `release_claim` | Release a claim you hold. The presented fence must match the current one. |
+| `reassign_claim` | Conductor-only: reassign an orphaned claim to a present member. |
+| `request_landing` | Queue a landing: your commits are rebased onto the integration head, verified against affected tests, and fast-forwarded in. Landings are strictly serial (one FIFO queue). |
+| `set_integration_ref` | Conductor-only: configure the git ref that landings rebase onto, in a dedicated integration worktree. |
+
+## Per-client config
+
+Prefer stdio (`command`/`args`, spawns `sagefs mcp`) over HTTP (`url`,
+requires the daemon already running) for the reason above.
+
+**Claude Code**:
+```
+claude mcp add sagefs -- sagefs mcp
+```
+or in `~/.claude/claude_desktop_config.json`:
+```json
+{ "mcpServers": { "sagefs": { "command": "sagefs", "args": [ "mcp" ] } } }
+```
+
+**GitHub Copilot (CLI)**, `~/.copilot/github-copilot/mcp.json`:
+```json
+{ "servers": { "sagefs": { "type": "stdio", "command": "sagefs", "args": [ "mcp" ] } } }
+```
+
+**Cursor / Windsurf**, `.cursor/mcp.json` or the Windsurf MCP settings:
+```json
+{ "mcpServers": { "sagefs": { "command": "sagefs", "args": [ "mcp" ] } } }
+```
+
+**OpenCode**, `~/.opencode.json`:
+```json
+{ "mcp": { "sagefs": { "type": "local", "command": [ "sagefs", "mcp" ], "enabled": true } } }
+```
+
+If your client only takes a `url` (HTTP), the daemon has to be running
+first — see the troubleshooting note above. The `url` is
+`http://localhost:37749/` for Streamable HTTP, or `http://localhost:37749/sse`
+for SSE:
+
+**GitHub Copilot (CLI)** over HTTP:
+```json
+{ "servers": { "sagefs": { "type": "http", "url": "http://localhost:37749/" } } }
+```
+
+**Claude Code / Claude Desktop** over HTTP:
+```json
+{ "mcpServers": { "sagefs": { "url": "http://localhost:37749/" } } }
+```
+
+**Cursor / Windsurf** over HTTP:
+```json
+{ "mcpServers": { "sagefs": { "url": "http://localhost:37749/" } } }
+```
+
+**OpenCode** over SSE:
+```json
+{ "mcp": { "sagefs": { "type": "remote", "url": "http://localhost:37749/sse", "enabled": true } } }
+```
+
+Works with GitHub Copilot (CLI and VS Code), Claude Code, Claude Desktop,
+OpenCode, Windsurf, Cursor, and any MCP-compatible tool. With live testing
+on, agents can edit files, let SageFs re-run the affected tests, and read the
+result through `list_tests` and `diagnose`, no eval round-trip needed. This
+is the whole point of building an MCP server instead of just a REPL: the
+agent gets the same fast feedback loop I do.

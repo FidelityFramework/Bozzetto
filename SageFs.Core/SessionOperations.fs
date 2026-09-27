@@ -1,0 +1,406 @@
+namespace SageFs
+
+open System
+open System.Text.Json
+open SageFs.WorkerProtocol
+
+/// Pure, deterministic session routing and error types.
+/// No side effects, no IO, no dependencies on transport or actor.
+/// Shared vocabulary for ALL interfaces: MCP, HTTP, Neovim, CLI.
+module SessionOperations =
+
+  /// How a session was identified for an operation.
+  [<RequireQualifiedAccess>]
+  type SessionResolution =
+    /// Caller explicitly specified a session ID and it was found.
+    | Resolved of SessionId
+    /// Only one session exists, so it's the obvious target.
+    | DefaultSingle of SessionId
+    /// Multiple sessions exist; the most recently active one is chosen.
+    | DefaultMostRecent of SessionId
+
+  /// Resolve which session to target for an operation.
+  /// Pure function — takes the caller's optional sessionId and the current session list.
+  ///
+  /// Rules:
+  /// 1. Explicit sessionId > single-session default > most-recently-active
+  /// 2. If explicit sessionId is not found, error
+  /// 3. If no sessions exist, error
+  /// 4. If exactly one session, use it (no ambiguity)
+  /// 5. If multiple sessions and no sessionId, pick most recently active
+  let resolveSession
+    (requestedId: SessionId option)
+    (sessions: SessionInfo list)
+    : Result<SessionResolution, SageFsError> =
+    match requestedId with
+    | Some id ->
+      match sessions |> List.exists (fun s -> s.Id = id) with
+      | true -> Result.Ok (SessionResolution.Resolved id)
+      | false -> Result.Error (SageFsError.SessionNotFound (SessionId.value id))
+    | None ->
+      match sessions with
+      | [] ->
+        Result.Error SageFsError.NoActiveSessions
+      | [ single ] ->
+        Result.Ok (SessionResolution.DefaultSingle single.Id)
+      | multiple ->
+        let mostRecent =
+          multiple
+          |> List.sortByDescending (fun s -> s.LastActivity)
+          |> List.head
+        Result.Ok (SessionResolution.DefaultMostRecent mostRecent.Id)
+
+  /// Extract the resolved session ID from any resolution variant.
+  let sessionId (resolution: SessionResolution) : SessionId =
+    match resolution with
+    | SessionResolution.Resolved id
+    | SessionResolution.DefaultSingle id
+    | SessionResolution.DefaultMostRecent id -> id
+
+  /// Format a resolution for display/logging.
+  let describeResolution (resolution: SessionResolution) : string =
+    match resolution with
+    | SessionResolution.Resolved id ->
+      sprintf "session %s (explicit)" (SessionId.value id)
+    | SessionResolution.DefaultSingle id ->
+      sprintf "session %s (only session)" (SessionId.value id)
+    | SessionResolution.DefaultMostRecent id ->
+      sprintf "session %s (most recently active)" (SessionId.value id)
+
+  // ── Occupancy tracking ─────────────────────────────────────────
+
+  /// Whether a session occupant is actively working (MCP agent) or just watching (UI).
+  [<RequireQualifiedAccess>]
+  type OccupantRole = Worker | Observer
+
+  module OccupantRole =
+    /// Classify an agent name as Worker or Observer.
+    /// MCP agents (prefixed "mcp" or "agent-") are workers; everything else is an observer.
+    let classify (agentName: string) =
+      match agentName.StartsWith("mcp", System.StringComparison.Ordinal) || agentName.StartsWith("agent-", System.StringComparison.Ordinal) with
+      | true -> OccupantRole.Worker
+      | false -> OccupantRole.Observer
+
+    /// Classify by the BOUND connection kind (SageFs.MemberTable.MemberId),
+    /// not by a self-declared string a caller could pick to spoof a role.
+    /// A browser tab observes; an MCP or minted connection acts. Prefer this
+    /// over `classify` wherever a `MemberId` is already in hand — a `Minted`
+    /// identity still falls back to the name-prefix heuristic since a Minted
+    /// id IS a caller-supplied name by definition (unbound callers, mostly
+    /// direct in-process calls and tests).
+    let ofMemberId (id: SageFs.MemberTable.MemberId) =
+      match id with
+      | SageFs.MemberTable.MemberId.Browser _ -> OccupantRole.Observer
+      | SageFs.MemberTable.MemberId.Mcp _ -> OccupantRole.Worker
+      | SageFs.MemberTable.MemberId.Minted name -> classify name
+
+    let label = function OccupantRole.Worker -> "worker" | OccupantRole.Observer -> "observer"
+
+  type SessionOccupancy = {
+    AgentName: string
+    Role: OccupantRole
+  }
+
+  module SessionOccupancy =
+    /// Compute occupancy for a session by reverse-looking up the session map.
+    /// SUPERSEDED for MCP's own occupancy views (Mcp.fs's listSessions/
+    /// getStatus): they now read AgentActivityTracker instead, because it is
+    /// the ONE store shared with the dashboard — a raw agent-name-keyed
+    /// ConcurrentDictionary has no notion of a browser tab (see
+    /// Mcp.fs's occupantsForSession). Left in place — still correct, still
+    /// tested — for any caller that only has a bare name→session map.
+    let forSession (sessionMap: System.Collections.Concurrent.ConcurrentDictionary<string, string>) (sessionId: string) =
+      sessionMap
+      |> Seq.filter (fun kv -> kv.Value = sessionId)
+      |> Seq.map (fun kv -> { AgentName = kv.Key; Role = OccupantRole.classify kv.Key })
+      |> Seq.toList
+
+    /// True if any worker (MCP agent) is occupying this session.
+    let hasWorker (occupants: SessionOccupancy list) =
+      occupants |> List.exists (fun o -> o.Role = OccupantRole.Worker)
+
+    /// Format occupancy for display.
+    let format (occupants: SessionOccupancy list) =
+      match occupants with
+      | [] -> "unoccupied"
+      | occs ->
+        let workers = occs |> List.filter (fun o -> o.Role = OccupantRole.Worker)
+        let observers = occs |> List.filter (fun o -> o.Role = OccupantRole.Observer)
+        let parts = [
+          match workers.IsEmpty with
+          | false ->
+            let names = workers |> List.map (fun o -> o.AgentName) |> String.concat ", "
+            sprintf "%d worker(s): %s" workers.Length names
+          | true -> ()
+          match observers.IsEmpty with
+          | false ->
+            // Named, not just counted (sagefs-multiagent-vision.md §4.1): a
+            // dashboard tab is a Browser observer, and "1 observer(s)" with
+            // no name hid exactly who that was.
+            let names = observers |> List.map (fun o -> o.AgentName) |> String.concat ", "
+            sprintf "%d observer(s): %s" observers.Length names
+          | true -> ()
+        ]
+        parts |> String.concat " | "
+
+  // ── Multi-agent coordination ──────────────────────────────────
+
+  /// Machine-parseable guidance for an AI agent connecting to a session.
+  /// Replaces stringly-typed warnings with a typed DU that agents can
+  /// pattern-match on. Makes the decision tree unambiguous:
+  /// - Uncontested → proceed freely
+  /// - OccupiedBy → consider creating a separate session
+  /// - Unhealthy → session is faulted/stopped, don't use it
+  [<RequireQualifiedAccess>]
+  type SessionGuidance =
+    | Uncontested
+    | OccupiedBy of workerNames: string list
+    | Unhealthy of reason: string
+
+  module SessionGuidance =
+    /// Compute guidance from current occupancy and session status.
+    /// Pure function — no IO, no side effects.
+    let compute (occupants: SessionOccupancy list) (status: SessionStatus) : SessionGuidance =
+      match status with
+      | SessionStatus.Faulted -> SessionGuidance.Unhealthy "Session is faulted"
+      | SessionStatus.Stopped -> SessionGuidance.Unhealthy "Session is stopped"
+      | _ ->
+        let workers =
+          occupants
+          |> List.filter (fun o -> o.Role = OccupantRole.Worker)
+          |> List.map (fun o -> o.AgentName)
+        match workers with
+        | [] -> SessionGuidance.Uncontested
+        | names -> SessionGuidance.OccupiedBy names
+
+    /// Human-readable label for MCP/dashboard display.
+    let label = function
+      | SessionGuidance.Uncontested -> "Uncontested"
+      | SessionGuidance.OccupiedBy names ->
+        sprintf "OccupiedBy: %s" (names |> String.concat ", ")
+      | SessionGuidance.Unhealthy reason ->
+        sprintf "Unhealthy: %s" reason
+
+  /// Snapshot of an agent's presence in the system.
+  /// Tracks WHEN they were last active, WHAT files they touched,
+  /// and optionally WHAT they claim to be doing (intent).
+  /// This replaces the bare ConcurrentDictionary<string,string> SessionMap
+  /// for coordination purposes while keeping SessionMap for routing.
+  type AgentPresence = {
+    AgentName: string
+    Role: OccupantRole
+    SessionId: string
+    LastToolCall: DateTime
+    Intent: string option
+    RecentFiles: string list
+    EvalCount: int
+  }
+
+  /// Whether an agent's presence is fresh (active) or stale (likely crashed/disconnected).
+  [<RequireQualifiedAccess>]
+  type AgentFreshness =
+    | Fresh
+    | Stale
+
+  module AgentPresence =
+    /// Classify an agent as stale if their last tool call exceeds the timeout.
+    let freshness (now: DateTime) (timeout: TimeSpan) (presence: AgentPresence) : AgentFreshness =
+      match (now - presence.LastToolCall) > timeout with
+      | true -> AgentFreshness.Stale
+      | false -> AgentFreshness.Fresh
+
+    /// Convenience: true if the agent is stale.
+    let isStale now timeout presence =
+      freshness now timeout presence = AgentFreshness.Stale
+
+    /// Convenience: true if the agent is fresh.
+    let isFresh now timeout presence =
+      freshness now timeout presence = AgentFreshness.Fresh
+
+  /// Advisory about file overlap between agents.
+  /// Returned when an agent is about to evaluate code from a file
+  /// that another agent recently modified.
+  [<RequireQualifiedAccess>]
+  type FileOverlapAdvisory =
+    | NoOverlap
+    | OverlappingFiles of agentName: string * files: string list
+
+  module FileOverlapAdvisory =
+    /// Compute overlap between the current agent's files and all other agents' recent files.
+    /// Returns advisories for each overlapping agent (self is excluded).
+    let compute
+      (currentAgent: string)
+      (currentFiles: string list)
+      (otherPresences: AgentPresence list)
+      : FileOverlapAdvisory list =
+      let currentSet = Set.ofList currentFiles
+      match Set.isEmpty currentSet with
+      | true -> []
+      | false ->
+        otherPresences
+        |> List.filter (fun p -> p.AgentName <> currentAgent)
+        |> List.choose (fun p ->
+          let otherSet = Set.ofList p.RecentFiles
+          let overlap = Set.intersect currentSet otherSet |> Set.toList
+          match overlap with
+          | [] -> None
+          | files -> Some (FileOverlapAdvisory.OverlappingFiles (p.AgentName, files)))
+
+    /// Format an advisory for inclusion in tool responses.
+    let format = function
+      | FileOverlapAdvisory.NoOverlap -> ""
+      | FileOverlapAdvisory.OverlappingFiles (agent, files) ->
+        sprintf "Note: Agent '%s' recently evaluated code from %s"
+          agent (files |> String.concat ", ")
+
+  /// Outcome of periodic occupancy cleanup.
+  /// Explicit DU so the event log and dashboard can report what happened.
+  [<RequireQualifiedAccess>]
+  type OccupancyCleanupOutcome =
+    | NothingToClean
+    | EvictedStale of agentNames: string list
+    | CleanupSkipped of reason: string
+
+  // ── Session display formatting ──────────────────────────────────
+
+  /// Human-readable relative time (e.g. "5 min ago", "just now").
+  let formatRelativeTime (now: DateTime) (past: DateTime) : string =
+    let diff = now - past
+    match diff.TotalSeconds < 60.0 with
+    | true -> "just now"
+    | false ->
+      match diff.TotalMinutes < 60.0 with
+      | true -> sprintf "%d min ago" (int diff.TotalMinutes)
+      | false ->
+        match diff.TotalHours < 24.0 with
+        | true -> sprintf "%d hr ago" (int diff.TotalHours)
+        | false -> sprintf "%d days ago" (int diff.TotalDays)
+
+  // ── Coordination enrichment ──────────────────────────────────
+
+  /// Pure enrichment functions for MCP responses.
+  /// Take base response strings and coordination data, return enriched strings.
+  module CoordinationEnrichment =
+    /// Enrich a status response with guidance information.
+    let enrichStatusWithGuidance (guidance: SessionGuidance) (baseResponse: string) : string =
+      sprintf "%s\n\n🤝 Coordination:\n  Guidance: %s" baseResponse (SessionGuidance.label guidance)
+
+    /// Enrich a status response with active agent presences.
+    let enrichStatusWithPresences (now: DateTime) (presences: AgentPresence list) (baseResponse: string) : string =
+      match presences with
+      | [] -> baseResponse
+      | ps ->
+        let lines =
+          ps |> List.map (fun p ->
+            let intentStr =
+              match p.Intent with
+              | Some i -> sprintf " (%s)" i
+              | None -> ""
+            let agoStr = formatRelativeTime now p.LastToolCall
+            sprintf "    • %s%s — %s, %d evals" p.AgentName intentStr agoStr p.EvalCount)
+        sprintf "%s\n  Active agents:\n%s" baseResponse (String.concat "\n" lines)
+
+    /// Enrich an eval response with overlap advisories.
+    let enrichEvalWithAdvisories (advisories: FileOverlapAdvisory list) (baseResponse: string) : string =
+      let texts =
+        advisories
+        |> List.choose (fun a ->
+          match FileOverlapAdvisory.format a with
+          | "" -> None
+          | text -> Some text)
+      match texts with
+      | [] -> baseResponse
+      | _ -> sprintf "%s\n\n%s" baseResponse (String.concat "\n" texts)
+
+  /// What the caller wants when creating a session — pure data, no IO.
+  type SessionCreateRequest = {
+    Projects: string list
+    WorkingDirectory: string
+  }
+
+  /// Format a single session for display, with optional occupancy info.
+  let formatSessionInfo (now: DateTime) (occupancy: SessionOccupancy list option) (info: SessionInfo) : string =
+    let name = SessionInfo.displayName info
+    let projects = info.Projects |> String.concat ", "
+    let lastActive = formatRelativeTime now info.LastActivity
+    let pid =
+      match SessionLifecycleStatus.workerPid info.Status with
+      | Some p -> sprintf "(PID %d)" p
+      | None -> "(no PID)"
+    let occLabel =
+      match occupancy with
+      | Some occs -> sprintf "  Occupancy: %s" (SessionOccupancy.format occs)
+      | None -> ""
+    // Worktree-aware routing (sagefs-multiagent-vision.md §3.2): a session
+    // rooted inside a git worktree shows its own branch, so an agent can
+    // tell "the session at .claude/worktrees/agent-x" from "the main
+    // checkout" without guessing from the path alone.
+    let checkoutLabel =
+      match Checkout.classify info.WorkingDirectory with
+      | Checkout.Checkout.Worktree(_, branch) -> sprintf "  Worktree branch: %s" branch
+      | Checkout.Checkout.MainCheckout _ | Checkout.Checkout.NotAGitCheckout -> ""
+    sprintf "%s  %s  %s  %s  %s\n  Started: %s  Last active: %s  Projects: %s%s%s"
+      (SessionId.value info.Id) name info.WorkingDirectory (SessionLifecycleStatus.label info.Status) pid
+      (info.CreatedAt.ToString("yyyy-MM-dd HH:mm"))
+      lastActive
+      projects
+      occLabel
+      checkoutLabel
+
+  /// Format a list of sessions for display, with optional per-session occupancy.
+  let formatSessionList (now: DateTime) (occupancyMap: Map<string, SessionOccupancy list> option) (sessions: SessionInfo list) : string =
+    match sessions with
+    | [] -> "No active sessions."
+    | sessions ->
+      sessions
+      |> List.map (fun info ->
+        let occ = occupancyMap |> Option.map (fun m -> m |> Map.tryFind (SessionId.value info.Id) |> Option.defaultValue [])
+        formatSessionInfo now occ info)
+      |> String.concat "\n\n"
+      |> sprintf "%d active session(s):\n\n%s" sessions.Length
+
+  /// Pure JSON projection of the session list — the read model for the
+  /// `sessions://list` MCP resource (item 12, sagefs-multiagent-vision.md
+  /// §5.6: "one read model, no new channel" — the exact `SessionInfo list`
+  /// `list_sessions`/`formatSessionList` already reports, serialized as JSON
+  /// instead of prose). No IO, no worker round-trips: unlike `/api/sessions`
+  /// (McpServer.fs), this never calls into a worker proxy for live eval
+  /// stats — it is the same cheap, in-memory-only shape `list_sessions`
+  /// itself uses. Occupancy is deliberately omitted: it is a caller-side
+  /// enrichment over `McpContext.SessionMap` (per-agent routing state), not
+  /// part of `SessionInfo`, and keeping this function pure means it cannot
+  /// read that mutable map.
+  let sessionsToJson (opts: JsonSerializerOptions) (sessions: SessionInfo list) : string =
+    let rows =
+      sessions
+      |> List.map (fun info ->
+        let worktreeBranch =
+          match Checkout.classify info.WorkingDirectory with
+          | Checkout.Checkout.Worktree(_, branch) -> Some branch
+          | Checkout.Checkout.MainCheckout _ | Checkout.Checkout.NotAGitCheckout -> None
+        {| Id = SessionId.value info.Id
+           Name = SessionInfo.displayName info
+           WorkingDirectory = info.WorkingDirectory
+           Status = SessionLifecycleStatus.label info.Status
+           Workflow = WorkflowTypes.SessionWorkflow.label info.Workflow
+           Projects = info.Projects
+           CreatedAt = info.CreatedAt
+           LastActivity = info.LastActivity
+           WorktreeBranch = worktreeBranch |})
+    JsonSerializer.Serialize({| Sessions = rows |}, opts)
+
+  /// A cheap, deterministic "version" of the session list — the
+  /// `sessions://list` MCP resource's `McpResourceGate` key (item 12,
+  /// §5.6): two calls with the same set of sessions in the same
+  /// lifecycle-status produce the same string, so an unrelated model change
+  /// (McpServer.fs's `wireSessionsResourceSubscription` rides the existing
+  /// `ModelChanged` signal, which fires for output/diagnostics/bindings too,
+  /// not just session changes) notifies nothing. Sorted by id so member
+  /// order never matters. Intentionally coarse — id + status label is
+  /// enough to catch "a session was created/stopped/faulted"; it is not a
+  /// substitute for `sessionsToJson`'s full content.
+  let sessionsListVersion (sessions: SessionInfo list) : string =
+    sessions
+    |> List.map (fun info -> sprintf "%s:%s" (SessionId.value info.Id) (SessionLifecycleStatus.label info.Status))
+    |> List.sort
+    |> String.concat ";"

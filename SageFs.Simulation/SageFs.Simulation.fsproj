@@ -1,0 +1,172 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <IsPackable>false</IsPackable>
+        <!-- Deterministic Simulation Testing (DST) harness for the pure
+             supervision core. Only used by SageFs.Tests, so it takes the repo
+             default TargetFramework (net11.0, Directory.Build.props) rather
+             than multi-targeting like SageFs.Core does. Pure F#, no IO, no
+             third-party deps — only SageFs.Core, so the harness folds through
+             the REAL policy. -->
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="Scenario.fs" />
+        <Compile Include="Runner.fs" />
+        <Compile Include="Invariants.fs" />
+        <Compile Include="Generators.fs" />
+        <!-- Phase 2: SessionManager worker-lifecycle pid-race simulation. -->
+        <Compile Include="WorkerLifecycleSim.fs" />
+        <Compile Include="WorkerLifecycleInvariants.fs" />
+        <Compile Include="MgrGenerators.fs" />
+        <!-- Phase 3 Brief B5: ManifestOwner / ManifestMutation concurrency + fault DST. -->
+        <Compile Include="ManifestSim.fs" />
+        <Compile Include="ManifestInvariants.fs" />
+        <Compile Include="ManifestGenerators.fs" />
+        <!-- Phase 3A / Brief B1: reference-vs-candidate oracle for the
+             supervision core. -->
+        <Compile Include="ReferenceModel.fs" />
+        <Compile Include="Oracle.fs" />
+        <!-- Phase 3 (B6): SessionManager mailbox supervise/last-good-restart
+             simulation — session preservation across a mailbox fault. -->
+        <Compile Include="SupervisorSim.fs" />
+        <Compile Include="SupervisorInvariants.fs" />
+        <!-- Phase 3A / Brief B3: coverage matrix — which invariants were
+             non-vacuously exercised vs merely "held" across a battery. -->
+        <Compile Include="Coverage.fs" />
+        <!-- Brief B2: deterministic delta-debugging (ddmin) shrinker for
+             failing Scenario/MgrScenario reproducers. -->
+        <Compile Include="Shrink.fs" />
+        <!-- Phase 3A / B4: revision-stamped scenario identity + saved-seed
+             regression corpus. -->
+        <Compile Include="SeedCorpus.fs" />
+        <!-- Phase 3C / Brief B8: pure fault-injection combinators (clock
+             skew, reorder, drop, duplicate) composing over the generators
+             and the manifest sim (B5). -->
+        <Compile Include="FaultInjection.fs" />
+        <!-- Phase 3 landing queue-jam DST: fold the REAL Cohort.decide's serial
+             landing pipeline through a pure effect-performer; twin reducer
+             reintroduces the pre-fix queue-jam (396ee1c3) so the no-deadlock
+             invariants are proven to have teeth. -->
+        <Compile Include="CohortLandingSim.fs" />
+        <Compile Include="CohortLandingInvariants.fs" />
+        <Compile Include="CohortLandingGenerators.fs" />
+        <!-- Phase 1 exhaustive spec proof: BFS the ENTIRE bounded reachable
+             CohortState space through the REAL Cohort.decide and prove the named
+             rules (not sample them); a Faults twin reintroduces the RebaseConflict
+             jam so NO-TERMINAL-IN-QUEUE is proven to have teeth. CsCheck's
+             Exhaustive+Faults modes — see sagefs-learn-from-cscheck.md. -->
+        <Compile Include="CohortSpec.fs" />
+        <!-- Eval-actor DST: fold the REAL SageFs.AppState.EvalActorDecision.decide
+             (the eval actor mailbox's pure routing core) through a pure,
+             clock-free reducer, replacing four slow FSI-warmup Integration
+             suites (ActorSplitTests, EvalCancellationTests,
+             EvalActorResilienceTests, EvalActorStragglerTests). Two twin
+             reducers reintroduce the historical bugs the invariants pin:
+             generation-blind (resurrects a stale straggler) and single-actor
+             (blocks Query while Evaluating). -->
+        <Compile Include="EvalActorSim.fs" />
+        <Compile Include="EvalActorInvariants.fs" />
+        <Compile Include="EvalActorGenerators.fs" />
+        <!-- Workflow-switch DST (outcome-gate-sweep.md Gap F): folds the real
+             WorkerEventGuard pid-classification inside a faithful miniature
+             model of SwitchWorkflow/spawnFirst; twin stop-before-spawn opens
+             a dead window. -->
+        <Compile Include="WorkflowSwitchSim.fs" />
+        <Compile Include="WorkflowSwitchInvariants.fs" />
+        <Compile Include="WorkflowSwitchGenerators.fs" />
+        <!-- File-reload claim-routing DST: folds the real LiveTestWatcherCore
+             routing; twins broadcast-to-all / double-fire. -->
+        <Compile Include="FileReloadRoutingSim.fs" />
+        <Compile Include="FileReloadRoutingInvariants.fs" />
+        <Compile Include="FsiEmitSim.fs" />
+        <Compile Include="FsiEmitInvariants.fs" />
+        <!-- Rule 2 read-provenance DST: folds the real ValueReads classifier,
+             ledger and save check through every interleaving of reads, the
+             startup window closing, probes coming off and saves; twins put
+             back the naive rules (ignore reads after startup, treat a stored
+             value like a dead local, check once and patch). -->
+        <Compile Include="ValueReadSim.fs" />
+        <Compile Include="ValueReadInvariants.fs" />
+        <!-- Rule 2 reflection reads, in every mode: the slot that names a
+             rewired caller, reads inside other reflective calls, threads,
+             mode switches. Real ledger and save check, modelled watch. -->
+        <Compile Include="ReflectionReadSim.fs" />
+        <Compile Include="FsiDiscoveryIdentitySim.fs" />
+        <Compile Include="FsiDiscoveryIdentityInvariants.fs" />
+        <Compile Include="FileReloadRoutingGenerators.fs" />
+        <!-- P2: pure linearizability checker (permutation search over the real
+             Cohort.decide) for the concurrency keystone (H1 claim exclusivity). -->
+        <Compile Include="Linearizability.fs" />
+        <!-- Phase 3 (live tweaking): fold the real TweakTransaction/TweakAddress/
+             LiteralEdit/TweakLog through an interleaved, seeded chaos stream
+             (tweaks, concurrent file edits, saves, rollbacks, reformats,
+             crashes); twins reintroduce a skipped hash check, a naive
+             line-based undo, and a compaction that drops an unsaved tweak. -->
+        <Compile Include="TweakSim.fs" />
+        <Compile Include="TweakSimInvariants.fs" />
+        <!-- Local data retention: seeded months of upgrades, bursts, restarts
+             and cohort traffic through LocalDataRetention; a twin prunes by
+             age only and ignores the version. -->
+        <Compile Include="GranularRestartSim.fs" />
+        <Compile Include="GranularRestartInvariants.fs" />
+        <Compile Include="HolderSim.fs" />
+        <Compile Include="HolderInvariants.fs" />
+        <Compile Include="TypeShapeMigrationSim.fs" />
+        <Compile Include="TypeShapeMigrationInvariants.fs" />
+        <Compile Include="HolderRewriteSim.fs" />
+        <Compile Include="HolderRewriteInvariants.fs" />
+        <Compile Include="RewriteValidationSim.fs" />
+        <Compile Include="RewriteValidationInvariants.fs" />
+        <Compile Include="RetentionSim.fs" />
+        <Compile Include="RetentionSimInvariants.fs" />
+        <!-- sagefs mcp stdio bridge: startup-race DST folding the real
+             McpBridge.decide for several independent bridge instances against
+             one shared, seeded daemon-liveness oracle; a twin reproduces a
+             real regression found while building the bridge (the
+             Probing->Starting transition being dead code). -->
+        <Compile Include="McpStdioBridgeSim.fs" />
+        <Compile Include="McpStdioBridgeInvariants.fs" />
+        <Compile Include="McpStdioBridgeGenerators.fs" />
+        <!-- File-watcher lifecycle DST: folds the real LiveTestWatcherCore
+             claim/reconcile core (for watch-count bookkeeping, not routing)
+             and the real FileWatcher.fileChangeAction; twins reintroduce a
+             session stop that never releases its claims (the inotify-watch
+             leak) and an overflow folded into an ordinary SoftReset (the
+             swallowed hot-reload verdict). -->
+        <Compile Include="WatcherLifecycleSim.fs" />
+        <Compile Include="WatcherLifecycleInvariants.fs" />
+        <Compile Include="WatcherLifecycleGenerators.fs" />
+        <!-- Streaming-test-proxy cancellation contract DST: models the
+             pre-start / mid-read / racing-completion cancellation ordering
+             races in HttpWorkerClient.fs's streamingTestProxy; a twin
+             reintroduces the double-token race (Async.CancellationToken +
+             a second Async.StartAsTask cancellationToken=ct) that produced
+             a raw TaskCanceledException instead of StreamOutcome.Cancelled. -->
+        <Compile Include="StreamingProxySim.fs" />
+        <Compile Include="StreamingProxyInvariants.fs" />
+        <Compile Include="StreamingProxyGenerators.fs" />
+        <Compile Include="WarmupSim.fs" />
+        <Compile Include="WarmupInvariants.fs" />
+        <Compile Include="WarmupGenerators.fs" />
+        <Compile Include="SessionStatusReconciliationSim.fs" />
+        <Compile Include="SessionStatusReconciliationInvariants.fs" />
+        <Compile Include="SessionStatusReconciliationGenerators.fs" />
+        <!-- HealthAnomaly DST: seeded series shapes (flat, step, drift,
+             spike, sawtooth, recovery, legitimate scale change) folded
+             through the REAL HealthAnomaly.step; an AlwaysFineTwin behavior
+             proves the invariants have teeth by failing against it. -->
+        <Compile Include="HealthAnomalySim.fs" />
+        <Compile Include="HealthAnomalySimInvariants.fs" />
+        <Compile Include="MemoryShedSim.fs" />
+        <Compile Include="MemoryShedInvariants.fs" />
+        <Compile Include="LeaseSim.fs" />
+        <Compile Include="LeaseSimInvariants.fs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\SageFs.Core\SageFs.Core.fsproj" />
+    </ItemGroup>
+
+</Project>

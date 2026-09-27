@@ -1,0 +1,659 @@
+namespace SageFs
+
+open System
+
+/// A rectangle in the grid. Smart constructor clamps to non-negative.
+[<Struct>]
+type Rect = {
+  Row: int
+  Col: int
+  Width: int
+  Height: int
+}
+
+module Rect =
+  let create row col width height =
+    { Row = max 0 row
+      Col = max 0 col
+      Width = max 0 width
+      Height = max 0 height }
+
+  let isEmpty r = r.Width <= 0 || r.Height <= 0
+  let right r = r.Col + r.Width
+  let bottom r = r.Row + r.Height
+
+  let inset margin r =
+    create (r.Row + margin) (r.Col + margin) (r.Width - margin * 2) (r.Height - margin * 2)
+
+  let splitH (topH: int) (r: Rect) =
+    let topH = topH |> max 0 |> min r.Height
+    let top = create r.Row r.Col r.Width topH
+    let bot = create (r.Row + topH) r.Col r.Width (r.Height - topH)
+    top, bot
+
+  let splitV (leftW: int) (r: Rect) =
+    let leftW = leftW |> max 0 |> min r.Width
+    let left = create r.Row r.Col leftW r.Height
+    let right = create r.Row (r.Col + leftW) (r.Width - leftW) r.Height
+    left, right
+
+  let splitHProp (frac: float) (r: Rect) =
+    let topH = int (float r.Height * frac)
+    splitH topH r
+
+  let splitVProp (frac: float) (r: Rect) =
+    let leftW = int (float r.Width * frac)
+    splitV leftW r
+
+  /// Does the rect contain the point (row, col)?
+  let contains (row: int) (col: int) (r: Rect) =
+    row >= r.Row && row < r.Row + r.Height
+    && col >= r.Col && col < r.Col + r.Width
+
+/// Flags controlling how a render region behaves
+[<Flags>]
+type RegionFlags =
+  | None        = 0
+  | Clickable   = 1
+  | Scrollable  = 2
+  | Focusable   = 4
+  | DrawBorder  = 8
+  | LiveUpdate  = 16
+  | Collapsible = 32
+  | Draggable   = 64
+
+/// A key combination — what the user physically presses
+type KeyCombo = {
+  Key: ConsoleKey
+  Modifiers: ConsoleModifiers
+  Char: char option
+}
+
+/// Cursor position within a region (line, column)
+type RegionCursor = { Line: int; Col: int }
+
+/// A rendered region of the UI
+type RenderRegion = {
+  Id: string
+  Flags: RegionFlags
+  Content: string
+  Affordances: Affordance list
+  Cursor: RegionCursor option
+  Completions: CompletionOverlay option
+  LineAnnotations: SageFs.Features.LiveTesting.LineAnnotation array
+}
+
+/// Completion overlay data for rendering
+and CompletionOverlay = {
+  Items: string list
+  SelectedIndex: int
+}
+
+/// A discoverable action the user can take
+and Affordance = {
+  Action: EditorAction
+  Label: string
+  KeyHint: KeyCombo option
+  Enabled: bool
+}
+
+/// Cardinal directions for cursor movement
+and [<RequireQualifiedAccess>] Direction =
+  | Up
+  | Down
+  | Left
+  | Right
+
+/// Strongly-typed pane identifier — eliminates stringly-typed region matching
+and [<RequireQualifiedAccess>] PaneId =
+  | Output
+  | Sessions
+  | Diagnostics
+  | Editor
+  | Context
+  | Tests
+
+/// Direction for history navigation
+and [<RequireQualifiedAccess>] HistoryDirection =
+  | Previous
+  | Next
+
+/// Editor mode (vi-style)
+and [<RequireQualifiedAccess>] EditMode =
+  | Normal
+  | Insert
+  | Visual
+
+/// Every possible user action — exhaustive, serializable
+and [<RequireQualifiedAccess>] EditorAction =
+  // Text editing
+  | InsertChar of char
+  | DeleteBackward
+  | DeleteForward
+  | DeleteWord
+  | DeleteToEndOfLine
+  // Cursor movement
+  | MoveCursor of Direction
+  | SetCursorPosition of line: int * col: int
+  | MoveWordForward
+  | MoveWordBackward
+  | MoveToLineStart
+  | MoveToLineEnd
+  // Selection
+  | SelectAll
+  | SelectWord
+  // Completion
+  | TriggerCompletion
+  | AcceptCompletion
+  | DismissCompletion
+  | NextCompletion
+  | PreviousCompletion
+  // History
+  | HistoryPrevious
+  | HistoryNext
+  | HistorySearch of string
+  // Buffer
+  | NewLine
+  | Submit
+  | Cancel
+  | Undo
+  | Redo
+  // Mode switching
+  | SwitchMode of EditMode
+  // Session management
+  | ListSessions
+  | SwitchSession of string
+  | CreateSession of projects: string list
+  | ConfigureWarmupAutoOpen
+  | StopSession of string
+  | ToggleSessionPanel
+  | ResetSession
+  | HardResetSession
+  | SmartReset
+  // Session navigation (when Sessions pane focused)
+  | SessionNavUp
+  | SessionNavDown
+  | SessionSelect
+  | SessionDelete
+  | SessionStopOthers
+  | SessionSetIndex of int
+  // Quick session cycling (Ctrl+Tab / Ctrl+Shift+Tab)
+  | SessionCycleNext
+  | SessionCyclePrev
+  // Output
+  | ClearOutput
+  // Prompt input (for inline prompts like session create)
+  | PromptChar of char
+  | PromptBackspace
+  | PromptConfirm
+  | PromptCancel
+
+/// Every UI-level action (superset of EditorAction for renderers)
+and [<RequireQualifiedAccess>] UiAction =
+  | Editor of EditorAction
+  | Quit
+  | CycleFocus
+  | FocusDir of Direction
+  | ScrollUp
+  | ScrollDown
+  | Redraw
+  | FontSizeUp
+  | FontSizeDown
+  | TogglePane of PaneId
+  | LayoutPreset of string
+  | ResizeH of int
+  | ResizeV of int
+  | ResizeR of int
+  | CycleTheme
+  | HotReloadWatchAll
+  | HotReloadUnwatchAll
+  | EnableLiveTesting
+  | DisableLiveTesting
+  | CycleRunPolicy
+  | ToggleCoverage
+  | TimeTravelBack
+  | TimeTravelForward
+  | TimeTravelGoLive
+  | CycleDensity
+  | JumpToTest
+  | NextFailingTest
+  | PrevFailingTest
+  | MarkAllStale
+
+/// Controls how much information the status bar reveals.
+[<RequireQualifiedAccess>]
+type UiDensity =
+  | Minimal
+  | Normal
+  | Full
+
+module UiDensity =
+  let cycle = function
+    | UiDensity.Minimal -> UiDensity.Normal
+    | UiDensity.Normal  -> UiDensity.Full
+    | UiDensity.Full    -> UiDensity.Minimal
+
+  let label = function
+    | UiDensity.Minimal -> "minimal"
+    | UiDensity.Normal  -> "normal"
+    | UiDensity.Full    -> "full"
+
+module PaneId =
+  let all = [| PaneId.Output; PaneId.Sessions; PaneId.Context; PaneId.Diagnostics; PaneId.Editor; PaneId.Tests |]
+
+  let toRegionId = function
+    | PaneId.Output -> "output"
+    | PaneId.Sessions -> "sessions"
+    | PaneId.Diagnostics -> "diagnostics"
+    | PaneId.Editor -> "editor"
+    | PaneId.Context -> "context"
+    | PaneId.Tests -> "tests"
+
+  let fromRegionId = function
+    | "output" -> Some PaneId.Output
+    | "sessions" -> Some PaneId.Sessions
+    | "diagnostics" -> Some PaneId.Diagnostics
+    | "editor" -> Some PaneId.Editor
+    | "context" -> Some PaneId.Context
+    | "tests" -> Some PaneId.Tests
+    | _ -> None
+
+  let next (current: PaneId) : PaneId =
+    let idx = all |> Array.findIndex ((=) current)
+    all.[(idx + 1) % all.Length]
+
+  let nextVisible (visible: Set<PaneId>) (current: PaneId) : PaneId =
+    match visible.IsEmpty with
+    | true -> current
+    | false ->
+      let visibleArr = all |> Array.filter visible.Contains
+      match visibleArr.Length = 0 with
+      | true -> current
+      | false ->
+        match visibleArr |> Array.tryFindIndex ((=) current) with
+        | Some idx -> visibleArr.[(idx + 1) % visibleArr.Length]
+        | None -> visibleArr.[0]
+
+  let firstVisible (visible: Set<PaneId>) : PaneId =
+    all
+    |> Array.tryFind visible.Contains
+    |> Option.defaultValue PaneId.Output
+
+  let navigate (direction: Direction) (current: PaneId) (paneRects: (PaneId * Rect) list) : PaneId =
+    let currentRect =
+      paneRects |> List.tryFind (fun (id, _) -> id = current) |> Option.map snd
+    match currentRect with
+    | None -> current
+    | Some cr ->
+      let centerRow = cr.Row + cr.Height / 2
+      let centerCol = cr.Col + cr.Width / 2
+      let candidates =
+        paneRects
+        |> List.filter (fun (id, r) ->
+          match id = current with
+          | true -> false
+          | false ->
+            let cRow = r.Row + r.Height / 2
+            let cCol = r.Col + r.Width / 2
+            match direction with
+            | Direction.Left  -> cCol < centerCol
+            | Direction.Right -> cCol > centerCol
+            | Direction.Up    -> cRow < centerRow
+            | Direction.Down  -> cRow > centerRow)
+      match candidates with
+      | [] -> current
+      | _ ->
+        candidates
+        |> List.minBy (fun (_, r) ->
+          let cRow = r.Row + r.Height / 2
+          let cCol = r.Col + r.Width / 2
+          let dr = cRow - centerRow
+          let dc = cCol - centerCol
+          dr * dr + dc * dc)
+        |> fst
+
+  let displayName = function
+    | PaneId.Output -> "Output"
+    | PaneId.Sessions -> "Sessions"
+    | PaneId.Diagnostics -> "Diagnostics"
+    | PaneId.Editor -> "Editor"
+    | PaneId.Context -> "Context"
+    | PaneId.Tests -> "Tests"
+
+  let tryParse = function
+    | "Output" | "output" -> Some PaneId.Output
+    | "Sessions" | "sessions" -> Some PaneId.Sessions
+    | "Diagnostics" | "diagnostics" -> Some PaneId.Diagnostics
+    | "Editor" | "editor" -> Some PaneId.Editor
+    | "Context" | "context" -> Some PaneId.Context
+    | "Tests" | "tests" -> Some PaneId.Tests
+    | _ -> None
+
+/// Maps physical keys to semantic actions
+type KeyMap = Map<KeyCombo, UiAction>
+
+module KeyCombo =
+  let create key mods =
+    { Key = key; Modifiers = mods; Char = None }
+
+  let ctrl key = create key ConsoleModifiers.Control
+  let alt key = create key ConsoleModifiers.Alt
+  let ctrlAlt key = create key (ConsoleModifiers.Control ||| ConsoleModifiers.Alt)
+  let ctrlShift key = create key (ConsoleModifiers.Control ||| ConsoleModifiers.Shift)
+  let plain key = create key (enum<ConsoleModifiers> 0)
+
+  /// Parse a string like "Ctrl+Q", "Alt+Up", "Ctrl+Shift+Z", "Enter", "PageUp"
+  let tryParse (s: string) : KeyCombo option =
+    let parts = s.Split('+') |> Array.map (fun p -> p.Trim())
+    let mutable mods = enum<ConsoleModifiers> 0
+    let mutable keyPart = None
+    for p in parts do
+      match p.ToLowerInvariant() with
+      | "ctrl" | "control" -> mods <- mods ||| ConsoleModifiers.Control
+      | "alt" -> mods <- mods ||| ConsoleModifiers.Alt
+      | "shift" -> mods <- mods ||| ConsoleModifiers.Shift
+      | _ -> keyPart <- Some p
+    match keyPart with
+    | None -> None
+    | Some kp ->
+      let parsed =
+        match kp.ToLowerInvariant() with
+        | "enter" | "return" -> Some ConsoleKey.Enter
+        | "tab" -> Some ConsoleKey.Tab
+        | "escape" | "esc" -> Some ConsoleKey.Escape
+        | "space" | "spacebar" -> Some ConsoleKey.Spacebar
+        | "backspace" -> Some ConsoleKey.Backspace
+        | "delete" | "del" -> Some ConsoleKey.Delete
+        | "up" | "uparrow" -> Some ConsoleKey.UpArrow
+        | "down" | "downarrow" -> Some ConsoleKey.DownArrow
+        | "left" | "leftarrow" -> Some ConsoleKey.LeftArrow
+        | "right" | "rightarrow" -> Some ConsoleKey.RightArrow
+        | "home" -> Some ConsoleKey.Home
+        | "end" -> Some ConsoleKey.End
+        | "pageup" | "pgup" -> Some ConsoleKey.PageUp
+        | "pagedown" | "pgdn" -> Some ConsoleKey.PageDown
+        | "=" | "equal" | "equals" -> Some ConsoleKey.OemPlus
+        | "-" | "minus" -> Some ConsoleKey.OemMinus
+        | s when s.Length = 1 ->
+          let c = System.Char.ToUpper(s.[0])
+          match c >= 'A' && c <= 'Z' with
+          | true -> Some (enum<ConsoleKey> (int c))
+          | false ->
+            match c >= '0' && c <= '9' with
+            | true -> Some (enum<ConsoleKey> (int ConsoleKey.D0 + int c - int '0'))
+            | false -> None
+        | _ -> None
+      parsed |> Option.map (fun k -> { Key = k; Modifiers = mods; Char = None })
+
+  /// Format a KeyCombo as a human-readable string
+  let format (kc: KeyCombo) : string =
+    let parts = ResizeArray<string>()
+    match kc.Modifiers.HasFlag(ConsoleModifiers.Control) with
+    | true -> parts.Add("Ctrl")
+    | false -> ()
+    match kc.Modifiers.HasFlag(ConsoleModifiers.Alt) with
+    | true -> parts.Add("Alt")
+    | false -> ()
+    match kc.Modifiers.HasFlag(ConsoleModifiers.Shift) with
+    | true -> parts.Add("Shift")
+    | false -> ()
+    let keyName =
+      match kc.Key with
+      | ConsoleKey.OemPlus -> "="
+      | ConsoleKey.OemMinus -> "-"
+      | ConsoleKey.UpArrow -> "Up"
+      | ConsoleKey.DownArrow -> "Down"
+      | ConsoleKey.LeftArrow -> "Left"
+      | ConsoleKey.RightArrow -> "Right"
+      | ConsoleKey.Spacebar -> "Space"
+      | k -> sprintf "%A" k
+    parts.Add(keyName)
+    String.Join("+", parts)
+
+module UiAction =
+  /// All fixed string→UiAction pairs. Public for completeness testing.
+  let allFixedEntries : (string * UiAction) list =
+    [ "Quit", UiAction.Quit
+      "CycleFocus", UiAction.CycleFocus
+      "FocusLeft", UiAction.FocusDir Direction.Left
+      "FocusRight", UiAction.FocusDir Direction.Right
+      "FocusUp", UiAction.FocusDir Direction.Up
+      "FocusDown", UiAction.FocusDir Direction.Down
+      "ScrollUp", UiAction.ScrollUp
+      "ScrollDown", UiAction.ScrollDown
+      "Redraw", UiAction.Redraw
+      "FontSizeUp", UiAction.FontSizeUp
+      "FontSizeDown", UiAction.FontSizeDown
+      "Submit", UiAction.Editor EditorAction.Submit
+      "NewLine", UiAction.Editor EditorAction.NewLine
+      "Cancel", UiAction.Editor EditorAction.Cancel
+      "Undo", UiAction.Editor EditorAction.Undo
+      "Redo", UiAction.Editor EditorAction.Redo
+      "DeleteBackward", UiAction.Editor EditorAction.DeleteBackward
+      "DeleteForward", UiAction.Editor EditorAction.DeleteForward
+      "DeleteWord", UiAction.Editor EditorAction.DeleteWord
+      "DeleteToEndOfLine", UiAction.Editor EditorAction.DeleteToEndOfLine
+      "MoveWordForward", UiAction.Editor EditorAction.MoveWordForward
+      "MoveWordBackward", UiAction.Editor EditorAction.MoveWordBackward
+      "MoveToLineStart", UiAction.Editor EditorAction.MoveToLineStart
+      "MoveToLineEnd", UiAction.Editor EditorAction.MoveToLineEnd
+      "MoveUp", UiAction.Editor (EditorAction.MoveCursor Direction.Up)
+      "MoveDown", UiAction.Editor (EditorAction.MoveCursor Direction.Down)
+      "MoveLeft", UiAction.Editor (EditorAction.MoveCursor Direction.Left)
+      "MoveRight", UiAction.Editor (EditorAction.MoveCursor Direction.Right)
+      "SelectAll", UiAction.Editor EditorAction.SelectAll
+      "SelectWord", UiAction.Editor EditorAction.SelectWord
+      "TriggerCompletion", UiAction.Editor EditorAction.TriggerCompletion
+      "AcceptCompletion", UiAction.Editor EditorAction.AcceptCompletion
+      "DismissCompletion", UiAction.Editor EditorAction.DismissCompletion
+      "NextCompletion", UiAction.Editor EditorAction.NextCompletion
+      "PreviousCompletion", UiAction.Editor EditorAction.PreviousCompletion
+      "HistoryPrevious", UiAction.Editor EditorAction.HistoryPrevious
+      "HistoryNext", UiAction.Editor EditorAction.HistoryNext
+      "ListSessions", UiAction.Editor EditorAction.ListSessions
+      "ToggleSessionPanel", UiAction.Editor EditorAction.ToggleSessionPanel
+      "CreateSession", UiAction.Editor (EditorAction.CreateSession [])
+      "ConfigureWarmupAutoOpen", UiAction.Editor EditorAction.ConfigureWarmupAutoOpen
+      "ResetSession", UiAction.Editor EditorAction.ResetSession
+      "HardResetSession", UiAction.Editor EditorAction.HardResetSession
+      "SmartReset", UiAction.Editor EditorAction.SmartReset
+      "SessionNavUp", UiAction.Editor EditorAction.SessionNavUp
+      "SessionNavDown", UiAction.Editor EditorAction.SessionNavDown
+      "SessionSelect", UiAction.Editor EditorAction.SessionSelect
+      "SessionDelete", UiAction.Editor EditorAction.SessionDelete
+      "SessionStopOthers", UiAction.Editor EditorAction.SessionStopOthers
+      "SessionCycleNext", UiAction.Editor EditorAction.SessionCycleNext
+      "SessionCyclePrev", UiAction.Editor EditorAction.SessionCyclePrev
+      "ClearOutput", UiAction.Editor EditorAction.ClearOutput
+      "PromptConfirm", UiAction.Editor EditorAction.PromptConfirm
+      "PromptCancel", UiAction.Editor EditorAction.PromptCancel
+      "ResizeHGrow", UiAction.ResizeH 1
+      "ResizeHShrink", UiAction.ResizeH -1
+      "ResizeVGrow", UiAction.ResizeV 1
+      "ResizeVShrink", UiAction.ResizeV -1
+      "ResizeRGrow", UiAction.ResizeR 1
+      "ResizeRShrink", UiAction.ResizeR -1
+      "CycleTheme", UiAction.CycleTheme
+      "HotReloadWatchAll", UiAction.HotReloadWatchAll
+      "HotReloadUnwatchAll", UiAction.HotReloadUnwatchAll
+      "EnableLiveTesting", UiAction.EnableLiveTesting
+      "DisableLiveTesting", UiAction.DisableLiveTesting
+      "CycleRunPolicy", UiAction.CycleRunPolicy
+      "ToggleCoverage", UiAction.ToggleCoverage
+      "TimeTravelBack", UiAction.TimeTravelBack
+      "TimeTravelForward", UiAction.TimeTravelForward
+      "TimeTravelGoLive", UiAction.TimeTravelGoLive
+      "CycleDensity", UiAction.CycleDensity
+      "JumpToTest", UiAction.JumpToTest
+      "NextFailingTest", UiAction.NextFailingTest
+      "PrevFailingTest", UiAction.PrevFailingTest
+      "MarkAllStale", UiAction.MarkAllStale
+    ]
+
+  /// O(1) lookup map built once from allFixedEntries
+  let private parseMap : Map<string, UiAction> =
+    allFixedEntries |> Map.ofList
+
+  /// Parse a string like "Quit", "Submit", "FocusLeft", "TogglePane.editor"
+  let tryParse (s: string) : UiAction option =
+    let trimmed = s.Trim()
+    match Map.tryFind trimmed parseMap with
+    | Some _ as result -> result
+    | None ->
+      match trimmed with
+      | s when s.StartsWith("TogglePane.", System.StringComparison.Ordinal) ->
+        PaneId.tryParse (s.Substring(11))
+        |> Option.map UiAction.TogglePane
+      | s when s.StartsWith("Layout.", System.StringComparison.Ordinal) ->
+        Some (UiAction.LayoutPreset (s.Substring(7)))
+      | _ -> None
+
+module KeyMap =
+  let hintFor (keyMap: KeyMap) (action: EditorAction) : KeyCombo option =
+    keyMap
+    |> Map.tryFindKey (fun _ a -> a = UiAction.Editor action)
+
+  /// Default keybindings shared by all UI renderers
+  let defaults : KeyMap =
+    let e a = UiAction.Editor a
+    [ // Quit
+      KeyCombo.ctrl ConsoleKey.Q, UiAction.Quit
+      // Focus
+      KeyCombo.plain ConsoleKey.Tab, UiAction.CycleFocus
+      KeyCombo.ctrl ConsoleKey.H, UiAction.FocusDir Direction.Left
+      KeyCombo.ctrl ConsoleKey.J, UiAction.FocusDir Direction.Down
+      KeyCombo.ctrl ConsoleKey.K, UiAction.FocusDir Direction.Up
+      KeyCombo.ctrl ConsoleKey.L, UiAction.FocusDir Direction.Right
+      // Scroll
+      KeyCombo.alt ConsoleKey.UpArrow, UiAction.ScrollUp
+      KeyCombo.alt ConsoleKey.DownArrow, UiAction.ScrollDown
+      // Time-travel
+      KeyCombo.alt ConsoleKey.LeftArrow, UiAction.TimeTravelBack
+      KeyCombo.alt ConsoleKey.RightArrow, UiAction.TimeTravelForward
+      KeyCombo.alt ConsoleKey.Home, UiAction.TimeTravelGoLive
+      KeyCombo.plain ConsoleKey.PageUp, UiAction.ScrollUp
+      KeyCombo.plain ConsoleKey.PageDown, UiAction.ScrollDown
+      // Font size
+      KeyCombo.ctrl ConsoleKey.OemPlus, UiAction.FontSizeUp
+      KeyCombo.ctrl ConsoleKey.OemMinus, UiAction.FontSizeDown
+      // Session management
+      KeyCombo.ctrl ConsoleKey.N, e (EditorAction.CreateSession [])
+      KeyCombo.ctrlAlt ConsoleKey.A, e EditorAction.ConfigureWarmupAutoOpen
+      KeyCombo.ctrlAlt ConsoleKey.S, e EditorAction.ToggleSessionPanel
+      KeyCombo.ctrlAlt ConsoleKey.R, e EditorAction.ResetSession
+      KeyCombo.ctrlAlt ConsoleKey.H, e EditorAction.HardResetSession
+      KeyCombo.ctrlShift ConsoleKey.R, e EditorAction.SmartReset
+      // Quick session cycling
+      KeyCombo.ctrl ConsoleKey.Tab, e EditorAction.SessionCycleNext
+      KeyCombo.ctrlShift ConsoleKey.Tab, e EditorAction.SessionCyclePrev
+      // Submit / NewLine
+      KeyCombo.alt ConsoleKey.Enter, e EditorAction.Submit
+      KeyCombo.plain ConsoleKey.Enter, e EditorAction.NewLine
+      // Editing
+      KeyCombo.plain ConsoleKey.Backspace, e EditorAction.DeleteBackward
+      KeyCombo.plain ConsoleKey.Delete, e EditorAction.DeleteForward
+      KeyCombo.ctrl ConsoleKey.Backspace, e EditorAction.DeleteWord
+      // History
+      KeyCombo.ctrl ConsoleKey.UpArrow, e EditorAction.HistoryPrevious
+      KeyCombo.ctrl ConsoleKey.DownArrow, e EditorAction.HistoryNext
+      // Cursor movement
+      KeyCombo.plain ConsoleKey.UpArrow, e (EditorAction.MoveCursor Direction.Up)
+      KeyCombo.plain ConsoleKey.DownArrow, e (EditorAction.MoveCursor Direction.Down)
+      KeyCombo.plain ConsoleKey.LeftArrow, e (EditorAction.MoveCursor Direction.Left)
+      KeyCombo.plain ConsoleKey.RightArrow, e (EditorAction.MoveCursor Direction.Right)
+      KeyCombo.ctrl ConsoleKey.LeftArrow, e EditorAction.MoveWordBackward
+      KeyCombo.ctrl ConsoleKey.RightArrow, e EditorAction.MoveWordForward
+      KeyCombo.plain ConsoleKey.Home, e EditorAction.MoveToLineStart
+      KeyCombo.plain ConsoleKey.End, e EditorAction.MoveToLineEnd
+      // Selection & completion
+      KeyCombo.ctrl ConsoleKey.A, e EditorAction.SelectAll
+      KeyCombo.ctrl ConsoleKey.Spacebar, e EditorAction.TriggerCompletion
+      KeyCombo.plain ConsoleKey.Escape, e EditorAction.DismissCompletion
+      // Undo/Redo
+      KeyCombo.ctrl ConsoleKey.Z, e EditorAction.Undo
+      KeyCombo.ctrlShift ConsoleKey.Z, e EditorAction.Redo
+      KeyCombo.ctrl ConsoleKey.R, e EditorAction.Undo
+      // Cancel
+      KeyCombo.ctrlShift ConsoleKey.Q, e EditorAction.Cancel
+      // Layout presets
+      KeyCombo.ctrlAlt ConsoleKey.D1, UiAction.LayoutPreset "default"
+      KeyCombo.ctrlAlt ConsoleKey.D2, UiAction.LayoutPreset "focus"
+      KeyCombo.ctrlAlt ConsoleKey.D3, UiAction.LayoutPreset "minimal"
+      // Pane toggle
+      KeyCombo.ctrlAlt ConsoleKey.O, UiAction.TogglePane PaneId.Output
+      KeyCombo.ctrlAlt ConsoleKey.E, UiAction.TogglePane PaneId.Editor
+      KeyCombo.ctrlAlt ConsoleKey.D, UiAction.TogglePane PaneId.Diagnostics
+      KeyCombo.ctrlShift ConsoleKey.T, UiAction.TogglePane PaneId.Tests
+      // Pane resize
+      KeyCombo.ctrlAlt ConsoleKey.LeftArrow, UiAction.ResizeH -1
+      KeyCombo.ctrlAlt ConsoleKey.RightArrow, UiAction.ResizeH 1
+      KeyCombo.ctrlAlt ConsoleKey.UpArrow, UiAction.ResizeV 1
+      KeyCombo.ctrlAlt ConsoleKey.DownArrow, UiAction.ResizeV -1
+      // Clear output
+      KeyCombo.ctrlShift ConsoleKey.L, e EditorAction.ClearOutput
+      // Theme
+      KeyCombo.ctrl ConsoleKey.T, UiAction.CycleTheme
+      // Hot Reload
+      KeyCombo.ctrlAlt ConsoleKey.W, UiAction.HotReloadWatchAll
+      KeyCombo.ctrlAlt ConsoleKey.U, UiAction.HotReloadUnwatchAll
+      // Live Testing
+      KeyCombo.ctrlAlt ConsoleKey.T, UiAction.EnableLiveTesting
+      KeyCombo.create ConsoleKey.T (ConsoleModifiers.Control ||| ConsoleModifiers.Alt ||| ConsoleModifiers.Shift), UiAction.DisableLiveTesting
+      KeyCombo.ctrlAlt ConsoleKey.P, UiAction.CycleRunPolicy
+      KeyCombo.ctrlAlt ConsoleKey.C, UiAction.ToggleCoverage
+      KeyCombo.ctrlAlt ConsoleKey.M, UiAction.CycleDensity
+      // Jump to failing test source
+      KeyCombo.plain ConsoleKey.F12, UiAction.JumpToTest
+      // Failing test navigation
+      KeyCombo.alt ConsoleKey.N, UiAction.NextFailingTest
+      KeyCombo.alt ConsoleKey.P, UiAction.PrevFailingTest
+      // Mark all test results stale
+      KeyCombo.ctrlShift ConsoleKey.S, UiAction.MarkAllStale
+    ] |> Map.ofList
+
+  /// Merge user overrides onto defaults (overrides win)
+  let merge (overrides: KeyMap) (base': KeyMap) : KeyMap =
+    overrides |> Map.fold (fun acc k v -> Map.add k v acc) base'
+
+  /// Parse keybinding lines from config.fsx format:
+  ///   let keybindings = [ "Ctrl+Q", "Quit"; "Alt+Enter", "Submit" ]
+  let parseConfigLines (lines: string array) : KeyMap =
+    let mutable bindings = Map.empty
+    let mutable inBindings = false
+    for line in lines do
+      let trimmed = line.Trim()
+      match trimmed.StartsWith("let keybindings", System.StringComparison.Ordinal) || trimmed.StartsWith("let Keybindings", System.StringComparison.Ordinal) with
+      | true -> inBindings <- true
+      | false -> ()
+      match inBindings with
+      | true ->
+        // Extract "Key", "Action" pairs
+        let mutable i = 0
+        while i < trimmed.Length do
+          let q1 = trimmed.IndexOf('"', i)
+          match q1 >= 0 with
+          | true ->
+            let q2 = trimmed.IndexOf('"', q1 + 1)
+            match q2 > q1 with
+            | true ->
+              let keyStr = trimmed.Substring(q1 + 1, q2 - q1 - 1)
+              let q3 = trimmed.IndexOf('"', q2 + 1)
+              match q3 > q2 with
+              | true ->
+                let q4 = trimmed.IndexOf('"', q3 + 1)
+                match q4 > q3 with
+                | true ->
+                  let actionStr = trimmed.Substring(q3 + 1, q4 - q3 - 1)
+                  match KeyCombo.tryParse keyStr, UiAction.tryParse actionStr with
+                  | Some kc, Some act -> bindings <- Map.add kc act bindings
+                  | _ -> ()
+                  i <- q4 + 1
+                | false -> i <- trimmed.Length
+              | false -> i <- trimmed.Length
+            | false -> i <- trimmed.Length
+          | false -> i <- trimmed.Length
+        match trimmed.Contains(']') with
+        | true -> inBindings <- false
+        | false -> ()
+      | false -> ()
+    bindings

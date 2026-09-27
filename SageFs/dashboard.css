@@ -1,0 +1,1746 @@
+/* ═══════════════════════════════════════════════════════════════════
+   SageFs Dashboard — Terminal Noir
+   Aligned with sagetech.dev aesthetic: flat panels, sharp corners,
+   vim-like statusline, bracket-style buttons, monospace everywhere.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Reset & Root ─────────────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+  /* Kanagawa fallbacks — overridden by <style id="theme-vars"> once SSE arrives */
+  --bg-default: #1f1f28;
+  --bg-panel: #2a2a37;
+  --bg-editor: #1f1f28;
+  --bg-selection: #363646;
+  --bg-status: #1f1f28;
+  --bg-focus: #363646;
+  --fg-default: #dcd7ba;
+  --fg-dim: #727169;
+  --fg-green: #98bb6c;
+  --fg-red: #ff5d62;
+  --fg-yellow: #e6c384;
+  --fg-cyan: #7fb4ca;
+  --fg-blue: #7e9cd8;
+  --fg-magenta: #957fb8;
+  --border-normal: #54546d;
+  --border-focus: #7e9cd8;
+  --color-pass: #98bb6c;
+  --color-fail: #ff5d62;
+  --color-warn: #e6c384;
+  --color-info: #7fb4ca;
+  --font-size: 14px;
+  --sidebar-width: 320px;
+  --tabline-h: 36px;
+  --statusline-h: 28px;
+  --cmdline-h: 32px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Subtle CRT scanline texture — matches sagetech.dev */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  mix-blend-mode: overlay;
+}
+
+/* ── Base ─────────────────────────────────────────────────────── */
+
+/* `rem` is always relative to the ROOT (html) element's font-size, not
+   body's — Ctrl+/- (Dashboard.fs) sets --font-size on document.documentElement
+   (html === :root), but only `body` consumed it below, so every `rem`-sized
+   control on the page (buttons, panels, text) silently ignored zoom (roast
+   UX-8). Setting it here too makes every rem in the stylesheet track zoom. */
+html {
+  font-size: var(--font-size);
+}
+
+body {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  background: var(--bg-default);
+  color: var(--fg-default);
+  font-size: var(--font-size);
+  line-height: 1.5;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1 {
+  color: var(--fg-blue);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+h2 {
+  color: var(--fg-blue);
+  font-weight: 500;
+}
+
+::selection {
+  background: var(--fg-blue);
+  color: var(--bg-default);
+}
+
+/* ── Layout ───────────────────────────────────────────────────── */
+
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+  /* Pad for the fixed tabline top only; the bottom statusline/cmdline bands
+     are gone — their two useful facts now ride the in-flow session-context
+     line under the health bar. */
+  padding: var(--tabline-h) 0 0;
+}
+
+/* Tabline — fixed top bar like sagetech.dev */
+.app-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--tabline-h);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-normal);
+  font-size: 13px;
+}
+
+.app-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.main-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────── */
+
+.sidebar {
+  width: var(--sidebar-width);
+  border-left: 1px solid var(--border-normal);
+  background: var(--bg-panel);
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+
+  &.collapsed {
+    width: 32px;
+    min-width: 32px;
+    border-left: 1px solid var(--border-normal);
+
+    .sidebar-inner {
+      display: none;
+    }
+
+    .sidebar-header h2 {
+      display: none;
+    }
+
+    .sidebar-header {
+      justify-content: center;
+      padding: 0;
+    }
+  }
+}
+
+.sidebar-inner {
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: var(--sidebar-width);
+  overflow-y: auto;
+  flex: 1;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 0.5rem;
+  border-bottom: 1px solid var(--border-normal);
+  background: var(--bg-tabline, var(--bg-panel));
+  flex-shrink: 0;
+
+  h2 {
+    margin: 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--fg-default);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.sidebar-header-btn {
+  background: none;
+  border: 1px solid var(--border-normal);
+  color: var(--fg-default);
+  border-radius: 0;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-family: inherit;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sidebar.collapsed .sidebar-header-btn {
+  padding: 2px 6px;
+}
+
+.sidebar-header-btn:hover {
+  background: var(--bg-selection, #3a3a3a);
+  color: var(--fg-accent, #fff);
+}
+
+.resize-handle {
+  width: 4px;
+  background: var(--border-normal);
+  cursor: col-resize;
+  flex-shrink: 0;
+  transition: background 0.15s;
+
+  &:hover,
+  &.dragging {
+    background: var(--border-focus);
+  }
+}
+
+/* ── Panels ───────────────────────────────────────────────────── */
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-normal);
+  border-radius: 0;
+  padding: 0.75rem;
+
+  & h2 {
+    color: var(--fg-blue);
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-normal);
+    padding-bottom: 0.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+}
+
+.panel-header-btn {
+  background: none;
+  border: 1px solid var(--border-normal);
+  color: var(--fg-default);
+  border-radius: 0;
+  padding: 1px 8px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+
+  &:hover {
+    background: var(--fg-blue);
+    color: var(--bg-default);
+  }
+}
+
+/* ── Output Area ──────────────────────────────────────────────── */
+
+.output-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border-normal);
+  /* Anchors the unseen-eval pill, which floats over the bottom of the panel. */
+  position: relative;
+}
+
+/* "N new evals ↓". Shows while you're scrolled up in the output (see
+   OutputFollow in DashboardTypes.fs). Same flat, square-cornered, bordered
+   look as the other panel controls. Sized in em so Ctrl+/- zoom (which sets
+   --font-size on :root) scales it with the rest of the page, and capped to
+   the area's width so it wraps instead of clipping at phone widths.
+   The `.output-area >` is there for specificity: the aria-label tooltip rule
+   further down sets `position: relative` on anything with an aria-label, and
+   it outranks a bare class. Without it the pill sat in the flex flow at full
+   width. */
+.output-area > .output-new-evals {
+  position: absolute;
+  width: max-content;
+  bottom: 0.75em;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  max-width: calc(100% - 16px);
+  padding: 0.3em 0.9em;
+  font-family: inherit;
+  font-size: 0.8em;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+  cursor: pointer;
+  color: var(--bg-default);
+  background: var(--fg-blue);
+  border: 1px solid var(--fg-blue);
+  border-radius: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: background 0.15s, color 0.15s;
+
+  &:hover {
+    background: var(--bg-panel);
+    color: var(--fg-blue);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--fg-yellow);
+    outline-offset: 2px;
+  }
+}
+
+/* Visually hidden, still read by screen readers (the unseen-eval live region). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-normal);
+  font-size: 12px;
+
+  & h2 {
+    color: var(--fg-dim);
+    font-size: 12px;
+    font-weight: 500;
+    margin: 0;
+  }
+}
+
+#output-panel {
+  flex: 1;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  background: var(--bg-default);
+  font-size: 0.85rem;
+  padding: 0.25rem 0;
+}
+
+.output-line {
+  font-size: 0.85rem;
+  padding: 1px 0.5rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.output-result {
+  color: var(--fg-green);
+}
+
+.output-error {
+  color: var(--fg-red);
+}
+
+.output-info {
+  color: var(--fg-blue);
+}
+
+.output-system {
+  color: var(--fg-dim);
+}
+
+/* Discover results (roast-9 #5) — bounded and scrollable so a big repo's
+   scan (30+ .fsproj files) can never push the New Session card wider or run
+   the page off the bottom. Never widens: width 100% + box-sizing border-box
+   keeps it inside whichever card (picker or sidebar) it renders in. */
+.discovered-projects-list {
+  max-height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* One clickable Discover result (roast-9 #4) — a real <button> so it is
+   keyboard-reachable and Enter/Space-activatable with no extra a11y
+   plumbing, styled to read as an output line rather than a normal button. */
+.discovered-project-row {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 1px 0.5rem 1px 1rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--bg-focus);
+    color: var(--fg-blue);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--fg-blue);
+    outline-offset: -1px;
+  }
+}
+
+/* Promoted output lines — the Expecto assertion and the user's own source
+   frame (roast UX-5) — stand out from the framework-frame wall around them. */
+.output-line-promoted {
+  border-left: 3px solid var(--fg-yellow);
+  padding-left: 0.4rem;
+  font-weight: bold;
+}
+
+/* Folded framework-frame group — collapsed by default so the ONE useful
+   line (the assertion / the user's frame) isn't buried between walls of
+   framework stack frames (roast UX-5). */
+.output-frame-group {
+  margin: 0;
+}
+
+.output-frame-group-summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  color: var(--fg-dim);
+  font-size: 0.8rem;
+  padding: 1px 0.5rem;
+}
+
+.output-frame-group-body .output-line {
+  opacity: 0.75;
+}
+
+/* ── Eval Area ────────────────────────────────────────────────── */
+
+.eval-area {
+  flex-shrink: 0;
+  padding: 0;
+  border-top: 1px solid var(--border-normal);
+
+  & summary {
+    list-style: none;
+    user-select: none;
+    padding: 4px 8px;
+    background: var(--bg-panel);
+    cursor: pointer;
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+
+    & span:first-child::before {
+      content: '';
+    }
+  }
+}
+
+.eval-input {
+  width: 100%;
+  background: var(--bg-default);
+  color: var(--fg-default);
+  border: 1px solid var(--border-normal);
+  border-radius: 0;
+  padding: 0.5rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  resize: vertical;
+  min-height: 80px;
+  tab-size: 2;
+
+  &:focus {
+    outline: 1px solid var(--border-focus);
+    border-color: var(--border-focus);
+  }
+}
+
+/* One shared control idiom for every non-icon dashboard action button
+   (EVAL/RESET/HARD_RESET, CLEAR, Discover/Create, Send Report, Hot Reload
+   Watch/Unwatch, Live Testing toggle, ...): flex-centered content, a fixed
+   height, and consistent gap/padding baked into the base class — so a
+   caller never has to re-declare the same five properties inline just to
+   look consistent (roast UX-8: "eval-btn/panel-header-btn auto-sized vs
+   .session-btn 28px" — this is .session-btn's uniform-box doctrine applied
+   to the labeled-text button family). A caller may still override height/
+   font-size inline for a genuinely denser context (e.g. a narrow sidebar
+   panel); the override wins, only the shared shape is no longer duplicated. */
+.eval-btn {
+  background: var(--fg-blue);
+  color: var(--bg-default);
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: bold;
+  font-size: 0.85rem;
+  transition: opacity 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 2rem;
+  padding: 0 0.75rem;
+  flex-shrink: 0;
+
+  &:hover {
+    opacity: 0.85;
+  }
+
+  &:active {
+    opacity: 0.7;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.eval-btn-reset {
+  background: var(--fg-green);
+}
+
+.eval-btn-hard {
+  background: var(--fg-red);
+}
+
+/* Cancel: distinct from RESET (green) and HARD_RESET (red) — it requests
+   cancellation of the in-flight eval, it does not destroy the session. */
+.eval-btn-cancel {
+  background: var(--fg-yellow);
+  color: var(--bg-default);
+}
+
+/* Eval action row (EVAL / RESET / HARD_RESET / Load File). */
+.eval-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 0.5rem;
+}
+
+/* ── Editor ───────────────────────────────────────────────────── */
+
+#editor-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Session Picker ───────────────────────────────────────────── */
+
+#session-picker {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+
+  &:empty {
+    display: none;
+  }
+
+  &:not(:empty)~#editor-area {
+    display: none;
+  }
+}
+
+.picker-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 2rem;
+  gap: 1.5rem;
+  /* safe center: center when content fits, top-align when it overflows
+     so the top isn't clipped by the scroll container */
+  justify-content: safe center;
+  min-height: min-content;
+
+  & h2 {
+    color: var(--fg-blue);
+    font-size: 1.4rem;
+    margin-bottom: 0.5rem;
+  }
+}
+
+.picker-options {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+  max-width: 900px;
+}
+
+.picker-card {
+  flex: 1;
+  min-width: 240px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-normal);
+  border-radius: 0;
+  padding: 1.25rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+
+  &:hover {
+    border-color: var(--fg-blue);
+    background: var(--bg-focus);
+  }
+
+  & h3 {
+    color: var(--fg-blue);
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  & p {
+    color: var(--fg-dim);
+    font-size: 0.85rem;
+    line-height: 1.4;
+  }
+}
+
+.picker-form {
+  width: 100%;
+  max-width: 500px;
+
+  & .eval-input {
+    min-height: auto;
+    height: 2rem;
+    margin-bottom: 0.5rem;
+  }
+}
+
+.picker-previous {
+  width: 100%;
+  max-width: 600px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+/* The "Resume Previous" sort control — width 100% so it can never widen the
+   .picker-previous card it sits in; reuses .theme-select's look for the
+   <select> itself. */
+.picker-previous-sort {
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+/* A real <button> now (not a div+onclick — roast follow-up, same fix as
+   .discovered-project-row in fe8e1f4b), so the usual button-reset properties
+   are needed to keep the row's existing look. */
+.picker-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  border-bottom: 1px solid var(--border-normal);
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+
+  &:hover {
+    background: var(--bg-focus);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--fg-blue);
+    outline-offset: -1px;
+  }
+}
+
+/* ── Status Badges ────────────────────────────────────────────── */
+
+.status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 0;
+  font-size: 0.8rem;
+  font-weight: bold;
+}
+
+.status-ready {
+  background: var(--fg-green);
+  color: var(--bg-default);
+}
+
+.status-warming {
+  background: var(--fg-yellow);
+  color: var(--bg-default);
+}
+
+.status-faulted {
+  background: var(--fg-red);
+  color: white;
+}
+
+.status-idle {
+  background: var(--fg-dim);
+  color: var(--bg-default);
+}
+
+.status-disconnected {
+  background: var(--fg-red);
+  color: white;
+  animation: pulse 1.5s infinite;
+}
+
+/* ── Session Controls ─────────────────────────────────────────── */
+
+.session-btn {
+  background: var(--border-normal);
+  color: var(--fg-default);
+  border: none;
+  border-radius: 0;
+  /* Uniform square buttons: every action glyph (◎ ■ ⌫ ✖) renders in the
+     same box, centered — no more size drift between icons. */
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+
+  &:hover {
+    background: var(--fg-blue);
+    color: var(--bg-default);
+  }
+}
+
+/* A button that must carry text (e.g. "▶ ProjectName" when a session has
+   several runnable projects) keeps the icon buttons' height but sizes to its
+   content, and never grows past the row: the label truncates with an
+   ellipsis (full name in the tooltip) instead of spilling over neighbours. */
+.session-btn-labeled {
+  width: auto;
+  min-width: 28px;
+  max-width: 100%;
+  padding: 0 8px;
+  gap: 5px;
+}
+
+.session-btn-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-btn-danger:hover {
+  background: var(--fg-red);
+  color: white;
+}
+
+.session-btn-warn:hover {
+  background: var(--fg-yellow);
+  color: var(--bg-default);
+}
+
+/* Warmup auto-open state icon on session cards — same box metrics as
+   the other session buttons so the row looks uniform. */
+.session-btn-autoopen {
+  background: transparent;
+  border: 1px solid var(--border-normal);
+  font-size: 0.85rem;
+  line-height: 1;
+
+  &:hover {
+    background: var(--bg-focus);
+    color: inherit;
+  }
+}
+
+/* ── Session cards: pinnacle of responsive design ──────────────────
+   The card is a SINGLE column: [body] on top, [actions] beneath it.
+   The actions never sit beside the body, so horizontal resizing can
+   only ever wrap the body's content — the body is never squeezed by a
+   side rail, and no blank space can appear beside the buttons. When
+   the card gets narrow, the body rows wrap and the button row wraps
+   too; when it widens, everything spreads naturally. One layout that
+   flows, no breakpoints, nothing to go wrong. */
+
+.session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.session-row .session-card-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.session-row .session-card-status-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.65rem;
+  min-width: 0;
+  line-height: 1.4;
+}
+
+.session-row .session-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Project picker: the card answers "which project is loaded?" and lets you
+   change it. The <select> must never widen the card — a long project path
+   truncates inside the control (min-width:0 is what actually permits a flex
+   item to shrink below its content), and the apply button sits beside it. */
+.session-row .session-card-projects {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  margin-top: 0.35rem;
+}
+
+.session-row .session-projects-label {
+  font-size: 0.65rem;
+  color: var(--fg-dim);
+  flex-shrink: 0;
+}
+
+.session-row .session-project-select {
+  flex: 1 1 8rem;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 0.65rem;
+  padding: 2px 4px;
+  color: var(--fg);
+  background: var(--bg-alt, var(--bg));
+  border: 1px solid var(--border, var(--fg-dim));
+  border-radius: 3px;
+  text-overflow: ellipsis;
+}
+
+/* Disabled until the selection actually changes: re-loading the project a
+   session already has would throw its REPL bindings away for nothing. */
+.session-row .session-card-projects .session-btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Badges (project tags, agent badges, status) must truncate gracefully
+   rather than forcing the card wider or spilling out. */
+.session-row .badge,
+.session-row .meta,
+.session-row .session-card-status-row > span {
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Long unbroken content (status messages, working dirs) wraps instead
+   of overflowing the card. */
+.session-row .session-card-body .status-msg,
+.session-row .session-card-body .session-dir {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.session-stopping {
+  color: var(--fg-dim);
+  font-style: italic;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* New Session collapsible panel */
+.new-session-panel {
+  summary {
+    list-style: none;
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+
+    &::before {
+      content: "▸ ";
+      color: var(--fg-dim);
+    }
+  }
+
+  &[open] summary::before {
+    content: "▾ ";
+  }
+}
+
+/* ── Live Bindings Watch Window ──────────────────────────────────── */
+
+.live-binding-node {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4em;
+  padding: 2px 0;
+  flex-wrap: wrap;
+}
+
+.live-preview {
+  color: var(--fg-green);
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
+.live-closure-badge {
+  color: var(--fg-yellow);
+  font-size: 0.65rem;
+  font-style: italic;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+.live-cycle {
+  color: var(--fg-red);
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+
+.live-truncated {
+  color: var(--fg-dim);
+  font-size: 0.65rem;
+  font-style: italic;
+}
+
+.session-selected {
+  background: var(--bg-selection);
+  border-left: 3px solid var(--border-focus);
+}
+
+.session-row:hover {
+  background: var(--bg-selection);
+}
+
+/* Lost session: worker process gone, session is Uninitialized. Show
+   a warning border so the user can see at a glance which sessions
+   need a restart, rather than displaying a confusing "Uninitialized"
+   status as if the session were merely starting up. */
+.session-row.session-lost {
+  border-left: 3px solid var(--fg-yellow);
+  padding-left: 8px;
+  opacity: 0.85;
+}
+
+.session-row.session-faulted {
+  border-left: 3px solid var(--fg-red);
+  padding-left: 8px;
+  opacity: 0.85;
+}
+
+/* ── Diagnostics ──────────────────────────────────────────────── */
+
+.diag {
+  font-size: 0.85rem;
+  padding: 1px 0.5rem;
+  line-height: 1.5;
+}
+
+.diag-error {
+  color: var(--fg-red);
+}
+
+.diag-warning {
+  color: var(--fg-yellow);
+}
+
+.diag-location {
+  font-family: monospace;
+  background: var(--bg-selection);
+  padding: 1px 4px;
+  border-radius: 0;
+  font-size: 0.8rem;
+  margin-right: 0.25rem;
+}
+
+/* ── Meta & Utility ───────────────────────────────────────────── */
+
+.meta {
+  color: var(--fg-dim);
+  font-size: 0.8rem;
+}
+
+.log-box {
+  background: var(--bg-default);
+  border: 1px solid var(--border-normal);
+  border-radius: 0;
+  padding: 0.5rem 0;
+  font-size: 0.85rem;
+}
+
+/* ── Connection Banner ────────────────────────────────────────── */
+
+.conn-banner {
+  padding: 4px 1rem;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: bold;
+  border-radius: 0;
+  transition: all 0.3s;
+  flex-shrink: 0;
+}
+
+.conn-connected {
+  background: var(--fg-green);
+  color: var(--bg-default);
+}
+
+.conn-disconnected {
+  background: var(--fg-red);
+  color: white;
+  animation: pulse 1.5s infinite;
+}
+
+.conn-reconnecting {
+  background: var(--fg-yellow);
+  color: var(--bg-default);
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* ── Alarm Banner ─────────────────────────────────────────────── */
+
+.alarm-banner {
+  background: color-mix(in srgb, var(--fg-red, #e06c75) 12%, var(--bg-panel, #1e1e2e));
+  border-left: 3px solid var(--fg-red, #e06c75);
+  padding: 0.5rem 1rem;
+  margin: 0.5rem 0;
+  border-radius: 0;
+}
+
+.alarm-banner-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.alarm-title {
+  font-weight: bold;
+  color: var(--fg-red, #e06c75);
+}
+
+.alarm-dismiss {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--fg-red, #e06c75);
+  color: var(--fg-red, #e06c75);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 0;
+  font-size: 0.8rem;
+  transition: background 0.2s;
+}
+
+.alarm-dismiss:hover {
+  background: color-mix(in srgb, var(--fg-red, #e06c75) 20%, transparent);
+}
+
+.alarm-entry {
+  margin: 0.25rem 0 0 1.5rem;
+  font-size: 0.85rem;
+  color: var(--fg-default);
+}
+
+.alarm-phase {
+  color: var(--fg-yellow, #e5c07b);
+  font-weight: 500;
+}
+
+/* ── Theme Picker ─────────────────────────────────────────────── */
+
+.theme-select {
+  width: 100%;
+  background: var(--bg-editor);
+  color: var(--fg-default);
+  border: 1px solid var(--border-normal);
+  border-radius: 0;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+
+  &:focus {
+    outline: 1px solid var(--border-focus);
+    border-color: var(--border-focus);
+  }
+}
+
+/* ── Syntax Highlighting ──────────────────────────────────────── */
+
+.syn-keyword {
+  color: var(--syn-keyword);
+}
+
+.syn-string {
+  color: var(--syn-string);
+}
+
+.syn-comment {
+  color: var(--syn-comment);
+  font-style: italic;
+}
+
+.syn-number {
+  color: var(--syn-number);
+}
+
+.syn-operator {
+  color: var(--syn-operator);
+}
+
+.syn-type {
+  color: var(--syn-type);
+}
+
+.syn-function {
+  color: var(--syn-function);
+}
+
+.syn-variable {
+  color: var(--syn-variable);
+}
+
+.syn-punctuation {
+  color: var(--syn-punctuation);
+}
+
+.syn-constant {
+  color: var(--syn-constant);
+}
+
+.syn-module {
+  color: var(--syn-module);
+}
+
+.syn-attribute {
+  color: var(--syn-attribute);
+}
+
+.syn-directive {
+  color: var(--syn-directive);
+}
+
+.syn-property {
+  color: var(--syn-property);
+}
+
+/* ── Bottom Statusline ────────────────────────────────────────── */
+/* Fixed bottom bar like sagetech.dev's vim statusline */
+
+/* Slim, dim eval-to-pixel latency line under the daemon health bar. Shown
+   only once an eval has completed the chain (no empty band when idle); no
+   box, no border — just a quiet right-aligned perf readout. */
+.session-context {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 2px 12px;
+  font-size: 0.7rem;
+  color: var(--fg-dim);
+}
+
+.session-context-latency {
+  opacity: 0.8;
+}
+
+/* Modern styled tooltip for icon-only controls. Keyed on aria-label so one
+   attribute gives both the accessible name and the styled tooltip — no native
+   double-tooltip, no a11y regression, and morph-safe (server-rendered). Appears
+   after a short hover delay via the opacity transition-delay. */
+[aria-label]:not(input):not(textarea) { position: relative; }
+[aria-label]:not(input):not(textarea):hover::after,
+[aria-label]:not(input):not(textarea):focus-visible::after {
+  content: attr(aria-label);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 260px;
+  background: var(--bg-panel);
+  color: var(--fg-default);
+  border: 1px solid var(--border-normal);
+  border-radius: 0;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  white-space: normal;
+  text-align: left;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0;
+  animation: tip-fade-in 0.12s ease 0.55s forwards;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+}
+@keyframes tip-fade-in { to { opacity: 1; } }
+
+/* The rule above can only ever render the tip ABOVE the control, as an absolutely
+   positioned child of it. That fails two ways on this page:
+
+     1. Clipping. A dozen panels here set `overflow: hidden`, and an absolutely
+        positioned descendant is clipped by them no matter how high its z-index.
+     2. Overflow. A control near the top of the viewport (the header row, the eval
+        perf toggle) puts its tip above the top edge, where it cannot be read.
+
+   CSS anchor positioning fixes both without touching the markup, which keeps the
+   server-rendered, one-attribute, morph-safe design intact:
+
+     - `position: fixed` escapes every `overflow: hidden` ancestor. That is only
+       true while no ancestor establishes a containing block, so nothing in this
+       stylesheet may set transform/filter/backdrop-filter/contain/perspective/
+       will-change on a tooltip ancestor. Today the only `transform` in this file
+       is the fallback rule's own, which this block overrides.
+     - No `anchor-name` is needed: a pseudo-element is implicitly anchored to its
+       originating element. That matters here, because the selector matches many
+       controls — a shared anchor name would bind every tip to whichever element
+       came last in source order.
+     - `position-try-fallbacks` re-places the tip when the preferred spot does not
+       fit: below when there is no room above, edge-aligned when it would overflow
+       the left or right edge.
+
+   Guarded by @supports so browsers without anchor positioning (Baseline as of
+   September 2026; Chrome/Edge 128+, Firefox 147+) keep the fallback above. */
+@supports (position-try-fallbacks: flip-block) {
+  [aria-label]:not(input):not(textarea):hover::after,
+  [aria-label]:not(input):not(textarea):focus-visible::after {
+    position: fixed;
+    position-area: block-start span-all;
+    position-try-fallbacks:
+      block-end span-all,
+      block-start span-inline-end,
+      block-start span-inline-start,
+      block-end span-inline-end,
+      block-end span-inline-start;
+    /* Neutralise the fallback rule's manual placement so it cannot fight
+       position-area, and re-express its 6px gap as a margin that applies
+       whichever side the tip is finally placed on. */
+    bottom: auto;
+    left: auto;
+    transform: none;
+    margin: 6px;
+  }
+}
+
+/* Perf-stats reveal toggle (📊) — count stays; the detail hides behind it. */
+.perf-toggle-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 0.72rem;
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+.perf-toggle-btn:hover { opacity: 1; }
+.eval-perf-detail { color: var(--fg-dim); }
+
+/* Session run-target dropdown: several executables collapse to one <select>
+   + a single Run button, instead of a wall of per-project buttons. */
+.session-run-picker { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.session-run-select {
+  background: var(--bg-panel);
+  color: var(--fg-normal, inherit);
+  border: 1px solid var(--border-normal);
+  border-radius: 0;
+  /* Match the 28px square action buttons so the row is one clean height. */
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  font-size: 0.72rem;
+  max-width: 150px;
+  min-width: 0;
+}
+
+.statusline-left {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.statusline-mode {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 12px;
+  background: var(--fg-green);
+  color: var(--bg-default);
+  font-weight: 700;
+}
+
+.statusline-branch {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 12px;
+  background: var(--fg-blue);
+  color: var(--bg-default);
+  font-weight: 700;
+  border-right: 1px solid var(--border-normal);
+}
+
+.statusline-file {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 12px;
+  background: var(--bg-focus);
+  border-right: 1px solid var(--border-normal);
+}
+
+.statusline-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusline-right {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 100%;
+  border-left: 1px solid var(--border-normal);
+}
+
+.statusline-stat {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 12px;
+  background: var(--bg-focus);
+  border-right: 1px solid var(--border-normal);
+}
+
+.statusline-stat-accent {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 12px;
+  background: var(--fg-blue);
+  color: var(--bg-default);
+  font-weight: 700;
+}
+
+/* ── Scrollbar styling ────────────────────────────────────────── */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-normal) var(--bg-default);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg-default); }
+::-webkit-scrollbar-thumb {
+  background: var(--border-normal);
+  border: 2px solid var(--bg-default);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--fg-dim); }
+::-webkit-scrollbar-corner { background: var(--bg-default); }
+
+/* ── Responsive ───────────────────────────────────────────────── */
+/* Desktop (above 768px) is untouched above this point — everything
+   below only changes behavior at narrow widths via media queries.
+
+   Below 768px the shell restacks into a genuine single column instead
+   of squeezing the fixed 320px sidebar against the main content pane:
+   main content (output + eval) flows first and takes the full row
+   width, the sidebar becomes a full-width block that follows it — not
+   a squeezed side column, and not a hidden/position:fixed overlay
+   that hides the session list from view. */
+
+@media (max-width: 768px) {
+  .app-layout {
+    /* Was a fixed-width side-by-side flex row (main-area | sidebar);
+       stack the two as full-width blocks instead. #main still clips
+       vertically to the space between the fixed header/statusline/
+       cmdline bars, so app-layout owns the one scroll region for the
+       stacked content — no nested scrollers fighting each other. */
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .main-area {
+    /* No longer sharing width with a fixed sidebar column. Give it a
+       floor so the output/eval area isn't crushed toward zero height
+       when the (now full-width, below it) sidebar content is tall. */
+    flex: 1 1 auto;
+    min-height: 320px;
+  }
+
+  .sidebar {
+    /* Full-width block stacked below main content — this *is* the
+       restack. Never position:fixed, never narrower than the row, so
+       the session list stays visible and reachable, not hidden. */
+    width: 100%;
+    max-width: 100%;
+    flex-shrink: 0;
+    border-left: none;
+    border-top: 1px solid var(--border-normal);
+    /* Bounded so the sidebar can't consume the whole viewport on a
+       phone; it scrolls internally within this budget (sidebar-inner
+       already has its own overflow-y:auto) while main content above
+       keeps the majority of the space. */
+    max-height: 50vh;
+
+    &.collapsed {
+      /* Width is already 100% here, so "collapsed" means collapsing
+         height down to just the header row, not width to a sliver. */
+      width: 100%;
+      min-width: 0;
+      max-height: 36px;
+    }
+  }
+
+  .sidebar-inner {
+    /* Drop the desktop 320px floor — at phone width the sidebar is
+       exactly as wide as the row (minus its own padding), never
+       wider than the screen. */
+    min-width: 0;
+  }
+
+  .resize-handle {
+    /* The col-resize drag handle only makes sense when main-area and
+       sidebar share a row; there's nothing to drag between stacked
+       full-width blocks. */
+    display: none;
+  }
+
+  .eval-area {
+    /* eval-area has no horizontal padding at desktop width (its
+       children carry their own); give it a side gutter here so the
+       eval textarea/buttons aren't flush against the screen edge. */
+    padding: 0 0.75rem;
+  }
+
+  #output-panel {
+    /* Pairs with .output-line's own 0.5rem side padding to keep a
+       real gutter (~16px total) between transcript text and the
+       screen edge instead of running edge-to-edge. */
+    padding: 0.25rem 0.5rem;
+  }
+}
+
+/* Phone-width safety net: the fixed header/statusline/cmdline bars
+   lay out their segments in a single non-wrapping row (by design, to
+   match the vim-statusline aesthetic). At ~400px a full segment set
+   can exceed the viewport width; without a contained overflow these
+   fixed, edge-to-edge bars would bleed past the screen edge instead
+   of the page ever showing a horizontal scrollbar (body already sets
+   overflow:hidden). Give each bar its own scroll region so overflow
+   is contained and reachable, and never bleeds off-screen or forces
+   the page itself to scroll horizontally. */
+@media (max-width: 480px) {
+  .app-header,
+  .session-context {
+    overflow-x: auto;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Semantic Utility Classes
+   Replace repeated inline Attr.style patterns
+   ═══════════════════════════════════════════════════════════════════ */
+
+.flex-row {
+  display: flex;
+  align-items: center;
+}
+
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.badge {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 0;
+}
+
+.meta-text {
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+}
+
+.text-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diag-code {
+  background: rgba(0, 0, 0, 0.1);
+  padding: 0.1em 0.3em;
+  border-radius: 0;
+  font-size: 0.65rem;
+}
+
+/* Diagnostic error block — failed opens, warmup errors */
+.diag-error-block {
+  margin: 0.4em 0;
+  padding: 0.4em;
+  background: color-mix(in oklch, var(--fg-red) 8%, transparent);
+  border-left: 3px solid var(--fg-red);
+  border-radius: 0;
+}
+
+/* Progress bar track */
+.progress-track {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 0;
+  overflow: hidden;
+}
+
+/* Small progress bar for test trace */
+.progress-track-sm {
+  height: 4px;
+  background: var(--bg-selection);
+  border-radius: 0;
+  overflow: hidden;
+}
+
+/* ── Minimal Mode (expandedDashboard signal) ──────────────────── */
+
+/* Expanded-only panels are hidden by default (minimal mode) */
+.expanded-only {
+  display: none;
+}
+
+/* When #main has .expanded class (signal true), show expanded-only panels */
+#main.expanded .expanded-only {
+  display: block;
+}
+
+/* Expand/collapse toggle for extra panels (Hot Reload, Live Testing, etc.)
+   — lives in the tabline right side, not floating. */
+.expand-toggle-btn {
+  height: 100%;
+  padding: 0 12px;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--border-normal);
+  color: var(--fg-dim, #888);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.85rem;
+}
+
+.expand-toggle-btn:hover {
+  color: var(--fg-default, #ccc);
+  background: var(--bg-selection, #3a3a3a);
+}
+
+/* ── Multi-agent coordination badges ───────────────────────────── */
+.badge-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 0;
+  background: var(--bg-focus, #363646);
+  color: var(--fg-default, #dcd7ba);
+  border: 1px solid var(--border-normal, #54546d);
+}
+.badge-agent-stale {
+  opacity: 0.45;
+}
+.guidance-contested {
+  border-left: 3px solid var(--fg-yellow, #e6c384);
+  background: rgba(230, 195, 132, 0.04);
+}
+.guidance-unhealthy {
+  border-left: 3px solid var(--fg-red, #e82424);
+  background: rgba(232, 36, 36, 0.04);
+}
+
+/* ── Daemon Disconnected State ─────────────────────────────────── */
+/* When body[data-connected="false"], the daemon is not running.
+   The connection banner becomes prominent; the statusline and cmdline
+   reflect the disconnected state via DashboardConnectionState. */
+
+/* Connection banner: prominent when disconnected */
+.conn-banner {
+  position: fixed;
+  top: var(--tabline-h, 36px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: 8px 16px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: bold;
+  font-family: inherit;
+}
+
+/* When disconnected, dim the main content to indicate stale state */
+body[data-connected="false"] #main {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* Statusline reflects disconnected state via DashboardConnectionState */
+body[data-connected="false"] .statusline-info {
+  color: var(--fg-red);
+}
+
+/* ── Settings panel (unified-settings-design.md Phase B) ───────────────── */
+.settings-page { padding: 1rem 1.25rem; max-width: 900px; margin: 0 auto; }
+.settings-page > p { margin: 0 0 0.75rem; }
+.settings-groups { display: flex; flex-direction: column; gap: 1.25rem; }
+.settings-group { display: flex; flex-direction: column; gap: 0.5rem; }
+.settings-group-title {
+  margin: 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--fg-dim); border-bottom: 1px solid var(--border-normal); padding-bottom: 0.25rem;
+}
+.settings-row {
+  display: flex; flex-direction: column; gap: 0.25rem;
+  padding: 0.6rem 0.5rem; border-bottom: 1px solid var(--border-normal);
+}
+.settings-row-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.settings-name { font-weight: bold; }
+.settings-desc { font-size: 0.8rem; color: var(--fg-dim); overflow-wrap: anywhere; }
+.settings-value { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.85rem; }
+.settings-effective { font-family: 'JetBrains Mono', monospace; }
+.settings-value-error { color: var(--fg-red); }
+.settings-perlayer { font-size: 0.75rem; color: var(--fg-dim); font-family: 'JetBrains Mono', monospace; }
+
+.settings-badge, .settings-chip {
+  font-size: 0.65rem; padding: 0.05rem 0.4rem; border-radius: 0.6rem;
+  border: 1px solid var(--border-normal); white-space: nowrap;
+}
+.settings-badge-default { color: var(--fg-dim); }
+.settings-badge-global { color: var(--fg-blue); border-color: var(--fg-blue); }
+.settings-badge-repo { color: var(--fg-green); border-color: var(--fg-green); }
+.settings-badge-session { color: var(--fg-yellow); border-color: var(--fg-yellow); }
+.settings-chip-live { color: var(--fg-green); border-color: var(--fg-green); }
+.settings-chip-restart { color: var(--fg-yellow); border-color: var(--fg-yellow); }
+.settings-chip-guarded { color: var(--fg-red); border-color: var(--fg-red); }
+
+/* Settings scope toggle (Phase C1) */
+.settings-scope { display: flex; align-items: center; gap: 0.5rem; margin: 0.25rem 0 0.75rem; font-size: 0.8rem; }
+.settings-scope-label { color: var(--fg-dim); }
+.settings-scope-select { background: var(--bg-panel); color: var(--fg-normal, inherit); border: 1px solid var(--border-normal); border-radius: 0; padding: 0.1rem 0.3rem; font-size: 0.8rem; }
+
+/* No-session sessions panel empty state (anchors the panel; no floating bare text) */
+.sessions-empty {
+  padding: 14px 12px;
+  margin: 4px 0;
+  border: 1px dashed var(--border-normal);
+  border-radius: 0;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+}
+.sessions-empty-hint {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: var(--fg-dim);
+  opacity: 0.8;
+}

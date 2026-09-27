@@ -1,0 +1,40 @@
+<Project>
+  <PropertyGroup>
+    <!-- net11.0 is the repo default now (test project, samples, demos, anything
+         that doesn't say otherwise). The old Harmony blocker is gone: I'm
+         building SageFs.Harmony 2.4.2-sagefs.1 (Directory.Packages.props) from
+         my LibHarmony fork's patched MonoMod (ci-pipeline.fsx's "restore
+         harmony fork" stage), and its detours actually work on CoreCLR 11 —
+         proved it by running WebAppHotReloadVerificationTests on net11 with
+         zero skips before touching this file.
+
+         The tool I actually ship (SageFs, SageFs.Core, SageFs.Host) doesn't
+         just move to net11 though — it multi-targets $(SageFsTargetFrameworks).
+         A dotnet tool nupkg built that way carries one tools/<tfm>/any payload
+         per TFM, and `dotnet tool install` grabs whichever one matches your
+         SDK. So a .NET 10 user still gets a net10.0 build, a .NET 11 user gets
+         net11.0, and issue #131 (a net11-only package that .NET 10 users
+         couldn't install) can't happen again. If a project needs to
+         multi-target like this, clear the default with
+         `<TargetFramework></TargetFramework>` and set
+         `<TargetFrameworks>$(SageFsTargetFrameworks)</TargetFrameworks>`. -->
+    <TargetFramework>net11.0</TargetFramework>
+    <SageFsTargetFrameworks>net10.0;net11.0</SageFsTargetFrameworks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- F# nullness analysis: surfaces nullability warnings at compile time
+         (requires the newer FCS/SDK — the whole point of keeping those current).
+         NoWarn NU1608/NU1902 for the pre-1.0/known-audited transitive pins. -->
+    <CheckNulls>true</CheckNulls>
+    <NoWarn>$(NoWarn);NU1608;NU1902</NoWarn>
+    <Version>0.6.834</Version>
+    <!-- Reproducible/tamper-evident restore: commit packages.lock.json per
+         project and fail restore if it drifts from Directory.Packages.props
+         without a regenerate. RestoreLockedMode is scoped to CI so local
+         `dotnet restore` after a version bump still regenerates the file
+         instead of hard-failing. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">true</RestoreLockedMode>
+  </PropertyGroup>
+</Project>
+
+

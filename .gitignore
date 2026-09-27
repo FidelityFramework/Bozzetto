@@ -1,0 +1,93 @@
+.vscode/
+bin/
+obj/
+.sagefs_history
+.idea/
+*.DotSettings.user
+/packages/
+nupkg/
+*/nupkg/*
+riderModule.iml
+/_ReSharper.Caches/
+.vs/
+expertPanel/
+
+.obsidian/
+node_modules/
+.vscode-test/
+test-results/
+playwright-report/
+.grepai/
+.github/agents/
+.github/copilot-instructions.md
+*.received.*
+analyzers/community
+
+.fake
+# nuget.config declares mcp-sdk-nupkg/ as a local package source, so the
+# directory must exist whenever NuGet reads that config -- including at the
+# moment `dotnet fsi ci-pipeline.fsx` resolves its own `#r "nuget:"` on a cold
+# machine, BEFORE any pipeline stage can pack into it. Track an empty dir via
+# .gitkeep (a missing local source is NU1301) while ignoring the packed output.
+mcp-sdk-nupkg/*
+!mcp-sdk-nupkg/.gitkeep
+mcp-sdk/
+# Same for the patched Harmony fork (LibHarmony): cloned + packed by ci-pipeline.fsx, referenced via nuget.config.
+harmony-nupkg/*
+!harmony-nupkg/.gitkeep
+# The packed nupkg IS committed: LibHarmony builds are not byte-reproducible, and packages.lock.json pins the
+# package's content hash, so a locked-mode restore needs one fixed artifact (see Directory.Packages.props).
+!harmony-nupkg/SageFs.Harmony.*.nupkg
+harmony-fork/
+*.log
+aspire-traces.png
+otel-*.png
+**/TestResults.junit.xml
+
+BenchmarkDotNet.Artifacts/
+# sagefs-demos recording scratch output (demo-gif-plan.md §1, §4.1) — the
+# published, committed artifacts live under docs/demos/, written only by an
+# explicit `sagefs-demos publish` step (Part II). artifacts/ is throwaway
+# local build output, same as bin/obj/.
+/artifacts/
+viz-output/*
+!viz-output/code-city/
+viz-output/code-city/*
+!viz-output/code-city/Program.fs
+!viz-output/code-city/CodeCity.fsproj
+viz-output/code-city/bin/
+viz-output/code-city/obj/
+!viz-output/code-city-tests/
+viz-output/code-city-tests/*
+!viz-output/code-city-tests/CodeCity.Tests.fsproj
+!viz-output/code-city-tests/DomainTests.fs
+viz-output/code-city-tests/bin/
+viz-output/code-city-tests/obj/
+
+test-output.txt
+.SageFs/
+.commandcode/
+.playwright-mcp/
+.slopwatch/
+.claude/
+
+# Coverage output — regenerated locally/in CI, never committed (90MB+).
+coverage.cobertura.xml
+coverage-report/
+
+# Roast/audit docs and cross-agent handoff docs are intentionally untracked
+# working files (per standing preference) — re-committed by accident once
+# in c6be863d; this keeps that from happening again.
+/release-blockers.md
+/standby-session-rework.md
+/sagefs-roast.md
+/sagefs-roast-2.md
+/sagefs-roast-3.md
+/sagefs-roast-4.md
+
+# Local output of the ci-pipeline.fsx release stages (nupkg + vsix + manifest);
+# on CI it is uploaded as the release-assets artifact, never committed.
+release/
+
+# Scratch copies the hot-reload state tests build per runtime (HotReloadStateHarness).
+SageFs.Tests/fixtures/HotReloadStateFixture/.runs/

@@ -1,0 +1,140 @@
+module SageFs.Tests.SseDedupKeyTests
+
+open System
+open Expecto
+open Expecto.Flip
+open SageFs
+open SageFs.Features.LiveTesting
+
+/// Helper to create a TestStatusEntry
+let makeEntry (i: int) (status: TestRunStatus) : TestStatusEntry =
+  { TestId = TestId.TestId (sprintf "test-%d" i)
+    DisplayName = sprintf "Test %d" i
+    FullName = sprintf "Namespace.Test%d" i
+    Origin = TestOrigin.ReflectionOnly
+    Framework = TestFramework.Expecto
+    Category = TestCategory.Unit
+    CurrentPolicy = RunPolicy.OnEveryChange
+    Status = status
+    PreviousStatus = TestRunStatus.Queued }
+
+let baseModel = (SageFsModel.initial())
+
+let withTests (count: int) (model: SageFsModel) =
+  let entries =
+    [| for i in 1..count ->
+        makeEntry i (TestRunStatus.Passed (TimeSpan.FromMilliseconds 10.0)) |]
+  let statuses = entries |> Array.map (fun e -> e.Status)
+  let summary = TestSummary.fromStatuses model.LiveTesting.TestState.Activation statuses
+  let ts =
+    { model.LiveTesting.TestState with
+        StatusIndex = TestStatusIndex.fromEntries entries
+        Cached = { model.LiveTesting.TestState.Cached with
+                    TestSummary = summary
+                    StateVersion = model.LiveTesting.TestState.Cached.StateVersion + 1L } }
+  { model with LiveTesting = { model.LiveTesting with TestState = ts } }
+
+let withActivation (activation: LiveTestingActivation) (model: SageFsModel) =
+  let ts = { model.LiveTesting.TestState with Activation = activation }
+  { model with LiveTesting = { model.LiveTesting with TestState = ts } }
+
+let withRunPhase (phase: TestRunPhase) (model: SageFsModel) =
+  let ts = { model.LiveTesting.TestState with RunPhases = Map.ofList ["s", phase] }
+  { model with LiveTesting = { model.LiveTesting with TestState = ts } }
+
+let withGeneration (gen: int) (model: SageFsModel) =
+  let ts = { model.LiveTesting.TestState with LastGeneration = RunGeneration gen }
+  { model with LiveTesting = { model.LiveTesting with TestState = ts } }
+
+[<Tests>]
+let tests = testList "SseDedupKey" [
+  testList "detects test state changes" [
+    testCase "key changes when tests added" <| fun () ->
+      let before = SseDedupKey.fromModel baseModel
+      let after = baseModel |> withTests 5 |> SseDedupKey.fromModel
+      (before <> after)
+      |> Expect.isTrue "must detect test count change"
+
+    testCase "key changes when activation toggled" <| fun () ->
+      let before = SseDedupKey.fromModel baseModel
+      let after =
+        baseModel
+        |> withActivation LiveTestingActivation.Active
+        |> SseDedupKey.fromModel
+      (before <> after)
+      |> Expect.isTrue "must detect activation change"
+
+    testCase "key changes when run phase changes" <| fun () ->
+      let before = SseDedupKey.fromModel baseModel
+      let after =
+        baseModel
+        |> withRunPhase (TestRunPhase.Running (RunGeneration 1))
+        |> SseDedupKey.fromModel
+      (before <> after)
+      |> Expect.isTrue "must detect run phase change"
+
+    testCase "key changes when generation advances" <| fun () ->
+      let before = SseDedupKey.fromModel baseModel
+      let after = baseModel |> withGeneration 42 |> SseDedupKey.fromModel
+      (before <> after)
+      |> Expect.isTrue "must detect generation change"
+
+    testCase "key changes when test status changes from passed to failed" <| fun () ->
+      let modelPassed = baseModel |> withTests 3
+      let modelFailed =
+        let entries =
+          [| makeEntry 1 (TestRunStatus.Passed (TimeSpan.FromMilliseconds 10.0))
+             makeEntry 2 (TestRunStatus.Failed (
+              TestFailure.AssertionFailed "oops",
+              TimeSpan.FromMilliseconds 20.0))
+             makeEntry 3 (TestRunStatus.Passed (TimeSpan.FromMilliseconds 10.0)) |]
+        let statuses = entries |> Array.map (fun e -> e.Status)
+        let summary = TestSummary.fromStatuses baseModel.LiveTesting.TestState.Activation statuses
+        let ts =
+          { baseModel.LiveTesting.TestState with
+              StatusIndex = TestStatusIndex.fromEntries entries
+              Cached = { baseModel.LiveTesting.TestState.Cached with
+                          TestSummary = summary
+                          StateVersion = baseModel.LiveTesting.TestState.Cached.StateVersion + 1L } }
+        { baseModel with LiveTesting = { baseModel.LiveTesting with TestState = ts } }
+      let before = SseDedupKey.fromModel modelPassed
+      let after = SseDedupKey.fromModel modelFailed
+      (before <> after)
+      |> Expect.isTrue "must detect pass to fail transition"
+  ]
+
+  testList "preserves existing behavior" [
+    testCase "key stable when nothing changes" <| fun () ->
+      let a = SseDedupKey.fromModel baseModel
+      let b = SseDedupKey.fromModel baseModel
+      a |> Expect.equal "same model = same key" b
+
+    testCase "key changes when output added" <| fun () ->
+      let before = SseDedupKey.fromModel baseModel
+      let withOutput =
+        { baseModel with
+            RecentOutput =
+              SessionOutputStore.ofLines
+                [{ Kind = OutputKind.Info
+                   Text = "hello"
+                   Timestamp = DateTime.UtcNow
+                   SessionId = "" }] }
+      let after = SseDedupKey.fromModel withOutput
+      (before <> after)
+      |> Expect.isTrue "must still detect output changes"
+
+    testCase "WHY — output in any session changes the key because browser tabs may view a non-global session" <| fun () ->
+      let before = SseDedupKey.fromModel baseModel
+      let withNonActiveOutput =
+        { baseModel with
+            RecentOutput =
+              SessionOutputStore.ofLines
+                [{ Kind = OutputKind.Info
+                   Text = "session B output"
+                   Timestamp = DateTime.UtcNow
+                   SessionId = "0a2b3c4e" }] }
+      let after = SseDedupKey.fromModel withNonActiveOutput
+      (before <> after)
+      |> Expect.isTrue "non-active session output must wake pinned browser streams"
+  ]
+]

@@ -1,0 +1,494 @@
+module SageFs.Tests.WarmupContextTests
+
+open Expecto
+open Expecto.Flip
+open SageFs
+open SageFs.AppState
+open SageFs.OpenReplay
+open SageFs.WarmUp
+open SageFs.McpAdapter
+open SageFs.WorkflowTypes
+
+let sampleAssembly: LoadedAssembly = {
+  Name = "MyApp"
+  Path = "/bin/MyApp.dll"
+  NamespaceCount = 3
+  ModuleCount = 2
+}
+
+let sampleCtx: WarmupContext = {
+  SourceFilesScanned = 15
+  AssembliesLoaded = [
+    sampleAssembly
+    { Name = "MyLib"; Path = "/bin/MyLib.dll"; NamespaceCount = 1; ModuleCount = 0 }
+  ]
+  NamespacesOpened = [
+    { Name = "System"; Kind = OpenableKind.Namespace; Source = "reflection"; DurationMs = 0.0 }
+    { Name = "System.IO"; Kind = OpenableKind.Namespace; Source = "reflection"; DurationMs = 0.0 }
+    { Name = "MyApp.Utils"; Kind = OpenableKind.Module; Source = "source-scan"; DurationMs = 0.0 }
+    { Name = "MyApp.Domain"; Kind = OpenableKind.Namespace; Source = "source-scan"; DurationMs = 0.0 }
+  ]
+  FailedOpens = [ { Name = "BrokenNs"; Kind = OpenableKind.Namespace; ErrorMessage = "type not found"; Diagnostics = []; RetryCount = 1; DurationMs = 0.0 } ]
+  PhaseTiming = { ScanSourceFilesMs = 0L; ScanAssembliesMs = 0L; OpenNamespacesMs = 0L; TotalMs = 1234L }
+  StartedAt = System.DateTimeOffset.UtcNow
+}
+
+[<Tests>]
+let warmupAssemblyVerificationTests = testList "Warmup assembly verification" [
+
+  /// WHY — friction report 2026-08: hard_reset reported success, get_fsi_status
+  /// showed Ready + warmup complete, but AppDomain.GetAssemblies() contained ZERO
+  /// project assemblies — 'open SageTech' failed with 'not defined'. Warmup never
+  /// verified that references actually loaded. Because — classification of
+  /// expected-vs-actually-loaded assembly names must distinguish all three
+  /// outcomes so a dead session can be reported as Faulted instead of Ready.
+
+  testCase "WHY — no expected assemblies means nothing to verify (bare sessions stay valid)"
+  <| fun _ ->
+    WarmUp.classifyAssemblyLoad [] ["Anything"]
+    |> Expect.equal "empty expectation is trivially satisfied" WarmUp.AllExpectedLoaded
+
+  testCase "WHY — every expected assembly present means the session genuinely loaded the project"
+  <| fun _ ->
+    WarmUp.classifyAssemblyLoad ["SageTech"; "Expecto"] ["SageTech"; "Expecto"; "System.Runtime"]
+    |> Expect.equal "all loaded" WarmUp.AllExpectedLoaded
+
+  testCase "WHY — partially loaded must name exactly which assemblies are missing so failures are attributable"
+  <| fun _ ->
+    WarmUp.classifyAssemblyLoad ["SageTech"; "SageTech.Tests"] ["SageTech.Tests"]
+    |> Expect.equal "one missing"
+        (WarmUp.PartiallyLoaded [ "SageTech" ])
+
+  testCase "WHY — zero loaded is the false-positive signature: warmup claimed success while nothing worked, so it must classify as NothingLoaded and fault the session"
+  <| fun _ ->
+    WarmUp.classifyAssemblyLoad ["SageTech"; "SageTech.Tests"] []
+    |> Expect.equal "none loaded" WarmUp.NothingLoaded
+]
+
+[<Tests>]
+let warmupContextTests = testList "WarmupContext" [
+  testCase "empty has zero counts" <| fun _ ->
+    let ctx = WarmupContext.empty
+    ctx.SourceFilesScanned
+    |> Expect.equal "no files scanned" 0
+    ctx.AssembliesLoaded
+    |> Expect.isEmpty "no assemblies"
+    ctx.NamespacesOpened
+    |> Expect.isEmpty "no namespaces"
+    ctx.FailedOpens
+    |> Expect.isEmpty "no failures"
+
+  testCase "totalOpenedCount returns count of all opened" <| fun _ ->
+    WarmupContext.totalOpenedCount sampleCtx
+    |> Expect.equal "4 opened" 4
+
+  testCase "totalFailedCount returns count of failures" <| fun _ ->
+    WarmupContext.totalFailedCount sampleCtx
+    |> Expect.equal "1 failed" 1
+
+  testCase "assemblyNames extracts names" <| fun _ ->
+    WarmupContext.assemblyNames sampleCtx
+    |> Expect.equal "two assemblies" ["MyApp"; "MyLib"]
+
+  testCase "moduleNames filters to modules only" <| fun _ ->
+    WarmupContext.moduleNames sampleCtx
+    |> Expect.equal "one module" ["MyApp.Utils"]
+
+  testCase "namespaceNames filters to non-modules only" <| fun _ ->
+    WarmupContext.namespaceNames sampleCtx
+    |> Expect.equal "three namespaces" ["System"; "System.IO"; "MyApp.Domain"]
+]
+
+[<Tests>]
+let fileReadinessTests = testList "FileReadiness" [
+  testCase "label returns human-readable string" <| fun _ ->
+    FileReadiness.label NotLoaded
+    |> Expect.equal "not loaded label" "not loaded"
+    FileReadiness.label Loaded
+    |> Expect.equal "loaded label" "loaded"
+    FileReadiness.label Stale
+    |> Expect.equal "stale label" "stale"
+    FileReadiness.label LoadFailed
+    |> Expect.equal "failed label" "load failed"
+
+  testCase "icon returns glyph" <| fun _ ->
+    FileReadiness.icon NotLoaded
+    |> Expect.equal "not loaded icon" "○"
+    FileReadiness.icon Loaded
+    |> Expect.equal "loaded icon" "●"
+
+  testCase "isAvailable only true for Loaded" <| fun _ ->
+    FileReadiness.isAvailable Loaded
+    |> Expect.isTrue "loaded is available"
+    FileReadiness.isAvailable Stale
+    |> Expect.isFalse "stale not available"
+    FileReadiness.isAvailable NotLoaded
+    |> Expect.isFalse "not loaded not available"
+    FileReadiness.isAvailable LoadFailed
+    |> Expect.isFalse "failed not available"
+]
+
+let sampleSession: SessionContext = {
+  SessionId = "abc123"
+  ProjectNames = ["MyApp.fsproj"]
+  WorkingDir = "/code/myapp"
+  Status = "Ready"
+  Warmup = sampleCtx
+  FileStatuses = [
+    { Path = "Domain.fs"; Readiness = Loaded; LastLoadedAt = Some System.DateTimeOffset.UtcNow; IsWatched = true }
+    { Path = "Utils.fs"; Readiness = Loaded; LastLoadedAt = Some System.DateTimeOffset.UtcNow; IsWatched = false }
+    { Path = "Tests.fs"; Readiness = NotLoaded; LastLoadedAt = None; IsWatched = false }
+    { Path = "Broken.fs"; Readiness = LoadFailed; LastLoadedAt = None; IsWatched = true }
+    { Path = "Old.fs"; Readiness = Stale; LastLoadedAt = Some (System.DateTimeOffset.UtcNow.AddHours(-1)); IsWatched = true }
+  ]
+  Workflow = WorkflowTypes.SessionWorkflow.Interactive
+  AutoOpenNamespaces = true
+}
+
+[<Tests>]
+let sessionContextTests = testList "SessionContext" [
+  testCase "summary includes status and counts" <| fun _ ->
+    let s = SessionContext.summary sampleSession
+    s |> Expect.stringContains "has status" "Ready"
+    s |> Expect.stringContains "has file count" "2/5"
+    s |> Expect.stringContains "has namespace count" "4 namespaces"
+    s |> Expect.stringContains "has failed count" "1 failed"
+    s |> Expect.stringContains "has duration" "1234ms"
+
+  testCase "assemblyLine formats assembly info" <| fun _ ->
+    SessionContext.assemblyLine sampleAssembly
+    |> Expect.stringContains "has name" "MyApp"
+    SessionContext.assemblyLine sampleAssembly
+    |> Expect.stringContains "has ns count" "3 ns"
+
+  testCase "openLine shows open statement with kind" <| fun _ ->
+    SessionContext.openLine { Name = "System"; Kind = OpenableKind.Namespace; Source = "reflection"; DurationMs = 0.0 }
+    |> Expect.equal "namespace open" "open System // namespace via reflection"
+    SessionContext.openLine { Name = "MyApp.Utils"; Kind = OpenableKind.Module; Source = "source-scan"; DurationMs = 0.0 }
+    |> Expect.equal "module open" "open MyApp.Utils // module via source-scan"
+
+  testCase "fileLine shows icon and path" <| fun _ ->
+    SessionContext.fileLine { Path = "Domain.fs"; Readiness = Loaded; LastLoadedAt = None; IsWatched = true }
+    |> Expect.equal "loaded watched" "● Domain.fs 👁"
+    SessionContext.fileLine { Path = "Tests.fs"; Readiness = NotLoaded; LastLoadedAt = None; IsWatched = false }
+    |> Expect.equal "not loaded unwatched" "○ Tests.fs"
+]
+
+let sampleTuiSession: SessionContext = {
+  SessionId = "abc123"
+  ProjectNames = ["MyApp.fsproj"]
+  WorkingDir = @"C:\Code\MyProject"
+  Status = "Ready"
+  Warmup = {
+    SourceFilesScanned = 5
+    AssembliesLoaded = [
+      { Name = "MyApp"; Path = "/bin/MyApp.dll"; NamespaceCount = 3; ModuleCount = 2 }
+      { Name = "MyLib"; Path = "/bin/MyLib.dll"; NamespaceCount = 1; ModuleCount = 0 }
+    ]
+    NamespacesOpened = [
+      { Name = "System"; Kind = OpenableKind.Namespace; Source = "MyApp"; DurationMs = 0.0 }
+      { Name = "System.IO"; Kind = OpenableKind.Namespace; Source = "MyApp"; DurationMs = 0.0 }
+      { Name = "MyApp.Domain"; Kind = OpenableKind.Module; Source = "MyApp"; DurationMs = 0.0 }
+      { Name = "MyLib.Utils"; Kind = OpenableKind.Module; Source = "MyLib"; DurationMs = 0.0 }
+    ]
+    FailedOpens = [ { Name = "Bogus.Ns"; Kind = OpenableKind.Namespace; ErrorMessage = "Type not found"; Diagnostics = []; RetryCount = 1; DurationMs = 0.0 } ]
+    PhaseTiming = { ScanSourceFilesMs = 0L; ScanAssembliesMs = 0L; OpenNamespacesMs = 0L; TotalMs = 450L }
+    StartedAt = System.DateTimeOffset.UtcNow
+  }
+  FileStatuses = [
+    { Path = "src/Domain.fs"; Readiness = Loaded; LastLoadedAt = Some System.DateTimeOffset.UtcNow; IsWatched = true }
+    { Path = "src/App.fs"; Readiness = Loaded; LastLoadedAt = Some System.DateTimeOffset.UtcNow; IsWatched = false }
+    { Path = "src/Startup.fs"; Readiness = NotLoaded; LastLoadedAt = None; IsWatched = false }
+    { Path = "src/Old.fs"; Readiness = Stale; LastLoadedAt = Some (System.DateTimeOffset.UtcNow.AddHours(-1)); IsWatched = true }
+    { Path = "src/Broken.fs"; Readiness = LoadFailed; LastLoadedAt = None; IsWatched = false }
+  ]
+  Workflow = WorkflowTypes.SessionWorkflow.Interactive
+  AutoOpenNamespaces = true
+}
+
+[<Tests>]
+let sessionContextTuiTests= testList "SessionContextTui" [
+  testCase "summaryLine contains status, file counts, ns counts, duration" <| fun _ ->
+    let line = SessionContextTui.summaryLine sampleTuiSession
+    line |> Expect.stringContains "has status" "[Ready]"
+    line |> Expect.stringContains "file ratio" "2/5"
+    line |> Expect.stringContains "ns count" "4 ns"
+    line |> Expect.stringContains "fail count" "1 fail"
+    line |> Expect.stringContains "duration" "450ms"
+
+  testCase "summaryLine empty session shows zeros" <| fun _ ->
+    let empty = {
+      SessionId = "x"; ProjectNames = []; WorkingDir = "."
+      Status = "Starting"; Warmup = WarmupContext.empty; FileStatuses = []
+      Workflow = SessionWorkflow.Interactive
+      AutoOpenNamespaces = true
+    }
+    let line = SessionContextTui.summaryLine empty
+    line |> Expect.stringContains "zero files" "0/0"
+    line |> Expect.stringContains "zero ns" "0 ns"
+
+  testCase "detailLines has all section headers" <| fun _ ->
+    let lines = SessionContextTui.detailLines sampleTuiSession
+    lines |> List.exists (fun l -> l.Contains("Assemblies")) |> Expect.isTrue "assemblies header"
+    lines |> List.exists (fun l -> l.Contains("Opened")) |> Expect.isTrue "opened header"
+    lines |> List.exists (fun l -> l.Contains("Failed")) |> Expect.isTrue "failed header"
+    lines |> List.exists (fun l -> l.Contains("Files")) |> Expect.isTrue "files header"
+
+  testCase "detailLines includes assembly info" <| fun _ ->
+    let lines = SessionContextTui.detailLines sampleTuiSession
+    lines |> List.exists (fun l -> l.Contains("MyApp") && l.Contains("3 ns")) |> Expect.isTrue "MyApp assembly"
+    lines |> List.exists (fun l -> l.Contains("MyLib")) |> Expect.isTrue "MyLib assembly"
+
+  testCase "detailLines includes open statements" <| fun _ ->
+    let lines = SessionContextTui.detailLines sampleTuiSession
+    lines |> List.exists (fun l -> l.Contains("open System") && l.Contains("namespace")) |> Expect.isTrue "System ns"
+    lines |> List.exists (fun l -> l.Contains("open MyApp.Domain") && l.Contains("module")) |> Expect.isTrue "Domain module"
+
+  testCase "detailLines shows file readiness icons" <| fun _ ->
+    let lines = SessionContextTui.detailLines sampleTuiSession
+    lines |> List.exists (fun l -> l.Contains("●") && l.Contains("Domain.fs")) |> Expect.isTrue "loaded+watched"
+    lines |> List.exists (fun l -> l.Contains("○") && l.Contains("Startup.fs")) |> Expect.isTrue "not loaded"
+    lines |> List.exists (fun l -> l.Contains("~") && l.Contains("Old.fs")) |> Expect.isTrue "stale"
+    lines |> List.exists (fun l -> l.Contains("✖") && l.Contains("Broken.fs")) |> Expect.isTrue "failed"
+
+  testCase "detailLines shows failed opens" <| fun _ ->
+    let lines = SessionContextTui.detailLines sampleTuiSession
+    lines |> List.exists (fun l -> l.Contains("Bogus.Ns") && l.Contains("Type not found")) |> Expect.isTrue "failed open"
+
+  testCase "renderContent joins summary + details with many lines" <| fun _ ->
+    let content = SessionContextTui.renderContent sampleTuiSession
+    let lines = content.Split('\n')
+    lines.[0] |> Expect.stringContains "first line is summary" "[Ready]"
+    (lines.Length, 10) |> Expect.isGreaterThan "has many lines"
+
+  testCase "detailLines omits empty sections" <| fun _ ->
+    let minimal = {
+      SessionId = "m"; ProjectNames = []; WorkingDir = "."
+      Status = "Ready"; Warmup = WarmupContext.empty; FileStatuses = []
+      Workflow = SessionWorkflow.Interactive
+      AutoOpenNamespaces = true
+    }
+    let lines = SessionContextTui.detailLines minimal
+    lines |> List.exists (fun l -> l.Contains("Assemblies")) |> Expect.isFalse "no assemblies section"
+    lines |> List.exists (fun l -> l.Contains("Failed")) |> Expect.isFalse "no failed section"
+    lines |> List.exists (fun l -> l.Contains("Files")) |> Expect.isFalse "no files section"
+]
+
+let mkLlmAsm name ns mods : LoadedAssembly =
+  { Name = name; Path = sprintf "%s.dll" name; NamespaceCount = ns; ModuleCount = mods }
+
+let mkLlmOpen name : OpenedBinding =
+  { Name = name; Kind = OpenableKind.Namespace; Source = "warmup"; DurationMs = 0.0 }
+
+let mkLlmFile path readiness : FileStatus =
+  { Path = path; Readiness = readiness; LastLoadedAt = None; IsWatched = true }
+
+[<Tests>]
+let formatWarmupDetailForLlmTests = testList "formatWarmupDetailForLlm" [
+  testCase "healthy session shows assemblies and opened namespaces" <| fun _ ->
+    let ctx : SessionContext = {
+      SessionId = "abc123"
+      ProjectNames = ["MyProj"]
+      WorkingDir = "/code"
+      Status = "Ready"
+      Warmup = {
+        AssembliesLoaded = [mkLlmAsm "Asm1" 3 1; mkLlmAsm "Asm2" 2 0]
+        NamespacesOpened = [mkLlmOpen "System"; mkLlmOpen "System.IO"]
+        FailedOpens = []
+        PhaseTiming = { ScanSourceFilesMs = 0L; ScanAssembliesMs = 0L; OpenNamespacesMs = 0L; TotalMs = 890L }
+        SourceFilesScanned = 5
+        StartedAt = System.DateTimeOffset.UtcNow
+      }
+      FileStatuses = [mkLlmFile "a.fs" Loaded; mkLlmFile "b.fs" Loaded]
+      Workflow = WorkflowTypes.SessionWorkflow.Interactive
+      AutoOpenNamespaces = true
+    }
+    let result = formatWarmupDetailForLlm ctx
+    result |> Expect.stringContains "asm1""📦 Asm1 (3 ns, 1 modules)"
+    result |> Expect.stringContains "asm2" "📦 Asm2 (2 ns, 0 modules)"
+    result |> Expect.stringContains "open System" "open System // namespace"
+    result |> Expect.stringContains "open System.IO" "open System.IO // namespace"
+
+  testCase "failed opens show warning section" <| fun _ ->
+    let ctx : SessionContext = {
+      SessionId = "def456"
+      ProjectNames = ["BadProj"]
+      WorkingDir = "/code"
+      Status = "Ready"
+      Warmup = {
+        AssembliesLoaded = [mkLlmAsm "Asm1" 3 1]
+        NamespacesOpened = [mkLlmOpen "System"]
+        FailedOpens = [{ Name = "Bad.Ns"; Kind = OpenableKind.Namespace; ErrorMessage = "not found"; Diagnostics = []; RetryCount = 1; DurationMs = 0.0 }]
+        PhaseTiming = { ScanSourceFilesMs = 0L; ScanAssembliesMs = 0L; OpenNamespacesMs = 0L; TotalMs = 1200L }
+        SourceFilesScanned = 3
+        StartedAt = System.DateTimeOffset.UtcNow
+      }
+      FileStatuses = [mkLlmFile "good.fs" Loaded]
+      Workflow = WorkflowTypes.SessionWorkflow.Interactive
+      AutoOpenNamespaces = true
+    }
+    let result = formatWarmupDetailForLlm ctx
+    result |> Expect.stringContains "summary ratio" "1/2 namespaces opened"
+    result |> Expect.stringContains "failed section""⚠ Failed opens (1):"
+    result |> Expect.stringContains "failed detail" "✖ Bad.Ns (namespace) — not found"
+
+  testCase "failed file loads show in files section" <| fun _ ->
+    let ctx : SessionContext = {
+      SessionId = "ghi789"
+      ProjectNames = ["Proj"]
+      WorkingDir = "/code"
+      Status = "Ready"
+      Warmup = {
+        AssembliesLoaded = [mkLlmAsm "Asm1" 2 1]
+        NamespacesOpened = [mkLlmOpen "System"]
+        FailedOpens = []
+        PhaseTiming = { ScanSourceFilesMs = 0L; ScanAssembliesMs = 0L; OpenNamespacesMs = 0L; TotalMs = 500L }
+        SourceFilesScanned = 2
+        StartedAt = System.DateTimeOffset.UtcNow
+      }
+      FileStatuses = [mkLlmFile "good.fs" Loaded; mkLlmFile "broken.fs" LoadFailed]
+      Workflow = WorkflowTypes.SessionWorkflow.Interactive
+      AutoOpenNamespaces = true
+    }
+    let result = formatWarmupDetailForLlm ctx
+    result |> Expect.stringContains "files header""Files (1/2 loaded):"
+    result |> Expect.stringContains "loaded file" "● good.fs"
+    result |> Expect.stringContains "failed file" "✖ broken.fs"
+
+  testCase "empty session shows zero summary" <| fun _ ->
+    let ctx : SessionContext = {
+      SessionId = "empty"
+      ProjectNames = []
+      WorkingDir = ""
+      Status = "Starting"
+      Warmup = WarmupContext.empty
+      FileStatuses = []
+      Workflow = WorkflowTypes.SessionWorkflow.Interactive
+      AutoOpenNamespaces = true
+    }
+    let result = formatWarmupDetailForLlm ctx
+    result |> Expect.stringContains "zero summary""0 assemblies, 0/0 namespaces opened, 0ms"
+
+  testCase "modules show as module not namespace" <| fun _ ->
+    let ctx : SessionContext = {
+      SessionId = "mod"
+      ProjectNames = ["P"]
+      WorkingDir = "/code"
+      Status = "Ready"
+      Warmup = {
+        AssembliesLoaded = [mkLlmAsm "A" 1 1]
+        NamespacesOpened = [
+          { Name = "MyModule"; Kind = OpenableKind.Module; Source = "warmup"; DurationMs = 0.0 }
+        ]
+        FailedOpens = []
+        PhaseTiming = { ScanSourceFilesMs = 0L; ScanAssembliesMs = 0L; OpenNamespacesMs = 0L; TotalMs = 100L }
+        SourceFilesScanned = 1
+        StartedAt = System.DateTimeOffset.UtcNow
+      }
+      FileStatuses = []
+      Workflow = WorkflowTypes.SessionWorkflow.Interactive
+      AutoOpenNamespaces = true
+    }
+    let result = formatWarmupDetailForLlm ctx
+    result |> Expect.stringContains "module kind" "open MyModule // module"
+]
+
+[<Tests>]
+let extractOpensTests = testList "extractOpensFromLines" [
+
+  testCase "returns empty for empty input" <| fun _ ->
+    extractOpensFromLines [||]
+    |> Expect.isEmpty "empty lines should yield no opens"
+
+  testCase "extracts single open statement" <| fun _ ->
+    extractOpensFromLines [| "open System" |]
+    |> Expect.equal "single open" [| "System" |]
+
+  testCase "extracts multiple distinct opens" <| fun _ ->
+    let lines = [| "open System"; "open System.IO"; "open FSharp.Collections" |]
+    extractOpensFromLines lines
+    |> Expect.equal "three opens" [| "System"; "System.IO"; "FSharp.Collections" |]
+
+  testCase "deduplicates repeated opens" <| fun _ ->
+    let lines = [| "open System"; "open System.IO"; "open System" |]
+    extractOpensFromLines lines
+    |> Expect.equal "deduped" [| "System"; "System.IO" |]
+
+  testCase "ignores non-open lines" <| fun _ ->
+    let lines = [| "module Foo"; "let x = 1"; "open System"; "type T = {}" |]
+    extractOpensFromLines lines
+    |> Expect.equal "only open" [| "System" |]
+
+  testCase "ignores commented-out open lines" <| fun _ ->
+    let lines = [| "// open System"; "open System.IO" |]
+    extractOpensFromLines lines
+    |> Expect.equal "skip comment" [| "System.IO" |]
+
+  testCase "handles leading whitespace" <| fun _ ->
+    let lines = [| "  open System.Collections.Generic" |]
+    extractOpensFromLines lines
+    |> Expect.equal "indented open" [| "System.Collections.Generic" |]
+
+  testCase "handles trailing semicolons" <| fun _ ->
+    let lines = [| "open System;;" |]
+    extractOpensFromLines lines
+    |> Expect.equal "semicolons stripped" [| "System" |]
+
+  testCase "ignores blank lines" <| fun _ ->
+    let lines = [| ""; "open System"; "   "; "open System.IO" |]
+    extractOpensFromLines lines
+    |> Expect.equal "blank lines skipped" [| "System"; "System.IO" |]
+
+  testCase "parallel scan over file batches returns same set as sequential" <| fun _ ->
+    let fileContents =
+      [|
+        [| "open System"; "open System.IO" |]
+        [| "open System.IO"; "open FSharp.Collections" |]
+        [| "module Foo"; "open System"; "open Expecto" |]
+      |]
+    let seqResult =
+      fileContents
+      |> Array.collect extractOpensFromLines
+      |> Array.distinct
+      |> Set.ofArray
+    let parResult =
+      fileContents
+      |> Array.Parallel.map extractOpensFromLines
+      |> Array.collect id
+      |> Array.distinct
+      |> Set.ofArray
+    parResult
+    |> Expect.equal "parallel matches sequential" seqResult
+]
+
+[<Tests>]
+let internalModuleOpenFilterTests =
+  // roast-7 dogfood finding F7: warmup replays each source file's own `open`
+  // statements; a file's legal SAME-assembly `open` of an INTERNAL module
+  // (e.g. AppState.fs's `open SageFs.WarmupReplayCache`) fails from the FSI
+  // session (a different assembly, no access to internal members). The fix
+  // excludes such internal top-level modules from the replayed opens, keyed on
+  // the visibility reflection actually reports.
+  let coreTypes =
+    // SageFs.Core is where WarmupReplayCache (internal) and Cohort (public) live.
+    typeof<SageFs.Cohort.CohortCommand<string>>.Assembly.GetTypes()
+  testList "AppState.internalTopLevelModuleFullNames (roast-7 F7)" [
+    test "WHY — an internal top-level module IS excluded, because opening it from the FSI session fails" {
+      AppState.internalTopLevelModuleFullNames coreTypes
+      |> Set.contains "SageFs.WarmupReplayCache"
+      |> Expect.isTrue "the internal module SageFs.WarmupReplayCache must be flagged for exclusion"
+    }
+
+    test "WHY — a PUBLIC top-level module is NOT excluded, because it opens fine and dropping it would break warmup" {
+      AppState.internalTopLevelModuleFullNames coreTypes
+      |> Set.contains "SageFs.Cohort"
+      |> Expect.isFalse "the public module SageFs.Cohort must NOT be excluded"
+    }
+
+    test "WHY — extractOpensFromLines still captures a source file's own opens, internal ones included (they are filtered later, not here)" {
+      [| "namespace SageFs"; ""; "open System"; "open SageFs.WarmupReplayCache"; "let x = 1" |]
+      |> extractOpensFromLines
+      |> Array.toList
+      |> Expect.equal "captures both opens verbatim" [ "System"; "SageFs.WarmupReplayCache" ]
+    }
+  ]

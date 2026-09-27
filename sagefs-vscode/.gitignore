@@ -1,0 +1,9 @@
+out/
+dist/
+fable-out/
+test-electron-out/
+test-electron-dist/
+node_modules/
+*.vsix
+.vscode-test/
+*.fable-temp.csproj

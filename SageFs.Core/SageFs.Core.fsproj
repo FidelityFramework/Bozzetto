@@ -1,0 +1,413 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <IsPackable>false</IsPackable>
+        <!-- Core is part of the shipped tool closure (referenced by both SageFs
+             and SageFs.Host), so it multi-targets alongside them — see
+             Directory.Build.props for why (issue #131, dotnet tool TFM
+             selection). Clearing TargetFramework is required: it is set for
+             every project by Directory.Build.props, and TargetFramework/
+             TargetFrameworks cannot both be set. -->
+        <TargetFramework></TargetFramework>
+        <TargetFrameworks>$(SageFsTargetFrameworks)</TargetFrameworks>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="SageFs.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Include="TestProviderTypes.fs" />
+        <Compile Include="WorkflowTypes.fs" />
+        <Compile Include="SessionProjectTarget.fs" />
+        <Compile Include="Args.fs" />
+        <Compile Include="OwnerMonitor.fs" />
+        <Compile Include="McpResourceGate.fs" />
+        <Compile Include="Measures.fs" />
+        <Compile Include="Cohort.fs" />
+        <Compile Include="RingBuffer.fs" />
+        <Compile Include="SseReplayBuffer.fs" />
+        <Compile Include="ModelSnapshot.fs" />
+        <Compile Include="TimeTravel.fs" />
+        <Compile Include="Utils.fs" />
+        <Compile Include="FsiNaming.fs" />
+        <Compile Include="NativeResolution.fs" />
+        <Compile Include="AppOutput.fs" />
+        <Compile Include="Checkout.fs" />
+        <Compile Include="MemberTable.fs" />
+        <Compile Include="Tutorial.fs" />
+        <Compile Include="SageFsConfig.fs" />
+        <Compile Include="Timeouts.fs" />
+        <Compile Include="UpdateCheck.fs" />
+        <Compile Include="Settings.fs" />
+        <Compile Include="SettingsStore.fs" />
+        <Compile Include="SettingsCatalog.fs" />
+        <Compile Include="EvalLatencyTrace.fs" />
+        <Compile Include="Features\Treemap.fs" />
+        <Compile Include="BatchFlusher.fs" />
+        <Compile Include="BinaryFormat.fs" />
+        <Compile Include="Instrumentation.fs" />
+        <Compile Include="McpToolAudit.fs" />
+        <Compile Include="FeatureParity.fs" />
+        <Compile Include="EndpointContracts.fs" />
+        <Compile Include="ResilientActor.fs" />
+        <Compile Include="RuntimeCompat.fs" />
+        <Compile Include="RuntimeSelection.fs" />
+        <Compile Include="SessionKinds.fs" />
+        <!-- Dependency-free and also compiled into the isolated FSI host (config.fsx is evaluated there): it must
+             precede the protocol, which carries a DirectoryConfig. -->
+        <Compile Include="DirectoryConfigTypes.fs" />
+        <!-- One source file, compiled into BOTH this assembly and the per-SDK generated FSI host: the wire
+             protocol cannot drift because there is only one definition of it. -->
+        <!-- LiveValueTree has no dependencies and is also compiled into the host, so the protocol can carry its
+             snapshot type directly; it must precede the protocol here. -->
+        <Compile Include="Features\LiveValueTree.fs" />
+        <!-- The isolated FSI host's project + sources ship inside this assembly; FsiHostBuild writes them to a
+             cache directory and builds them with the project's own SDK. -->
+        <EmbeddedResource Include="../SageFs.FsiHost/FsiHost.fsproj" LogicalName="FsiHost/FsiHost.fsproj" />
+        <EmbeddedResource Include="Measures.fs" LogicalName="FsiHost/Measures.fs" />
+        <EmbeddedResource Include="Utils.fs" LogicalName="FsiHost/Utils.fs" />
+        <EmbeddedResource Include="FsiNaming.fs" LogicalName="FsiHost/FsiNaming.fs" />
+        <EmbeddedResource Include="Timeouts.fs" LogicalName="FsiHost/Timeouts.fs" />
+        <EmbeddedResource Include="Instrumentation.fs" LogicalName="FsiHost/Instrumentation.fs" />
+        <EmbeddedResource Include="DirectoryConfigTypes.fs" LogicalName="FsiHost/DirectoryConfigTypes.fs" />
+        <EmbeddedResource Include="../SageFs.FsiHost/ConfigDsl.fs" LogicalName="FsiHost/ConfigDsl.fs" />
+        <EmbeddedResource Include="Features\LiveValueTree.fs" LogicalName="FsiHost/LiveValueTree.fs" />
+        <EmbeddedResource Include="TestProviderTypes.fs" LogicalName="FsiHost/TestProviderTypes.fs" />
+        <EmbeddedResource Include="Features\LiveTestingTypes.fs" LogicalName="FsiHost/LiveTestingTypes.fs" />
+        <EmbeddedResource Include="Features\CoverageProbes.fs" LogicalName="FsiHost/CoverageProbes.fs" />
+        <EmbeddedResource Include="Features\LiveTestingInstrumentation.fs" LogicalName="FsiHost/LiveTestingInstrumentation.fs" />
+        <EmbeddedResource Include="Features\ReflectionDiscovery.fs" LogicalName="FsiHost/ReflectionDiscovery.fs" />
+        <EmbeddedResource Include="Features\LiveTestingExecutors.fs" LogicalName="FsiHost/LiveTestingExecutors.fs" />
+        <EmbeddedResource Include="DevReload.fs" LogicalName="FsiHost/DevReload.fs" />
+        <EmbeddedResource Include="Middleware\ValueReads.fs" LogicalName="FsiHost/ValueReads.fs" />
+        <EmbeddedResource Include="Middleware\ValueReadTracking.fs" LogicalName="FsiHost/ValueReadTracking.fs" />
+        <EmbeddedResource Include="Middleware\HotReloadCore.fs" LogicalName="FsiHost/HotReloadCore.fs" />
+        <EmbeddedResource Include="HostAgent.fs" LogicalName="FsiHost/HostAgent.fs" />
+        <EmbeddedResource Include="../SageFs.FsiHost/FsiProtocol.fs" LogicalName="FsiHost/FsiProtocol.fs" />
+        <EmbeddedResource Include="../SageFs.FsiHost/FcsQueries.fs" LogicalName="FsiHost/FcsQueries.fs" />
+        <EmbeddedResource Include="../SageFs.FsiHost/Program.fs" LogicalName="FsiHost/Program.fs" />
+        <Compile Include="ProjectLoading.fs" />
+        <Compile Include="Holder.fs" />
+        <Compile Include="TypeShapeMigration.fs" />
+        <Compile Include="HolderRewrite.fs" />
+        <Compile Include="TranslationValidation.fs" />
+        <Compile Include="BuildPreflight.fs" />
+        <Compile Include="Middleware\ValueReads.fs" />
+        <Compile Include="Features\RestartScope.fs" />
+        <Compile Include="Features\ReloadOutcome.fs" />
+        <Compile Include="Features\ReloadPlanning.fs" />
+        <Compile Include="Features\RestartAttribution.fs" />
+        <!-- Phase 3 (live tweaking): pure address/edit/classification/transaction
+             modules. Self-contained, no dependency on ReloadPlanning/ReloadOutcome
+             above (deliberately, since those are owned by a parallel change),
+             placed here only because they share the same Fantomas.FCS parsing
+             technique. -->
+        <Compile Include="Features\Tweak\TweakAddress.fs" />
+        <Compile Include="Features\Tweak\LiteralEdit.fs" />
+        <Compile Include="Features\Tweak\ExpressionEdit.fs" />
+        <Compile Include="Features\Tweak\SideEffectClass.fs" />
+        <Compile Include="Features\Tweak\TweakTransaction.fs" />
+        <!-- Section 4 (history and rollback): event-sourced tweak journal
+             with bounded-growth compaction, on top of the address/edit
+             modules above. -->
+        <Compile Include="Features\Tweak\TweakLog.fs" />
+        <Compile Include="Features\LiveStateEmit.fs" />
+        <Compile Include="Features\KeptState.fs" />
+        <Compile Include="ShadowCopy.fs" />
+        <Compile Include="WarmUp.fs" />
+        <Compile Include="AspireSetup.fs" />
+        <Compile Include="ErrorMessages.fs" />
+        <Compile Include="WorkflowErrorContext.fs" />
+        <Compile Include="Features\LiveTestingTypes.fs" />
+        <Compile Include="Features\TestExecutionContracts.fs" />
+        <Compile Include="Features\RequestedRuns.fs" />
+        <Compile Include="Features\TestTreemap.fs" />
+        <Compile Include="Features\TestAnnotations.fs" />
+        <Compile Include="Features\TestRunKey.fs" />
+        <Compile Include="Features\InputHashCoverage.fs" />
+        <Compile Include="Features\AffectedTests.fs" />
+        <Compile Include="Features\LandingCache.fs" />
+        <Compile Include="Features\LiveTestActivity.fs" />
+        <Compile Include="Features\TestCachePersistence.fs" />
+        <Compile Include="Features\CoverageProbes.fs" />
+        <Compile Include="Features\CoverageInstrumenter.fs" />
+        <Compile Include="Features\LiveTestingInstrumentation.fs" />
+        <Compile Include="Features\ReflectionDiscovery.fs" />
+        <Compile Include="Features\LiveTestingExecutors.fs" />
+        <Compile Include="Features\TestDiscoveryMerge.fs" />
+        <Compile Include="Features\TestTreeSitter.fs" />
+        <Compile Include="Features\AutoCompletion.fs" />
+        <Compile Include="Features\Diagnostics.fs" />
+        <Compile Include="Features\DiagnosticsStore.fs" />
+        <Compile Include="Features\Events.fs" />
+        <Compile Include="Features\DaemonManifest.fs" />
+        <Compile Include="Features\ManifestPersistence.fs" />
+        <Compile Include="Features\DaemonPersistence.fs" />
+        <Compile Include="Features\ManifestOwner.fs" />
+        <Compile Include="Features\CohortLedger.fs" />
+        <Compile Include="Features\LocalDataRetention.fs" />
+        <Compile Include="Features\CohortOwner.fs" />
+        <Compile Include="Features\CohortTestProjection.fs" />
+        <Compile Include="Features\CohortMatrixRender.fs" />
+        <Compile Include="Features\CohortTerritory.fs" />
+        <Compile Include="Features\CohortBoundedView.fs" />
+        <Compile Include="Features\CohortStatusText.fs" />
+        <Compile Include="Features\CohortLanes.fs" />
+        <Compile Include="Features\CohortScrubber.fs" />
+        <Compile Include="Features\CohortIntegrationScope.fs" />
+        <Compile Include="Features\EvalDedup.fs" />
+        <Compile Include="Features\EvalDiff.fs" />
+        <Compile Include="Features\IdentifierScan.fs" />
+        <Compile Include="Features\CellDependencyGraph.fs" />
+        <Compile Include="Features\TestSourceResolver.fs" />
+        <Compile Include="Features\EvalProvenance.fs" />
+        <Compile Include="Features\SessionScribe.fs" />
+        <Compile Include="Features\MessageJournal.fs" />
+        <Compile Include="Features\TestNarration.fs" />
+        <Compile Include="Features\MachineMemory.fs" />
+        <Compile Include="Features\HealthAnomaly.fs" />
+        <Compile Include="Features\HealthWatch.fs" />
+        <!-- After HealthAnomaly/HealthWatch: the RSS-Broken evidence capture,
+             gated on the verdict those two produce. -->
+        <Compile Include="Features\GcDumpCapture.fs" />
+        <Compile Include="Features\GcDumpWatch.fs" />
+        <!-- A daemon-wide "this component failed and a client should know"
+             registry — FileWatcher.fs (below) and McpServer.fs both report
+             into it. Needs no state of its own beyond a ConcurrentDictionary
+             so it can sit anywhere before its first consumer; here, right
+             beside the other watch modules it mirrors the shape of. -->
+        <Compile Include="Features\ComponentWatch.fs" />
+        <!-- The shared three-level pressure vocabulary MemorySupervisor, the
+             expensive-work lease, and DaemonHealth.overallStatus all read.
+             Moved ahead of DaemonHealth.fs (was down by MemorySupervisor.fs)
+             so overallStatus can judge the machine's absolute memory level,
+             not just the shape-based HealthAnomaly verdict — a daemon whose
+             RSS climbs in a smooth ramp never trips the EWMA/CUSUM detector
+             (its learned baseline rises right along with it), so shape alone
+             reported Healthy through two real incidents that ate the machine. -->
+        <Compile Include="MemoryPressure.fs" />
+        <Compile Include="Features\DaemonHealth.fs" />
+        <Compile Include="Features\ScratchPad.fs" />
+        <Compile Include="Features\EvalRipple.fs" />
+        <Compile Include="Features\EvalLens.fs" />
+        <Compile Include="Features\WhatIf.fs" />
+        <Compile Include="Features\Ghostwriter.fs" />
+        <Compile Include="Features\SessionFilmstrip.fs" />
+        <Compile Include="Features\FsiOutputParser.fs" />
+        <!-- Bounds a printed eval result's size before AppState.evalFn returns
+             it; see the file header for why (roast-8 "huge eval result"). -->
+        <Compile Include="Features\EvalResultSummary.fs" />
+        <Compile Include="Features\BindingExplorer.fs" />
+        <Compile Include="Features\LiveBindingsAdaptive.fs" />
+        <Compile Include="Features\DomainModelViz.fs" />
+        <Compile Include="Features\EvalTimeline.fs" />
+        <Compile Include="Features\NotebookExport.fs" />
+        <Compile Include="Features\CoverageIntel.fs" />
+        <Compile Include="Features\ImpactForecast.fs" />
+        <Compile Include="Features\ActionPrioritizer.fs" />
+        <Compile Include="Features\TestDiscovery.fs" />
+        <Compile Include="Features\CellDependenciesReport.fs" />
+        <Compile Include="Features\FeatureDiscovery.fs" />
+        <Compile Include="Features\Diagnostician.fs" />
+        <Compile Include="RetryPolicy.fs" />
+        <Compile Include="SseWriter.fs" />
+    <Compile Include="Features\EvalStore.fs" />
+    <Compile Include="Features\FeatureHooks.fs" />
+    <Compile Include="Features\FrictionTelemetryTypes.fs" />
+        <Compile Include="Features\FrictionTelemetry.fs" />
+        <Compile Include="Features\FrictionSanitize.fs" />
+        <Compile Include="Features\FrictionOtelProjection.fs" />
+        <!-- FrictionSqlite.fs, FrictionReviewView.fs, McpFrictionRecorder.fs
+             moved to SageFs.fsproj — friction storage is daemon-only; the
+             worker process (SageFs.Host) never referenced them, so they
+             pulled Microsoft.Data.Sqlite into its closure for nothing. -->
+        <!-- Observed (passive) friction — pure derivation over FrictionEvent
+             (observed-friction-plan.md). Types first, then one stub file per
+             Wave-1 detector brief (B1-B6, each a no-op `[] `until its brief
+             lands), then the engine that registers every stub. -->
+        <Compile Include="Features\ObservedFrictionTypes.fs" />
+        <Compile Include="Features\ObservedFriction.Polling.fs" />
+        <Compile Include="Features\ObservedFriction.ResetThrash.fs" />
+        <Compile Include="Features\ObservedFriction.Unattributed.fs" />
+        <Compile Include="Features\ObservedFriction.Resolution.fs" />
+        <Compile Include="Features\ObservedFriction.Repetition.fs" />
+        <Compile Include="Features\ObservedFriction.InvalidState.fs" />
+        <Compile Include="Features\ObservedFriction.fs" />
+        <Compile Include="SessionState.fs" />
+        <!-- Before SageFsError: ProjectFrameworkNotHostable carries its UnsupportedTfmReason. -->
+        <Compile Include="ProjectCompatibility.fs" />
+        <Compile Include="SageFsError.fs" />
+        <!-- After SageFsError: F#-aware compile-order insight over BuildDiagnostic (roast UX-4). -->
+        <Compile Include="CompileOrderInsight.fs" />
+        <!-- After SageFsError: the railway effect type over the algebra. -->
+        <Compile Include="SageFsIO.fs" />
+        <!-- After SageFsError: an app state carries the structured error that ended its run. -->
+        <Compile Include="AppRun.fs" />
+        <Compile Include="ResultEx.fs" />
+        <Compile Include="EvalPipeline.fs" />
+        <Compile Include="Affordances.fs" />
+        <Compile Include="WorkerProtocol.fs" />
+        <Compile Include="Features\CohortLedgerExport.fs" />
+        <Compile Include="CrossCheckoutOverlap.fs" />
+        <Compile Include="Features\Verification.fs" />
+        <Compile Include="SessionMode.fs" />
+        <Compile Include="AppRunOrchestration.fs" />
+        <Compile Include="HttpWorkerClient.fs" />
+        <Compile Include="HostManifest.fs" />
+        <Compile Include="VariantSelector.fs" />
+        <Compile Include="HostAdaptation.fs" />
+        <Compile Include="OrphanTempDirSweep.fs" />
+        <Compile Include="HostCoreAdoption.fs" />
+        <Compile Include="Supervisor.fs" />
+        <Compile Include="RestartPolicy.fs" />
+        <Compile Include="GranularRestart.fs" />
+        <Compile Include="SmartReset.fs" />
+        <Compile Include="Watchdog.fs" />
+        <Compile Include="SessionLifecycle.fs" />
+        <Compile Include="WarmupSupervision.fs" />
+        <Compile Include="WorkerEventGuard.fs" />
+        <Compile Include="WorkerHealthProbe.fs" />
+        <!-- MemoryPressure.fs itself now compiles earlier, just ahead of
+             Features\DaemonHealth.fs (see the comment there) — this is only
+             the supervisory decision built on top of it. -->
+        <Compile Include="MemorySupervisor.fs" />
+        <!-- After MemorySupervisor: the stateful wrapper that persists its
+             PressureLevel across calls (same split as HealthWatch/HealthAnomaly). -->
+        <Compile Include="Features\MemoryPressureWatch.fs" />
+        <!-- The coordination point for expensive, memory-costly work
+             (session create/warmup, rebuild, full build, test run, run app). -->
+        <Compile Include="ExpensiveWorkLease.fs" />
+        <Compile Include="Features\LeaseWatch.fs" />
+        <Compile Include="ProcessEnvironment.fs" />
+        <Compile Include="SessionBuild.fs" />
+        <Compile Include="ProjectResolution.fs" />
+        <Compile Include="SessionManager.fs" />
+        <Compile Include="SessionOperations.fs" />
+        <Compile Include="AgentActivityTracker.fs" />
+        <Compile Include="DaemonState.fs" />
+        <Compile Include="McpBridge.fs" />
+        <Compile Include="WarmupContext.fs" />
+        <Compile Include="SessionHealth.fs" />
+        <Compile Include="WarmupReplayCache.fs" />
+        <Compile Include="StartupProfile.fs" />
+        <Compile Include="HotReloadState.fs" />
+        <Compile Include="HttpOriginGuard.fs" />
+        <Compile Include="DevReload.fs" />
+        <!-- Needs both ReloadOutcome/ReloadPlanning (above) and DevReload, so it lands here rather than beside
+             the other Features/ files. Deliberately NOT embedded into the isolated FSI host: DevReload.fs is,
+             and keeping that closure free of the planner is why the translation lives in its own module. -->
+        <Compile Include="Features\ReloadBroadcast.fs" />
+        <Compile Include="Middleware\ValueReadTracking.fs" />
+        <Compile Include="Middleware\HotReloadCore.fs" />
+        <Compile Include="HostAgent.fs" />
+        <Compile Include="../SageFs.FsiHost/FsiProtocol.fs" Link="FsiProtocol.fs" />
+        <Compile Include="FsiHostBuild.fs" />
+        <Compile Include="FsiHostClient.fs" />
+        <!-- No dependency on FileWatcher.fs itself (System/System.IO only) —
+             placed beside it because they're both directory-walk primitives,
+             and DashboardTypes.fs/Mcp.fs/DaemonMode.fs (SageFs/) need it for
+             their own project/file discovery walks. -->
+        <Compile Include="SafeDirectoryWalk.fs" />
+        <Compile Include="FileWatcher.fs" />
+        <Compile Include="DaemonOwnership.fs" />
+        <Compile Include="LiveTestWatcherCore.fs" />
+        <!-- Pure eval-actor decision core (SessionActivity/SessionGeneration/
+             EvalPhase/EvalInput/EvalDecision/decide) — compiled BEFORE
+             AppState.fs so it stays a standalone file the DST harness can
+             fold, instead of ratcheting AppState.fs over its line budget
+             (see EvalActorDecision.fs's header for why it can't be nested). -->
+        <Compile Include="EvalActorDecision.fs" />
+        <Compile Include="FsiSession.fs" />
+        <Compile Include="RemoteFsiSession.fs" />
+        <Compile Include="IsolatedFsiSession.fs" />
+        <Compile Include="ConfigHost.fs" />
+        <Compile Include="SessionAgent.fs" />
+        <!-- Pure warmup open-replay decision core (extractOpensFromLines/
+             ReflectedModuleFact/resolveWarmupOpens) — compiled BEFORE
+             AppState.fs for the same reason as EvalActorDecision.fs above:
+             a standalone, unit-testable file instead of ratcheting
+             AppState.fs over its line budget. -->
+        <Compile Include="OpenReplay.fs" />
+        <Compile Include="AppState.fs" />
+        <Compile Include="Middleware\EvaluableSubmission.fs" />
+        <Compile Include="Middleware\ComputationExpression.fs" />
+        <Compile Include="Middleware\Directives.fs" />
+        <Compile Include="Middleware\CompilationContext.fs" />
+        <Compile Include="Middleware\NonBlockingRun.fs" />
+        <Compile Include="Middleware\HotReloading.fs" />
+        <Compile Include="Middleware\Tracing.fs" />
+        <Compile Include="ActorCreation.fs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <EmbeddedResource Include="base.fsx" />
+        <EmbeddedResource Include="highlights.scm" LogicalName="highlights.scm" />
+        <EmbeddedResource Include="tests.scm" LogicalName="tests.scm" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="..\runtimes\win-x64\native\tree-sitter-fsharp.dll"
+              Pack="true"
+              PackagePath="runtimes\win-x64\native"
+              CopyToOutputDirectory="PreserveNewest"
+              Link="runtimes\win-x64\native\tree-sitter-fsharp.dll" />
+        <None Include="..\runtimes\osx-arm64\native\libtree-sitter-fsharp.dylib"
+              Condition="Exists('..\runtimes\osx-arm64\native\libtree-sitter-fsharp.dylib')"
+              Pack="true"
+              PackagePath="runtimes\osx-arm64\native"
+              CopyToOutputDirectory="PreserveNewest"
+              Link="runtimes\osx-arm64\native\libtree-sitter-fsharp.dylib" />
+        <None Include="..\runtimes\osx-x64\native\libtree-sitter-fsharp.dylib"
+              Condition="Exists('..\runtimes\osx-x64\native\libtree-sitter-fsharp.dylib')"
+              Pack="true"
+              PackagePath="runtimes\osx-x64\native"
+              CopyToOutputDirectory="PreserveNewest"
+              Link="runtimes\osx-x64\native\libtree-sitter-fsharp.dylib" />
+        <None Include="..\runtimes\linux-x64\native\libtree-sitter-fsharp.so"
+              Condition="Exists('..\runtimes\linux-x64\native\libtree-sitter-fsharp.so')"
+              Pack="true"
+              PackagePath="runtimes\linux-x64\native"
+              CopyToOutputDirectory="PreserveNewest"
+              Link="runtimes\linux-x64\native\libtree-sitter-fsharp.so" />
+        <None Include="..\runtimes\linux-arm64\native\libtree-sitter-fsharp.so"
+              Condition="Exists('..\runtimes\linux-arm64\native\libtree-sitter-fsharp.so')"
+              Pack="true"
+              PackagePath="runtimes\linux-arm64\native"
+              CopyToOutputDirectory="PreserveNewest"
+              Link="runtimes\linux-arm64\native\libtree-sitter-fsharp.so" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="FSharp.Compiler.Service" />
+        <PackageReference Include="FSharp.Data.Adaptive" />
+        <PackageReference Include="TreeSitter.DotNet" />
+
+        <PackageReference Include="FuzzySharp" />
+        <PackageReference Include="SageFs.Harmony" />
+        <PackageReference Include="Ionide.ProjInfo" />
+        <PackageReference Include="Ionide.ProjInfo.FCS" />
+        <PackageReference Include="System.Configuration.ConfigurationManager" />
+        <PackageReference Include="Fantomas.Core" />
+        <PackageReference Include="FSharp.SystemTextJson" />
+        <PackageReference Include="FsToolkit.ErrorHandling" />
+        <!-- Explicit logging abstractions pin: FSharp.Compiler.Service does not
+             always surface it transitively; the central-version pin keeps the
+             closure stable across TFMs. -->
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+        <!-- SQLite (friction storage) is daemon-only — see SageFs.fsproj, which
+             carries Microsoft.Data.Sqlite/SQLitePCLRaw.lib.e_sqlite3 and the
+             CVE-2025-6965 pin comment. SageFs.Host (the worker process) never
+             touches friction storage, so it must not link SQLite's native
+             library into its closure. -->
+        <PackageReference Include="Mono.Cecil" GeneratePathProperty="true" />
+    </ItemGroup>
+
+    <Target Name="AddCecilRocksReference" BeforeTargets="ResolveAssemblyReferences">
+        <ItemGroup>
+            <Reference Include="$(PkgMono_Cecil)\lib\netstandard2.0\Mono.Cecil.Rocks.dll" />
+        </ItemGroup>
+    </Target>
+
+</Project>

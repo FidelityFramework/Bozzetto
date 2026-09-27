@@ -1,0 +1,1647 @@
+namespace SageFs
+
+open System
+open System.Collections.Generic
+open SageFs.Measures
+
+/// The pure cohort core (sagefs-multiagent-vision.md §5.1, §5.2, §5.4, §5.7, §7.1, §7.3;
+/// Phase 1 item 7, §10). One `decide` turns a command into a new state plus recorded
+/// events plus effects-as-data; `replay` folds a recorded ledger back into that same
+/// state; `project` turns a ledger head plus session snapshots into the flat,
+/// index-aligned `CohortFrame` read model. No IO, no `DateTime.UtcNow`, no
+/// `Guid.NewGuid()` anywhere in this file — time and randomness are parameters, so
+/// every race a caller can construct is a reproducible, shrinkable test input.
+///
+/// Scope notes — read before extending this module:
+///
+/// - **Member identity is opaque.** Every type here is generic over `'m` (with
+///   `comparison` where it is used as a Map key). The canonical `MemberId` DU
+///   (browser tab / MCP transport / minted, §4.1) is Phase 1 item 8's concern and
+///   plugs in at integration by instantiating `'m = MemberId`; this module must
+///   never assume anything about `'m` beyond equality and ordering. Because the
+///   acting member is always the caller-supplied `'m` value (never a self-declared
+///   display string), claim/landing mutations are bound to identity by
+///   construction — there is no channel through which one member's command can
+///   mutate another member's claim by merely naming itself the same thing.
+/// - **`Authority`/`JoinableRole` are included** because the vision asks for their
+///   shape here (§4.2). Phase 1 item 8 added `Authority.present` (a total, pure
+///   lookup — `CohortState.Conductor` is the only door) and wired `decide` to
+///   check it on the two conductor-only commands (`ReassignClaim`,
+///   `DelegateConductor`). The total `cohortTools : SessionState * Authority *
+///   CohortPhase -> Set<ToolName>` affordance function that *consumes* `Authority`
+///   for MCP tool-listing filtering, and its solo-user-invariant property (§7.3
+///   #8), is still Phase 1 item 11 (§8.1) — it would require depending on
+///   `Affordances.fs`/`SessionState`, which sits outside this island. Likewise the
+///   MCP-boundary `Authority.tryPresent : MemberId -> CohortState -> Result<Authority,
+///   SageFsError>` the vision text names (token presentation at the transport
+///   edge) is a later item's concern — this module's `present` is pure state, so
+///   it is total and returns `Authority<'m>` directly, never `SageFsError`.
+/// - **`Decision`/`record_decision`** (the ledger's human-facing decision log, the
+///   second half of §5.2) is Phase 1 item 10, not built here. The ledger
+///   primitive this file *does* build (`LedgerEntry`/`replay`) is what item 10
+///   will read and what a `Decision` will be appended alongside.
+/// - **`CohortFrame` here is trimmed to what `decide`'s own state and test
+///   outcomes can produce**: members, claims, and the three test bitplanes. The
+///   remaining §5.7 fields (`LedgerTail`, `Queue`/`LandingSummary`, `Waits`,
+///   `LaneEvents`, `Spans`, `Budget`, the territory map, the symbol coupling
+///   masks) belong to later phase items (§5.4's landing queue as its own read
+///   projection, §6.5's cockpit, §3.4's budgets) whose types do not exist yet.
+///   Speculative placeholder fields for them here would be dead weight the
+///   roast doctrine explicitly bans; they are left for those items to add.
+/// - **`Measures.seq` from the vision text is `Measures.ledgerSeq` here.** A
+///   throwaway `dotnet fsi` compile check confirmed that a measure type literally
+///   named `seq` shadows both `seq<'T>` type annotations and the `seq { }`
+///   computation-expression builder for every file that `open`s the module it is
+///   defined in — and `SageFs.Core/Measures.fs` is already `open`ed by files that
+///   use `seq { }` (e.g. `Features/LiveTestingTypes.fs`). That is a real,
+///   repo-wide collision, not a hypothetical one, so the ledger/frame version
+///   measure is named `ledgerSeq` instead; it is the same integer the vision
+///   describes (dense, cohort-monotonic, also the `CohortFrame.Version`).
+/// - **`fork` (§5.2's `atSeq` forking) is not built here.** Item 7's brief is
+///   `decide` + `replay` + `project` + the seventeen properties; `fork` is a thin
+///   wrapper over `replay (prefix atSeq)` plus a `Forked` event this module does
+///   not yet define, and is left for whichever item actually consumes it.
+module Cohort =
+
+  // ── Time and randomness as parameters (§7.1) ──────────────────────────────
+
+  /// When a command arrived. Never read from `DateTime.UtcNow` inside `decide`.
+  type Clock = DateTime
+
+  /// The bytes a token/id is minted from. Never read from `Guid.NewGuid()` inside
+  /// `decide`. Empty is valid (mints a fixed placeholder id) for callers that do
+  /// not need entropy — no command in this module *requires* non-empty entropy.
+  type Entropy = byte[]
+
+  // ── Test identity (local, minimal — §5.3's TestRunKey/InputHash overhaul is a
+  //    separate item; the cohort core only needs an opaque, orderable test id to
+  //    shape the matrix bitplanes in `project`) ──────────────────────────────
+
+  type TestId = TestId of string
+
+  // ── Claim/landing identifiers, minted from entropy (never Guid.NewGuid) ────
+
+  type ClaimId = ClaimId of string
+  type LandingId = LandingId of string
+
+  // ── Claim scope (§5.1) ──────────────────────────────────────────────────
+
+  /// v1 is deliberately small: `File`/`Project`, exclusive only. The `Module`/
+  /// `Symbol`/`Contract` cases the vision puts in this DU from day one (so
+  /// `overlaps` is total from day one) are Phase 3 (§6.1) — they are not added
+  /// here because nothing in this module constructs them yet, and an unused case
+  /// with no producer is exactly the speculative surface §1's roast complains
+  /// about. Extending the DU when Phase 3 lands is a compile error everywhere the
+  /// match was not extended — that is the intended forcing function.
+  [<RequireQualifiedAccess>]
+  type ClaimScope =
+    | File of repoRelativePath: string
+    | Project of fsprojRelativePath: string
+
+  module ClaimScope =
+    let private normalize (path: string) = path.Replace('\\', '/')
+
+    /// `Project` claims a directory (the fsproj's own directory), not the fsproj
+    /// file itself — a `File` overlaps a `Project` iff it is under that directory.
+    let private projectDir (fsprojRelativePath: string) =
+      let n = normalize fsprojRelativePath
+      match n.LastIndexOf '/' with
+      | -1 -> ""
+      | i -> n.Substring(0, i)
+
+    let private underDir (dir: string) (path: string) =
+      let d = normalize dir
+      let p = normalize path
+      if d = "" then true
+      else p = d || p.StartsWith(d + "/", StringComparison.Ordinal)
+
+    /// Path arithmetic, never a regex per claim (§5.1). `File` overlaps `File`
+    /// iff they name the same path; `Project` overlaps `Project` iff either
+    /// directory contains the other; `File`/`Project` overlap iff the file is
+    /// under the project's directory.
+    let overlaps (a: ClaimScope) (b: ClaimScope) : bool =
+      match a, b with
+      | ClaimScope.File fa, ClaimScope.File fb -> normalize fa = normalize fb
+      | ClaimScope.Project pa, ClaimScope.Project pb ->
+        let da, db = projectDir pa, projectDir pb
+        da = db || underDir da db || underDir db da
+      | ClaimScope.File f, ClaimScope.Project p
+      | ClaimScope.Project p, ClaimScope.File f -> underDir (projectDir p) f
+
+  // ── Bounded free-text (§4.3, §5.2) ─────────────────────────────────────
+
+  /// "I am acquiring this claim because ...": one line, bounded. Constructed only
+  /// via `Purpose.tryCreate`.
+  type Purpose = private Purpose of string
+
+  module Purpose =
+    let maxLength = 200
+
+    let tryCreate (raw: string) : Result<Purpose, string> =
+      if isNull raw then Error "purpose is null"
+      else
+        let trimmed = raw.Trim()
+        if trimmed.Length = 0 then Error "purpose is empty"
+        elif trimmed.Length > maxLength then Error (sprintf "purpose exceeds %d characters" maxLength)
+        elif trimmed.Contains "\n" then Error "purpose must be one line"
+        else Ok (Purpose trimmed)
+
+    let value (Purpose p) = p
+
+  /// A landing's "why", becomes the squash/merge message body: bounded, may be a
+  /// paragraph (unlike `Purpose`, newlines are allowed). Constructed only via
+  /// `Statement.tryCreate`. (Also the primitive `Decision.Statement`, §5.2, will
+  /// reuse once decisions are built — Phase 1 item 10.)
+  type Statement = private Statement of string
+
+  module Statement =
+    let maxLength = 1000
+
+    let tryCreate (raw: string) : Result<Statement, string> =
+      if isNull raw then Error "statement is null"
+      else
+        let trimmed = raw.Trim()
+        if trimmed.Length = 0 then Error "statement is empty"
+        elif trimmed.Length > maxLength then Error (sprintf "statement exceeds %d characters" maxLength)
+        else Ok (Statement trimmed)
+
+    let value (Statement s) = s
+
+  // ── Authority (shape only — §4.2; enforcement wiring is Phase 1 item 8) ────
+
+  [<RequireQualifiedAccess>]
+  type JoinableRole =
+    | Implementer
+    | Verifier
+    | Observer
+
+  /// A capability, not a role name (§4.2): `Conductor` is a binding this module
+  /// will move via a future `delegate_conductor` command (item 8), never a value
+  /// a caller can assert about itself. Not yet consulted by `decide` — see the
+  /// module-level scope note.
+  [<RequireQualifiedAccess>]
+  type Authority<'m> =
+    | Member of 'm * JoinableRole
+    | Conductor of 'm
+    | Anonymous
+
+  // ── Membership (§4.1, §4.3) ────────────────────────────────────────────
+
+  [<RequireQualifiedAccess>]
+  type MemberPresence =
+    | Present
+    | Departed of since: DateTime
+
+  type MemberRecord = {
+    Role: JoinableRole
+    Presence: MemberPresence
+    LastRenewal: DateTime
+    /// Which SESSION (checkout) this member works in, if any (item 13c,
+    /// sagefs-multiagent-vision.md). `None` means the member joined without a
+    /// resolvable session — still a full member, just absent from the test
+    /// matrix (`CohortOwner.frameOf` only attributes a row to members with
+    /// `Some sid`). Set once at `Join` time; there is no v1 command to rebind
+    /// it after joining (a member who switches checkouts departs and rejoins).
+    Session: string option
+  }
+
+  // ── Claims (§5.1, §4.3) ─────────────────────────────────────────────────
+
+  /// The holder lives IN the state, not beside it — a record with a top-level
+  /// `Holder` field plus a `Released` state could express "released, still held";
+  /// folding the holder into the state makes that unwritable (§4.3).
+  [<RequireQualifiedAccess>]
+  type ClaimState<'m> =
+    | Held of holder: 'm
+    | Orphaned of previousHolder: 'm * since: DateTime
+    | Released of by: 'm * at: DateTime
+
+  type Claim<'m> = {
+    Id: ClaimId
+    Fence: int64<fence>
+    Scope: ClaimScope
+    Purpose: Purpose
+    Since: DateTime
+    State: ClaimState<'m>
+  }
+
+  /// WHY `Retention.sweep` removed a claim from `CohortState` — carried on
+  /// the `ClaimPruned` event so the ledger records the reason, never just the
+  /// fact. `SupersededBy` names the claim that now covers the same scope.
+  [<RequireQualifiedAccess>]
+  type ClaimPruneReason =
+    | OrphanedPastRetention of since: DateTime
+    | ReleasedPastRetention of at: DateTime
+    | SupersededBy of ClaimId
+
+  // ── Landing (§5.4) ──────────────────────────────────────────────────────
+
+  [<RequireQualifiedAccess>]
+  type NextAction =
+    | RebaseAndResubmit
+    | AwaitConductor
+    | FixTests of TestId list
+    | Withdraw
+
+  /// Trimmed to the blockers `decide` (this item) can actually produce.
+  /// `OutsideClaims`/`ClaimOverlap`/`ContractChangedWithoutDecision` need a git
+  /// diff's file list, which only exists once the shell's `ComputeAffected`
+  /// effect reports it back with that detail (§5.4's `LandingEffect.ComputeAffected`
+  /// today only carries shas) — adding those blockers speculatively, before any
+  /// command can construct them, is exactly the dead-weight the roast bans.
+  [<RequireQualifiedAccess>]
+  type LandingBlocker<'m> =
+    | RebaseConflict of files: string list
+    | FailingTests of TestId list
+    | StaleClaimFence of ClaimId
+    | HeadMoved of from: string * to': string
+    | VetoedBy of 'm * reason: string
+    /// The verifier could NOT reach a verdict — not "tests failed", but "we
+    /// couldn't run them" (e.g. the integration session was still warming up
+    /// after the rebase-triggered rebuild, or was otherwise untrustworthy).
+    /// Kept structurally distinct from `FailingTests` on purpose: an
+    /// inconclusive verification is a transient, environmental condition, not a
+    /// statement that the landing's code is broken — so its `NextAction` is
+    /// `RebaseAndResubmit` (retry the same landing once the environment settles),
+    /// where a real `FailingTests` is `FixTests` (the code IS broken; fix it and
+    /// submit a fresh landing). Both now pop the queue, so neither ever
+    /// dead-locks the cohort — the distinction is what the requester should DO,
+    /// not whether the queue advances. Conflating the two — the old behaviour,
+    /// which reported every "couldn't verify" as "all tests failing" — collapsed
+    /// a transient into a definitive failure and told the requester to fix code
+    /// that was never broken.
+    | Inconclusive of reason: string
+
+  [<RequireQualifiedAccess>]
+  type LandingState<'m> =
+    | Queued
+    | Rebasing of onto: string
+    /// `base` is the IntegrationHead this landing was rebased ONTO — the value
+    /// the land-time HeadMoved guard compares against the current IntegrationHead
+    /// (Property 11). `rebasedHead` is the NEW commit the rebase produced — the
+    /// FastForward target. These are two distinct shas for any real rebase;
+    /// conflating them (an earlier bug) made every real landing misfire as
+    /// HeadMoved because the new commit never equals the head it sits on top of.
+    | Verifying of baseHead: string * rebasedHead: string * affectedTests: int * running: int
+    | Blocked of LandingBlocker<'m> * NextAction
+    | Landed of integrationCommit: string
+    | Withdrawn
+
+  /// When a landing stopped being live. `decide` keeps this in lock-step with
+  /// `LandingState` in ONE place (`stampSettlement`, applied to every command's
+  /// result): terminal states (Blocked/Landed/Withdrawn) are `SettledAt`, live
+  /// ones (Queued/Rebasing/Verifying) are `Unsettled` — so the two can never
+  /// disagree, and `Retention` can age a settled landing out without any
+  /// terminal arm having to remember to stamp a time.
+  [<RequireQualifiedAccess>]
+  type LandingSettlement =
+    | Unsettled
+    | SettledAt of DateTime
+
+  type LandingRequest<'m> = {
+    Id: LandingId
+    Requester: 'm
+    /// The claims the requester is presenting as backing this landing, each with
+    /// the fence it was holding them at when the landing was requested.
+    Claims: (ClaimId * int64<fence>) list
+    Commits: string list
+    BaseAtQueue: string
+    Statement: Statement
+    State: LandingState<'m>
+    /// How many times `FastForwardFailed`'s transient-infra-failure branch has
+    /// re-entered `Rebasing` for THIS landing (roast-2day-cmd §RISK — bounded
+    /// so a persistent infra failure cannot retry forever, `decide`'s
+    /// `FastForwardFailed` case, `maxFastForwardAttempts`). Additive: 0 for
+    /// every landing until its first fast-forward failure. Deliberately on
+    /// the request record, not folded into `LandingState.Rebasing`'s own
+    /// shape — the count must survive the Rebasing -> Verifying -> (failure)
+    /// -> Rebasing round trip, and `LandingState.Rebasing`/`Verifying` are
+    /// read by several formatters outside this file (SseWriter, CohortPlay,
+    /// CohortInspector) that only pattern-match their EXISTING arity; adding
+    /// it here keeps that arity untouched.
+    FastForwardAttempts: int
+    /// Maintained solely by `stampSettlement` — see `LandingSettlement`.
+    Settlement: LandingSettlement
+  }
+
+  // ── Cohort state (§7.1) — never persisted; `replay` is the only way to get one ─
+
+  type CohortState<'m when 'm: comparison> = {
+    NextFence: int64<fence>
+    IntegrationHead: string
+    Members: Map<'m, MemberRecord>
+    Claims: Map<ClaimId, Claim<'m>>
+    Landings: Map<LandingId, LandingRequest<'m>>
+    /// Strict FIFO. Only `Queue.Head` may be `Rebasing`/`Verifying` — this is
+    /// what makes v1 landing "strictly serial" (§5.4) structural rather than a
+    /// convention `decide`'s callers have to honor.
+    Queue: LandingId list
+    /// The conductor binding (§4.2). `None` until the first member joins an
+    /// empty-membership cohort — v1 has no separate `create_cohort` command, so
+    /// the first `Join` IS create_cohort's conductor binding. Moved only by
+    /// `DelegateConductor`; never a value a member can assert about itself.
+    Conductor: 'm option
+  }
+
+  /// The well-known git "no parent" sha — a real, meaningful sentinel (`git
+  /// hash-object` never produces it), not a fabricated placeholder.
+  let nullSha = String.replicate 40 "0"
+
+  /// Silence, not busyness, costs a seat (§4.3): a member's lease is renewed by
+  /// any tool call and by `Evaluating`; the reaper is what makes silence cost
+  /// something, so this is generous. `Clock` being a parameter means tests exert
+  /// this via generated `DateTime` deltas, never a shortened constant.
+  let leaseWindow = TimeSpan.FromMinutes 30.0
+
+  /// How long SETTLED history stays in `CohortState` before `Retention.sweep`
+  /// (run by every `Tick`) removes it: an orphaned claim (the conductor's
+  /// window to `ReassignClaim` it), a released claim, a departed member, a
+  /// settled (Blocked/Landed/Withdrawn) landing. Before this existed none of
+  /// them was ever removed — the dashboard and `get_cohort_status` listed
+  /// 43 orphaned claims, 4 departed members and 9 blocked landings, hours
+  /// old. One window for all of them so a member's seat and the claims that
+  /// name it age out together. Like `leaseWindow`, `Clock` is a parameter, so
+  /// tests exert it via generated `DateTime` deltas, never a shortened value.
+  let settledRetention = TimeSpan.FromMinutes 30.0
+
+  module CohortState =
+    let empty () : CohortState<'m> = {
+      NextFence = 0L<fence>
+      IntegrationHead = nullSha
+      Members = Map.empty
+      Claims = Map.empty
+      Landings = Map.empty
+      Queue = []
+      Conductor = None
+    }
+
+  module Authority =
+    /// The ONLY door (§4.2): a member's id becomes an `Authority` by looking it up
+    /// in `CohortState`. Total — a non-member is `Anonymous`, never an error.
+    /// `Conductor` is read straight off the `Conductor` binding in state; it is
+    /// never a value a caller can assert about itself by naming a role in `Join`.
+    /// The vision's MCP-boundary `tryPresent : MemberId -> CohortState ->
+    /// Result<Authority, SageFsError>` (token presentation at the transport edge)
+    /// is a later item's concern — this lookup is pure state, so it stays total.
+    let present (who: 'm) (state: CohortState<'m>) : Authority<'m> =
+      match state.Conductor with
+      | Some c when c = who -> Authority.Conductor who
+      // default policy: every other Conductor value (unbound, or bound to
+      // someone else) falls through to an ordinary membership lookup —
+      // `state.Conductor` is a single binding, not a case set that grows, so
+      // there is nothing here for a future case to silently absorb.
+      | _ ->
+        match Map.tryFind who state.Members with
+        | Some { Presence = MemberPresence.Present; Role = role } -> Authority.Member(who, role)
+        | Some { Presence = MemberPresence.Departed _ } -> Authority.Anonymous
+        | None -> Authority.Anonymous
+
+  // ── Commands, events, effects (§7.1: effects are data) ────────────────────
+
+  [<RequireQualifiedAccess>]
+  type CohortCommand<'m> =
+    /// `session` (item 13c) is the caller's resolved SESSION (checkout) id, if
+    /// any — the shell resolves this (Mcp.fs's `join_cohort`), `decide` only
+    /// stores it verbatim in the new `MemberRecord`.
+    | Join of who: 'm * role: JoinableRole * session: string option
+    | Depart of who: 'm
+    | RenewLease of who: 'm
+    /// The shell posts this periodically; `decide` derives who has gone silent
+    /// from `Clock - LastRenewal >= leaseWindow`. No timer lives in this module.
+    | Tick
+    | AcquireClaim of who: 'm * scope: ClaimScope * purpose: string
+    | ReleaseClaim of who: 'm * claimId: ClaimId * fence: int64<fence>
+    /// Conductor action: reassign an `Orphaned` claim. Gated by `Authority.present
+    /// by state = Authority.Conductor _` (Phase 1 item 8) — refused with
+    /// `CohortError.NotConductor` otherwise.
+    | ReassignClaim of by: 'm * claimId: ClaimId * toMember: 'm
+    /// Conductor action: rebind `Conductor` to another Present member (§4.2's
+    /// "delegate conductor to member X rebinds it"). Gated the same way as
+    /// `ReassignClaim`.
+    | DelegateConductor of by: 'm * toMember: 'm
+    /// The member's own watcher observed a save; warn (never block — a claim
+    /// cannot stop an edit, §5.1) if it landed inside someone else's claim.
+    | ObserveSave of who: 'm * path: string
+    | RequestLanding of requester: 'm * claims: (ClaimId * int64<fence>) list * commits: string list * statement: string
+    /// Effect completions are commands (§5.2) — this is `RebuildCompleted`'s
+    /// pattern (`SessionManager.fs:79-82`) applied to landing.
+    /// `Ok newHead` or `Error conflictFiles`.
+    | RebaseCompleted of LandingId * Result<string, string list>
+    | AffectedComputed of LandingId * TestId list
+    | TestsCompleted of LandingId * failing: TestId list
+    /// The verifier could not produce a verdict at all — distinct from
+    /// `TestsCompleted` with a non-empty failing list. The performer emits this
+    /// (instead of reporting every requested test as "failing") when it cannot
+    /// trust the integration session enough to run — e.g. the rebase-triggered
+    /// rebuild left the session warming up, or a bounded settle wait elapsed.
+    /// Fail-closed is preserved (the landing still does NOT fast-forward), but
+    /// `decide` records it as `Blocked(Inconclusive ...)` and un-jams the queue
+    /// rather than treating a transient as a permanent test failure.
+    | VerificationInconclusive of LandingId * reason: string
+    | FastForwardCompleted of LandingId * committedSha: string
+    /// The FastForward EFFECT itself failed — an infra error (the branch
+    /// moved concurrently under a raw git command, a transient I/O error,
+    /// a bad ref), as opposed to `FastForwardCompleted`'s `HeadMoved` guard,
+    /// which is `decide`'s OWN check of a fast-forward that nominally
+    /// succeeded. Before this case existed the performer could only log the
+    /// failure (`CohortOwner.dispatchLandingEffects`'s `FastForward` arm) —
+    /// nothing ever re-entered `decide`, so the landing was permanently
+    /// stranded in `Verifying` (roast-6 #7b). See the `decide` case below for
+    /// the transition this now drives.
+    | FastForwardFailed of LandingId * reason: string
+    | WithdrawLanding of who: 'm * LandingId
+    | VetoLanding of by: 'm * LandingId * reason: string
+    /// Conductor action (item 14c): bind `IntegrationHead` to a git sha the
+    /// shell has already resolved and checked out into the daemon's
+    /// integration worktree (`SageFs/Mcp.fs`'s `set_integration_ref`, which
+    /// resolves the ref to a sha with `CohortGit.revParse` BEFORE dispatching
+    /// this command — `decide` never resolves a ref itself, it only records
+    /// the sha it is given). Gated the same way as `ReassignClaim`/
+    /// `DelegateConductor`. This is additive-only: no existing landing arm
+    /// (`RequestLanding`'s `advanceQueue` reads `IntegrationHead` as
+    /// `onto`, `FastForwardCompleted`'s `HeadMoved` check compares against
+    /// it) changes — both already treat `IntegrationHead` as ordinary
+    /// mutable state, whatever last set it.
+    | SetIntegrationHead of by: 'm * head: string
+    /// Conductor action (armfix, cmd-handoff.md item B2): clear a
+    /// `Blocked(VetoedBy, AwaitConductor)` landing and re-Queue it (see the
+    /// `decide` case's doc comment for the re-Queue-vs-Withdraw design
+    /// rationale). Gated the same way as `SetIntegrationHead`/
+    /// `ReassignClaim`/`DelegateConductor`.
+    | ResolveVeto of by: 'm * LandingId
+
+  [<RequireQualifiedAccess>]
+  type CohortEvent<'m> =
+    /// Carries the same `session` `Join` was given (item 13c) so `replay`
+    /// reconstructs an identical `MemberRecord.Session` from the ledger alone.
+    | MemberJoined of 'm * JoinableRole * session: string option
+    | MemberDeparted of 'm * since: DateTime
+    | LeaseRenewed of 'm
+    /// The `Conductor` binding was made for the first time — v1's `create_cohort`
+    /// (§4.2), fired alongside `MemberJoined` for the cohort's first joiner only.
+    | ConductorBound of 'm
+    /// The `Conductor` binding moved from one Present member to another.
+    | ConductorDelegated of from: 'm * to': 'm
+    | ClaimAcquired of ClaimId * ClaimScope * holder: 'm * fence: int64<fence>
+    | ClaimReleased of ClaimId * by: 'm * fence: int64<fence>
+    | ClaimOrphaned of ClaimId * previousHolder: 'm * fence: int64<fence>
+    | ClaimReassigned of ClaimId * toMember: 'm * fence: int64<fence>
+    | ClaimViolationObserved of ClaimId * observer: 'm * holder: 'm * path: string
+    | LandingQueued of LandingId * requester: 'm
+    | LandingStateChanged of LandingId * LandingState<'m>
+    | LandingLanded of LandingId * integrationCommit: string
+    | LandingWithdrawn of LandingId
+    | LandingVetoed of LandingId * by: 'm * reason: string
+    /// The `IntegrationHead` binding was (re)configured (item 14c).
+    | IntegrationConfigured of head: string
+    /// A conductor cleared a veto via `ResolveVeto` and re-Queued the landing.
+    | LandingVetoResolved of LandingId * by: 'm
+    /// `Retention.sweep` removed settled history from `CohortState` (emitted by
+    /// `Tick`). Audit only — replay re-derives the removal from the recorded
+    /// `Tick` command and its `Clock`, never from these events.
+    | ClaimPruned of ClaimId * ClaimPruneReason
+    | LandingPruned of LandingId * settledAt: DateTime
+    | MemberPurged of 'm * departedSince: DateTime
+
+  /// What the pure machine asks the shell to DO. `decide` never rebases, never
+  /// runs a test, never writes SQLite — it returns these, the shell performs
+  /// them, and posts a typed completion back as a command (§7.1).
+  [<RequireQualifiedAccess>]
+  type CohortEffect<'m> =
+    /// Replay the member's own `commits` (their landing request's `Commits`,
+    /// reachable in the shared object store) onto `onto` in the integration
+    /// worktree — the realistic cohort model: a member's commits live on their
+    /// OWN branch/checkout, and landing brings them onto the integration head.
+    /// (Earlier this carried only `onto` and rebased whatever the worktree HEAD
+    /// already was, which silently required the caller to pre-position the
+    /// worktree at the commits — the integration worktree never had them.)
+    | Rebase of LandingId * onto: string * commits: string list
+    | ComputeAffected of LandingId * baseSha: string * headSha: string
+    | RunTests of LandingId * TestId list
+    | FastForward of LandingId * toSha: string
+    | Notify of 'm * CohortEvent<'m>
+
+  [<RequireQualifiedAccess>]
+  type CohortError<'m> =
+    | DuplicateJoin of 'm
+    | MemberNotPresent of 'm
+    | ClaimConflict of ClaimScope * holder: 'm
+    | NotClaimHolder of ClaimId * requester: 'm
+    | UnknownClaim of ClaimId
+    | ClaimNotOrphaned of ClaimId
+    | DuplicateClaimId of ClaimId
+    | StaleClaimFence of ClaimId * presented: int64<fence> * current: int64<fence>
+    | InvalidPurpose of string
+    | InvalidStatement of string
+    | UnknownLanding of LandingId
+    | DuplicateLandingId of LandingId
+    | NotLandingRequester of LandingId * 'm
+    | LandingNotAtFrontOfQueue of LandingId
+    | LandingNotInExpectedState of LandingId * expected: string
+    /// A conductor-only command (`ReassignClaim`, `DelegateConductor`) was issued
+    /// by a member whose `Authority.present` is not `Conductor _` (§4.2).
+    | NotConductor of 'm
+
+  // ── Id minting from entropy (never Guid.NewGuid, §7.1) ────────────────────
+
+  module private Ids =
+    let private hex (bytes: byte[]) =
+      bytes |> Array.truncate 12 |> Array.map (fun b -> b.ToString "x2") |> String.concat ""
+
+    let mintClaimId (entropy: Entropy) : ClaimId =
+      ClaimId ("c-" + (if Array.isEmpty entropy then "0" else hex entropy))
+
+    let mintLandingId (entropy: Entropy) : LandingId =
+      LandingId ("l-" + (if Array.isEmpty entropy then "0" else hex entropy))
+
+  // ── decide's helpers ────────────────────────────────────────────────────
+
+  let private isPresent (state: CohortState<'m>) (who: 'm) =
+    match Map.tryFind who state.Members with
+    | Some { Presence = MemberPresence.Present } -> true
+    | Some { Presence = MemberPresence.Departed _ } -> false
+    | None -> false
+
+  /// Every `Held` claim of `who` becomes `Orphaned`, each with its own fence bump
+  /// (property 3: fence is strictly increasing per claim id, not shared).
+  let private orphanClaimsOf (who: 'm) (now: DateTime) (state: CohortState<'m>) : CohortState<'m> * CohortEvent<'m> list =
+    let mutable fence = state.NextFence
+    let mutable claims = state.Claims
+    let events = ResizeArray()
+    for KeyValue(cid, claim) in state.Claims do
+      match claim.State with
+      | ClaimState.Held holder when holder = who ->
+        fence <- fence + 1L<fence>
+        let updated = { claim with Fence = fence; State = ClaimState.Orphaned(holder, now) }
+        claims <- Map.add cid updated claims
+        events.Add(CohortEvent.ClaimOrphaned(cid, holder, fence))
+      | ClaimState.Held _ -> ()
+      | ClaimState.Orphaned _ -> ()
+      | ClaimState.Released _ -> ()
+    { state with Claims = claims; NextFence = fence }, List.ofSeq events
+
+  let private departMember (who: 'm) (now: DateTime) (state: CohortState<'m>) : CohortState<'m> * CohortEvent<'m> list =
+    let record = state.Members.[who]
+    let state1 = { state with Members = Map.add who { record with Presence = MemberPresence.Departed now } state.Members }
+    let state2, orphanEvents = orphanClaimsOf who now state1
+    state2, CohortEvent.MemberDeparted(who, now) :: orphanEvents
+
+  /// Every claim the requester is presenting must currently be `Held` by them at
+  /// the presented fence — checked at request time (early warning) and again at
+  /// land time (the contract that matters, §7.2).
+  let private validateLandingClaims (state: CohortState<'m>) (requester: 'm) (claims: (ClaimId * int64<fence>) list) : Result<unit, CohortError<'m>> =
+    claims
+    |> List.fold (fun acc (cid, presentedFence) ->
+      match acc with
+      | Error _ -> acc
+      | Ok () ->
+        match Map.tryFind cid state.Claims with
+        | None -> Error(CohortError.UnknownClaim cid)
+        | Some c ->
+          match c.State with
+          | ClaimState.Held holder when holder = requester ->
+            if presentedFence <> c.Fence then Error(CohortError.StaleClaimFence(cid, presentedFence, c.Fence)) else Ok ()
+          | ClaimState.Held _
+          | ClaimState.Orphaned _
+          | ClaimState.Released _ -> Error(CohortError.NotClaimHolder(cid, requester)))
+      (Ok ())
+
+  /// If the new front of the queue is `Queued`, kick off its rebase. No-op
+  /// otherwise (front already in flight, or queue empty).
+  let private advanceQueue (state: CohortState<'m>) : CohortState<'m> * CohortEvent<'m> list * CohortEffect<'m> list =
+    match state.Queue with
+    | next :: _ ->
+      match Map.tryFind next state.Landings with
+      | Some req when req.State = LandingState.Queued ->
+        let onto = state.IntegrationHead
+        let rebasing = { req with State = LandingState.Rebasing onto }
+        let newState = { state with Landings = Map.add next rebasing state.Landings }
+        newState, [ CohortEvent.LandingStateChanged(next, rebasing.State) ], [ CohortEffect.Rebase(next, onto, req.Commits) ]
+      // default policy: a front-of-queue landing that is missing (should not
+      // happen) or already past Queued (Rebasing/Verifying/Blocked/Landed/
+      // Withdrawn) needs no fresh Rebase effect — a no-op for every
+      // LandingState other than Queued, by construction, whatever the DU
+      // ever grows to.
+      | _ -> state, [], []
+    | [] -> state, [], []
+
+  let private requireAtFrontOfQueue (state: CohortState<'m>) (id: LandingId) : Result<unit, CohortError<'m>> =
+    if state.Queue |> List.tryHead = Some id then Ok () else Error(CohortError.LandingNotAtFrontOfQueue id)
+
+  /// The ONE terminal-transition helper (roast-2day/roast-2day-cmd §1): every
+  /// arm that blocks a landing for good (this round of verification is over,
+  /// the requester must act) routes through here, so the pop+advance
+  /// discipline is a single copy-paste-proof site instead of four
+  /// independently-maintained ones. Before this helper existed,
+  /// `RebaseCompleted`'s conflict arm / `TestsCompleted`'s failing arm /
+  /// `VerificationInconclusive` each hand-rolled "filter the id out of
+  /// `Queue`, then `advanceQueue`" — and three OTHER arms
+  /// (`VetoLanding`, `FastForwardCompleted`'s `HeadMoved`/`StaleClaimFence`,
+  /// `FastForwardFailed`'s `HeadMoved`) quietly forgot the pop, jamming the
+  /// whole serial queue behind a landing that was never coming back
+  /// (`NO-TERMINAL-IN-QUEUE`, `CohortSpec.fs`). Routing every terminal arm
+  /// through this one function makes a future non-popping arm a
+  /// compile-visible anomaly (an arm that builds its own `Blocked` value
+  /// inline, instead of calling this, stands out in review) rather than a
+  /// silent, easy-to-repeat omission.
+  let private blockAndPop
+      (state: CohortState<'m>)
+      (id: LandingId)
+      (req: LandingRequest<'m>)
+      (blocker: LandingBlocker<'m>)
+      (nextAction: NextAction)
+      : CohortState<'m> * CohortEvent<'m> list * CohortEffect<'m> list =
+    let blocked = { req with State = LandingState.Blocked(blocker, nextAction) }
+    let poppedQueue = state.Queue |> List.filter (fun x -> x <> id)
+    let stateAfter = { state with Landings = Map.add id blocked state.Landings; Queue = poppedQueue }
+    let advanced, advEvents, advEffects = advanceQueue stateAfter
+    advanced, CohortEvent.LandingStateChanged(id, blocked.State) :: advEvents, advEffects
+
+  /// Bounded so a persistent `FastForward` infra failure (the branch moved
+  /// concurrently under a raw git command, a transient I/O error, a bad ref —
+  /// never a real head-move, which is `FastForwardFailed`'s own `HeadMoved`
+  /// guard, not this loop) cannot spin the rebase → verify → fast-forward
+  /// pipeline forever (roast-2day-cmd §RISK: "FastForwardFailed has no retry
+  /// bound"). A named module constant, never an inline literal at the call
+  /// site (AGENTS.md / cmd-handoff.md §1.4: no magic numbers anywhere).
+  let private maxFastForwardAttempts = 3
+
+  // ── Retention: settled history does not live forever ────────────────────
+
+  /// The pure decision of what settled history leaves `CohortState` at a given
+  /// `now`. Run by every `Tick` (the reaper's existing periodic command — there
+  /// is no per-artifact event to hang a time-based expiry on), and a pure
+  /// function of `(state, now)`, so `replay` re-derives every prune from the
+  /// recorded `Tick` clocks. It only ever removes SETTLED artifacts — never a
+  /// `Held` claim, a `Present` member, the conductor's seat, or a live landing.
+  module Retention =
+
+    let private aged (now: DateTime) (since: DateTime) = now - since >= settledRetention
+
+    /// Which claim outranks the others on the same scope: a `Held` claim beats
+    /// any orphan; among orphans the newest (highest fence) wins. The fence is
+    /// bumped on every state change and `ClaimId` breaks any tie, so the choice
+    /// is total and deterministic.
+    let private rankKey (c: Claim<'m>) =
+      let liveness =
+        match c.State with
+        | ClaimState.Held _ -> 1
+        | ClaimState.Orphaned _
+        | ClaimState.Released _ -> 0
+      liveness, c.Fence, c.Id
+
+    /// Claims to remove, with why. An orphan is dead weight the moment ANOTHER
+    /// claim covers the same scope (a live `Held` one, or a newer orphan) — the
+    /// conductor has nothing left to reassign — otherwise it lives out the
+    /// window. A released claim is history and lives out the window.
+    let claimsToPrune (now: DateTime) (claims: Map<ClaimId, Claim<'m>>) : (ClaimId * ClaimPruneReason) list =
+      let winners : Map<ClaimScope, Claim<'m>> =
+        claims
+        |> Map.fold
+          (fun acc _ c ->
+            match c.State with
+            | ClaimState.Released _ -> acc
+            | ClaimState.Held _
+            | ClaimState.Orphaned _ ->
+              match Map.tryFind c.Scope acc with
+              | Some w when rankKey w >= rankKey c -> acc
+              | Some _
+              | None -> Map.add c.Scope c acc)
+          Map.empty
+      [ for KeyValue(id, c) in claims do
+          match c.State with
+          | ClaimState.Held _ -> ()
+          | ClaimState.Released(_, at) ->
+            if aged now at then yield id, ClaimPruneReason.ReleasedPastRetention at
+          | ClaimState.Orphaned(_, since) ->
+            let winner = Map.find c.Scope winners
+            if winner.Id <> id then yield id, ClaimPruneReason.SupersededBy winner.Id
+            elif aged now since then yield id, ClaimPruneReason.OrphanedPastRetention since ]
+
+    /// Settled landings to remove. A landing vetoed and awaiting the conductor
+    /// is an outstanding DECISION, not history, so it stays until resolved.
+    let landingsToPrune (now: DateTime) (landings: Map<LandingId, LandingRequest<'m>>) : (LandingId * DateTime) list =
+      [ for KeyValue(id, l) in landings do
+          match l.Settlement with
+          | LandingSettlement.Unsettled -> ()
+          | LandingSettlement.SettledAt at ->
+            match l.State with
+            | LandingState.Blocked(LandingBlocker.VetoedBy _, NextAction.AwaitConductor) -> ()
+            // default policy: every other settled landing is history.
+            | _ -> if aged now at then yield id, at ]
+
+    /// Departed members to purge, judged against the claims/landings that
+    /// SURVIVED this sweep: a seat that a remaining claim or landing still
+    /// names, or the conductor's seat (authority resolves through it), stays.
+    let membersToPurge (now: DateTime) (state: CohortState<'m>) : ('m * DateTime) list =
+      let mentioned =
+        Set.union
+          (state.Claims
+           |> Map.toSeq
+           |> Seq.map (fun (_, c) ->
+             match c.State with
+             | ClaimState.Held h -> h
+             | ClaimState.Orphaned(h, _) -> h
+             | ClaimState.Released(by, _) -> by)
+           |> Set.ofSeq)
+          (state.Landings |> Map.toSeq |> Seq.map (fun (_, l) -> l.Requester) |> Set.ofSeq)
+      [ for KeyValue(m, r) in state.Members do
+          match r.Presence with
+          | MemberPresence.Present -> ()
+          | MemberPresence.Departed since ->
+            if aged now since && state.Conductor <> Some m && not (Set.contains m mentioned) then
+              yield m, since ]
+
+    let sweep (now: DateTime) (state: CohortState<'m>) : CohortState<'m> * CohortEvent<'m> list =
+      let claimPrunes = claimsToPrune now state.Claims
+      let landingPrunes = landingsToPrune now state.Landings
+      let survivors =
+        { state with
+            Claims = claimPrunes |> List.fold (fun m (id, _) -> Map.remove id m) state.Claims
+            Landings = landingPrunes |> List.fold (fun m (id, _) -> Map.remove id m) state.Landings }
+      let memberPurges = membersToPurge now survivors
+      let swept =
+        { survivors with Members = memberPurges |> List.fold (fun m (who, _) -> Map.remove who m) survivors.Members }
+      swept,
+      [ for id, reason in claimPrunes -> CohortEvent.ClaimPruned(id, reason)
+        for id, at in landingPrunes -> CohortEvent.LandingPruned(id, at)
+        for who, since in memberPurges -> CohortEvent.MemberPurged(who, since) ]
+
+    /// TWIN — the pre-fix behavior, frozen as a regression witness: `Tick`
+    /// only departed silent members and never removed anything. NOT wired
+    /// into any product path; `CohortRetentionTests` proves the bounded
+    /// invariant FAILS under it on the live scene (43 orphans, departed
+    /// members, blocked landings, hours old).
+    let neverPrunesTwin (_now: DateTime) (state: CohortState<'m>) : CohortState<'m> * CohortEvent<'m> list =
+      state, []
+
+  /// Keep `LandingRequest.Settlement` in lock-step with `LandingState` — the
+  /// single place it is written, applied to every command's result.
+  let private stampSettlement (now: DateTime) (state: CohortState<'m>) : CohortState<'m> =
+    let restamp (l: LandingRequest<'m>) : LandingRequest<'m> =
+      match l.State, l.Settlement with
+      | (LandingState.Blocked _ | LandingState.Landed _ | LandingState.Withdrawn), LandingSettlement.Unsettled ->
+        { l with Settlement = LandingSettlement.SettledAt now }
+      | (LandingState.Queued | LandingState.Rebasing _ | LandingState.Verifying _), LandingSettlement.SettledAt _ ->
+        { l with Settlement = LandingSettlement.Unsettled }
+      | (LandingState.Blocked _ | LandingState.Landed _ | LandingState.Withdrawn), LandingSettlement.SettledAt _
+      | (LandingState.Queued | LandingState.Rebasing _ | LandingState.Verifying _), LandingSettlement.Unsettled -> l
+    { state with Landings = state.Landings |> Map.map (fun _ l -> restamp l) }
+
+  // ── decide (§7.1) ───────────────────────────────────────────────────────
+
+  /// The one pure decision function. No IO, no `DateTime.UtcNow`, no
+  /// `Guid.NewGuid()`. `CohortOwner` (a future item's shell actor) is the only
+  /// thing that calls this in production; every property in this file calls it
+  /// directly.
+  let private decideRaw (clock: Clock) (entropy: Entropy) (state: CohortState<'m>) (command: CohortCommand<'m>)
+      : Result<CohortState<'m> * CohortEvent<'m> list * CohortEffect<'m> list, CohortError<'m>> =
+    match command with
+
+    | CohortCommand.Join(who, role, session) ->
+      match Map.tryFind who state.Members with
+      | Some { Presence = MemberPresence.Present } -> Error(CohortError.DuplicateJoin who)
+      // a Departed member may rejoin exactly like a brand-new member — both
+      // fall through to the same binding below.
+      | Some { Presence = MemberPresence.Departed _ }
+      | None ->
+        let record = { Role = role; Presence = MemberPresence.Present; LastRenewal = clock; Session = session }
+        let newState = { state with Members = Map.add who record state.Members }
+        match state.Conductor with
+        | None ->
+          // v1 create_cohort semantics (§4.2): the first member to join an
+          // empty-membership cohort becomes the conductor. There is no separate
+          // CreateCohort command in v1 — this IS that binding.
+          let bound = { newState with Conductor = Some who }
+          Ok(bound, [ CohortEvent.MemberJoined(who, role, session); CohortEvent.ConductorBound who ], [])
+        | Some _ ->
+          Ok(newState, [ CohortEvent.MemberJoined(who, role, session) ], [])
+
+    | CohortCommand.Depart who ->
+      if not (isPresent state who) then Error(CohortError.MemberNotPresent who)
+      else
+        let newState, events = departMember who clock state
+        Ok(newState, events, [])
+
+    | CohortCommand.RenewLease who ->
+      match Map.tryFind who state.Members with
+      | Some ({ Presence = MemberPresence.Present } as record) ->
+        let newState = { state with Members = Map.add who { record with LastRenewal = clock } state.Members }
+        Ok(newState, [ CohortEvent.LeaseRenewed who ], [])
+      | Some { Presence = MemberPresence.Departed _ }
+      | None -> Error(CohortError.MemberNotPresent who)
+
+    | CohortCommand.Tick ->
+      let expired =
+        state.Members
+        |> Map.toList
+        |> List.filter (fun (_, r) -> r.Presence = MemberPresence.Present && (clock - r.LastRenewal) >= leaseWindow)
+        |> List.map fst
+      let departedState, departEvents =
+        expired
+        |> List.fold
+          (fun (st, evs) who ->
+            let st2, whoEvents = departMember who clock st
+            st2, evs @ whoEvents)
+          (state, [])
+      // Settled history is swept on the SAME tick (Retention): a departure
+      // above stamps `since = clock`, so nothing departed here is pruned here.
+      let sweptState, pruneEvents = Retention.sweep clock departedState
+      Ok(sweptState, departEvents @ pruneEvents, [])
+
+    | CohortCommand.AcquireClaim(who, scope, purposeRaw) ->
+      if not (isPresent state who) then Error(CohortError.MemberNotPresent who)
+      else
+        match Purpose.tryCreate purposeRaw with
+        | Error e -> Error(CohortError.InvalidPurpose e)
+        | Ok purpose ->
+          let conflict =
+            state.Claims
+            |> Map.toList
+            |> List.tryPick (fun (_, c) ->
+              match c.State with
+              | ClaimState.Held holder when ClaimScope.overlaps c.Scope scope -> Some holder
+              | ClaimState.Held _
+              | ClaimState.Orphaned _
+              | ClaimState.Released _ -> None)
+          match conflict with
+          | Some holder -> Error(CohortError.ClaimConflict(scope, holder))
+          | None ->
+            let claimId = Ids.mintClaimId entropy
+            if Map.containsKey claimId state.Claims then
+              Error(CohortError.DuplicateClaimId claimId)
+            else
+              let fence = state.NextFence + 1L<fence>
+              let claim = { Id = claimId; Fence = fence; Scope = scope; Purpose = purpose; Since = clock; State = ClaimState.Held who }
+              let newState = { state with NextFence = fence; Claims = Map.add claimId claim state.Claims }
+              Ok(newState, [ CohortEvent.ClaimAcquired(claimId, scope, who, fence) ], [])
+
+    | CohortCommand.ReleaseClaim(who, claimId, presentedFence) ->
+      match Map.tryFind claimId state.Claims with
+      | None -> Error(CohortError.UnknownClaim claimId)
+      | Some claim when presentedFence <> claim.Fence ->
+        // Property 4: a stale fence is refused whatever else the command carries —
+        // checked before the holder-identity check, not after.
+        Error(CohortError.StaleClaimFence(claimId, presentedFence, claim.Fence))
+      | Some claim ->
+        match claim.State with
+        | ClaimState.Held holder when holder = who ->
+          let fence = state.NextFence + 1L<fence>
+          let updated = { claim with Fence = fence; State = ClaimState.Released(who, clock) }
+          let newState = { state with NextFence = fence; Claims = Map.add claimId updated state.Claims }
+          Ok(newState, [ CohortEvent.ClaimReleased(claimId, who, fence) ], [])
+        | ClaimState.Held _
+        | ClaimState.Orphaned _
+        | ClaimState.Released _ -> Error(CohortError.NotClaimHolder(claimId, who))
+
+    | CohortCommand.ReassignClaim(by, claimId, toMember) ->
+      match Authority.present by state with
+      | Authority.Conductor _ ->
+        match Map.tryFind claimId state.Claims with
+        | None -> Error(CohortError.UnknownClaim claimId)
+        | Some claim ->
+          match claim.State with
+          | ClaimState.Orphaned _ ->
+            if not (isPresent state toMember) then Error(CohortError.MemberNotPresent toMember)
+            else
+              // Property 1: reactivating an Orphaned claim must not create a
+              // second simultaneously-Held claim over an overlapping scope —
+              // the same exclusivity AcquireClaim enforces on a fresh claim.
+              let conflict =
+                state.Claims
+                |> Map.toList
+                |> List.tryPick (fun (otherId, c) ->
+                  match c.State with
+                  | ClaimState.Held holder when otherId <> claimId && ClaimScope.overlaps c.Scope claim.Scope -> Some holder
+                  | ClaimState.Held _
+                  | ClaimState.Orphaned _
+                  | ClaimState.Released _ -> None)
+              match conflict with
+              | Some holder -> Error(CohortError.ClaimConflict(claim.Scope, holder))
+              | None ->
+                let fence = state.NextFence + 1L<fence>
+                let updated = { claim with Fence = fence; State = ClaimState.Held toMember }
+                let newState = { state with NextFence = fence; Claims = Map.add claimId updated state.Claims }
+                Ok(newState, [ CohortEvent.ClaimReassigned(claimId, toMember, fence) ], [])
+          | ClaimState.Held _
+          | ClaimState.Released _ -> Error(CohortError.ClaimNotOrphaned claimId)
+      // default policy: only a bound Conductor may reassign a claim — every
+      // other Authority (Member, Anonymous) is refused.
+      | _ -> Error(CohortError.NotConductor by)
+
+    | CohortCommand.DelegateConductor(by, toMember) ->
+      match Authority.present by state with
+      | Authority.Conductor _ ->
+        if not (isPresent state toMember) then Error(CohortError.MemberNotPresent toMember)
+        else
+          let newState = { state with Conductor = Some toMember }
+          Ok(newState, [ CohortEvent.ConductorDelegated(by, toMember) ], [])
+      // default policy: only a bound Conductor may delegate — every other
+      // Authority (Member, Anonymous) is refused.
+      | _ -> Error(CohortError.NotConductor by)
+
+    | CohortCommand.ObserveSave(who, path) ->
+      let violating =
+        state.Claims
+        |> Map.toList
+        |> List.tryPick (fun (cid, c) ->
+          match c.State with
+          | ClaimState.Held holder when holder <> who && ClaimScope.overlaps c.Scope (ClaimScope.File path) -> Some(cid, holder)
+          | ClaimState.Held _
+          | ClaimState.Orphaned _
+          | ClaimState.Released _ -> None)
+      match violating with
+      | Some(cid, holder) -> Ok(state, [ CohortEvent.ClaimViolationObserved(cid, who, holder, path) ], [])
+      | None -> Ok(state, [], [])
+
+    | CohortCommand.RequestLanding(requester, claims, commits, statementRaw) ->
+      if not (isPresent state requester) then Error(CohortError.MemberNotPresent requester)
+      else
+        match Statement.tryCreate statementRaw with
+        | Error e -> Error(CohortError.InvalidStatement e)
+        | Ok statement ->
+          match validateLandingClaims state requester claims with
+          | Error e -> Error e
+          | Ok () ->
+            let landingId = Ids.mintLandingId entropy
+            if Map.containsKey landingId state.Landings then
+              Error(CohortError.DuplicateLandingId landingId)
+            else
+              let req = {
+                Id = landingId
+                Requester = requester
+                Claims = claims
+                Commits = commits
+                BaseAtQueue = state.IntegrationHead
+                Statement = statement
+                State = LandingState.Queued
+                FastForwardAttempts = 0
+                Settlement = LandingSettlement.Unsettled
+              }
+              let queued = { state with Landings = Map.add landingId req state.Landings; Queue = state.Queue @ [ landingId ] }
+              let advanced, advEvents, advEffects = advanceQueue queued
+              Ok(advanced, CohortEvent.LandingQueued(landingId, requester) :: advEvents, advEffects)
+
+    | CohortCommand.RebaseCompleted(id, result) ->
+      match Map.tryFind id state.Landings with
+      | None -> Error(CohortError.UnknownLanding id)
+      | Some req ->
+        match requireAtFrontOfQueue state id with
+        | Error e -> Error e
+        | Ok () ->
+          match req.State with
+          | LandingState.Rebasing onto ->
+            match result with
+            | Ok newHead ->
+              let verifying = { req with State = LandingState.Verifying(onto, newHead, 0, 0) }
+              let newState = { state with Landings = Map.add id verifying state.Landings }
+              Ok(newState, [ CohortEvent.LandingStateChanged(id, verifying.State) ], [ CohortEffect.ComputeAffected(id, onto, newHead) ])
+            | Error conflictFiles ->
+              // A rebase conflict blocks THIS landing, but — exactly like a
+              // failing TestsCompleted or a VerificationInconclusive — it must not
+              // jam the whole cohort: pop it from the queue and advance the next
+              // one (`blockAndPop`, above). The landing stays recorded as
+              // Blocked(RebaseConflict) with NextAction.RebaseAndResubmit (the
+              // requester rebases and submits a fresh landing) while OTHER
+              // members' unrelated landings are never dead-locked behind it.
+              // (Earlier this left the conflicted landing at the queue head
+              // forever with no pop and no advance — the same serial-queue
+              // dead-lock the failing-tests arm had before 396ee1c3, overlooked
+              // on this sibling arm; the DST landing-queue-jam harness caught it
+              // as a violation of the no-terminal-in-queue invariant.)
+              let advanced, advEvents, advEffects =
+                blockAndPop state id req (LandingBlocker.RebaseConflict conflictFiles) NextAction.RebaseAndResubmit
+              Ok(advanced, advEvents, advEffects)
+          // default policy: RebaseCompleted only advances a landing that is
+          // actually Rebasing — every other LandingState is refused as
+          // out-of-order, by construction, for any case the DU ever grows to.
+          | _ -> Error(CohortError.LandingNotInExpectedState(id, "Rebasing"))
+
+    | CohortCommand.AffectedComputed(id, tests) ->
+      match Map.tryFind id state.Landings with
+      | None -> Error(CohortError.UnknownLanding id)
+      | Some req ->
+        match requireAtFrontOfQueue state id with
+        | Error e -> Error e
+        | Ok () ->
+          match req.State with
+          | LandingState.Verifying(base', rebasedHead, _, _) ->
+            let n = List.length tests
+            let verifying = { req with State = LandingState.Verifying(base', rebasedHead, n, n) }
+            let newState = { state with Landings = Map.add id verifying state.Landings }
+            Ok(newState, [ CohortEvent.LandingStateChanged(id, verifying.State) ], [ CohortEffect.RunTests(id, tests) ])
+          // default policy: AffectedComputed only advances a landing that is
+          // actually Verifying — every other LandingState is refused as
+          // out-of-order, by construction, for any case the DU ever grows to.
+          | _ -> Error(CohortError.LandingNotInExpectedState(id, "Verifying"))
+
+    | CohortCommand.TestsCompleted(id, failing) ->
+      match Map.tryFind id state.Landings with
+      | None -> Error(CohortError.UnknownLanding id)
+      | Some req ->
+        match requireAtFrontOfQueue state id with
+        | Error e -> Error e
+        | Ok () ->
+          match req.State with
+          | LandingState.Verifying(base', rebasedHead, affected, _) ->
+            match failing with
+            | [] ->
+              let verifying = { req with State = LandingState.Verifying(base', rebasedHead, affected, 0) }
+              let newState = { state with Landings = Map.add id verifying state.Landings }
+              Ok(newState, [], [ CohortEffect.FastForward(id, rebasedHead) ])
+            | fails ->
+              // A genuine test failure blocks THIS landing, but it must not jam
+              // the whole cohort: pop it from the queue and advance the next one
+              // (`blockAndPop`, above), exactly like every other terminal
+              // transition (Inconclusive, land, withdraw). The landing stays
+              // recorded as Blocked(FailingTests) with NextAction.FixTests — the
+              // requester fixes it and submits a fresh landing — while OTHER
+              // members' unrelated landings are never dead-locked behind it.
+              // (Earlier this left the failed landing at the queue head forever,
+              // so one member's failing test froze every landing in the cohort: a
+              // definitive failure dead-locked while a transient Inconclusive
+              // auto-recovered — exactly backwards.)
+              let advanced, advEvents, advEffects =
+                blockAndPop state id req (LandingBlocker.FailingTests fails) (NextAction.FixTests fails)
+              Ok(advanced, advEvents, advEffects)
+          // default policy: TestsCompleted only advances a landing that is
+          // actually Verifying — every other LandingState is refused as
+          // out-of-order, by construction, for any case the DU ever grows to.
+          | _ -> Error(CohortError.LandingNotInExpectedState(id, "Verifying"))
+
+    | CohortCommand.VerificationInconclusive(id, reason) ->
+      match Map.tryFind id state.Landings with
+      | None -> Error(CohortError.UnknownLanding id)
+      | Some req ->
+        match requireAtFrontOfQueue state id with
+        | Error e -> Error e
+        | Ok () ->
+          match req.State with
+          | LandingState.Verifying _ ->
+            // Distinct from `TestsCompleted`'s `FailingTests`: an inconclusive
+            // verification is transient/environmental, so it does NOT permanently
+            // jam the serial queue. Pop it (`blockAndPop`, as `WithdrawLanding`
+            // does) and advance the next queued landing; the requester resubmits
+            // when the integration session is healthy again
+            // (`RebaseAndResubmit`). The landing still does not fast-forward —
+            // fail-closed is preserved.
+            let advanced, advEvents, advEffects =
+              blockAndPop state id req (LandingBlocker.Inconclusive reason) NextAction.RebaseAndResubmit
+            Ok(advanced, advEvents, advEffects)
+          // default policy: VerificationInconclusive only advances a landing
+          // that is actually Verifying — every other LandingState is refused
+          // as out-of-order, by construction, for any case the DU ever grows to.
+          | _ -> Error(CohortError.LandingNotInExpectedState(id, "Verifying"))
+
+    | CohortCommand.FastForwardCompleted(id, committedSha) ->
+      match Map.tryFind id state.Landings with
+      | None -> Error(CohortError.UnknownLanding id)
+      | Some req ->
+        match requireAtFrontOfQueue state id with
+        | Error e -> Error e
+        | Ok () ->
+          match req.State with
+          | LandingState.Verifying(base', _rebasedHead, _, _) ->
+            // Property 11: a landing verified against H1 never lands when the
+            // head is H2 <> H1 — checked at land time, not queue time (§5.4, §7.2).
+            // Compares the BASE it rebased onto against the current head — NOT
+            // the rebased head (which is always a fresh commit and never equals
+            // the base, which would misfire HeadMoved on every real landing).
+            if base' <> state.IntegrationHead then
+              // Roast-2day/roast-2day-cmd §1: this arm used to set Blocked and
+              // stop, WITHOUT popping the queue or calling `advanceQueue` — a
+              // concurrent `SetIntegrationHead` (the conductor re-seeding the
+              // integration ref mid-verification, e.g. F4 in
+              // cohort-dogfood-findings.md) parked the ENTIRE serial queue
+              // behind this one landing forever, with no in-band recovery but
+              // the requester's own `WithdrawLanding`. `blockAndPop` (above)
+              // closes it: the landing is still recorded Blocked(HeadMoved) with
+              // NextAction.RebaseAndResubmit — nothing about the diagnosis
+              // changes — but every OTHER member's queued landing is now free
+              // to advance instead of waiting on this one's requester.
+              let advanced, advEvents, advEffects =
+                blockAndPop state id req (LandingBlocker.HeadMoved(base', state.IntegrationHead)) NextAction.RebaseAndResubmit
+              Ok(advanced, advEvents, advEffects)
+            else
+              // Property 6: every claim in the request must still be Held by the
+              // requester, at the presented fence, at land time.
+              let claimHeldOk (cid, presentedFence) =
+                match Map.tryFind cid state.Claims with
+                | Some c ->
+                  (match c.State with
+                   | ClaimState.Held h -> h = req.Requester
+                   | ClaimState.Orphaned _
+                   | ClaimState.Released _ -> false)
+                  && c.Fence = presentedFence
+                | None -> false
+              match req.Claims |> List.tryFind (claimHeldOk >> not) with
+              | Some(staleId, _) ->
+                // Same queue-jam class as the HeadMoved arm above (roast-2day/
+                // roast-2day-cmd §1) — a claim backing this landing was
+                // released/reassigned/orphaned between RequestLanding and land
+                // time, and this arm used to Block WITHOUT popping the queue.
+                // `blockAndPop` frees every other member's landing to advance;
+                // this one stays Blocked(StaleClaimFence) with
+                // NextAction.AwaitConductor, and the requester can still
+                // `WithdrawLanding` it (any non-terminal state is withdrawable)
+                // to resubmit against fresh claims at any time — no new command
+                // is needed to make this arm's block actionable, unlike
+                // VetoLanding's AwaitConductor (see `ResolveVeto` below), which
+                // has no such requester-side escape because a veto is not the
+                // requester's decision to reverse.
+                let advanced, advEvents, advEffects =
+                  blockAndPop state id req (LandingBlocker.StaleClaimFence staleId) NextAction.AwaitConductor
+                Ok(advanced, advEvents, advEffects)
+              | None ->
+                let releaseFence, releasedClaims, releaseEventsRev =
+                  req.Claims
+                  |> List.fold
+                    (fun (fence, claims: Map<ClaimId, Claim<'m>>, evs) (cid, _) ->
+                      match Map.tryFind cid claims with
+                      | Some c ->
+                        let f2 = fence + 1L<fence>
+                        let updated = { c with Fence = f2; State = ClaimState.Released(req.Requester, clock) }
+                        f2, Map.add cid updated claims, CohortEvent.ClaimReleased(cid, req.Requester, f2) :: evs
+                      | None -> fence, claims, evs)
+                    (state.NextFence, state.Claims, [])
+                let landed = { req with State = LandingState.Landed committedSha }
+                let poppedQueue = state.Queue |> List.filter (fun x -> x <> id)
+                let stateAfterLand = {
+                  state with
+                    NextFence = releaseFence
+                    Claims = releasedClaims
+                    Landings = Map.add id landed state.Landings
+                    Queue = poppedQueue
+                    IntegrationHead = committedSha
+                }
+                let advanced, advEvents, advEffects = advanceQueue stateAfterLand
+                Ok(advanced,
+                   (CohortEvent.LandingStateChanged(id, landed.State) :: CohortEvent.LandingLanded(id, committedSha) :: List.rev releaseEventsRev)
+                   @ advEvents,
+                   advEffects)
+          // default policy: FastForwardCompleted only advances a landing
+          // that is actually Verifying — every other LandingState is refused
+          // as out-of-order, by construction, for any case the DU ever grows to.
+          | _ -> Error(CohortError.LandingNotInExpectedState(id, "Verifying"))
+
+    | CohortCommand.FastForwardFailed(id, reason) ->
+      match Map.tryFind id state.Landings with
+      | None -> Error(CohortError.UnknownLanding id)
+      | Some req ->
+        match requireAtFrontOfQueue state id with
+        | Error e -> Error e
+        | Ok () ->
+          match req.State with
+          | LandingState.Verifying(base', _rebasedHead, _, _) ->
+            // A FastForward infra failure has no merge-conflict or
+            // failing-test payload of its own — closing roast-6 #7b means
+            // this must not be a dead end, but it also must not silently
+            // relabel a real head-move as something else. So: apply
+            // `FastForwardCompleted`'s OWN Property-11 guard first (same
+            // base'-vs-IntegrationHead comparison, same Blocked(HeadMoved)
+            // outcome) — a landing whose head genuinely moved concurrently
+            // gets the real diagnosis and the requester's existing
+            // RebaseAndResubmit recovery path. Only when the head has NOT
+            // moved does this treat the failure as transient infra: the
+            // landing re-enters `Rebasing` against the SAME base and
+            // `decide` emits a fresh `Rebase` effect, so the
+            // rebase -> verify -> fast-forward pipeline retries end-to-end
+            // instead of leaving the landing stuck in `Verifying` forever —
+            // but only up to `maxFastForwardAttempts` retries (roast-2day-cmd
+            // §RISK: "FastForwardFailed has no retry bound" — an infra
+            // failure that never clears used to loop rebase -> verify ->
+            // fast-forward forever at whatever pace the real git/test
+            // machinery ran). Once exhausted this pops the queue (`blockAndPop`)
+            // instead of retrying again, same as every other terminal arm.
+            match base' <> state.IntegrationHead with
+            | true ->
+              let advanced, advEvents, advEffects =
+                blockAndPop state id req (LandingBlocker.HeadMoved(base', state.IntegrationHead)) NextAction.RebaseAndResubmit
+              Ok(advanced, advEvents, advEffects)
+            | false ->
+              let attempts = req.FastForwardAttempts + 1
+              if attempts >= maxFastForwardAttempts then
+                // Retries exhausted: this is now a definitive, if
+                // environmental, failure to land — `Inconclusive` (the
+                // existing "we could not reach a trustworthy verdict" case)
+                // fits better than minting a speculative new blocker case for
+                // one exhausted-retries outcome; `NextAction.RebaseAndResubmit`
+                // tells the requester what to do (a fresh landing, once the
+                // infra issue clears), same as every other Inconclusive.
+                let blockerReason =
+                  sprintf "fast-forward failed %d times (giving up): %s" attempts reason
+                let advanced, advEvents, advEffects =
+                  blockAndPop state id req (LandingBlocker.Inconclusive blockerReason) NextAction.RebaseAndResubmit
+                Ok(advanced, advEvents, advEffects)
+              else
+                let rebasing = { req with State = LandingState.Rebasing base'; FastForwardAttempts = attempts }
+                let newState = { state with Landings = Map.add id rebasing state.Landings }
+                Ok(newState, [ CohortEvent.LandingStateChanged(id, rebasing.State) ], [ CohortEffect.Rebase(id, base', req.Commits) ])
+          // default policy: FastForwardFailed only re-enters the rebase loop
+          // for a landing that is actually Verifying — every other
+          // LandingState is refused as out-of-order, by construction, for
+          // any case the DU ever grows to.
+          | _ -> Error(CohortError.LandingNotInExpectedState(id, "Verifying"))
+
+    | CohortCommand.WithdrawLanding(who, id) ->
+      match Map.tryFind id state.Landings with
+      | None -> Error(CohortError.UnknownLanding id)
+      | Some req when req.Requester <> who -> Error(CohortError.NotLandingRequester(id, who))
+      | Some req ->
+        match req.State with
+        | LandingState.Landed _
+        | LandingState.Withdrawn -> Error(CohortError.LandingNotInExpectedState(id, "non-terminal"))
+        // default policy: any non-terminal LandingState (Queued/Rebasing/
+        // Verifying/Blocked, and any future case) is withdrawable — the two
+        // terminal states are enumerated above as the exclusions, so this is
+        // the safe direction to default a new LandingState case into.
+        | _ ->
+          let wasAtFront = state.Queue |> List.tryHead = Some id
+          let withdrawn = { req with State = LandingState.Withdrawn }
+          let poppedQueue = state.Queue |> List.filter (fun x -> x <> id)
+          let stateAfter = { state with Landings = Map.add id withdrawn state.Landings; Queue = poppedQueue }
+          let advanced, advEvents, advEffects = if wasAtFront then advanceQueue stateAfter else stateAfter, [], []
+          Ok(advanced,
+             CohortEvent.LandingStateChanged(id, withdrawn.State) :: CohortEvent.LandingWithdrawn id :: advEvents,
+             advEffects)
+
+    | CohortCommand.SetIntegrationHead(by, head) ->
+      match Authority.present by state with
+      | Authority.Conductor _ ->
+        let newState = { state with IntegrationHead = head }
+        Ok(newState, [ CohortEvent.IntegrationConfigured head ], [])
+      // default policy: only a bound Conductor may (re)configure the
+      // integration head — every other Authority (Member, Anonymous) is
+      // refused.
+      | _ -> Error(CohortError.NotConductor by)
+
+    | CohortCommand.VetoLanding(by, id, reason) ->
+      // roast-2day-cmd §RISK/§1: `VetoLanding` has NO authority gate on
+      // purpose (v1's design, unchanged here — see the command's doc
+      // comment) — "any present member may object" is the intended right,
+      // not a bug to close by gating it Conductor-only. What WAS a real bug:
+      // this arm set `Blocked` and never popped the queue, so if the vetoed
+      // landing was at the front, the ENTIRE serial queue jammed behind it —
+      // and, unlike `HeadMoved`/`StaleClaimFence` above, the requester's own
+      // `WithdrawLanding` was the only escape even though `NextAction` says
+      // `AwaitConductor` (a promise the code never kept). Two fixes land
+      // together: (1) `blockAndPop`, so a veto never jams anyone else's
+      // landing; (2) `ResolveVeto` (below), a genuine conductor verb that
+      // makes `AwaitConductor` true rather than aspirational.
+      match Map.tryFind id state.Landings with
+      | None -> Error(CohortError.UnknownLanding id)
+      | Some req ->
+        match req.State with
+        | LandingState.Landed _
+        | LandingState.Withdrawn -> Error(CohortError.LandingNotInExpectedState(id, "non-terminal"))
+        // default policy: any non-terminal LandingState (Queued/Rebasing/
+        // Verifying/Blocked, and any future case) can be vetoed — the two
+        // terminal states are enumerated above as the exclusions, so this is
+        // the safe direction to default a new LandingState case into.
+        | _ ->
+          let advanced, advEvents, advEffects =
+            blockAndPop state id req (LandingBlocker.VetoedBy(by, reason)) NextAction.AwaitConductor
+          // `blockAndPop` always yields at least one event (this landing's own
+          // `LandingStateChanged`) — insert the dedicated `LandingVetoed` audit
+          // event right after it, same relative order the pre-blockAndPop code
+          // had, ahead of anything `advanceQueue` produced for the NEXT landing.
+          match advEvents with
+          | stateChanged :: rest -> Ok(advanced, stateChanged :: CohortEvent.LandingVetoed(id, by, reason) :: rest, advEffects)
+          | [] -> Ok(advanced, [ CohortEvent.LandingVetoed(id, by, reason) ], advEffects)
+
+    | CohortCommand.ResolveVeto(by, id) ->
+      // roast-2day-cmd §1/§RISK's missing conductor verb. Design choice
+      // (armfix, cmd-handoff.md item B2 — documented here because the code
+      // is the only place this decision will be read years from now):
+      // RE-QUEUE the landing rather than mark it Withdrawn.
+      //
+      //   * A veto is the CONDUCTOR's call, not the requester's — unlike
+      //     RebaseConflict/FailingTests (NextAction.RebaseAndResubmit, where
+      //     the CODE is what's wrong and the REQUESTER must act), a veto
+      //     commonly means "hold on" for a reason external to the landing
+      //     itself (a policy question, a pending discussion) that the
+      //     conductor, not the requester, is positioned to resolve. Forcing
+      //     a `Withdrawn` + fresh `RequestLanding` would make the requester
+      //     reconstruct `Claims`/`Commits`/`Statement` for a landing whose
+      //     content was never in question — busywork with no safety benefit.
+      //   * It is SAFE to re-Queue the original request as-is: `Claims` are
+      //     re-validated at land time regardless (the `StaleClaimFence`
+      //     check in `FastForwardCompleted`, Property 6) — if a presented
+      //     claim went stale while this landing sat vetoed, that surfaces
+      //     correctly on its own the next time it reaches the front, exactly
+      //     as it would for any other requeued landing. No re-validation
+      //     logic needs duplicating here.
+      //   * Gated identically to `SetIntegrationHead`/`ReassignClaim`/
+      //     `DelegateConductor` (`Authority.present by state =
+      //     Authority.Conductor _`, else `NotConductor`) — only the
+      //     conductor may clear a veto, matching `NextAction.AwaitConductor`.
+      match Authority.present by state with
+      | Authority.Conductor _ ->
+        match Map.tryFind id state.Landings with
+        | None -> Error(CohortError.UnknownLanding id)
+        | Some req ->
+          match req.State with
+          | LandingState.Blocked(LandingBlocker.VetoedBy _, _) ->
+            let requeued = { req with State = LandingState.Queued }
+            let stateAfter = { state with Landings = Map.add id requeued state.Landings; Queue = state.Queue @ [ id ] }
+            let advanced, advEvents, advEffects = advanceQueue stateAfter
+            Ok(advanced,
+               CohortEvent.LandingStateChanged(id, requeued.State) :: CohortEvent.LandingVetoResolved(id, by) :: advEvents,
+               advEffects)
+          // default policy: ResolveVeto only clears a landing that is
+          // actually Blocked(VetoedBy) — every other LandingState (it was
+          // never vetoed, or it was vetoed and has since moved on) is
+          // refused as out-of-order, by construction, for any case the DU
+          // ever grows to.
+          | _ -> Error(CohortError.LandingNotInExpectedState(id, "Blocked(VetoedBy)"))
+      // default policy: only a bound Conductor may resolve a veto — every
+      // other Authority (Member, Anonymous) is refused, same as
+      // SetIntegrationHead/ReassignClaim/DelegateConductor above.
+      | _ -> Error(CohortError.NotConductor by)
+
+  /// Every command's result passes through `stampSettlement`, so a landing's
+  /// `Settlement` is derived from its `LandingState` in exactly one place and
+  /// no terminal arm above has to stamp (or remember to un-stamp on re-queue).
+  let decide (clock: Clock) (entropy: Entropy) (state: CohortState<'m>) (command: CohortCommand<'m>)
+      : Result<CohortState<'m> * CohortEvent<'m> list * CohortEffect<'m> list, CohortError<'m>> =
+    decideRaw clock entropy state command
+    |> Result.map (fun (newState, events, effects) -> stampSettlement clock newState, events, effects)
+
+  // ── The ledger IS the event store (§5.2) ───────────────────────────────
+
+  type LedgerEntry<'m> = {
+    /// Dense, cohort-monotonic; also the `CohortFrame.Version` (§5.2, §5.7 — the
+    /// separate frame-version counter earlier revisions had is deleted, §1.6 #10).
+    Seq: int64<ledgerSeq>
+    Clock: Clock
+    Entropy: Entropy
+    Command: CohortCommand<'m>
+    Events: CohortEvent<'m> list
+  }
+
+  type LedgerHead<'m when 'm: comparison> = {
+    Seq: int64<ledgerSeq>
+    State: CohortState<'m>
+  }
+
+  /// `CohortState` is never stored (§5.2) — this is the only way to get one.
+  /// Folds `decide` over the recorded (Clock, Entropy, Command) triples; never
+  /// runs git, never runs a test, never spawns a process. An entry whose command
+  /// no longer applies cleanly (it should not happen against a ledger this
+  /// module itself produced) leaves the fold's state unchanged rather than
+  /// throwing, so a corrupt tail cannot make replay itself unusable.
+  let replay (entries: LedgerEntry<'m> list) : CohortState<'m> =
+    entries
+    |> List.fold
+      (fun state entry ->
+        match decide entry.Clock entry.Entropy state entry.Command with
+        | Ok(newState, _, _) -> newState
+        | Error _ -> state)
+      (CohortState.empty ())
+
+  /// `replay` plus the `Seq` it landed on — `project`'s other input.
+  let replayHead (entries: LedgerEntry<'m> list) : LedgerHead<'m> =
+    let seq = entries |> List.tryLast |> Option.map (fun e -> e.Seq) |> Option.defaultValue 0L<ledgerSeq>
+    { Seq = seq; State = replay entries }
+
+  // ── The read model (§5.7) ──────────────────────────────────────────────
+
+  [<Flags>]
+  type FrameRegions =
+    | NoRegions = 0
+    | Members = 1
+    | Claims = 2
+    | Matrix = 4
+    /// The landing queue/state region (item added alongside `Landings`/
+    /// `IntegrationHead` on `CohortFrame` — closes the gap the live
+    /// multi-agent dogfood surfaced: `get_cohort_status`/`cohort://status`
+    /// had no way to show landing progress at all, see `CohortFrame.Landings`'
+    /// doc comment).
+    | Landings = 8
+
+  [<RequireQualifiedAccess>]
+  type SeatState =
+    | Present
+    | Departed of since: DateTime
+
+  /// One test outcome observation, per session, that `project` folds into the
+  /// matrix bitplanes. `Member = None` is the integration session (row 0, §5.3).
+  type SessionSnapshot<'m> = {
+    Member: 'm option
+    SessionId: string
+    Generation: int64
+    PassingTests: TestId list
+    FailingTests: TestId list
+    StaleTests: TestId list
+  }
+
+  /// Flat and index-aligned (§5.7): every renderer is an O(frame) array walk,
+  /// never a `Map` lookup in the render loop. `Version` is the ledger `Seq` the
+  /// frame was projected from — a scrubbed frame, a forked cohort and an MCP
+  /// "re-read from v" name the same integer (§1.6 #10).
+  type CohortFrame<'m> = {
+    Version: int64<ledgerSeq>
+    SessionGens: int64[]
+    Dirty: FrameRegions
+    /// The `Conductor` binding (§4.2), carried on the frame so a shell that
+    /// only holds `CohortFrame` (never `CohortState`) can still resolve an
+    /// `Authority` (Slice 3, cohort-integration-plan.md item 11) — see
+    /// `Affordances.authorityOfMember`. `None` until the first member joins
+    /// (mirrors `CohortState.Conductor`, §4.2).
+    Conductor: 'm option
+    MemberIds: 'm[]
+    MemberRole: JoinableRole[]
+    MemberSeat: SeatState[]
+    ClaimIds: ClaimId[]
+    ClaimScope: ClaimScope[]
+    /// Index into `MemberIds`; -1 when the claim is not currently `Held`
+    /// (Orphaned/Released) — never a nullable holder field.
+    ClaimHolderIndex: int[]
+    ClaimFence: int64<fence>[]
+    ClaimState: ClaimState<'m>[]
+    TestIds: TestId[]
+    Pass: bool[][]
+    Fail: bool[][]
+    Stale: bool[][]
+    /// ADDITIVE (dogfood gap closure — see the module-level scope note's
+    /// history: `CohortDogfoodIntegrationTests.fs` proved live that
+    /// `get_cohort_status`/`cohort://status` had NO landing-state field at
+    /// all, forcing agents to infer a land indirectly from a claim
+    /// auto-releasing). The `CohortState.IntegrationHead` binding this
+    /// cohort's landings rebase onto and fast-forward into — sourced
+    /// verbatim from `CohortState.IntegrationHead` (`Cohort.fs`, the
+    /// `CohortState` record above), never re-derived.
+    IntegrationHead: string
+    /// One row per `CohortState.Landings` entry, sorted by `LandingId` —
+    /// same deterministic-order discipline as `ClaimIds`/`ClaimScope` above
+    /// (property 10: frame identity is `(Version, SessionGens)`, so column
+    /// order must be a pure function of state, never map-enumeration order).
+    LandingIds: LandingId[]
+    /// Index into `MemberIds`; -1 when the requester is not a current member
+    /// (departed-and-purged, or a replay edge case) — never a nullable
+    /// requester field, same discipline as `ClaimHolderIndex`.
+    LandingRequesterIndex: int[]
+    LandingStatement: Statement[]
+    /// `LandingRequest.Commits` flattened from `string list` to `string[]`
+    /// per row — flat and index-aligned, never a `Map` walk in a renderer.
+    LandingCommits: string[][]
+    /// The landing's full `LandingState<'m>` — carries Queued/Rebasing/
+    /// Verifying(progress)/Blocked(blocker,nextAction)/Landed(sha)/Withdrawn
+    /// verbatim, the same "store the real sub-DU" discipline `ClaimState`
+    /// already uses on this frame, rather than flattening to a status string
+    /// and losing the blocker/next-action detail a renderer needs.
+    LandingState: LandingState<'m>[]
+    /// This landing's 0-based position in `CohortState.Queue`, or -1 when it
+    /// is not currently queued (Landed/Withdrawn, or a state a corrupt
+    /// ledger could produce). Position 0 is the only landing that may be
+    /// `Rebasing`/`Verifying` (`Cohort.fs`'s own FIFO invariant) — carried
+    /// here so a renderer can show "next in line" without re-deriving it
+    /// from `CohortState.Queue` (which the frame does not otherwise expose).
+    LandingQueuePosition: int[]
+  }
+
+  /// Pure. Identity of a frame is `(Version, SessionGens)` (property 10): the
+  /// same ledger head and the same session generations always project the same
+  /// frame — `Map.toArray`/`Array.sortBy` give every array a deterministic order,
+  /// so two calls with equal inputs are structurally equal, not merely
+  /// equivalent.
+  ///
+  /// Data-oriented rewrite (sagefs-multiagent-vision.md §3.4/§7.4 perf budget):
+  /// the original implementation built a fresh immutable, balanced-tree
+  /// `Set<TestId>` per session per bitplane (`Set.ofList` — O(n log n) with an
+  /// allocation on every tree rebalance) and then queried it once per test
+  /// column — 33 tree builds+queries per call at 11 sessions × 3 bitplanes,
+  /// measured at p50≈77ms/p99≈84ms against a <1ms p99 budget
+  /// (CohortPerfBudgetTests.fs).
+  ///
+  /// This version hashes every reported test-id string AT MOST ONCE (a first
+  /// profiling pass — before this rewrite the "shared `Dictionary`" version
+  /// still hashed each of the ~77,000 reported outcomes TWICE: once to
+  /// discover the distinct set, once more in `TryGetValue` while writing
+  /// bits — split ~3.0ms/~3.6ms of a ~9ms call in `dotnet fsi` phase timing).
+  /// A single pass assigns each newly-seen `TestId` a FIRST-SEEN integer
+  /// column index (one dictionary probe per occurrence — unavoidable, this is
+  /// the dedup) and records each hit as that plain `int` in a per-(session,
+  /// bitplane) buffer — no second string hash. Only once the distinct set is
+  /// complete do we sort it into the frame's canonical column order and
+  /// derive an `int[] -> int[]` PERMUTATION (first-seen index -> final sorted
+  /// column, one dictionary probe per DISTINCT id, not per occurrence). The
+  /// second pass turns the recorded hits into the final `bool[]` rows via
+  /// that permutation — plain integer array indexing, never a string hash.
+  /// Same `CohortFrame` shape, same sorted-column order (`Array.sortInPlaceBy`
+  /// on the identical key selector `Array.sortBy` used) — proven
+  /// output-identical against the pre-optimization implementation by
+  /// `CohortProjectEquivalenceTests.fs`'s property test.
+  let project (head: LedgerHead<'m>) (snapshots: SessionSnapshot<'m>[]) : CohortFrame<'m> =
+    let members = head.State.Members |> Map.toArray
+    let memberIds = members |> Array.map fst
+    let memberIndex = Dictionary<'m, int>(memberIds.Length)
+    for i in 0 .. memberIds.Length - 1 do
+      memberIndex.[memberIds.[i]] <- i
+    let memberIndexOf who =
+      match memberIndex.TryGetValue who with
+      | true, i -> i
+      | false, _ -> -1
+
+    let claims = head.State.Claims |> Map.toArray
+
+    // ── Landings (additive — dogfood gap closure) ──────────────────────────
+    // Sorted by LandingId for the same deterministic-order reason ClaimIds
+    // is sorted (Map.toArray on a comparison-keyed Map is already key-order,
+    // so this is `Map.toArray`'s natural order — spelled out via `Array.sortBy`
+    // to make the ordering contract explicit rather than incidental).
+    let landings =
+      head.State.Landings
+      |> Map.toArray
+      |> Array.sortBy (fun (LandingId lid, _) -> lid)
+    let queuePosition =
+      let positions = Dictionary<LandingId, int>(head.State.Queue.Length)
+      head.State.Queue
+      |> List.iteri (fun i lid -> if not (positions.ContainsKey lid) then positions.[lid] <- i)
+      landings |> Array.map (fun (lid, _) -> match positions.TryGetValue lid with true, i -> i | false, _ -> -1)
+
+    // ── One combined pass over every reported test outcome ─────────────────
+    // Each occurrence costs exactly one dictionary probe (assign-or-look-up a
+    // first-seen column index) — never a second one later. The FINAL (sorted)
+    // column position is not yet known here, so each hit is recorded as a
+    // first-seen index into a per-(session, bitplane) `ResizeArray<int>` —
+    // a compact, contiguous int buffer, not a re-hashed string. (A variant
+    // that pre-sized these via an up-front `List.length` pass measured no
+    // better — sometimes worse — than this simpler grow-as-you-go version;
+    // the extra list traversal cost as much as the reallocations it saved.)
+    let n = snapshots.Length
+    let firstSeenIndex = Dictionary<TestId, int>()
+    let firstSeenIds = ResizeArray<TestId>()
+    let indexOf (t: TestId) =
+      match firstSeenIndex.TryGetValue t with
+      | true, i -> i
+      | false, _ ->
+        let i = firstSeenIds.Count
+        firstSeenIndex.[t] <- i
+        firstSeenIds.Add t
+        i
+    let passHits = Array.init n (fun _ -> ResizeArray<int>())
+    let failHits = Array.init n (fun _ -> ResizeArray<int>())
+    let staleHits = Array.init n (fun _ -> ResizeArray<int>())
+    for si in 0 .. n - 1 do
+      let s = snapshots.[si]
+      for t in s.PassingTests do passHits.[si].Add(indexOf t)
+      for t in s.FailingTests do failHits.[si].Add(indexOf t)
+      for t in s.StaleTests do staleHits.[si].Add(indexOf t)
+
+    // Sort the discovered ids into the frame's canonical column order, then
+    // derive the first-seen -> final-column permutation — one dictionary
+    // probe per DISTINCT id (into the same `firstSeenIndex` built above),
+    // not per occurrence.
+    let testIds = firstSeenIds.ToArray()
+    Array.sortInPlaceBy (fun (TestId t) -> t) testIds
+    let permute = Array.zeroCreate<int> testIds.Length
+    for finalIdx in 0 .. testIds.Length - 1 do
+      permute.[firstSeenIndex.[testIds.[finalIdx]]] <- finalIdx
+
+    // Materialize each bitplane's rows from the recorded hits — plain integer
+    // indexing through `permute`, never a string hash.
+    let rowsFrom (hits: ResizeArray<int>[]) =
+      hits
+      |> Array.map (fun h ->
+        let row = Array.zeroCreate<bool> testIds.Length
+        for fsIdx in h do
+          row.[permute.[fsIdx]] <- true
+        row)
+
+    {
+      Version = head.Seq
+      SessionGens = snapshots |> Array.map (fun s -> s.Generation)
+      Dirty = FrameRegions.Members ||| FrameRegions.Claims ||| FrameRegions.Matrix ||| FrameRegions.Landings
+      Conductor = head.State.Conductor
+      MemberIds = memberIds
+      MemberRole = members |> Array.map (fun (_, r) -> r.Role)
+      MemberSeat =
+        members
+        |> Array.map (fun (_, r) ->
+          match r.Presence with
+          | MemberPresence.Present -> SeatState.Present
+          | MemberPresence.Departed since -> SeatState.Departed since)
+      ClaimIds = claims |> Array.map fst
+      ClaimScope = claims |> Array.map (fun (_, c) -> c.Scope)
+      ClaimHolderIndex =
+        claims
+        |> Array.map (fun (_, c) ->
+          match c.State with
+          | ClaimState.Held holder -> memberIndexOf holder
+          | ClaimState.Orphaned _
+          | ClaimState.Released _ -> -1)
+      ClaimFence = claims |> Array.map (fun (_, c) -> c.Fence)
+      ClaimState = claims |> Array.map (fun (_, c) -> c.State)
+      TestIds = testIds
+      Pass = rowsFrom passHits
+      Fail = rowsFrom failHits
+      Stale = rowsFrom staleHits
+      IntegrationHead = head.State.IntegrationHead
+      LandingIds = landings |> Array.map fst
+      LandingRequesterIndex = landings |> Array.map (fun (_, l) -> memberIndexOf l.Requester)
+      LandingStatement = landings |> Array.map (fun (_, l) -> l.Statement)
+      LandingCommits = landings |> Array.map (fun (_, l) -> l.Commits |> List.toArray)
+      LandingState = landings |> Array.map (fun (_, l) -> l.State)
+      LandingQueuePosition = queuePosition
+    }
