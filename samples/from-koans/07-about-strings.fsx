@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Strings — SageFs Edition
+//  🧘  About Strings — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutStrings.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

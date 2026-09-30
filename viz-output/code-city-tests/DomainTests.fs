@@ -5864,9 +5864,9 @@ let visibleRoadNetworkTests =
 let parseDaemonInfoJsonTests =
   testList "parseDaemonInfoJson" [
     testCase "valid JSON returns workingDirectory" <| fun () ->
-      let json = """{"pid":1234,"version":"0.5.0","startedAt":"2024-01-01T00:00:00Z","workingDirectory":"C:\\Code\\Repos\\SageFs"}"""
+      let json = """{"pid":1234,"version":"0.5.0","startedAt":"2024-01-01T00:00:00Z","workingDirectory":"C:\\Code\\Repos\\Bozzetto"}"""
       parseDaemonInfoJson json
-      |> Expect.equal "should parse workingDirectory" (Some @"C:\Code\Repos\SageFs")
+      |> Expect.equal "should parse workingDirectory" (Some @"C:\Code\Repos\Bozzetto")
 
     testCase "JSON without workingDirectory returns None" <| fun () ->
       let json = """{"pid":1234,"version":"0.5.0"}"""
@@ -5890,33 +5890,33 @@ let parseDaemonInfoJsonTests =
 
 let resolveRepoRootPureTests =
   testList "resolveRepoRootPure" [
-    testCase "explicit argv path takes priority over SageFs dir" <| fun () ->
+    testCase "explicit argv path takes priority over Bozzetto dir" <| fun () ->
       let argv = [| @"C:\SomeProject" |]
-      let sageFsDir = Some @"C:\SageFs"
+      let bozzettoDir = Some @"C:\Bozzetto"
       let fallback = @"C:\Fallback"
-      resolveRepoRootPure argv sageFsDir fallback
+      resolveRepoRootPure argv bozzettoDir fallback
       |> Expect.equal "argv should win" @"C:\SomeProject"
 
-    testCase "SageFs dir used when no argv" <| fun () ->
+    testCase "Bozzetto dir used when no argv" <| fun () ->
       let argv = [||]
-      let sageFsDir = Some @"C:\SageFs"
+      let bozzettoDir = Some @"C:\Bozzetto"
       let fallback = @"C:\Fallback"
-      resolveRepoRootPure argv sageFsDir fallback
-      |> Expect.equal "SageFs dir should be used" @"C:\SageFs"
+      resolveRepoRootPure argv bozzettoDir fallback
+      |> Expect.equal "Bozzetto dir should be used" @"C:\Bozzetto"
 
-    testCase "fallback used when no argv and no SageFs dir" <| fun () ->
+    testCase "fallback used when no argv and no Bozzetto dir" <| fun () ->
       let argv = [||]
-      let sageFsDir = None
+      let bozzettoDir = None
       let fallback = @"C:\Fallback"
-      resolveRepoRootPure argv sageFsDir fallback
+      resolveRepoRootPure argv bozzettoDir fallback
       |> Expect.equal "fallback should be used" @"C:\Fallback"
 
-    testCase "empty-string argv falls through to SageFs dir" <| fun () ->
+    testCase "empty-string argv falls through to Bozzetto dir" <| fun () ->
       let argv = [| "" |]
-      let sageFsDir = Some @"C:\SageFs"
+      let bozzettoDir = Some @"C:\Bozzetto"
       let fallback = @"C:\Fallback"
-      resolveRepoRootPure argv sageFsDir fallback
-      |> Expect.equal "empty string should not be used" @"C:\SageFs"
+      resolveRepoRootPure argv bozzettoDir fallback
+      |> Expect.equal "empty string should not be used" @"C:\Bozzetto"
   ]
 
 let sourceFileShowcaseTests =

@@ -1,10 +1,10 @@
 # RetryPolicy — Informal Specification
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
 
 ## Target
 
-**F# source**: `SageFs.Core/RetryPolicy.fs`
+**F# source**: `Bozzetto.Core/RetryPolicy.fs`
 **Key functions**: `backoffMs`, `shouldRetry`, `decide`
 
 ---

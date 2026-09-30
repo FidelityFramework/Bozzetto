@@ -3,7 +3,7 @@
 ## FILE PATHS & LINE NUMBERS
 
 ### 1. DaemonHealth.fs
-Path: C:\Code\Repos\SageFs\SageFs.Core\Features\DaemonHealth.fs
+Path: C:\Code\Repos\Bozzetto\Bozzetto.Core\Features\DaemonHealth.fs
 
 SessionHealthStatus (6-12):
   Ready, Evaluating, WarmingUp, Faulted, Stopped
@@ -43,7 +43,7 @@ Module Functions (49-127):
   formatSummary (96-126) - Takes HealthSnapshot, returns multi-line summary
 
 ### 2. SseWriter.fs
-Path: C:\Code\Repos\SageFs\SageFs.Core\SseWriter.fs
+Path: C:\Code\Repos\Bozzetto\Bozzetto.Core\SseWriter.fs
 
 formatSseEvent (15-21):
   Signature: (eventType: string) (data: string) → string
@@ -57,7 +57,7 @@ formatEvalTimelineEvent (246-255):
   Pattern example for health event formatting
 
 ### 3. DashboardFragments.fs
-Path: C:\Code\Repos\SageFs\SageFs\DashboardFragments.fs
+Path: C:\Code\Repos\Bozzetto\Bozzetto\DashboardFragments.fs
 
 renderEvalStats (131-145):
   PATTERN TO FOLLOW for renderDaemonHealth
@@ -72,7 +72,7 @@ renderMainContent (743-800):
   Call renderEvalStats at line 760
 
 ### 4. Dashboard.fs
-Path: C:\Code\Repos\SageFs\SageFs\Dashboard.fs
+Path: C:\Code\Repos\Bozzetto\Bozzetto\Dashboard.fs
 
 pushState function (225-373):
   Line 240-243: Parallelize tasks with Task.WhenAll
@@ -85,7 +85,7 @@ GetEvalTimeline pattern (250-251):
   let evalStatsView = EvalStatsView.fromStats stats timelineStats
 
 ### 5. DashboardTypes.fs
-Path: C:\Code\Repos\SageFs\SageFs\DashboardTypes.fs
+Path: C:\Code\Repos\Bozzetto\Bozzetto\DashboardTypes.fs
 
 DomIds module (17-44):
   Add DaemonHealth="daemon-health" around line 45

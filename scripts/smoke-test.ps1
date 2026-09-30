@@ -1,12 +1,12 @@
 #!/usr/bin/env pwsh
-# smoke-test.ps1 — Clean-machine end-to-end validation of a SageFs install.
+# smoke-test.ps1 — Clean-machine end-to-end validation of a Bozzetto install.
 # Exits 0 if all checks pass, 1 if any fail.
 
 param(
-  [string]$SampleProject = "samples\from-csharp\SageFs.Samples.FromCSharp\SageFs.Samples.FromCSharp.fsproj",
+  [string]$SampleProject = "samples\from-csharp\Bozzetto.Samples.FromCSharp\Bozzetto.Samples.FromCSharp.fsproj",
   [int]$DaemonTimeoutSeconds = 15,
   [int]$SessionWarmupSeconds = 45,
-  [int]$Port = 37749,
+  [int]$Port = 47749,
   [string]$DiagnosticsDir = "smoke-diagnostics"
 )
 
@@ -191,7 +191,7 @@ function Capture-SmokeDiagnostics([string]$reason) {
     samplePath = $samplePath
     daemonProcess = $daemonInfo
     daemonCommand = [PSCustomObject]@{
-      fileName = "sagefs"
+      fileName = "boz"
       arguments = @("--mcp-port", $Port, "--no-resume")
       stdoutLog = $daemonStdoutPath
       stderrLog = $daemonStderrPath
@@ -291,20 +291,20 @@ try {
   Fail "dotnet" "'dotnet' not found in PATH"
 }
 
-# sagefs in PATH
-$sagefsOk = $false
+# boz in PATH
+$bozzettoOk = $false
 try {
-  $sagefsVersion = & sagefs --version 2>&1
-  Pass "sagefs-path" "sagefs $sagefsVersion found in PATH"
-  $sagefsOk = $true
+  $bozzettoVersion = & boz --version 2>&1
+  Pass "bozzetto-path" "boz $bozzettoVersion found in PATH"
+  $bozzettoOk = $true
 } catch {
-  Fail "sagefs-path" "'sagefs' not found in PATH"
+  Fail "bozzetto-path" "'boz' not found in PATH"
   Write-Host ""
-  Write-Host "ERROR: 'sagefs' not found in PATH." -ForegroundColor Red
-  Write-Host "Install with: dotnet tool install --global SageFs" -ForegroundColor Yellow
+  Write-Host "ERROR: 'boz' not found in PATH." -ForegroundColor Red
+  Write-Host "Install with: dotnet tool install --global Bozzetto" -ForegroundColor Yellow
   Write-Host "Then restart your terminal to update PATH." -ForegroundColor Yellow
   Write-Host ""
-  Capture-SmokeDiagnostics "sagefs executable was not available on PATH"
+  Capture-SmokeDiagnostics "boz executable was not available on PATH"
   $null = Show-Summary
   exit 1
 }
@@ -336,7 +336,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "  Starting bare daemon" -ForegroundColor DarkGray
 Ensure-DiagnosticsDirectory
 Remove-Item -Path $daemonStdoutPath, $daemonStderrPath -ErrorAction SilentlyContinue
-$daemonProcess = Start-Process -FilePath "sagefs" `
+$daemonProcess = Start-Process -FilePath "boz" `
   -ArgumentList "--mcp-port", $Port, "--no-resume" `
   -WorkingDirectory $repoRoot `
   -RedirectStandardOutput $daemonStdoutPath `
@@ -394,7 +394,7 @@ Section "3. API version"
 try {
   $resp = Invoke-RestMethod -Method Get -Uri "$baseUrl/version" -TimeoutSec 10
   $versionResponse = $resp
-  if ($resp.server -eq "sagefs" -and $null -ne $resp.version) {
+  if ($resp.server -eq "bozzetto" -and $null -ne $resp.version) {
     Pass "api-version" "API version $($resp.version) (MCP: $($resp.mcp), SSE: $($resp.sse))"
   } else {
     Fail "api-version" "Unexpected /version response: $($resp | ConvertTo-Json -Compress)"

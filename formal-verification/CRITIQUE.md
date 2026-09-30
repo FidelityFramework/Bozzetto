@@ -1,6 +1,6 @@
 # Proof Utility Critique
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
 
 ## Last Updated
 
@@ -11,7 +11,7 @@
 
 ## Overall Assessment
 
-The SageFs formal verification project has 177 theorems proved across 11 Lean 4 files,
+The Bozzetto formal verification project has 177 theorems proved across 11 Lean 4 files,
 zero `sorry`, stdlib-only (no Mathlib). The project has progressed from individual-
 module invariants to system-level composition proofs. `Composition.lean` proves the
 end-to-end evaluation gate connecting `SessionLifecycle` and `Affordances`.

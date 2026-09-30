@@ -1,5 +1,5 @@
-% SageFs Formal Verification — Conference Paper
-% Lean Squad automated formal verification for WillEhrendreich/SageFs
+% Bozzetto Formal Verification — Conference Paper
+% Lean Squad automated formal verification for WillEhrendreich/Bozzetto
 %
 % ⚠️ LaTeX not available in CI sandbox — PDF not compiled.
 %    Compile with: cd formal-verification/paper && latexmk -pdf paper.tex
@@ -48,7 +48,7 @@
 \email{lean-squad@github-actions.bot}
 
 \begin{abstract}
-We report on a formal verification effort for SageFs, a live F\# development
+We report on a formal verification effort for Bozzetto, a live F\# development
 environment consisting of a REPL daemon, editor integrations, and a state-driven
 evaluation pipeline. Using Lean~4 with the standard library (no Mathlib, due to CI
 network constraints), we produced 11 specification files containing 177 theorems
@@ -87,10 +87,10 @@ Correctness properties that seem obvious by inspection---``code evaluation is on
 available when the session is ready''---span multiple subsystems and are easy to
 violate during refactoring.
 
-SageFs~\cite{sagefs} is an F\# live development environment providing a persistent
+Bozzetto~\cite{bozzetto} is an F\# live development environment providing a persistent
 F\# Interactive (FSI) session, Hot Reload, a terminal UI, Raylib GUI client, and
 editor integrations for VS~Code, Visual Studio, and Neovim. Its core logic in
-\texttt{SageFs.Core} includes:
+\texttt{Bozzetto.Core} includes:
 \begin{itemize}
   \item A \texttt{RingBuffer<'T>} circular buffer for storing evaluation history.
   \item Railway-oriented combinators (\texttt{ResultEx}) for error threading.
@@ -109,7 +109,7 @@ implementation defects through proof failure or counterexample.
 
 \paragraph{Contributions.}
 \begin{enumerate}
-  \item 177 Lean~4 theorems covering nine SageFs core modules, proved with zero
+  \item 177 Lean~4 theorems covering nine Bozzetto core modules, proved with zero
     \texttt{sorry}.
   \item The first cross-file composition theorem in the project:
     \texttt{send\_fsharp\_code\_iff\_ready\_phase} unifies the session lifecycle and
@@ -127,14 +127,14 @@ implementation defects through proof failure or counterexample.
 \section{Background}
 %% ============================================================
 
-\subsection{The SageFs Codebase}
+\subsection{The Bozzetto Codebase}
 
-SageFs is implemented in F\# targeting \texttt{net10.0}. The project uses a daemon
+Bozzetto is implemented in F\# targeting \texttt{net10.0}. The project uses a daemon
 architecture: a long-running FSI session managed by a mailbox processor
 (\texttt{AppState.fs}), which transitions through five phases: \texttt{Uninitialized},
 \texttt{Initializing}, \texttt{Active(Idle)}, \texttt{Active(Evaluating)}, and
 \texttt{Faulted}. Editor communication uses an MCP server; the terminal UI uses
-SageTUI's Elm Architecture. The core library (\texttt{SageFs.Core}) contains the
+SageTUI's Elm Architecture. The core library (\texttt{Bozzetto.Core}) contains the
 modules targeted for formal verification.
 
 \subsection{Lean 4 and the Standard Library}
@@ -166,7 +166,7 @@ tool-affordance properties we verify here.
 
 \subsection{Target Selection}
 
-We surveyed \texttt{SageFs.Core} for FV-amenable targets: pure or nearly-pure
+We surveyed \texttt{Bozzetto.Core} for FV-amenable targets: pure or nearly-pure
 functions, data structure invariants, and policy-enforcement logic. We applied
 the following criteria:
 \begin{itemize}
@@ -516,7 +516,7 @@ surprisingly simple once the bridge function was defined: most closed with
 \section{Conclusion}
 %% ============================================================
 
-We have presented a formal verification effort for SageFs, an F\# live development
+We have presented a formal verification effort for Bozzetto, an F\# live development
 environment, using Lean~4 with the standard library. The project produced 177 proved
 theorems across 11 files, with zero \texttt{sorry} and CI-checked builds. The central
 contribution is the system-level evaluation-gate theorem

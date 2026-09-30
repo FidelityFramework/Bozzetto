@@ -13,7 +13,7 @@
 # outputs, stray files, another agent's uncommitted edits) has masked real
 # failures here more than once.
 #
-# A pass is recorded under $SAGEFS_GATE_HOME/passed/<sha>/: the trust ledger,
+# A pass is recorded under $BOZZETTO_GATE_HOME/passed/<sha>/: the trust ledger,
 # the trust report table and the release bundle. The pre-push hook refuses
 # to push master to a commit with no pass. The self-hosted "main build" job
 # promotes that bundle instead of rebuilding it; with no pass (someone
@@ -21,7 +21,7 @@
 # definition of "passed", and nothing waits on a GitHub-hosted runner.
 set -uo pipefail
 
-STATE=${SAGEFS_GATE_HOME:-$HOME/.local/share/sagefs-gate}
+STATE=${BOZZETTO_GATE_HOME:-$HOME/.local/share/bozzetto-gate}
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel) || exit 9
 mkdir -p "$STATE/passed" "$STATE/logs"
 
@@ -114,7 +114,7 @@ echo "$$ $sha" > "$STATE/current"
 # within the wait below, say so loudly and gate anyway. Coordination that can
 # deadlock a release is worse than no coordination.
 gate_lease_id=""
-lease_port=${SAGEFS_MCP_PORT:-37749}
+lease_port=${BOZZETTO_MCP_PORT:-47749}
 if command -v curl >/dev/null 2>&1; then
   for _ in $(seq 1 12); do
     reply=$(curl -s -m 5 -X POST "http://localhost:$lease_port/api/lease/request" \
@@ -158,9 +158,9 @@ git checkout --detach -q "$sha" || exit 9
 git reset --hard -q
 git clean -fdq
 
-export SAGEFS_DATA_DIR="$STATE/data"   # never the user's real ~/.SageFs
+export BOZZETTO_DATA_DIR="$STATE/data"   # never the user's real ~/.bozzetto
 export TMPDIR="$STATE/tmp"
-rm -rf "$SAGEFS_DATA_DIR" "$TMPDIR"; mkdir -p "$SAGEFS_DATA_DIR" "$TMPDIR"
+rm -rf "$BOZZETTO_DATA_DIR" "$TMPDIR"; mkdir -p "$BOZZETTO_DATA_DIR" "$TMPDIR"
 export SOURCE_SHA="$sha"
 # MSBuild reuse nodes outlive the build that spawned them (about 15 minutes
 # idle). They used to inherit the lock fd below and hold it the whole time,
@@ -170,9 +170,9 @@ export SOURCE_SHA="$sha"
 export MSBUILDDISABLENODEREUSE=1
 # Recorded tier durations persist across gates, so longest-first ordering
 # learns from every run.
-export SAGEFS_TIER_HISTORY="$STATE/tier-durations.json"
+export BOZZETTO_TIER_HISTORY="$STATE/tier-durations.json"
 # Per-suite seconds, for balancing the sharded host tier (TierPlan.assign).
-export SAGEFS_SUITE_HISTORY="$STATE/suite-durations.json"
+export BOZZETTO_SUITE_HISTORY="$STATE/suite-durations.json"
 log="$STATE/logs/$short.log"
 
 echo "=== local gate: $(git log --oneline -1) ==="

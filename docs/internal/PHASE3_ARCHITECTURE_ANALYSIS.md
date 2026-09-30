@@ -1,8 +1,8 @@
-# SageFs Architecture Deep Dive - Phase 3 Analysis
+# Bozzetto Architecture Deep Dive - Phase 3 Analysis
 
 ## 1. FEATURE MODULE STRUCTURE
 
-### Public Module Organization (SageFs.Core/Features/)
+### Public Module Organization (Bozzetto.Core/Features/)
 
 **Core Composition Features:**
 - Diagnostician.fs - Master composition (5 features → DiagnosticReport)
@@ -27,7 +27,7 @@
   * CoverageState = {Slots: SequencePoint[], Hits: bool[]}
   * CoverageBitmap = uint64[] for 8x memory vs bool[]
 - CoverageInstrumenter.fs - Cecil IL probe injection
-  * Injects __SageFsCoverage class with bool[] Hits
+  * Injects __BozzettoCoverage class with bool[] Hits
   * Hit(slotId) calls at every non-hidden sequence point
 
 **Supporting Features:**
@@ -41,7 +41,7 @@
 
 ## 2. DIAGNOSTICIAN COMPOSITION PATTERN
 
-**Module:** SageFs.Core/Features/Diagnostician.fs
+**Module:** Bozzetto.Core/Features/Diagnostician.fs
 
 **Pure Composition Function:**
 `sharp
@@ -149,7 +149,7 @@ let routeToSession ctx sessionId msg : Task<Result<WorkerResponse, string>> =
 
 ## 4. SSE EVENT WIRING
 
-**Location:** SageFs.Core/McpPushNotifications.fs
+**Location:** Bozzetto.Core/McpPushNotifications.fs
 
 **PushEvent Union:**
 `sharp
@@ -196,7 +196,7 @@ let mergeStrategy = function
 
 ## 5. TEST PATTERNS
 
-**Module:** SageFs.Tests/DiagnosticianTests.fs
+**Module:** Bozzetto.Tests/DiagnosticianTests.fs
 
 **Composed Feature Test Example:**
 `sharp
@@ -274,7 +274,7 @@ Data infrastructure exists, but compositions missing:
 
 ## 7. FEATUREPUSHSTATE MODULE
 
-**Location:** SageFs.Core/Features/FeatureHooks.fs
+**Location:** Bozzetto.Core/Features/FeatureHooks.fs
 
 **State Structure:**
 `sharp
@@ -324,7 +324,7 @@ let recordEval (code: string) (result: string) (durationMs: int64)
 `sharp
 let computeEvalDiffPush opts sessionId currentOutputText state =
   let diff = EvalDiff.diffLines (Some state.LastOutputText) (Some currentOutputText)
-  let sseStr = SageFs.SseWriter.formatEvalDiffEvent opts sessionId (EvalDiff.summarize diff)
+  let sseStr = Bozzetto.SseWriter.formatEvalDiffEvent opts sessionId (EvalDiff.summarize diff)
   
   // Only return SSE if content changed (string comparison)
   if Some sseStr = state.LastEvalDiffSse then

@@ -1,14 +1,14 @@
-# Contributing to SageFs
+# Contributing to Bozzetto
 
-Welcome! SageFs is an open-source project and we genuinely appreciate contributions — whether it's fixing a typo, improving docs, filing a bug, or building a whole new feature. If you're from the F# community and want to help, you're in the right place.
+Welcome! Bozzetto is an open-source project and we genuinely appreciate contributions — whether it's fixing a typo, improving docs, filing a bug, or building a whole new feature. If you're from the F# community and want to help, you're in the right place.
 
 ## Quick Links
 
 | What | Where |
 |:---|:---|
-| Report a bug | [GitHub Issues](https://github.com/WillEhrendreich/SageFs/issues/new?labels=bug) |
-| Suggest a feature | [GitHub Issues](https://github.com/WillEhrendreich/SageFs/issues/new?labels=enhancement) |
-| Ask a question | [GitHub Discussions](https://github.com/WillEhrendreich/SageFs/discussions) or open an issue |
+| Report a bug | [Issues](https://forge.spkez.dev/FidelityFramework/Bozzetto/issues) |
+| Suggest a feature | [Issues](https://forge.spkez.dev/FidelityFramework/Bozzetto/issues) |
+| Ask a question | [Project issues](https://forge.spkez.dev/FidelityFramework/Bozzetto/issues) or open an issue |
 | Code standards | [AGENTS.md](AGENTS.md) |
 
 ## Getting Started
@@ -22,21 +22,19 @@ Welcome! SageFs is an open-source project and we genuinely appreciate contributi
 ### Clone and Build
 
 ```bash
-git clone https://github.com/WillEhrendreich/SageFs.git
-cd SageFs
+git clone https://forge.spkez.dev/FidelityFramework/Bozzetto.git
+cd Bozzetto
 dotnet fsi build.fsx
 ```
 
-The build script (one step) clones the [forked MCP SDK](https://github.com/WillEhrendreich/ModelContextProtocolSdk), packs it into a local `mcp-sdk-nupkg/` directory, and builds the solution. This is necessary because `NuGet.Config` points at that local directory as a package source.
+The build script restores the packages pinned in `Directory.Packages.props` and builds the solution. The MCP SDK comes from nuget.org; no dependency checkout or local MCP package feed is required. The owned `Bozzetto.Harmony` package and provenance manifest are versioned in `vendor/Bozzetto.Harmony/` and resolved through `nuget.config`. CI verifies this artifact without fetching upstream. To rebuild it from the controlled fork, run `scripts/update-harmony /absolute/path/to/Bozzetto.Harmony`, then review the package, manifest and lockfile changes. Generated package output stays in the external cache.
 
-> **Why a forked MCP SDK?** SageFs depends on a fork of `ModelContextProtocol` with additional features not yet upstream. The fork is public. The build script clones and packs it automatically — no manual steps needed.
-
-After the first run, `dotnet build` works normally (the `mcp-sdk-nupkg/` directory persists). If you get `NU1301: The local source 'mcp-sdk-nupkg' doesn't exist`, re-run `dotnet fsi build.fsx` to regenerate it.
+`dotnet build` also restores these dependencies directly. Use `dotnet fsi ci-pipeline.fsx` for the complete build and test gate.
 
 ### Build Script
 
 ```bash
-dotnet fsi build.fsx              # fetch MCP SDK + build (first-time setup)
+dotnet fsi build.fsx              # restore pinned packages + build
 dotnet fsi build.fsx -- test      # build + run tests
 dotnet fsi build.fsx -- install   # build + pack + install as global tool
 dotnet fsi build.fsx -- ext       # build + package + install editor extensions
@@ -46,54 +44,54 @@ dotnet fsi build.fsx -- all       # everything
 ### Install Your Local Build
 
 ```bash
-dotnet pack SageFs -o nupkg
-dotnet tool install --global SageFs --add-source ./nupkg --no-cache
+dotnet pack Bozzetto -o nupkg
+dotnet tool install --global Bozzetto --add-source ./nupkg --no-cache
 ```
 
-Now `sagefs` on your PATH is your locally-built version.
+Now `boz` on your PATH is your locally-built version.
 
 ### Run It
 
 ```bash
-# Point SageFs at any F# project
-sagefs
+# Point Bozzetto at any F# project
+boz
 
 # Use an editor integration, MCP client, or the dashboard
-# Dashboard: http://localhost:37750/dashboard
+# Dashboard: http://localhost:47750/dashboard
 ```
 
 ## Project Structure
 
 ```
-SageFs.Core/       — Shared engine, session, testing, persistence, and protocol logic (start here!)
-SageFs/            — CLI tool, daemon, MCP server, dashboard, plus retained deprecated TUI source
-SageFs.Gui/        — Deprecated Raylib product frontend retained as legacy source
-SageFs.Tests/      — Expecto test project (thousands of tests; the README badge is auto-derived)
-sagefs-vscode/     — VS Code extension (F# via Fable → JavaScript)
-sagefs-vs/         — Deprecated Visual Studio extension (C# + F#), retained as legacy source; not built or published
+Bozzetto.Core/       — Shared engine, session, testing, persistence, and protocol logic (start here!)
+Bozzetto/            — CLI tool, daemon, MCP server, dashboard, plus retained deprecated TUI source
+Bozzetto.Gui/        — Deprecated Raylib product frontend retained as legacy source
+Bozzetto.Tests/      — Expecto test project (thousands of tests; the README badge is auto-derived)
+bozzetto-vscode/     — VS Code extension (F# via Fable → JavaScript)
+bozzetto-vs/         — Deprecated Visual Studio extension (C# + F#), retained as legacy source; not built or published
 docs/              — GitHub Pages documentation site
 ```
 
 The Neovim plugin lives in a separate repo: [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim).
 
-The built-in SageTUI client, legacy TUI, and `SageFs.Gui` Raylib frontend are deprecated. Do not extend them as current product surfaces. Raylib application and game demos remain valuable examples of SageFs game-project support and should be preserved.
+The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are deprecated. Do not extend them as current product surfaces. Raylib application and game demos remain valuable examples of Bozzetto game-project support and should be preserved.
 
 **Good starting points for reading code:**
-- `SageFs/DaemonMode.fs` — daemon composition and client routing
-- `SageFs/Dashboard.fs` — current browser dashboard
-- `SageFs/McpServer.fs` and `SageFs/McpTools.fs` — MCP transport and tools
-- `SageFs.Tests/` — the test project shows how every module is exercised
+- `Bozzetto/DaemonMode.fs` — daemon composition and client routing
+- `Bozzetto/Dashboard.fs` — current browser dashboard
+- `Bozzetto/McpServer.fs` and `Bozzetto/McpTools.fs` — MCP transport and tools
+- `Bozzetto.Tests/` — the test project shows how every module is exercised
 
-## Debugging SageFs
+## Debugging Bozzetto
 
-This is the section your friend probably wants. Here's how to actually debug and develop SageFs day-to-day.
+This is the section your friend probably wants. Here's how to actually debug and develop Bozzetto day-to-day.
 
 ### The Development Loop
 
-SageFs is its own development environment. The recommended workflow is:
+Bozzetto is its own development environment. The recommended workflow is:
 
 ```
-1. Run SageFs against the test project
+1. Run Bozzetto against the test project
 2. Use the live FSI session to iterate on code
 3. Write tests in the REPL, see them fail, make them pass
 4. Save proven code to .fs files
@@ -102,31 +100,31 @@ SageFs is its own development environment. The recommended workflow is:
 
 ### Step-by-Step: Your First Debugging Session
 
-**1. Start SageFs against its own test project:**
+**1. Start Bozzetto against its own test project:**
 
 ```bash
-sagefs
+boz
 ```
 
-Then create a session for `SageFs.Tests/SageFs.Tests.fsproj` from your editor, MCP client, or the dashboard. That session loads the project into a live F# Interactive session with hot reload.
+Then create a session for `Bozzetto.Tests/Bozzetto.Tests.fsproj` from your editor, MCP client, or the dashboard. That session loads the project into a live F# Interactive session with hot reload.
 
-**2. Connect your editor.** SageFs exposes an MCP server at `http://localhost:37749/sse`. If you're using VS Code with the SageFs extension, it auto-connects. For other editors, see the [README](Readme.md) for setup.
+**2. Connect your editor.** Bozzetto exposes an MCP server at `http://localhost:47749/sse`. If you're using VS Code with the Bozzetto extension, it auto-connects. For other editors, see the [README](Readme.md) for setup.
 
-**3. Edit a `.fs` file and save.** SageFs detects the change (~500ms debounce), reloads the file via `#load` (~100ms), and if you have live testing enabled, affected tests re-run automatically.
+**3. Edit a `.fs` file and save.** Bozzetto detects the change (~500ms debounce), reloads the file via `#load` (~100ms), and if you have live testing enabled, affected tests re-run automatically.
 
-**4. Run tests from the SageFs REPL** (not `dotnet test`):
+**4. Run tests from the Bozzetto REPL** (not `dotnet test`):
 
 ```fsharp
 // Run a specific test module
-Expecto.Tests.runTestsWithCLIArgs [] [||] SageFs.Tests.SomeModule.tests;;
+Expecto.Tests.runTestsWithCLIArgs [] [||] Bozzetto.Tests.SomeModule.tests;;
 
 // Run all tests
-Expecto.Tests.runTestsWithCLIArgs [] [||] SageFs.Tests.AllTests.tests;;
+Expecto.Tests.runTestsWithCLIArgs [] [||] Bozzetto.Tests.AllTests.tests;;
 ```
 
 > **Signature note:** `runTestsWithCLIArgs` takes `(cliArguments: string list, argv: string[], test: Test)` — the **third argument is a single `Test` value**, not an array. A `[<Tests>]` module binding like `SomeModule.tests` is already a single combined `Test`; do NOT wrap it in `[| ... |]`. Passing an array lands it in the `argv` slot and produces the confusing error `expected string but got Test`.
 
-**5. Check test output** in the SageFs console window. Exit code 0 = all passed. Exit code 2 = passed but no TTY detected (cosmetic, ignore it). Exit code 1 = actual failures.
+**5. Check test output** in the Bozzetto console window. Exit code 0 = all passed. Exit code 2 = passed but no TTY detected (cosmetic, ignore it). Exit code 1 = actual failures.
 
 ### Debugging with Breakpoints
 
@@ -136,14 +134,14 @@ For traditional breakpoint debugging:
 # Build in Debug configuration (default)
 dotnet build
 
-# Attach your debugger to the SageFs process, or:
+# Attach your debugger to the Bozzetto process, or:
 # Run the test project directly with a debugger attached
-dotnet run --project SageFs.Tests -- --filter "test name"
+dotnet run --project Bozzetto.Tests -- --filter "test name"
 ```
 
-VS Code: Use the built-in .NET debugger. Create a `launch.json` that targets `SageFs.Tests.dll`.
+VS Code: Use the built-in .NET debugger. Create a `launch.json` that targets `Bozzetto.Tests.dll`.
 
-Visual Studio / Rider: Open `SageFs.slnx`, set `SageFs.Tests` as the startup project, and hit F5.
+Visual Studio / Rider: Open `Bozzetto.slnx`, set `Bozzetto.Tests` as the startup project, and hit F5.
 
 ### Performance guards
 
@@ -165,39 +163,39 @@ genuine hot path; do heavier one-off profiling ad hoc in the REPL.
 
 ### The Pack/Reinstall Cycle
 
-When you change SageFs's own source code (anything in `SageFs/` or `SageFs.Core/`), you need to rebuild and reinstall:
+When you change Bozzetto's own source code (anything in `Bozzetto/` or `Bozzetto.Core/`), you need to rebuild and reinstall:
 
 ```bash
 # Stop the running instance, rebuild, repackage, reinstall
-dotnet build && dotnet pack SageFs -o nupkg
-dotnet tool update --global SageFs --add-source ./nupkg --no-cache
+dotnet build && dotnet pack Bozzetto -o nupkg
+dotnet tool update --global Bozzetto --add-source ./nupkg --no-cache
 ```
 
-Then restart SageFs. If you only changed test code, a simpler rebuild is enough — no reinstall needed.
+Then restart Bozzetto. If you only changed test code, a simpler rebuild is enough — no reinstall needed.
 
 ### Viewing Logs
 
-- **Daemon console** — real-time output in the terminal where SageFs is running
-- **Dashboard** — `http://localhost:37750/dashboard` shows session state, events, test results
-- **Log files** — `sagefs-stderr.log`, `sagefs-trace.log` in the working directory
-- **OpenTelemetry** — start with `start-sagefs-otel.bat` for structured traces
+- **Daemon console** — real-time output in the terminal where Bozzetto is running
+- **Dashboard** — `http://localhost:47750/dashboard` shows session state, events, test results
+- **Log files** — `bozzetto-stderr.log`, `bozzetto-trace.log` in the working directory
+- **OpenTelemetry** — start with `start-bozzetto-otel.bat` for structured traces
 
 ## Running Tests
 
-SageFs uses [Expecto](https://github.com/haf/expecto) for testing, with [FsCheck](https://github.com/fscheck/FsCheck) for property-based tests and [Verify](https://github.com/VerifyTests/Verify) for snapshot tests.
+Bozzetto uses [Expecto](https://github.com/haf/expecto) for testing, with [FsCheck](https://github.com/fscheck/FsCheck) for property-based tests and [Verify](https://github.com/VerifyTests/Verify) for snapshot tests.
 
 ```bash
 # Quick: run all tests via build script
 dotnet fsi build.fsx -- test
 
 # Direct: run the test project
-dotnet run --project SageFs.Tests -- --summary
+dotnet run --project Bozzetto.Tests -- --summary
 
 # Filter: run specific tests
-dotnet run --project SageFs.Tests -- --filter "CellGrid"
+dotnet run --project Bozzetto.Tests -- --filter "CellGrid"
 ```
 
-For local development, prefer running tests inside SageFs's own REPL for instant feedback.
+For local development, prefer running tests inside Bozzetto's own REPL for instant feedback.
 
 ### Test Categories
 
@@ -292,15 +290,15 @@ Not sure where to start? Here are some areas where help is especially welcome:
 - **Snapshot tests** — add Verify snapshot tests for rendered output
 - **Bug fixes** — check the issue tracker for bugs labeled `good-first-issue`
 - **Error messages** — make diagnostics clearer and more helpful
-- **FSI quirks** — `SageFs.Core/FsiRewrite.fs` is ~25 lines and handles FSI edge cases — PRs welcome
+- **FSI quirks** — `Bozzetto.Core/FsiRewrite.fs` is ~25 lines and handles FSI edge cases — PRs welcome
 
 ## Architecture Overview
 
-SageFs is **daemon-first** — one long-running server, many clients:
+Bozzetto is **daemon-first** — one long-running server, many clients:
 
 ```
                 ┌───────────────┐
-                │  SageFs Daemon│
+                │  Bozzetto Daemon│
                 │  ┌─────────┐  │
                 │  │ FSI Actor│  │  ← F# Interactive session
                 │  └─────────┘  │
@@ -329,8 +327,8 @@ Key architectural concepts:
 
 ## Questions?
 
-- Open a [Discussion](https://github.com/WillEhrendreich/SageFs/discussions) for general questions
-- Open an [Issue](https://github.com/WillEhrendreich/SageFs/issues) for bugs or feature requests
+- Open a [project issue](https://forge.spkez.dev/FidelityFramework/Bozzetto/issues) for general questions
+- Open an [Issue](https://forge.spkez.dev/FidelityFramework/Bozzetto/issues) for bugs or feature requests
 - PRs are always welcome — even small ones
 
 Thank you for contributing! 🎉

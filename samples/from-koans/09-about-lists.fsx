@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Lists — SageFs Edition
+//  🧘  About Lists — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutLists.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

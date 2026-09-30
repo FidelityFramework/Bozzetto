@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Tuples — SageFs Edition
+//  🧘  About Tuples — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutTuples.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

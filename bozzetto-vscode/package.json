@@ -1,0 +1,942 @@
+{
+  "name": "bozzetto",
+  "displayName": "Bozzetto — Live F# Development",
+  "description": "Send F# code to Bozzetto for instant evaluation, type-checking, and hot reload.",
+  "version": "0.6.834",
+  "publisher": "fidelityframework",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://forge.spkez.dev/FidelityFramework/Bozzetto"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Testing",
+    "Linters"
+  ],
+  "keywords": [
+    "fsharp",
+    "f#",
+    "repl",
+    "interactive",
+    "hot-reload",
+    "mcp"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onLanguage:fsharp",
+    "workspaceContains:**/*.fsproj",
+    "workspaceContains:**/*.sln",
+    "workspaceContains:**/*.slnx",
+    "onCommand:bozzetto.start",
+    "onCommand:bozzetto.stop",
+    "onCommand:bozzetto.restart",
+    "onCommand:bozzetto.openDashboard"
+  ],
+  "main": "./dist/Extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "bozzetto.eval",
+        "title": "Bozzetto: Evaluate Selection / Line",
+        "icon": "$(play)"
+      },
+      {
+        "command": "bozzetto.evalFile",
+        "title": "Bozzetto: Evaluate Entire File"
+      },
+      {
+        "command": "bozzetto.evalRange",
+        "title": "Bozzetto: Evaluate Code Block"
+      },
+      {
+        "command": "bozzetto.start",
+        "title": "Bozzetto: Start Daemon"
+      },
+      {
+        "command": "bozzetto.stop",
+        "title": "Bozzetto: Stop Daemon"
+      },
+      {
+        "command": "bozzetto.restart",
+        "title": "Bozzetto: Restart Daemon"
+      },
+      {
+        "command": "bozzetto.openDashboard",
+        "title": "Bozzetto: Open Dashboard"
+      },
+      {
+        "command": "bozzetto.reconnect",
+        "title": "Bozzetto: Reconnect to Daemon",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "bozzetto.switchProject",
+        "title": "Bozzetto: Switch Project",
+        "icon": "$(folder-library)"
+      },
+      {
+        "command": "bozzetto.browseForProject",
+        "title": "Bozzetto: Browse for Project",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "bozzetto.switchWorkflow",
+        "title": "Bozzetto: Switch Workflow"
+      },
+      {
+        "command": "bozzetto.resetSession",
+        "title": "Bozzetto: Reset Session"
+      },
+      {
+        "command": "bozzetto.hardReset",
+        "title": "Bozzetto: Hard Reset (Rebuild)"
+      },
+      {
+        "command": "bozzetto.createSession",
+        "title": "Bozzetto: Create Session"
+      },
+      {
+        "command": "bozzetto.configureWarmupAutoOpen",
+        "title": "Bozzetto: Configure Warmup Auto-Open"
+      },
+      {
+        "command": "bozzetto.switchSession",
+        "title": "Bozzetto: Switch Session"
+      },
+      {
+        "command": "bozzetto.stopSession",
+        "title": "Bozzetto: Stop Session"
+      },
+      {
+        "command": "bozzetto.clearResults",
+        "title": "Bozzetto: Clear Inline Results"
+      },
+      {
+        "command": "bozzetto.cycleDensity",
+        "title": "Bozzetto: Cycle Density (Full → Normal → Minimal)"
+      },
+      {
+        "command": "bozzetto.hotReloadToggle",
+        "title": "Bozzetto: Toggle Hot Reload for File",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "bozzetto.hotReloadWatchAll",
+        "title": "Bozzetto: Watch All Files",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "bozzetto.hotReloadUnwatchAll",
+        "title": "Bozzetto: Unwatch All Files",
+        "icon": "$(close-all)"
+      },
+      {
+        "command": "bozzetto.hotReloadRefresh",
+        "title": "Bozzetto: Refresh Hot Reload",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "bozzetto.hotReloadToggleDirectory",
+        "title": "Bozzetto: Toggle Directory Hot Reload",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "bozzetto.sessionContextRefresh",
+        "title": "Bozzetto: Refresh Session Context",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "bozzetto.enableLiveTesting",
+        "title": "Bozzetto: Enable Live Testing"
+      },
+      {
+        "command": "bozzetto.disableLiveTesting",
+        "title": "Bozzetto: Disable Live Testing"
+      },
+      {
+        "command": "bozzetto.runTests",
+        "title": "Bozzetto: Run All Tests"
+      },
+      {
+        "command": "bozzetto.runTest",
+        "title": "Bozzetto: Run This Test"
+      },
+      {
+        "command": "bozzetto.setRunPolicy",
+        "title": "Bozzetto: Set Test Run Policy"
+      },
+      {
+        "command": "bozzetto.showHistory",
+        "title": "Bozzetto: Show Recent Events"
+      },
+      {
+        "command": "bozzetto.showCallGraph",
+        "title": "Bozzetto: Show Test Call Graph"
+      },
+      {
+        "command": "bozzetto.showBindings",
+        "title": "Bozzetto: Show FSI Bindings"
+      },
+      {
+        "command": "bozzetto.showTestTrace",
+        "title": "Bozzetto: Show Test Trace"
+      },
+      {
+        "command": "bozzetto.showCoveringTests",
+        "title": "Bozzetto: Show Covering Tests"
+      },
+      {
+        "command": "bozzetto.explainTestFailure",
+        "title": "Bozzetto: Explain Test Failure"
+      },
+      {
+        "command": "bozzetto.suggestRepair",
+        "title": "Bozzetto: Suggest Repair for Failed Test"
+      },
+      {
+        "command": "bozzetto.exportSession",
+        "title": "Bozzetto: Export Session as .fsx"
+      },
+      {
+        "command": "bozzetto.sessionMenu",
+        "title": "Bozzetto: Session Menu"
+      },
+      {
+        "command": "bozzetto.sessionsRefresh",
+        "title": "Bozzetto: Refresh Sessions",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "bozzetto.switchToSession",
+        "title": "Switch To",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "bozzetto.stopSessionInline",
+        "title": "Stop",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "bozzetto.resetSessionInline",
+        "title": "Reset",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "bozzetto.runApp",
+        "title": "Bozzetto: Run App",
+        "icon": "$(play)"
+      },
+      {
+        "command": "bozzetto.stopApp",
+        "title": "Bozzetto: Stop App",
+        "icon": "$(primitive-square)"
+      },
+      {
+        "command": "bozzetto.evalAdvance",
+        "title": "Bozzetto: Evaluate & Advance",
+        "icon": "$(run-below)"
+      },
+      {
+        "command": "bozzetto.evalAllBlocks",
+        "title": "Bozzetto: Evaluate All Blocks",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "bozzetto.nextBlock",
+        "title": "Bozzetto: Next Code Block"
+      },
+      {
+        "command": "bozzetto.prevBlock",
+        "title": "Bozzetto: Previous Code Block"
+      },
+      {
+        "command": "bozzetto.cancelEval",
+        "title": "Bozzetto: Cancel Evaluation"
+      },
+      {
+        "command": "bozzetto.loadScript",
+        "title": "Bozzetto: Load Current Script"
+      },
+      {
+        "command": "bozzetto.checkHealth",
+        "title": "Bozzetto: Check Health",
+        "icon": "$(heart)"
+      },
+      {
+        "command": "bozzetto.openGettingStarted",
+        "title": "Bozzetto: Open Getting Started Sample",
+        "icon": "$(mortar-board)"
+      },
+      {
+        "command": "bozzetto.nextFailingTest",
+        "title": "Bozzetto: Next Failing Test"
+      },
+      {
+        "command": "bozzetto.prevFailingTest",
+        "title": "Bozzetto: Previous Failing Test"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "bozzetto.eval",
+        "key": "alt+enter",
+        "when": "editorTextFocus && editorLangId == fsharp"
+      },
+      {
+        "command": "bozzetto.evalFile",
+        "key": "alt+shift+enter",
+        "when": "editorTextFocus && editorLangId == fsharp"
+      },
+      {
+        "command": "bozzetto.evalAdvance",
+        "key": "shift+enter",
+        "when": "editorTextFocus && editorLangId == fsharp && !notebookEditorFocused"
+      },
+      {
+        "command": "bozzetto.cancelEval",
+        "key": "ctrl+shift+c",
+        "when": "editorTextFocus && editorLangId == fsharp"
+      },
+      {
+        "command": "bozzetto.evalAllBlocks",
+        "key": "ctrl+alt+enter",
+        "when": "editorTextFocus && editorLangId == fsharp"
+      },
+      {
+        "command": "bozzetto.nextBlock",
+        "key": "ctrl+down",
+        "when": "editorTextFocus && editorLangId == fsharp"
+      },
+      {
+        "command": "bozzetto.prevBlock",
+        "key": "ctrl+up",
+        "when": "editorTextFocus && editorLangId == fsharp"
+      },
+      {
+        "command": "bozzetto.nextFailingTest",
+        "key": "alt+shift+]",
+        "when": "bozzetto:daemonRunning"
+      },
+      {
+        "command": "bozzetto.prevFailingTest",
+        "key": "alt+shift+[",
+        "when": "bozzetto:daemonRunning"
+      }
+    ],
+    "configuration": {
+      "title": "Bozzetto",
+      "properties": {
+        "bozzetto.mcpPort": {
+          "type": "number",
+          "default": 47749,
+          "description": "Port for the Bozzetto MCP server."
+        },
+        "bozzetto.dashboardPort": {
+          "type": "number",
+          "default": 47750,
+          "description": "Legacy fallback dashboard port. Bozzetto normally discovers the daemon and derives the dashboard port from the MCP port."
+        },
+        "bozzetto.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start Bozzetto daemon when opening an F# project."
+        },
+        "bozzetto.projectPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to .fsproj file. If empty, Bozzetto auto-detects."
+        },
+        "bozzetto.logLevel": {
+          "type": "string",
+          "enum": [
+            "error",
+            "info",
+            "debug"
+          ],
+          "default": "info",
+          "description": "Output channel log level."
+        },
+        "bozzetto.inlineResultTimeout": {
+          "type": "number",
+          "default": 30000,
+          "description": "How long (ms) inline eval results stay visible before auto-clearing. Set to 0 to keep forever."
+        },
+        "bozzetto.cellHighlight": {
+          "type": "boolean",
+          "default": true,
+          "description": "Highlight the current code cell (block) the cursor is in."
+        },
+        "bozzetto.density": {
+          "type": "string",
+          "enum": [
+            "full",
+            "normal",
+            "minimal"
+          ],
+          "enumDescriptions": [
+            "All decorations: inline results, code lens, cell highlight, test signs, stale markers",
+            "Inline results and test signs, no code lens or cell highlight",
+            "Only inline results on eval, nothing persistent"
+          ],
+          "default": "full",
+          "description": "Controls how many visual annotations Bozzetto shows."
+        },
+        "bozzetto.typeExplorerRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Pin the API Browser tree to a single root namespace (e.g. \"MyApp.Domain\"). Empty string shows the default set of common .NET and F# namespaces."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "bozzetto",
+          "title": "Bozzetto",
+          "icon": "$(flame)"
+        }
+      ]
+    },
+    "views": {
+      "bozzetto": [
+        {
+          "id": "bozzetto-sessions",
+          "name": "Sessions",
+          "contextualTitle": "Bozzetto Sessions"
+        },
+        {
+          "id": "bozzetto-hotReload",
+          "name": "Hot Reload Files",
+          "contextualTitle": "Bozzetto Hot Reload"
+        },
+        {
+          "id": "bozzetto-sessionContext",
+          "name": "Session Context",
+          "contextualTitle": "Bozzetto Session Context"
+        },
+        {
+          "id": "bozzetto-types",
+          "name": "API Browser",
+          "contextualTitle": "Bozzetto API Browser"
+        }
+      ]
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "bozzetto.eval",
+          "when": "bozzetto:daemonRunning && editorLangId == fsharp"
+        },
+        {
+          "command": "bozzetto.evalFile",
+          "when": "bozzetto:daemonRunning && editorLangId == fsharp"
+        },
+        {
+          "command": "bozzetto.evalRange",
+          "when": "bozzetto:daemonRunning && editorLangId == fsharp"
+        },
+        {
+          "command": "bozzetto.evalAdvance",
+          "when": "bozzetto:daemonRunning && editorLangId == fsharp"
+        },
+        {
+          "command": "bozzetto.evalAllBlocks",
+          "when": "bozzetto:daemonRunning && editorLangId == fsharp"
+        },
+        {
+          "command": "bozzetto.cancelEval",
+          "when": "bozzetto:daemonRunning && editorLangId == fsharp"
+        },
+        {
+          "command": "bozzetto.loadScript",
+          "when": "bozzetto:daemonRunning && editorLangId == fsharp"
+        },
+        {
+          "command": "bozzetto.nextBlock",
+          "when": "editorLangId == fsharp"
+        },
+        {
+          "command": "bozzetto.prevBlock",
+          "when": "editorLangId == fsharp"
+        },
+        {
+          "command": "bozzetto.stop",
+          "when": "bozzetto:daemonRunning"
+        },
+        {
+          "command": "bozzetto.restart",
+          "when": "bozzetto:daemonRunning"
+        },
+        {
+          "command": "bozzetto.openDashboard",
+          "when": "bozzetto:daemonRunning"
+        },
+        {
+          "command": "bozzetto.switchProject",
+          "when": "bozzetto:daemonRunning"
+        },
+        {
+          "command": "bozzetto.showCoveringTests",
+          "when": "false"
+        },
+        {
+          "command": "bozzetto.runTest",
+          "when": "false"
+        },
+        {
+          "command": "bozzetto.switchWorkflow",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.resetSession",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.hardReset",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.createSession",
+          "when": "bozzetto:daemonRunning"
+        },
+        {
+          "command": "bozzetto.switchSession",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.stopSession",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.hotReloadToggle",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.hotReloadWatchAll",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.hotReloadUnwatchAll",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.hotReloadRefresh",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.hotReloadToggleDirectory",
+          "when": "false"
+        },
+        {
+          "command": "bozzetto.sessionContextRefresh",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.enableLiveTesting",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession && !bozzetto:liveTestingEnabled"
+        },
+        {
+          "command": "bozzetto.disableLiveTesting",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession && bozzetto:liveTestingEnabled"
+        },
+        {
+          "command": "bozzetto.runTests",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.setRunPolicy",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.showHistory",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.showCallGraph",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.showBindings",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.showTestTrace",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.explainTestFailure",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.suggestRepair",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.exportSession",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.sessionMenu",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.sessionsRefresh",
+          "when": "bozzetto:daemonRunning"
+        },
+        {
+          "command": "bozzetto.switchToSession",
+          "when": "false"
+        },
+        {
+          "command": "bozzetto.stopSessionInline",
+          "when": "false"
+        },
+        {
+          "command": "bozzetto.resetSessionInline",
+          "when": "false"
+        },
+        {
+          "command": "bozzetto.runApp",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.stopApp",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.nextFailingTest",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        },
+        {
+          "command": "bozzetto.prevFailingTest",
+          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "bozzetto.hotReloadWatchAll",
+          "when": "view == bozzetto-hotReload",
+          "group": "navigation"
+        },
+        {
+          "command": "bozzetto.hotReloadUnwatchAll",
+          "when": "view == bozzetto-hotReload",
+          "group": "navigation"
+        },
+        {
+          "command": "bozzetto.hotReloadRefresh",
+          "when": "view == bozzetto-hotReload",
+          "group": "navigation"
+        },
+        {
+          "command": "bozzetto.sessionContextRefresh",
+          "when": "view == bozzetto-sessionContext",
+          "group": "navigation"
+        },
+        {
+          "command": "bozzetto.createSession",
+          "when": "view == bozzetto-sessions",
+          "group": "navigation"
+        },
+        {
+          "command": "bozzetto.sessionsRefresh",
+          "when": "view == bozzetto-sessions",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "bozzetto.switchToSession",
+          "when": "view == bozzetto-sessions && viewItem =~ /session-inactive/",
+          "group": "inline"
+        },
+        {
+          "command": "bozzetto.resetSessionInline",
+          "when": "view == bozzetto-sessions && viewItem =~ /session-active/",
+          "group": "inline"
+        },
+        {
+          "command": "bozzetto.stopSessionInline",
+          "when": "view == bozzetto-sessions && viewItem =~ /session-(active|inactive)/ && viewItem != session-stopped",
+          "group": "inline"
+        },
+        {
+          "command": "bozzetto.runApp",
+          "when": "view == bozzetto-sessions && viewItem =~ /session-active/",
+          "group": "inline"
+        },
+        {
+          "command": "bozzetto.stopApp",
+          "when": "view == bozzetto-sessions && viewItem =~ /session-active/",
+          "group": "inline"
+        },
+        {
+          "command": "bozzetto.hotReloadToggleDirectory",
+          "when": "view == bozzetto-hotReload && viewItem == directory",
+          "group": "inline"
+        },
+        {
+          "command": "bozzetto.hotReloadToggle",
+          "when": "view == bozzetto-hotReload && viewItem =~ /(watched|unwatched)File/",
+          "group": "inline"
+        }
+      ]
+    },
+    "colors": [
+      {
+        "id": "bozzetto.successBackground",
+        "description": "Background color for successful eval results",
+        "defaults": {
+          "dark": "#a6e3a120",
+          "light": "#40a02b20",
+          "highContrast": "#00ff0020"
+        }
+      },
+      {
+        "id": "bozzetto.successForeground",
+        "description": "Foreground color for successful eval results",
+        "defaults": {
+          "dark": "#a6e3a1",
+          "light": "#40a02b",
+          "highContrast": "#00ff00"
+        }
+      },
+      {
+        "id": "bozzetto.errorBackground",
+        "description": "Background color for eval errors",
+        "defaults": {
+          "dark": "#f38ba820",
+          "light": "#d2004220",
+          "highContrast": "#ff000020"
+        }
+      },
+      {
+        "id": "bozzetto.errorForeground",
+        "description": "Foreground color for eval errors",
+        "defaults": {
+          "dark": "#f38ba8",
+          "light": "#d20042",
+          "highContrast": "#ff0000"
+        }
+      },
+      {
+        "id": "bozzetto.runningForeground",
+        "description": "Foreground color for running indicator",
+        "defaults": {
+          "dark": "#f9e2af",
+          "light": "#df8e1d",
+          "highContrast": "#ffff00"
+        }
+      },
+      {
+        "id": "bozzetto.outputForeground",
+        "description": "Foreground color for output text",
+        "defaults": {
+          "dark": "#a6adc8",
+          "light": "#6c6f85",
+          "highContrast": "#ffffff"
+        }
+      },
+      {
+        "id": "bozzetto.staleForeground",
+        "description": "Foreground color for stale results",
+        "defaults": {
+          "dark": "#6c7086",
+          "light": "#9ca0b0",
+          "highContrast": "#808080"
+        }
+      },
+      {
+        "id": "bozzetto.evalFlashBackground",
+        "description": "Background highlight shown briefly when evaluating a code block",
+        "defaults": {
+          "dark": "#264f7830",
+          "light": "#add8e630",
+          "highContrast": "#ffffff20"
+        }
+      },
+      {
+        "id": "bozzetto.cellHighlightBackground",
+        "description": "Background color for the current code cell",
+        "defaults": {
+          "dark": "#ffffff06",
+          "light": "#00000006",
+          "highContrast": "#ffffff10"
+        }
+      },
+      {
+        "id": "bozzetto.bindingValueForeground",
+        "description": "Foreground color for inline binding value ghost text (e.g. → 42  int)",
+        "defaults": {
+          "dark": "#89b4fa",
+          "light": "#1e66f5",
+          "highContrast": "#89b4fa"
+        }
+      },
+      {
+        "id": "bozzetto.cellBorderColor",
+        "description": "Border color for the top edge of the current code cell",
+        "defaults": {
+          "dark": "#ffffff15",
+          "light": "#00000015",
+          "highContrast": "#ffffff30"
+        }
+      }
+    ],
+    "snippets": [
+      {
+        "language": "fsharp",
+        "path": "./snippets/fsharp.json"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "bozzetto.getStarted",
+        "title": "Get Started with Bozzetto",
+        "description": "Your first 60 seconds with Bozzetto — live F# development in VS Code.",
+        "steps": [
+          {
+            "id": "bozzetto.installCli",
+            "title": "Install the Bozzetto CLI",
+            "description": "Bozzetto needs its CLI tool installed. Run ``dotnet tool install --global Bozzetto`` in your terminal.\n\n[Check Installation](command:bozzetto.checkHealth)",
+            "media": {
+              "image": "$(terminal)",
+              "altText": "Terminal icon"
+            },
+            "completionEvents": [
+              "onCommand:bozzetto.checkHealth"
+            ]
+          },
+          {
+            "id": "bozzetto.openProject",
+            "title": "Open an F# Project",
+            "description": "Open a folder containing a ``.fsproj`` or ``.sln`` file. Bozzetto will automatically detect it.\n\nFor workspaces with multiple projects, Bozzetto will ask which one to use. You can switch later with **Bozzetto: Switch Project** from the command palette.",
+            "media": {
+              "image": "$(folder-opened)",
+              "altText": "Folder opened icon"
+            },
+            "completionEvents": [
+              "onLanguage:fsharp"
+            ]
+          },
+          {
+            "id": "bozzetto.startDaemon",
+            "title": "Start the Bozzetto Daemon",
+            "description": "Click the Bozzetto icon in the status bar or run **Bozzetto: Start Daemon** from the command palette.\n\n[Start Bozzetto](command:bozzetto.start)",
+            "media": {
+              "image": "$(rocket)",
+              "altText": "Rocket icon"
+            },
+            "completionEvents": [
+              "onCommand:bozzetto.start"
+            ]
+          },
+          {
+            "id": "bozzetto.evalFirst",
+            "title": "Evaluate Your First Expression",
+            "description": "Select some F# code and press ``Alt+Enter`` to evaluate it. Results appear inline!\n\nOther keys: ``Shift+Enter`` evaluates and moves to the next block, ``Alt+Shift+Enter`` evaluates the whole file.\n\nDon't have an F# file handy? Open our interactive tutorial:\n\n[Open Getting Started Sample](command:bozzetto.openGettingStarted)",
+            "media": {
+              "image": "$(play)",
+              "altText": "Play icon"
+            },
+            "completionEvents": [
+              "onCommand:bozzetto.eval"
+            ]
+          },
+          {
+            "id": "bozzetto.liveTesting",
+            "title": "Explore Live Testing",
+            "description": "Bozzetto automatically discovers and runs your tests. Check the Tests view in the Bozzetto sidebar for live results.\n\n[Enable Live Testing](command:bozzetto.enableLiveTesting)",
+            "media": {
+              "image": "$(testing-run-icon)",
+              "altText": "Testing icon"
+            },
+            "completionEvents": [
+              "onCommand:bozzetto.enableLiveTesting"
+            ]
+          }
+        ]
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "bozzetto-sessions",
+        "when": "!bozzetto:hasFsharpProject",
+        "contents": "No F# project or solution found in this workspace.\n[Browse for a Project](command:bozzetto.browseForProject)\n\nOpen a folder containing a .fsproj, .sln, or .slnx file, or browse to one."
+      },
+      {
+        "view": "bozzetto-sessions",
+        "when": "bozzetto:hasFsharpProject && !bozzetto:daemonRunning",
+        "contents": "Bozzetto isn't running.\n[Start Bozzetto](command:bozzetto.start)"
+      },
+      {
+        "view": "bozzetto-sessions",
+        "when": "bozzetto:hasFsharpProject && bozzetto:daemonRunning && !bozzetto:hasSession",
+        "contents": "Bozzetto is running with no active session.\n[Create Session](command:bozzetto.createSession)"
+      },
+      {
+        "view": "bozzetto-hotReload",
+        "when": "!bozzetto:daemonRunning",
+        "contents": "Bozzetto isn't running.\n[Start Bozzetto](command:bozzetto.start)"
+      },
+      {
+        "view": "bozzetto-hotReload",
+        "when": "bozzetto:daemonRunning && !bozzetto:hasSession",
+        "contents": "No active session.\n[Create Session](command:bozzetto.createSession)\n\nHot reload files appear once a session is running."
+      },
+      {
+        "view": "bozzetto-hotReload",
+        "when": "bozzetto:daemonRunning && bozzetto:hasSession && !bozzetto:hotReloadLoaded",
+        "contents": "No hot-reloadable files yet.\n\nWarmup lists a session's source files, which takes 15-30 seconds. If it stays empty, the project may not have been built.\n[Refresh](command:bozzetto.hotReloadRefresh)\n[Rebuild Session](command:bozzetto.hardReset)"
+      },
+      {
+        "view": "bozzetto-sessionContext",
+        "when": "!bozzetto:daemonRunning",
+        "contents": "Bozzetto isn't running.\n[Start Bozzetto](command:bozzetto.start)"
+      },
+      {
+        "view": "bozzetto-sessionContext",
+        "when": "bozzetto:daemonRunning && !bozzetto:hasSession",
+        "contents": "No active session.\n[Create Session](command:bozzetto.createSession)\n\nSession context shows bindings and types once a session is running."
+      },
+      {
+        "view": "bozzetto-sessionContext",
+        "when": "bozzetto:daemonRunning && bozzetto:hasSession && !bozzetto:sessionContextLoaded",
+        "contents": "Warming up.\n\nA session loads its projects before it can report what it holds; this usually takes 15-30 seconds.\n[Refresh](command:bozzetto.sessionContextRefresh)"
+      },
+      {
+        "view": "bozzetto-types",
+        "when": "!bozzetto:daemonRunning",
+        "contents": "Bozzetto isn't running.\n[Start Bozzetto](command:bozzetto.start)\n\nThe API Browser queries the live session, so it needs a running daemon."
+      },
+      {
+        "view": "bozzetto-types",
+        "when": "bozzetto:daemonRunning && !bozzetto:hasSession",
+        "contents": "No active session.\n[Create Session](command:bozzetto.createSession)\n\nThe API Browser lists the namespaces and types your session can actually see."
+      }
+    ]
+  },
+  "scripts": {
+    "sync-version": "node -e \"const fs=require('fs');const x=fs.readFileSync('../Directory.Build.props','utf8');const m=x.match(/<Version>([^<]+)<\\/Version>/);if(m){const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version=m[1];fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n');console.log('Version synced:',m[1])}\"",
+    "vscode:prepublish": "npm run sync-version && npm run compile",
+    "compile": "dotnet fable src --outDir fable-out && node esbuild.mjs",
+    "watch": "dotnet fable watch src --outDir fable-out",
+    "compile:ts": "tsc -p ./",
+    "test:golden": "node src/LiveTestingListener.golden-tests.mjs",
+    "compile:test-electron": "dotnet fable test-electron --outDir test-electron-out && node test-electron/esbuild.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^3.1.0",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.5.0"
+  }
+}

@@ -75,7 +75,7 @@ default is worse than it was".
    246 passed. Real bug, real fix, not this one.
 5. **The starved resource is the worker's test proxy.** Both suites WAIT for a
    worker to reach a ready state; the other 250-real-daemon suites pay a 94MB
-   private `SageFs.Core` adoption each (`HostCoreAdoption`), and that is the
+   private `Bozzetto.Core` adoption each (`HostCoreAdoption`), and that is the
    contention. Sequencing the two suites against each other (`72979fd9`) did
    **not** fix it, because the pressure comes from the other 248 suites, not
    from each other.
@@ -90,7 +90,7 @@ Measured on real paths and real logs, in the live REPL where possible:
 - **Not a port race.** `ed9220c1` took `address already in use` from 4 → 0.
 - **Not `HostCoreAdoption`.** This was my next hypothesis and it is wrong.
   Replaying `findCandidates`' exact predicate in the REPL: **0 of the 4 fixture
-  projects have a `SageFs.Core.dll` under their `bin`**, including both failing
+  projects have a `Bozzetto.Core.dll` under their `bin`**, including both failing
   suites' fixtures. Only **2 adoptions happen in the entire tier** (not 58), and
   the machine has 38GB RAM free. Adoption is a rounding error here, not the cause.
 - **Not the session being unready.** The test's own earlier waits succeed in the
@@ -104,7 +104,7 @@ discovered and instrumented, `RunRequestedTests` is dispatched (the API replies
 `Queued 3 test(s)`, `success: true`), and the status then sits at
 `Passed=0 Stale=3 Running=0` — nothing in flight, nothing ever reported.
 
-`SageFsApp.fs:2919` handles the effect and calls
+`BozzettoApp.fs:2919` handles the effect and calls
 `deps.GetStreamingTestProxy sid`; on `None` it dispatches every test as
 `NotRun`, which is what the state LOOKS like. **So I instrumented that branch
 and the hypothesis is wrong**: the new `Log.warn` in `DaemonMode.fs:1845`
@@ -149,10 +149,10 @@ So the right target is the tier's concurrency, not any one test:
 
 ```bash
 # passes alone (~10s)
-dotnet SageFs.Tests/bin/Release/net11.0/SageFs.Tests.dll \
+dotnet Bozzetto.Tests/bin/Release/net11.0/Bozzetto.Tests.dll \
   --integration-host \
   --filter-test-case "editing a compiled F# file reruns tests against rebuilt output without an explicit rerun"
 
 # 246 passed / 2 failed, on my tree AND on the unmodified release commit
-dotnet SageFs.Tests/bin/Release/net11.0/SageFs.Tests.dll --integration-host --summary
+dotnet Bozzetto.Tests/bin/Release/net11.0/Bozzetto.Tests.dll --integration-host --summary
 ```

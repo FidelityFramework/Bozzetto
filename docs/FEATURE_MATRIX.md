@@ -1,8 +1,8 @@
-# SageFs Feature Matrix
+# Bozzetto Feature Matrix
 
 The product surfaces are the web dashboard, editor integrations (VS Code and Neovim), and MCP.
 
-Raylib application and game projects are supported too. The demos in `samples/demos/` show SageFs
+Raylib application and game projects are supported too. The demos in `samples/demos/` show Bozzetto
 providing live development for Raylib projects.
 
 > **Legend**: Supported = dedicated client experience | Shared = available through the daemon or MCP | Partial = client support is incomplete | N/A = not meaningful for that client
@@ -59,7 +59,7 @@ Live testing is also a workflow, not only a toggle. See [Workflow Modes](workflo
 Completions and CodeLens are editor features backed by FSharp.Compiler.Service; they are not MCP tools. Neither
 is the type explorer, the call graph, the test-run policy control, or the test trace. Those are HTTP endpoints
 the editors and the dashboard call (`GET /api/dependency-graph`, `POST /api/live-testing/policy`,
-`GET /api/live-testing/test-trace`). The `get_completions` and `explore_type` members in `SageFs/McpTools.fs`
+`GET /api/live-testing/test-trace`). The `get_completions` and `explore_type` members in `Bozzetto/McpTools.fs`
 carry a `[<Description>]` but no `[<McpServerTool>]` attribute, so they aren't part of the advertised tool
 surface at all. I checked, this table isn't guessing. [`LIVE_TESTING_GUIDE.md`](LIVE_TESTING_GUIDE.md) is the
 authoritative list of what is and isn't an MCP tool.
@@ -73,7 +73,7 @@ the already-running process, including apps whose route table was built once at 
 Because it re-points **methods**, a handler that is *called* per request reloads, and a handler whose output
 was *computed once* at startup cannot. Prefer `let getHome (ctx: HttpContext) = ...` over
 `let getHome : HttpHandler = Response.ofHtml (pageLayout [])`. `let mutable` state, changed signatures, and
-changed types restart the app instead of patching it, and SageFs tells you that's what's happening rather than
+changed types restart the app instead of patching it, and Bozzetto tells you that's what's happening rather than
 silently serving stale code. [Hot Reload](hot-reload.md) carries the full what-reloads / what-restarts table,
 each row pinned by an executable test; this page deliberately doesn't duplicate it.
 

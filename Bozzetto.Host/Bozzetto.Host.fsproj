@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <IsPackable>false</IsPackable>
+        <AssemblyName>Bozzetto.Host</AssemblyName>
+        <RootNamespace>Bozzetto.Host</RootNamespace>
+        <!-- The host multi-targets alongside Bozzetto and Bozzetto.Core (see
+             Directory.Build.props): it is part of the shipped tool closure, and
+             the daemon's BuildHostForDaemon/PackHostForDaemon targets build it
+             per-TFM to match whichever inner build (net10.0 or net11.0) is
+             currently packing. Hot reload uses Harmony method detouring;
+             Bozzetto.Harmony is the owned fork carrying the pinned MonoMod
+             changes for CoreCLR 11. The separately named injected host copy
+             remains Bozzetto.HostHarmony. -->
+        <TargetFramework></TargetFramework>
+        <TargetFrameworks>$(BozzettoTargetFrameworks)</TargetFrameworks>
+        <!-- *.runtimeconfig.dev.json is a Debug-only hot-reload artifact, not in
+             the vetted manifest closure — disable its generation so the
+             fail-closed startup check never sees an unexpected file. -->
+        <GenerateRuntimeConfigDevFile>false</GenerateRuntimeConfigDevFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="Bozzetto.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Bozzetto.Core\Bozzetto.Core.fsproj" />
+        <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Include="DevReloadMiddleware.fs" />
+        <Compile Include="DevReloadInjector.fs" />
+        <Compile Include="AppRunner.fs" />
+        <Compile Include="WorkerHttpTransport.fs" />
+        <Compile Include="WorkerMain.fs" />
+        <Compile Include="Program.fs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <EmbeddedResource Include="Resources\devreload.js" />
+    </ItemGroup>
+
+    <!--
+      Generate host-manifest.json from the ACTUAL build output. This is the
+      vetted-closure guarantee: the manifest always matches what was built,
+      and the host's startup check refuses to run if the dir drifts from it.
+    -->
+    <!-- The outer multi-target build has no output directory or framework.
+         Only inner builds may write a manifest into their compiled output. -->
+    <Target Name="GenerateHostManifest" AfterTargets="Build"
+            Condition="'$(TargetFramework)' != '' And '$(TargetDir)' != ''">
+        <PropertyGroup>
+            <HostManifestPath>$(TargetDir)host-manifest.json</HostManifestPath>
+            <HostManifestJson>{"version":"$(Version)","targetFramework":"$(TargetFramework)","allowedFiles":[</HostManifestJson>
+        </PropertyGroup>
+        <ItemGroup>
+            <!-- Vetted closure: every file the host dir may contain. Includes
+                 the extensionless native host binary (Linux/macOS: Bozzetto.Host).
+                 *.runtimeconfig.dev.json is a Debug-only MSBuild artifact and is
+                 deleted post-build (below), so it is never in the closure. -->
+            <HostManifestFiles Include="$(TargetDir)*.dll;$(TargetDir)*.exe;$(TargetDir)*.pdb;$(TargetDir)*.deps.json;$(TargetDir)*.runtimeconfig.json;$(TargetDir)Bozzetto.Host" />
+        </ItemGroup>
+        <PropertyGroup>
+            <HostManifestFilesList>@(HostManifestFiles-&gt;'&quot;%(Filename)%(Extension)&quot;', ',')</HostManifestFilesList>
+        </PropertyGroup>
+        <WriteLinesToFile
+            File="$(HostManifestPath)"
+            Lines="$([System.String]::Concat('$(HostManifestJson)','$(HostManifestFilesList)',']}'))"
+            Overwrite="true" />
+    </Target>
+
+</Project>

@@ -1,6 +1,6 @@
 # Bozzetto Dashboard Test Plan
 
-> Historical fork test plan; Bozzetto naming is preserved here. The current dashboard and its executable tests come from the [updated upstream baseline](../docs/UPSTREAM_SYNC.md). Literal UI labels still use SageFs until the coordinated rename, and the old scenarios/version labels below are not acceptance evidence for this update.
+> Historical fork test plan; Bozzetto naming is preserved here. The current dashboard and its executable tests come from the [updated upstream baseline](../docs/UPSTREAM_SYNC.md). Literal UI labels still use Bozzetto until the coordinated rename, and the old scenarios/version labels below are not acceptance evidence for this update.
 
 ## Application Overview
 
@@ -17,7 +17,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/code-evaluation/evaluate-simple-expression.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Click on the F# code textarea to focus it
     - expect: The textarea should be focused and ready for input
   3. Type 'let x = 1 + 1' into the textarea
@@ -33,7 +33,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/code-evaluation/evaluate-with-keyboard-shortcut.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Click on the F# code textarea and type 'printfn "Hello, World!"'
     - expect: The code should appear in the textarea with correct character count
   3. Press Ctrl+Enter
@@ -46,7 +46,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/code-evaluation/evaluate-code-with-console-output.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type 'printfn "Test output"' into the textarea and evaluate it
     - expect: The evaluation result should appear
     - expect: The Output panel should display 'Test output' with a timestamp
@@ -56,7 +56,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/code-evaluation/evaluate-multiline-code.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type multi-line F# code: 'let add x y =\n  x + y\nadd 5 3'
     - expect: The code should appear on multiple lines in the textarea
     - expect: Character count should reflect multiple lines
@@ -69,7 +69,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/code-evaluation/evaluate-code-with-errors.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type 'let x = undefinedVariable' into the textarea
     - expect: The code should appear in the textarea
   3. Click the '▶ Eval' button
@@ -82,7 +82,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/code-evaluation/evaluate-with-syntax-error.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type invalid F# syntax like 'let x =' (incomplete expression)
     - expect: The code should appear in the textarea
   3. Click the '▶ Eval' button
@@ -94,7 +94,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/code-evaluation/evaluate-empty-textarea.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Ensure textarea is empty (0 lines)
     - expect: The textarea should be empty
   3. Click the '▶ Eval' button
@@ -106,7 +106,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/code-evaluation/character-count-updates.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Click on the textarea
     - expect: Character count should show '0 lines'
   3. Type 'let a = 1'
@@ -121,7 +121,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/code-evaluation/consecutive-evaluations.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type 'let x = 5' and evaluate it
     - expect: The result 'val x: int = 5' should appear
   3. Type 'let y = x + 3' and evaluate it
@@ -139,7 +139,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/output-panel/view-output-from-printfn.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type 'printfn "Line 1"' and evaluate it
     - expect: The Output panel should show 'Line 1' with a timestamp
   3. Type 'printfn "Line 2"' and evaluate it
@@ -150,7 +150,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/output-panel/clear-output-with-button.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute code that produces output (e.g., 'printfn "Test"')
     - expect: Output should appear in the Output panel
   3. Click the 'Clear' button in the Output panel header
@@ -162,7 +162,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/output-panel/clear-output-with-keyboard-shortcut.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute code that produces output
     - expect: Output should appear in the Output panel
   3. Press Ctrl+L
@@ -174,7 +174,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/output-panel/output-scrolling-with-many-lines.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute code that generates multiple lines of output: 'for i in 1..20 do printfn "Line %d" i'
     - expect: The Output panel should display all 20 lines
     - expect: The panel should have a scrollbar if content exceeds visible area
@@ -185,7 +185,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/output-panel/output-with-error-messages.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Check the initial state of the Output panel
     - expect: The Output panel may show warmup messages or errors like 'Warmup failure'
     - expect: Error messages should be prefixed with '✗' and a timestamp
@@ -195,7 +195,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/output-panel/output-persists-across-evaluations.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute 'printfn "First"' and then 'printfn "Second"'
     - expect: Both 'First' and 'Second' should appear in the Output panel
     - expect: Output should accumulate across evaluations
@@ -210,7 +210,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/session-management/view-active-session-info.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Locate the Sessions panel
     - expect: The panel should show session status (e.g., 'Ready')
     - expect: It should display session ID (e.g., 'Session: session-9fa9b00b')
@@ -222,7 +222,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/session-management/reset-session.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute 'let x = 100' to define a variable
     - expect: The variable should be defined successfully
   3. Click the '↻ Reset' button
@@ -237,7 +237,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/session-management/hard-reset-session.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute some F# code to create session state
     - expect: Code should execute successfully
   3. Click the '⟳ Hard Reset' button
@@ -250,7 +250,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/session-management/discover-projects-from-directory.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Scroll to the 'Create Session' panel
   3. Click on the 'Working Directory' textbox and enter a valid directory path (e.g., 'C:\\Code\\Repos\\Bozzetto')
     - expect: The path should appear in the textbox
@@ -265,7 +265,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/session-management/discover-projects-from-empty-directory.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Enter a directory path that contains no F# projects
     - expect: The path should appear in the textbox
   3. Click the '🔍 Discover' button
@@ -277,7 +277,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/session-management/discover-with-invalid-directory.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Enter an invalid or non-existent directory path
     - expect: The path should appear in the textbox
   3. Click the '🔍 Discover' button
@@ -289,7 +289,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/session-management/specify-projects-manually.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Click on the 'Or enter project paths' textbox
     - expect: The textbox should be focused
   3. Type comma-separated project paths: 'Project1.fsproj, Project2.fsproj'
@@ -304,7 +304,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/session-management/create-session-from-discovered-projects.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Discover projects using a valid directory path
     - expect: Projects should be discovered and listed
   3. Click the '➕ Create Session' button
@@ -317,7 +317,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/session-management/create-session-without-projects.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Ensure both the Working Directory and project paths textboxes are empty or invalid
   3. Click the '➕ Create Session' button
     - expect: The system should handle this gracefully
@@ -329,7 +329,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/session-management/view-sessions-when-none-exist.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard with no active sessions
+  1. Navigate to http://localhost:47750/dashboard with no active sessions
   2. Check the Sessions panel
     - expect: The panel should show 'No sessions' if no sessions are active
     - expect: Or it should show the default/primary session information
@@ -343,7 +343,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/diagnostics-panel/view-diagnostics-panel-when-empty.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Locate the Diagnostics panel
     - expect: The panel should show 'No diagnostics' when there are no errors or warnings
 
@@ -352,7 +352,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/diagnostics-panel/diagnostics-appear-after-compilation-error.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute code with a type error: 'let x: int = "string"'
     - expect: An error should occur during evaluation
     - expect: The Diagnostics panel should display compiler diagnostics
@@ -363,7 +363,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/diagnostics-panel/diagnostics-clear-after-successful-evaluation.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute code that produces diagnostics
     - expect: Diagnostics should appear in the Diagnostics panel
   3. Execute valid code that compiles successfully
@@ -375,7 +375,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/diagnostics-panel/view-multiple-diagnostics.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute code with multiple errors: 'let x: int = "string"\nlet y = undefinedVar'
     - expect: Multiple diagnostic messages should appear in the Diagnostics panel
     - expect: Each diagnostic should be clearly separated
@@ -390,7 +390,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/connection-status/view-connected-status.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Check the connection status banner at the top of the page
     - expect: The banner should show '✅ Connected' with a green indicator
     - expect: The status should be prominently displayed
@@ -400,7 +400,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/connection-status/view-disconnected-status.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Simulate a disconnect by stopping the server or interrupting the SSE connection
   3. Check the connection status banner
     - expect: The banner should update to show 'Disconnected' or similar status
@@ -412,7 +412,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/connection-status/reconnection-after-disconnect.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard and ensure it's connected
+  1. Navigate to http://localhost:47750/dashboard and ensure it's connected
   2. Disconnect the server temporarily
     - expect: The connection status should show 'Disconnected'
   3. Restart the server
@@ -425,7 +425,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/connection-status/functionality-during-disconnect.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Disconnect the server
   3. Try to evaluate F# code
     - expect: The evaluation should fail gracefully
@@ -441,7 +441,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/keyboard-shortcuts/view-keyboard-shortcuts-help.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Click the '⌨ Help' button in the Evaluate panel
     - expect: A keyboard shortcuts help table should appear
     - expect: It should show 'Ctrl+Enter - Evaluate code'
@@ -453,7 +453,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/keyboard-shortcuts/toggle-keyboard-shortcuts-help.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Click the '⌨ Help' button
     - expect: The keyboard shortcuts table should appear
   3. Click the '⌨ Help' button again
@@ -465,7 +465,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/keyboard-shortcuts/f1-opens-help.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Press F1 key
     - expect: The keyboard shortcuts help should appear
     - expect: This provides quick access to help documentation
@@ -475,7 +475,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/keyboard-shortcuts/tab-inserts-spaces.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Click on the F# code textarea to focus it
   3. Type 'let x =' and press Enter
   4. Press Tab key
@@ -488,7 +488,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/keyboard-shortcuts/multiple-tab-presses.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Click on the textarea and press Tab key 3 times
     - expect: Six spaces (2 spaces × 3 presses) should be inserted
     - expect: The cursor should be indented appropriately
@@ -498,7 +498,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/keyboard-shortcuts/ctrl-enter-evaluates.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type 'let result = 42' into the textarea
   3. Press Ctrl+Enter
     - expect: The code should be evaluated without clicking the Eval button
@@ -510,7 +510,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/keyboard-shortcuts/ctrl-l-clears-output.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute code that produces output to populate the Output panel
   3. Press Ctrl+L
     - expect: The Output panel should be cleared immediately
@@ -525,7 +525,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/eval-stats/view-eval-statistics.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Locate the 'Eval Stats' panel on the right sidebar
     - expect: The panel should display the total number of evaluations (e.g., '4 evals')
     - expect: It should show average evaluation time (e.g., 'avg 314ms')
@@ -537,7 +537,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/eval-stats/stats-update-after-evaluation.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Note the current eval count in the Eval Stats panel
   3. Execute 'let x = 1 + 1'
     - expect: The eval count should increment by 1
@@ -549,7 +549,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/eval-stats/stats-reflect-multiple-evaluations.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute several pieces of F# code in succession
   3. Check the Eval Stats panel after each evaluation
     - expect: The eval count should increase with each evaluation
@@ -562,7 +562,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/eval-stats/stats-after-session-reset.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute some code to generate eval stats
   3. Click the '↻ Reset' button to reset the session
     - expect: Check if eval stats are preserved or reset
@@ -577,7 +577,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/real-time-updates/sse-updates-connection-status.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Verify the connection status shows '✅ Connected'
     - expect: The status should be updated via SSE/Datastar
   3. Monitor for any server-side events that change connection status
@@ -589,7 +589,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/real-time-updates/sse-updates-session-info.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Open the dashboard in a second browser tab
     - expect: Both tabs should show the same initial session information
   3. Create a new session or modify session state in one tab
@@ -601,7 +601,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/real-time-updates/sse-updates-eval-results.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute F# code
     - expect: The evaluation result should appear in real-time
     - expect: Output should stream to the Output panel via SSE
@@ -612,7 +612,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/real-time-updates/sse-maintains-state-during-long-evaluation.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Execute code that takes a long time to evaluate: 'System.Threading.Thread.Sleep(5000); 42'
     - expect: The dashboard should remain responsive
     - expect: The connection status should remain '✅ Connected' throughout
@@ -628,7 +628,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/ui-and-layout/page-loads-successfully.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Verify the page loads without errors
     - expect: The page title should be 'Bozzetto Dashboard'
     - expect: The page should display the header '🧙 Bozzetto Dashboard v0.4.13.0' or similar version
@@ -640,7 +640,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/ui-and-layout/all-panels-are-visible.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Verify the presence and visibility of all UI panels
     - expect: Output panel should be visible in the top-left
     - expect: Evaluate panel should be visible with textarea and buttons
@@ -654,7 +654,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/ui-and-layout/responsive-layout-on-smaller-screens.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Resize the browser window to a smaller width (e.g., 768px)
     - expect: The layout should adapt to the smaller screen size
     - expect: All panels should remain accessible
@@ -666,7 +666,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/ui-and-layout/scrolling-in-panels.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Generate enough content in the Output panel to exceed its visible area
     - expect: The Output panel should display a scrollbar
     - expect: User should be able to scroll through all content
@@ -680,7 +680,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/ui-and-layout/version-number-displayed.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Check the main header
     - expect: The version number should be displayed (e.g., 'v0.4.13.0')
     - expect: The version should be clearly visible in the header
@@ -690,7 +690,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/ui-and-layout/button-states-and-feedback.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Hover over various buttons (Eval, Reset, Clear, etc.)
     - expect: Buttons should show hover states (cursor: pointer)
     - expect: Visual feedback should indicate interactivity
@@ -703,7 +703,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/ui-and-layout/panel-headers-are-clear.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Review all panel headers
     - expect: Each panel should have a clear, descriptive heading (Output, Evaluate, Sessions, Diagnostics, Create Session, Eval Stats)
     - expect: Headers should be formatted consistently
@@ -718,7 +718,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/edge-cases/very-long-code-input.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type or paste a very long piece of F# code (e.g., 1000+ lines)
     - expect: The textarea should accept the input
     - expect: Character count should update correctly
@@ -730,7 +730,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/edge-cases/special-characters-in-code.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type code with special characters: 'let message = "Hello 👋 World! ♥️"'
     - expect: Special characters and emojis should be handled correctly
     - expect: The code should evaluate successfully
@@ -741,7 +741,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/edge-cases/concurrent-evaluations.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type code and click Eval button
     - expect: Evaluation should start
   3. Immediately type new code and click Eval again before the first evaluation completes
@@ -754,7 +754,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/edge-cases/rapid-consecutive-button-clicks.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type some code in the textarea
   3. Click the Eval button rapidly multiple times in succession
     - expect: The system should handle rapid clicks gracefully
@@ -767,7 +767,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/edge-cases/paste-large-code-block.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Copy a large block of F# code to clipboard and paste it into the textarea using Ctrl+V
     - expect: The entire code block should be pasted
     - expect: Character count should update correctly
@@ -779,7 +779,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/edge-cases/code-with-infinite-loop.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Type code with an infinite loop: 'while true do printfn "loop"'
     - expect: The code should be sent for evaluation
   3. Monitor the dashboard behavior
@@ -793,7 +793,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/edge-cases/invalid-path-in-create-session.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Enter special characters or invalid path syntax in the Working Directory field: '||||invalid|||'
     - expect: The field should accept the input
   3. Click the Discover button
@@ -805,7 +805,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/edge-cases/empty-project-paths-field.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Leave the project paths field empty
   3. Click the '➕ Create Session' button
     - expect: The system should validate the input
@@ -817,7 +817,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/edge-cases/malformed-project-paths.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Enter malformed project paths: 'not-a-path, ///invalid///'
     - expect: The input should be accepted in the field
   3. Click the '➕ Create Session' button
@@ -830,7 +830,7 @@ The Bozzetto Dashboard is a developer tool for interactive F# code evaluation vi
 **File:** `tests/edge-cases/network-interruption-during-eval.spec.ts`
 
 **Steps:**
-  1. Navigate to http://localhost:37750/dashboard
+  1. Navigate to http://localhost:47750/dashboard
   2. Start evaluating code
   3. Simulate network interruption (disconnect network or pause connection)
     - expect: The connection status should update to 'Disconnected'

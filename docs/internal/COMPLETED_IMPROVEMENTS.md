@@ -8,9 +8,9 @@
 
 ## 0.0 Marten + PostgreSQL Event Store — ✅ DONE
 
-**Implemented:** Domain event DUs (`SageFsEvent`, `EventSource`, `DiagnosticEvent`, `EventMetadata`), Marten integration with Testcontainers, `EventStore` module (`configureStore`, `appendEvents`, `fetchStream`, `tryCreateFromEnv`), actor event emission via `onEvent` callback (SessionStarted, SessionReady, EvalRequested, EvalCompleted/EvalFailed, DiagnosticsChecked, SessionReset, SessionHardReset), CLI integration via `SageFs_CONNECTION_STRING`, Docker Compose for local PostgreSQL.
+**Implemented:** Domain event DUs (`BozzettoEvent`, `EventSource`, `DiagnosticEvent`, `EventMetadata`), Marten integration with Testcontainers, `EventStore` module (`configureStore`, `appendEvents`, `fetchStream`, `tryCreateFromEnv`), actor event emission via `onEvent` callback (SessionStarted, SessionReady, EvalRequested, EvalCompleted/EvalFailed, DiagnosticsChecked, SessionReset, SessionHardReset), CLI integration via `Bozzetto_CONNECTION_STRING`, Docker Compose for local PostgreSQL.
 
-**Files:** `SageFs\Features\Events.fs`, `SageFs.Server\EventStore.fs`, `compose.yml`
+**Files:** `Bozzetto\Features\Events.fs`, `Bozzetto.Server\EventStore.fs`, `compose.yml`
 
 **Tests:** 4 Testcontainers-based integration tests + 5 EventStore tests + 5 actor event emission tests.
 
@@ -218,7 +218,7 @@ Session replay from Marten event stream. No separate persistence mechanism neede
 
 ### SessionManager Lifecycle Integration Tests
 
-**Added 3 integration tests** verifying the SessionManager spawn/eval/stop lifecycle with real `SageFs worker` subprocesses:
+**Added 3 integration tests** verifying the SessionManager spawn/eval/stop lifecycle with real `Bozzetto worker` subprocesses:
 
 1. **create session, eval code, stop session** — full lifecycle: spawn worker, connect via named pipe, eval F# code, verify result, check status, stop session
 2. **worker crash is detected and session cleaned up** — Erlang-style supervision: spawn worker, kill the process, verify SessionManager detects crash and removes session
@@ -235,28 +235,28 @@ Session replay from Marten event stream. No separate persistence mechanism neede
 **Problem:** Bozzetto dies when the terminal closes because PrettyPrompt crashes without a TTY, taking the MCP server with it.
 
 **Implemented:**
-- `SageFs.Server\DaemonMode.fs` — headless daemon entry point, no PrettyPrompt, no console dependencies
-- `SageFs.Server\DaemonState.fs` — `~/.SageFs/daemon.json` lifecycle (write/read/clear with PID validation)
-- `SageFs.Server\ClientMode.fs` — REPL client that discovers daemon via daemon.json, starts one in background if needed
-- `SageFs.Server\Program.fs` — smart CLI routing: `SageFs` (embedded), `SageFs -d` (daemon), `SageFs status/stop` (subcommands)
-- `SageFs.Server\WorkerMain.fs` — headless worker process entry point for sub-process sessions
+- `Bozzetto.Server\DaemonMode.fs` — headless daemon entry point, no PrettyPrompt, no console dependencies
+- `Bozzetto.Server\DaemonState.fs` — `~/.bozzetto/daemon.json` lifecycle (write/read/clear with PID validation)
+- `Bozzetto.Server\ClientMode.fs` — REPL client that discovers daemon via daemon.json, starts one in background if needed
+- `Bozzetto.Server\Program.fs` — smart CLI routing: `Bozzetto` (embedded), `Bozzetto -d` (daemon), `Bozzetto status/stop` (subcommands)
+- `Bozzetto.Server\WorkerMain.fs` — headless worker process entry point for sub-process sessions
 
 **Commits:** `d7610de`, `e068a27`
 
 ### Phase 1b: Worker Process Infrastructure
 
 **Implemented:**
-- `SageFs\WorkerProtocol.fs` — `WorkerMessage`/`WorkerResponse` DUs, `SessionProxy` transport abstraction, `SessionInfo` metadata, `SessionStatus` DU, JSON serialization via System.Text.Json + FSharpJsonConverter
-- `SageFs\Transports\NamedPipeTransport.fs` — length-prefixed JSON framing over named pipes (fastest local IPC on Windows)
-- `SageFs\SessionManager.fs` — Erlang-style supervisor MailboxProcessor: spawn/monitor/restart worker sub-processes, named pipe IPC, exponential backoff via RestartPolicy
-- `SageFs\SessionOperations.fs` — pure domain routing (`resolveSession`), session formatting, `SessionResolution` DU
-- `SageFs\RestartPolicy.fs` — pure domain module for exponential backoff decisions
-- `SageFs\SessionLifecycle.fs` — pure exit outcome classification (Graceful/RestartAfter/Abandoned)
+- `Bozzetto\WorkerProtocol.fs` — `WorkerMessage`/`WorkerResponse` DUs, `SessionProxy` transport abstraction, `SessionInfo` metadata, `SessionStatus` DU, JSON serialization via System.Text.Json + FSharpJsonConverter
+- `Bozzetto\Transports\NamedPipeTransport.fs` — length-prefixed JSON framing over named pipes (fastest local IPC on Windows)
+- `Bozzetto\SessionManager.fs` — Erlang-style supervisor MailboxProcessor: spawn/monitor/restart worker sub-processes, named pipe IPC, exponential backoff via RestartPolicy
+- `Bozzetto\SessionOperations.fs` — pure domain routing (`resolveSession`), session formatting, `SessionResolution` DU
+- `Bozzetto\RestartPolicy.fs` — pure domain module for exponential backoff decisions
+- `Bozzetto\SessionLifecycle.fs` — pure exit outcome classification (Graceful/RestartAfter/Abandoned)
 
 **Key design decisions:**
 - Sub-process sessions (not in-process) for true fault isolation — one session crash doesn't affect others
 - `SessionProxy = WorkerMessage -> Async<WorkerResponse>` — transport-agnostic, same interface for named pipes, HTTP, or in-process
-- `SessionManager` in core `SageFs` library (not `SageFs.Server`) for independent testability
+- `SessionManager` in core `Bozzetto` library (not `Bozzetto.Server`) for independent testability
 - Rich session metadata: WorkingDirectory, SolutionRoot (auto-detected), CreatedAt, LastActivity, WorkerPid
 
 **Commits:** `251c165`, `306893e`, `e6823fe`, `80bd6ea`, `d1e899a`, `ad7c5b4`, `aca618b`, `4367dd1`, `0e43d0d`
@@ -270,7 +270,7 @@ Session replay from Marten event stream. No separate persistence mechanism neede
 - `DiagnosticSeverity` DU replaced string severity — **Commit:** `44a3b03`
 - `SessionState.label` replaced `%A` formatting — **Commit:** `c4a3cbb`
 - `ToolUnavailable` DU replaced `checkToolAvailability` string error — **Commit:** `d6b5305`
-- `SageFsError` unified DU — consolidated ALL errors (15+ scattered types) into single discriminated union across all layers — **Commit:** `fa5b93b`
+- `BozzettoError` unified DU — consolidated ALL errors (15+ scattered types) into single discriminated union across all layers — **Commit:** `fa5b93b`
 - `CompletionKind` DU replaced string Kind on completions — **Commit:** `66323e9`
 - `SessionMode` DU — `Embedded | Daemon of SessionManagementOps` for session routing dispatch — **Commit:** `8a6f6c4`
 - `SessionManagementOps` record — Task-based function interface decoupling MCP tools from SessionManager internals
@@ -309,7 +309,7 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 **Problem:** All MCP tools operated on the local in-process FSI actor. In daemon mode with multiple sessions, there was no way to route tool calls to a specific worker session.
 
 **Implemented:**
-- `SessionMode` DU (`Embedded | Daemon of SessionManagementOps`) in `SageFs\SessionMode.fs`
+- `SessionMode` DU (`Embedded | Daemon of SessionManagementOps`) in `Bozzetto\SessionMode.fs`
 - `SessionManagementOps` record with `GetProxy: SessionId -> Task<SessionProxy option>`
 - All 5 MCP tool functions gained `sessionId: string option` parameter
 - `routeToSession` helper resolves proxy and dispatches `WorkerMessage`
@@ -320,7 +320,7 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 
 ### 3.5 Startup Profile — ✅ DONE
 
-**Implemented:** `~/.SageFs/init.fsx` auto-loaded on session start. Per-project startup scripts.
+**Implemented:** `~/.bozzetto/init.fsx` auto-loaded on session start. Per-project startup scripts.
 
 **Commit:** `cca2051`
 
@@ -333,7 +333,7 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 **Problem:** When a user edits `.fs` files in their project, they had to manually hard-reset Bozzetto to pick up changes — a 30-60s rebuild every time.
 
 **Implemented:**
-- `SageFs\FileWatcher.fs` — pure types (`FileChangeKind` DU, `FileChange` record, `WatchConfig`, `FileChangeAction` DU) and pure functions (`shouldTriggerRebuild`, `shouldExcludeFile`, `fileChangeAction`)
+- `Bozzetto\FileWatcher.fs` — pure types (`FileChangeKind` DU, `FileChange` record, `WatchConfig`, `FileChangeAction` DU) and pure functions (`shouldTriggerRebuild`, `shouldExcludeFile`, `fileChangeAction`)
 - **Incremental `#load` reload** (~100ms) instead of hard reset (30-60s) for `.fs`/`.fsx` changes
 - **Escalation chain**: `.fs`/`.fsx` → `Reload` (FSI `#load`), `.fsproj` → `SoftReset`, deletions → `Ignore`
 - **Glob-based exclude patterns** (`ExcludePatterns` on `WatchConfig`) — supports `**`, `*`, case-insensitive matching
@@ -358,10 +358,10 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 **Research output:** `docs/repl-tui-research.md` (~2650 lines) — comprehensive analysis of:
 - Candidate libraries (RadLine, Terminal.Gui, Spectre.Console, Reedline, Bubble Tea, python-prompt-toolkit)
 - Tree-sitter foundation (ionide/tree-sitter-fsharp via TreeSitter.DotNet)
-- Push-based reactive streaming architecture (SageFsEvent bus, IObservable)
+- Push-based reactive streaming architecture (BozzettoEvent bus, IObservable)
 - Neovim UI protocol precedent (batch-and-flush, highlight table indirection, ext_ capabilities)
 - Immediate-mode philosophy (Fleury RAD Debugger feature flags, Muratori IMGUI, Datastar)
-- Core domain types (RenderRegion, RegionFlags, Affordance, EditorAction, EditorEffect, SageFsView, KeyMap)
+- Core domain types (RenderRegion, RegionFlags, Affordance, EditorAction, EditorEffect, BozzettoView, KeyMap)
 - Session registry with multi-session display
 - Interface contract (IFrontendAdapter, HATEOAS/Datastar web adapter)
 - Elm Architecture decision (custom ~40-line loop over Fable.Elmish)
@@ -378,7 +378,7 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 
 ## Live Testing Engine — ✅ DONE
 
-**Problem:** Visual Studio Enterprise charges $250/month for "Live Unit Testing." SageFs should make that look foolish — instant, framework-agnostic, editor-agnostic live test feedback.
+**Problem:** Visual Studio Enterprise charges $250/month for "Live Unit Testing." Bozzetto should make that look foolish — instant, framework-agnostic, editor-agnostic live test feedback.
 
 **Implemented — Full end-to-end pipeline:**
 
@@ -393,7 +393,7 @@ Per IMPROVEMENT_PLAN.md priority matrix:
    - `CancellationChain` prevents stale results from overwriting newer ones
    - `RunGeneration` + `ResultFreshness` track staleness across code edits
    - `AdaptiveDebounce` adjusts timing based on project size
-4. **Elm Loop Integration** — `SageFsApp.fs` handles all live testing messages:
+4. **Elm Loop Integration** — `BozzettoApp.fs` handles all live testing messages:
    - `ProvidersDetected`, `TestsDiscovered`, `AffectedTestsComputed` → populate state
    - `TestRunStarted` → update run phase
    - `TestResultsBatch` → merge results, detect retrigger needs, recompute statuses
@@ -405,7 +405,7 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 9. **HTTP Endpoints** — `POST /api/live-testing/toggle`, `POST /api/live-testing/policy`, `POST /api/live-testing/run`
 10. **SSE Broadcasting** — `SseWriter.formatTestResultsBatchEvent` serializes `TestResultsBatchPayload` as SSE events for editor consumption
 
-**Files:** `SageFs.Core/Features/LiveTestingTypes.fs`, `LiveTestingExecutors.fs`, `LiveTestingInstrumentation.fs`, `TestTreeSitter.fs`, `SageFs.Core/Middleware/HotReloading.fs`, `SageFs.Core/SageFsApp.fs`, `SageFs.Core/SseWriter.fs`
+**Files:** `Bozzetto.Core/Features/LiveTestingTypes.fs`, `LiveTestingExecutors.fs`, `LiveTestingInstrumentation.fs`, `TestTreeSitter.fs`, `Bozzetto.Core/Middleware/HotReloading.fs`, `Bozzetto.Core/BozzettoApp.fs`, `Bozzetto.Core/SseWriter.fs`
 
 **Tests:** Full pipeline roundtrip integration tests (keystroke → debounce → FCS → affected tests → execution), debounce property tests, cancellation chain tests, policy filtering tests — part of 1,400+ test suite across 81 test files.
 
@@ -419,7 +419,7 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 - Auto-pack NuGet tool, build VS Code VSIX, build VS VSIX
 - Push to NuGet, create GitHub Release with all artifacts
 - Tag `sagefs.nvim` repo with matching version
-- VSIX packages clearly named: `sagefs-vscode-*.vsix` and `sagefs-visualstudio-*.vsix`
+- VSIX packages clearly named: `bozzetto-vscode-*.vsix` and `bozzetto-visualstudio-*.vsix`
 
 **File:** `.github/workflows/main.yml`
 
@@ -427,7 +427,7 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 
 ## VS Code Extension — ✅ DONE
 
-**Implemented:** Full-featured VS Code extension (`sagefs-vscode/`) built with Fable (F# → JavaScript):
+**Implemented:** Full-featured VS Code extension (`bozzetto-vscode/`) built with Fable (F# → JavaScript):
 - 23 commands (eval, file eval, range eval, daemon start/stop, session management, hot reload, live testing, run policy)
 - CodeLens providers (eval + test)
 - Diagnostics integration
@@ -439,13 +439,13 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 - Call graph viewer
 - Event history QuickPick
 
-**Files:** 14 .fs files in `sagefs-vscode/src/`
+**Files:** 14 .fs files in `bozzetto-vscode/src/`
 
 ---
 
 ## Visual Studio Extension — ✅ DONE
 
-**Implemented:** VS 2022+ extension using new OOP extensibility SDK (`sagefs-vs/`):
+**Implemented:** VS 2022+ extension using new OOP extensibility SDK (`bozzetto-vs/`):
 - 24 commands (eval, file eval, range eval, daemon, sessions, hot reload, live testing, run policy)
 - 4 tool windows: Live Testing Dashboard, Type Explorer, Hot Reload Files, Session Context
 - CodeLens providers (eval + test)
@@ -453,9 +453,9 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 - SSE subscriber for real-time updates
 - F# core library + C# shim pattern for SDK compatibility
 
-**Files:** 7 .fs files in `SageFs.VisualStudio.Core/`, 26 .cs files in `SageFs.VisualStudio/`
+**Files:** 7 .fs files in `Bozzetto.VisualStudio.Core/`, 26 .cs files in `Bozzetto.VisualStudio/`
 
-**SDK limitations (blocked, not SageFs issues):**
+**SDK limitations (blocked, not Bozzetto issues):**
 - No text adornment/decoration API (inline test results)
 - No completion/IntelliSense provider API
 - No Test Explorer integration API
@@ -498,7 +498,7 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 **VS Code extension polish:**
 - Replaced 5 hardcoded hex colors with VS Code `ThemeColor` references (`testing.iconPassed`, `testing.iconFailed`, `testing.iconQueued`) — respects user themes.
 - Added `logWarn` helper and replaced 15 silent `with _` error handlers with `with ex -> logWarn "functionName" ex` for debuggability.
-- Startup polling now shows elapsed seconds in status bar ("SageFs starting... (15s)").
+- Startup polling now shows elapsed seconds in status bar ("Bozzetto starting... (15s)").
 - Added coverage decoration types (▸ covered-passing, ▸ covered-failing, ○ not-covered) wired to `CoverageRefreshed` state change events.
 
 **CI resilience:**
@@ -513,15 +513,15 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 - Expanded troubleshooting section with SSE, live testing, and coverage guidance.
 - Updated MCP tools reference to include live testing tools (`toggle_live_testing`, `get_live_test_status`, `run_tests`, `set_run_policy`, `get_test_trace`).
 
-**Tests:** 3 toggle activation behavior tests added (43 → 47 total SageFsUpdate tests).
+**Tests:** 3 toggle activation behavior tests added (43 → 47 total BozzettoUpdate tests).
 
 ---
 
 ## Pure Function Test Coverage Expansion (v0.5.169–v0.5.170) — ✅ DONE
 
-**Problem:** Many pure function modules in SageFs.Core had zero dedicated test coverage despite being critical to correctness: Args parser, SSE writer, Theme, ErrorMessages, RetryPolicy, FsiRewrite.
+**Problem:** Many pure function modules in Bozzetto.Core had zero dedicated test coverage despite being critical to correctness: Args parser, SSE writer, Theme, ErrorMessages, RetryPolicy, FsiRewrite.
 
-**Implemented:** 98 new unit tests across 6 modules, all proven in sagefs FSI first (TDD):
+**Implemented:** 98 new unit tests across 6 modules, all proven in bozzetto FSI first (TDD):
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
@@ -533,12 +533,12 @@ Per IMPROVEMENT_PLAN.md priority matrix:
 | **FsiRewrite** | 10 | use→let rewriting: indented, non-indented preserved, tabs, empty input |
 
 **Files created:**
-- `SageFs.Tests/ArgsParserTests.fs`
-- `SageFs.Tests/SseWriterTests.fs`
-- `SageFs.Tests/ThemeTests.fs`
-- `SageFs.Tests/ErrorMessagesTests.fs`
-- `SageFs.Tests/RetryPolicyTests.fs`
-- `SageFs.Tests/FsiRewriteTests.fs`
+- `Bozzetto.Tests/ArgsParserTests.fs`
+- `Bozzetto.Tests/SseWriterTests.fs`
+- `Bozzetto.Tests/ThemeTests.fs`
+- `Bozzetto.Tests/ErrorMessagesTests.fs`
+- `Bozzetto.Tests/RetryPolicyTests.fs`
+- `Bozzetto.Tests/FsiRewriteTests.fs`
 
 **Total test count:** 3826 (up from ~3710).
 

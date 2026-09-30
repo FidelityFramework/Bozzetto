@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Let — SageFs Edition
+//  🧘  About Let — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutLet.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

@@ -1,12 +1,12 @@
 // ============================================================
 //  📓 → 🦅  Coming from Jupyter Notebooks? You're home.
-//  SageFs is what notebooks always wanted to be.
+//  Bozzetto is what notebooks always wanted to be.
 //  Alt+Enter any expression.  Results appear inline.  No browser.
 // ============================================================
 
 // ── The notebook cell model, but better ──
 // In Jupyter, cells are the unit of execution.
-// In SageFs, *any expression* is a cell. No box to draw.
+// In Bozzetto, *any expression* is a cell. No box to draw.
 // Hit Alt+Enter on any line and it runs.
 
 // Just like a notebook cell:
@@ -19,12 +19,12 @@ let variance =
 // ── No kernel crashes. No "restart and run all". ──
 // Jupyter has one global mutable kernel state.
 // You run cell 7 after cell 3 and wonder why nothing works.
-// SageFs sessions are isolated processes.  Crash one → swap for a pre-warmed one.
+// Bozzetto sessions are isolated processes.  Crash one → swap for a pre-warmed one.
 // `hard_reset_fsi_session` in 200ms.  Your data is still there.
 
 // ── Inline results instead of print() everywhere ──
 // Jupyter: you need a cell that ends in an expression, or use display()
-// SageFs:  Alt+Enter on *any* expression, anywhere in the file
+// Bozzetto:  Alt+Enter on *any* expression, anywhere in the file
 
 let fib n =
   let rec go a b n = if n = 0 then a else go b (a + b) (n - 1)
@@ -62,16 +62,16 @@ let grouped =
 // (Your documentation can't go stale if it's in the same file as working code.)
 
 // ── Plotting — coming soon / BYO library ──
-// Plotly.NET works great with SageFs:
+// Plotly.NET works great with Bozzetto:
 //   #r "nuget: Plotly.NET"
 //   open Plotly.NET
 //   [ for r in data -> r.Name, r.Value ]
 //   |> Chart.Bar
-//   |> Chart.show   // opens in browser tab, or use the SageFs dashboard
+//   |> Chart.show   // opens in browser tab, or use the Bozzetto dashboard
 
 // ── The killer feature: live tests alongside your analysis ──
 // In Jupyter you check assumptions manually.
-// In SageFs you write them as tests and they run every time you save:
+// In Bozzetto you write them as tests and they run every time you save:
 
 #r "nuget: Expecto"
 open Expecto
@@ -85,19 +85,19 @@ let tests = testList "data invariants" [
       Expect.isTrue (r.Category = "A" || r.Category = "B") "valid category")
   }
 ]
-// SageFs runs these on every save.  Gutter turns green.  No runTests() call needed.
+// Bozzetto runs these on every save.  Gutter turns green.  No runTests() call needed.
 
 // ── Script vs Project mode ──
 // .fsx = interactive script (like a Jupyter notebook file)
 //        great for exploration, data work, quick experiments
 // .fs  = compiled module in a project
 //        great for shipping production code
-// SageFs handles both.  When you're ready to promote your script to production,
+// Bozzetto handles both.  When you're ready to promote your script to production,
 // just move the logic into a .fs file.  Nothing else changes.
 
-// ── SageFs vs Jupyter: the honest comparison ──
+// ── Bozzetto vs Jupyter: the honest comparison ──
 //  Jupyter:  great for ad-hoc analysis, terrible for long-lived code
-//  SageFs:   same interactive feel, but your code is real code
+//  Bozzetto:   same interactive feel, but your code is real code
 //            • type-checked as you type
 //            • lives in source control (it's just a file, not JSON)
 //            • hot-reloads into your running web app

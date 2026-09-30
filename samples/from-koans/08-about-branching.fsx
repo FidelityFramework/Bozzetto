@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Branching — SageFs Edition
+//  🧘  About Branching — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutBranching.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.
@@ -107,7 +107,7 @@ let tests = testList "about branching" [
 // 3. Try omitting the `else` branch — F# will tell you why it's wrong
 // 4. Write a classify function: "fizz" for %3, "buzz" for %5, "fizzbuzz"
 //
-// 💡 SageFs convention: In production F#, prefer `match` over `if/else`.
+// 💡 Bozzetto convention: In production F#, prefer `match` over `if/else`.
 //    Pattern matching is more expressive, exhaustive, and composes better.
 //    Notice how getDinnerClumsy (if/else) is harder to read than getDinner
 //    (match)? That's not a coincidence — match scales; if/else doesn't.

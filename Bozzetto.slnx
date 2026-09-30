@@ -1,0 +1,33 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Bozzetto.Core/Bozzetto.Core.fsproj" />
+  <Project Path="Bozzetto.Simulation/Bozzetto.Simulation.fsproj" />
+  <Project Path="Bozzetto/Bozzetto.fsproj" />
+  <Project Path="Bozzetto.Host/Bozzetto.Host.fsproj" />
+  <Project Path="Bozzetto.Tests/Bozzetto.Tests.fsproj" />
+  <Folder Name="/Samples/">
+    <Project Path="samples/from-koans/Bozzetto.Samples.Koans/Bozzetto.Samples.Koans.fsproj" />
+    <Project Path="samples/from-csharp/Bozzetto.Samples.FromCSharp/Bozzetto.Samples.FromCSharp.fsproj" />
+    <Project Path="samples/from-python/Bozzetto.Samples.FromPython/Bozzetto.Samples.FromPython.fsproj" />
+    <Project Path="samples/from-java/Bozzetto.Samples.FromJava/Bozzetto.Samples.FromJava.fsproj" />
+    <Project Path="samples/from-javascript/Bozzetto.Samples.FromJavaScript/Bozzetto.Samples.FromJavaScript.fsproj" />
+    <Project Path="samples/from-rust/Bozzetto.Samples.FromRust/Bozzetto.Samples.FromRust.fsproj" />
+    <Project Path="samples/from-jupyter/Bozzetto.Samples.FromJupyter/Bozzetto.Samples.FromJupyter.fsproj" />
+    <Project Path="samples/demos/Bozzetto.Samples.RaylibHello/Bozzetto.Samples.RaylibHello.fsproj" />
+    <Project Path="samples/demos/Bozzetto.Samples.RaylibGame/Bozzetto.Samples.RaylibGame.fsproj" />
+    <Project Path="samples/demos/Bozzetto.Samples.WebappDatastar/Bozzetto.Samples.WebappDatastar.fsproj" />
+    <!-- The MCP run_app/stop_app outcome gate and the dashboard browser
+         journeys create real sessions on ConsoleTicker, and a session warms up
+         by loading the project's built assembly. Left out of the solution, it
+         was never built by CI's `dotnet build`, so those gates failed on a
+         fresh runner with "Not all DLLs are found (1 missing:
+         Bozzetto.Samples.ConsoleTicker.dll)" while passing on any machine that
+         had once built it by hand. -->
+    <Project Path="samples/demos/Bozzetto.Samples.ConsoleTicker/Bozzetto.Samples.ConsoleTicker.fsproj" />
+    <Project Path="samples/demos/Bozzetto.Samples.ConsoleTicker.Tests/Bozzetto.Samples.ConsoleTicker.Tests.fsproj" />
+  </Folder>
+</Solution>

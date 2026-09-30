@@ -1,5 +1,5 @@
-#load "/home/will/Work/SageFs/SageFs/WorkerProxyWait.fs"
-open SageFs
+#load "/home/will/Work/Bozzetto/Bozzetto/WorkerProxyWait.fs"
+open Bozzetto
 let d = WorkerProxyWait.delaysByDefault
 printfn "delays = %A" d
 printfn "sum    = %d" (List.sum d)

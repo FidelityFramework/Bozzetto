@@ -1,4 +1,4 @@
-# Troubleshooting SageFs
+# Troubleshooting Bozzetto
 
 Quick fixes for common issues. If your problem isn't listed here, check the
 [GitHub Issues](https://github.com/WillEhrendreich/SageFs/issues) or run the
@@ -9,24 +9,24 @@ rather hear about it than have you quietly work around it.
 
 | Editor | Command |
 |:-------|:--------|
-| **VS Code** | `Ctrl+Shift+P` → "SageFs: Check Health" |
-| **Neovim** | `:checkhealth sagefs` |
-| **CLI / dashboard** | `sagefs status` and `http://localhost:37750/dashboard` |
+| **VS Code** | `Ctrl+Shift+P` → "Bozzetto: Check Health" |
+| **Neovim** | `:checkhealth bozzetto` |
+| **CLI / dashboard** | `boz status` and `http://localhost:47750/dashboard` |
 
 ---
 
 ## Common First-Run Issues
 
-### "SageFs daemon not found" / CLI not installed
+### "Bozzetto daemon not found" / CLI not installed
 
 ```bash
-dotnet tool install --global SageFs
+dotnet tool install --global Bozzetto
 ```
 
-Verify: `sagefs --version` should print the version. If the command isn't
+Verify: `boz --version` should print the version. If the command isn't
 found, make sure `~/.dotnet/tools` is on your `PATH`.
 
-**Requires**: .NET 10 SDK to install SageFs itself. Check with
+**Requires**: .NET 10 SDK to install Bozzetto itself. Check with
 `dotnet --version`. Sessions can be on .NET 10 or .NET 11. Each
 session's host builds with whichever SDK `dotnet --version` reports in your
 project's folder, and runs on that SDK's runtime. That's your `global.json`
@@ -35,11 +35,11 @@ is installed and you want a project on 10, pin it.
 
 ### Daemon won't start / times out
 
-1. **Check if another instance is running**: `sagefs status`. If it shows a
-   running daemon, stop it with `sagefs stop` or use the existing one.
-2. **Port in use**: Default is 37749. Use `--mcp-port 8080` to pick a different
-   port. In VS Code, set `sagefs.mcpPort` in settings.
-3. **Check the SageFs console window**: it logs startup errors to its
+1. **Check if another instance is running**: `boz status`. If it shows a
+   running daemon, stop it with `boz stop` or use the existing one.
+2. **Port in use**: Default is 47749. Use `--mcp-port 8080` to pick a different
+   port. In VS Code, set `bozzetto.mcpPort` in settings.
+3. **Check the Bozzetto console window**: it logs startup errors to its
    own terminal window. Look for .NET SDK errors, missing project files, or
    compilation failures.
 4. **First-time JIT warmup**: The very first launch after install takes longer
@@ -47,18 +47,18 @@ is installed and you want a project on 10, pin it.
 
 ### "No .fsproj or .sln found"
 
-SageFs needs a project file. Either:
+Bozzetto needs a project file. Either:
 - Open a folder containing a `.fsproj` or `.sln` / `.slnx` file
 - Set the project path explicitly:
-  - **VS Code**: `sagefs.projectPath` in settings, or use "SageFs: Switch Project"
+  - **VS Code**: `bozzetto.projectPath` in settings, or use "Bozzetto: Switch Project"
   - **Neovim**: `:SageFsSwitchProject` or set `vim.g.sagefs_project_path`
-  - **CLI / dashboard**: start `sagefs`, then create or switch to a session for `path/to/MyApp.fsproj`
+  - **CLI / dashboard**: start `boz`, then create or switch to a session for `path/to/MyApp.fsproj`
 
 ### Wrong project selected (multi-project workspace)
 
-When a workspace has multiple `.fsproj` files, SageFs picks one. If it chose
+When a workspace has multiple `.fsproj` files, Bozzetto picks one. If it chose
 the wrong one:
-- **VS Code**: Run "SageFs: Switch Project" from the command palette
+- **VS Code**: Run "Bozzetto: Switch Project" from the command palette
 - **Neovim**: `:SageFsSwitchProject`
 - **CLI / dashboard**: create or switch to a session for `path/to/CorrectProject.fsproj`
 
@@ -70,11 +70,11 @@ The active project is shown in the status bar.
 
 ### Evaluation hangs / no result appears
 
-- **Check the daemon is alive**: Look for the SageFs console window. If it
+- **Check the daemon is alive**: Look for the Bozzetto console window. If it
   crashed, restart via your editor's "Start Daemon" command.
 - **SSE connection dropped**: The status bar shows connection state. If
   disconnected, most editors auto-reconnect. You can also trigger reconnect
-  manually (VS Code: Command Palette → `SageFs: Reconnect to Daemon`, Neovim:
+  manually (VS Code: Command Palette → `Bozzetto: Reconnect to Daemon`, Neovim:
   `:SageFsReconnect`).
 - **Long-running eval**: Some evaluations genuinely take time (large
   compilations, network calls). Check the daemon console for progress.
@@ -82,7 +82,7 @@ The active project is shown in the status bar.
 ### Stale REPL after code changes
 
 Use hard reset to pick up source file changes:
-- **VS Code**: "SageFs: Hard Reset" from command palette
+- **VS Code**: "Bozzetto: Hard Reset" from command palette
 - **Neovim**: `:SageFsHardReset`
 - **MCP**: `hard_reset_fsi_session` tool with `rebuild=true`
 
@@ -93,11 +93,11 @@ the session. It cannot help when the stale thing is the daemon itself.
 
 A daemon that has been running since before your code changed keeps serving the
 assemblies it started with. Nothing warns you, and it does not look like a
-version problem. It looks like SageFs is broken.
+version problem. It looks like Bozzetto is broken.
 
 Three ways it shows up:
 
-- `type not found, Version=...`, or a `SageFs.Core` version mismatch.
+- `type not found, Version=...`, or a `Bozzetto.Core` version mismatch.
 - `Could not load file or assembly 'System.Runtime, Version=N.0.0.0'` in worker
   stderr, on a project that builds perfectly on its own. This one means the
   daemon's worker is running an older .NET than your project targets: it starts
@@ -107,7 +107,7 @@ Three ways it shows up:
 **Check the daemon before you believe any other diagnosis:**
 
 ```bash
-sagefs status
+boz status
 ```
 
 It prints both `Version` and `Started`. `Started` is usually the faster tell:
@@ -118,16 +118,16 @@ If it's behind the code you're working on, restarting the *session* won't help �
 restart the *daemon*:
 
 ```bash
-sagefs stop
-dotnet tool update --global SageFs
-sagefs
+boz stop
+dotnet tool update --global Bozzetto
+boz
 ```
 
 If `dotnet tool update` reports "already installed" when you know a newer
 version is published, pass the version explicitly:
 
 ```bash
-dotnet tool update --global SageFs --version X.Y.Z
+dotnet tool update --global Bozzetto --version X.Y.Z
 ```
 
 `dotnet tool update` resolves through NuGet's search/registration index, which
@@ -137,7 +137,7 @@ NuGet while the CLI still can't see it.
 ### Hot reload not working
 
 - Hot reload is auto-injected by default for `.fs` file changes
-- Check `SAGEFS_DEVRELOAD` environment variable isn't set to `0`
+- Check `BOZZETTO_DEVRELOAD` environment variable isn't set to `0`
 - Look for `[DevReload]` messages in daemon logs
 - Ensure the file is part of the active project (listed in `.fsproj`)
 
@@ -151,8 +151,8 @@ NuGet while the CLI still can't see it.
 ### SSE connections dropping
 
 - Set proxy/reverse-proxy timeout ≥ 60 seconds
-- SageFs sends a keepalive comment on the dashboard's SSE stream every 5
-  seconds by default (`SAGEFS_DASHBOARD_HEARTBEAT_SECONDS`), well inside
+- Bozzetto sends a keepalive comment on the dashboard's SSE stream every 5
+  seconds by default (`BOZZETTO_DASHBOARD_HEARTBEAT_SECONDS`), well inside
   Kestrel's own keep-alive window
 - Corporate proxies may need explicit WebSocket/SSE passthrough configuration
 
@@ -177,27 +177,27 @@ still seeing it, that's a regression. File it.
 ## Environment Variable Overrides
 
 All timeout values can be overridden via environment variables. Set them before
-starting SageFs (or in your shell profile).
+starting Bozzetto (or in your shell profile).
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `SAGEFS_WARMUP_INACTIVITY_SECONDS` | `30` | Max seconds of inactivity during warmup before declaring failure |
-| `SAGEFS_WARMUP_MAX_MINUTES` | `10` | Absolute max warmup duration |
-| `SAGEFS_PER_TEST_TIMEOUT_SECONDS` | `5` | Per-test timeout |
-| `SAGEFS_BUILD_TIMEOUT_MINUTES` | `10` | Max time for `dotnet build` during hard reset |
-| `SAGEFS_WORKER_HTTP_READ_SECONDS` | `30` | HTTP read timeout for daemon→worker communication |
-| `SAGEFS_WORKER_STARTUP_TIMEOUT_MS` | `120000` | Worker process startup timeout (milliseconds) |
-| `SAGEFS_DASHBOARD_HEARTBEAT_SECONDS` | `5` | Dashboard SSE keepalive/heartbeat cadence |
-| `SAGEFS_BIND_HOST` | `localhost` | Loopback bind address: `localhost`, `127.0.0.1` or `::1`. Any other value stops the daemon at startup (see [Docker / Remote Containers](#docker--remote-containers)) |
-| `SAGEFS_MCP_PORT` | `37749` | MCP server port |
+| `BOZZETTO_WARMUP_INACTIVITY_SECONDS` | `30` | Max seconds of inactivity during warmup before declaring failure |
+| `BOZZETTO_WARMUP_MAX_MINUTES` | `10` | Absolute max warmup duration |
+| `BOZZETTO_PER_TEST_TIMEOUT_SECONDS` | `5` | Per-test timeout |
+| `BOZZETTO_BUILD_TIMEOUT_MINUTES` | `10` | Max time for `dotnet build` during hard reset |
+| `BOZZETTO_WORKER_HTTP_READ_SECONDS` | `30` | HTTP read timeout for daemon→worker communication |
+| `BOZZETTO_WORKER_STARTUP_TIMEOUT_MS` | `120000` | Worker process startup timeout (milliseconds) |
+| `BOZZETTO_DASHBOARD_HEARTBEAT_SECONDS` | `5` | Dashboard SSE keepalive/heartbeat cadence |
+| `BOZZETTO_BIND_HOST` | `localhost` | Loopback bind address: `localhost`, `127.0.0.1` or `::1`. Any other value stops the daemon at startup (see [Docker / Remote Containers](#docker--remote-containers)) |
+| `BOZZETTO_MCP_PORT` | `47749` | MCP server port |
 
 **Example**: slow CI machine with large project:
 
 ```bash
-export SAGEFS_WARMUP_MAX_MINUTES=20
-export SAGEFS_BUILD_TIMEOUT_MINUTES=15
-export SAGEFS_PER_TEST_TIMEOUT_SECONDS=15
-sagefs
+export BOZZETTO_WARMUP_MAX_MINUTES=20
+export BOZZETTO_BUILD_TIMEOUT_MINUTES=15
+export BOZZETTO_PER_TEST_TIMEOUT_SECONDS=15
+boz
 ```
 
 Then create a session for `MyBigProject.Tests/MyBigProject.Tests.fsproj`.
@@ -209,7 +209,7 @@ are silently ignored and the default is used.
 
 ## Warmup Progress Phases
 
-During session warmup, SageFs emits `warmup_progress` SSE events. Your editor's
+During session warmup, Bozzetto emits `warmup_progress` SSE events. Your editor's
 status bar shows which phase is active:
 
 | Phase | Status Bar Text | What's happening |
@@ -224,20 +224,20 @@ Each event includes `{Step, Total, Progress, Phase, Message}`. The `Progress`
 field is a 0.0–1.0 float for progress bars.
 
 **If warmup stalls**: Check the daemon console window for compilation errors or
-missing packages. Increase `SAGEFS_WARMUP_INACTIVITY_SECONDS` if your project
+missing packages. Increase `BOZZETTO_WARMUP_INACTIVITY_SECONDS` if your project
 has slow NuGet restores.
 
 **Large repos: name one project or solution.** The create tools have no
 auto-discovery path. Use `create_project_session` for one `.fsproj`,
 `create_solution_session` for one `.sln`/`.slnx`, or `create_bare_session` when
 you truly want a project-free REPL. `get_available_projects` lists candidates.
-If generated build state is missing, SageFs rebuilds it under a lease before it
+If generated build state is missing, Bozzetto rebuilds it under a lease before it
 creates the session.
 
 **A session that never reaches Ready is bounded, not silent.** Warmup is
-governed by two limits: `SAGEFS_WARMUP_INACTIVITY_SECONDS` (default 30) is how
+governed by two limits: `BOZZETTO_WARMUP_INACTIVITY_SECONDS` (default 30) is how
 long the worker can go with no progress before it's declared stuck;
-`SAGEFS_WARMUP_MAX_MINUTES` (default 10) is the hard ceiling regardless of
+`BOZZETTO_WARMUP_MAX_MINUTES` (default 10) is the hard ceiling regardless of
 progress. A session that's genuinely still working (a big repo resolving many
 projects) keeps that inactivity clock reset by its own progress and can run up
 to the absolute ceiling; a session that's gone quiet is faulted within the
@@ -260,21 +260,21 @@ See [#18](https://github.com/WillEhrendreich/SageFs/issues/18).
 
 ### Docker / Remote Containers
 
-SageFs only listens on loopback. Its HTTP ports evaluate F# as your user and
-have no authentication, so binding all interfaces (`SAGEFS_BIND_HOST=0.0.0.0`)
+Bozzetto only listens on loopback. Its HTTP ports evaluate F# as your user and
+have no authentication, so binding all interfaces (`BOZZETTO_BIND_HOST=0.0.0.0`)
 would hand code execution to anyone on the network. The daemon refuses to
-start with a non-loopback `SAGEFS_BIND_HOST`, and `sagefs check` reports it.
+start with a non-loopback `BOZZETTO_BIND_HOST`, and `boz check` reports it.
 I'm not going to make this configurable just so someone can trade an
 afternoon of convenience for handing out remote code execution. Forward the
 ports instead.
 
-To reach a daemon in a container, forward ports 37749 and 37750 to the
+To reach a daemon in a container, forward ports 47749 and 47750 to the
 container's loopback instead:
 
-- **VS Code Dev Containers**: add `"forwardPorts": [37749, 37750]` to
+- **VS Code Dev Containers**: add `"forwardPorts": [47749, 47750]` to
   `devcontainer.json`. VS Code tunnels to the container's loopback.
 - **Docker on Linux**: `docker run --network host ...`
-- **Anything with SSH**: `ssh -L 37749:localhost:37749 -L 37750:localhost:37750 <host>`
+- **Anything with SSH**: `ssh -L 47749:localhost:47749 -L 47750:localhost:47750 <host>`
 
 Browser requests must come from the dashboard itself. A page served from any
 other origin, including another `localhost` port, is refused. Request bodies
@@ -286,11 +286,11 @@ must be sent as `Content-Type: application/json`.
 
 | Tool | What it shows |
 |:-----|:-------------|
-| `sagefs status` | Running daemon info, port, sessions |
-| `sagefs stop` | Gracefully stop the daemon |
+| `boz status` | Running daemon info, port, sessions |
+| `boz stop` | Gracefully stop the daemon |
 | Daemon console window | Real-time logs, compilation output, test results |
 | OpenTelemetry export | Structured traces and metrics (set `OTEL_EXPORTER_OTLP_ENDPOINT`) |
-| Editor output channel | Extension-side logs (VS Code: "SageFs" in Output panel) |
+| Editor output channel | Extension-side logs (VS Code: "Bozzetto" in Output panel) |
 
 ---
 
@@ -312,6 +312,6 @@ must be sent as `Content-Type: application/json`.
 1. Check [GitHub Issues](https://github.com/WillEhrendreich/SageFs/issues) for
    known problems
 2. Run the health check for your editor (see table at top)
-3. File a new issue with: editor name + version, SageFs version (`sagefs --version`),
+3. File a new issue with: editor name + version, Bozzetto version (`boz --version`),
    OS, and the error message or behavior you're seeing. The more specific,
    the faster I can actually do something about it.

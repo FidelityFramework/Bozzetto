@@ -1,6 +1,6 @@
 // Pure parsing for the demo-recording environment variables that the Raylib
-// samples honor: SAGEFS_DEMO_WINDOW (window position + size) and
-// SAGEFS_DEMO_SEED (RNG seed), so recorded demos are reproducible.
+// samples honor: BOZZETTO_DEMO_WINDOW (window position + size) and
+// BOZZETTO_DEMO_SEED (RNG seed), so recorded demos are reproducible.
 //
 // This module is intentionally side-effect-free: it takes the already-read
 // environment value as a `string option` (None when the var is unset) and
@@ -13,7 +13,7 @@
 // in each .fsproj) rather than pulled in via a shared project reference, to
 // keep every sample a single self-contained, copy-pasteable file — same
 // reason DemoEnv.fs itself has no project of its own.
-module SageFs.Samples.DemoEnv
+module Bozzetto.Samples.DemoEnv
 
 open System
 

@@ -31,7 +31,7 @@ This is a **pure scheduling win** — zero architectural change, just move `crea
 
 ### 🥈 2. **Startup Profile / Session Script Pre-compilation** *(Good medium-term)*
 
-The `StartupProfile` / `discoverInitScript` mechanism already exists — it loads a `.sagefs/init.fsx` after warmup. This could be inverted: **cache the compiled form of the warmup `#load` and `open` script** so FSI gets a pre-baked `.dll` to reference rather than re-evaluating each `open X;;` interaction.
+The `StartupProfile` / `discoverInitScript` mechanism already exists — it loads a `.bozzetto/init.fsx` after warmup. This could be inverted: **cache the compiled form of the warmup `#load` and `open` script** so FSI gets a pre-baked `.dll` to reference rather than re-evaluating each `open X;;` interaction.
 
 Concretely: after a successful warmup, serialize the FSI `#load`/`open` sequence into a script file and **pre-compile it to a `.dll` using `fsc`**. On next startup, instead of N `EvalInteractionNonThrowing` calls, do a single `#r "cached-warmup.dll"`. This is the "cached hot state" idea — not a memory snapshot, but a pre-baked assembly.
 
@@ -56,7 +56,7 @@ open MyProject.Domain
 
 ### 4. **ReadyToRun / NativeAOT Pre-compilation of the Daemon** *(High impact, high effort)*
 
-The F# compiler itself (which FSI embeds) has enormous JIT startup cost. Publishing the SageFs daemon with `PublishReadyToRun=true` (R2R) means the compiler's IL is pre-JIT'd at publish time. This doesn't require any code changes — just a project file flag:
+The F# compiler itself (which FSI embeds) has enormous JIT startup cost. Publishing the Bozzetto daemon with `PublishReadyToRun=true` (R2R) means the compiler's IL is pre-JIT'd at publish time. This doesn't require any code changes — just a project file flag:
 
 ```xml
 <PublishReadyToRun>true</PublishReadyToRun>
@@ -81,9 +81,9 @@ The closest achievable thing is **process forking** (the technique `fork(2)` use
 
 ---
 
-### 6. **Per-Project Warmup Cache File (`.sagefm` extension)** *(Best long-term)*
+### 6. **Per-Project Warmup Cache File (`.bozzettofm` extension)** *(Best long-term)*
 
-SageFs already has a binary format (`.sagefm`, `.sagetc` files). The natural extension: **serialize the warmup result** — the exact list of assembly paths, namespace open order, and FSI args — to a project-keyed cache file. On next startup, **skip the scanning and reflection phases entirely** and just replay the known-good load sequence. Invalidate when `.fsproj` or `packages.lock.json` changes.
+Bozzetto already has a binary format (`.bozzettofm`, `.bozzettotc` files). The natural extension: **serialize the warmup result** — the exact list of assembly paths, namespace open order, and FSI args — to a project-keyed cache file. On next startup, **skip the scanning and reflection phases entirely** and just replay the known-good load sequence. Invalidate when `.fsproj` or `packages.lock.json` changes.
 
 This is essentially the same as strategy 2 but more general — it caches the *inputs* to warmup rather than the *output*. The scanning phase (which is already fast after yesterday's parallel scan) becomes a hash-check rather than a full scan.
 
@@ -98,7 +98,7 @@ Given the code as it stands, the highest-value/lowest-risk sequence would be:
 1. **Parallel namespace opening** — batch all `open X;;` into a single `EvalInteraction` call. Low risk, potentially huge gain.
 2. **Eager daemon pre-warming** — start the session the moment the daemon boots, not when the first client connects.
 3. **`PublishReadyToRun`** — flip a project file flag, zero code change.
-4. **Warmup replay cache** — persist the successful warmup sequence to a `.sagefs/warmup-cache.json` (keyed by `.fsproj` hash), skip scanning on subsequent starts.
+4. **Warmup replay cache** — persist the successful warmup sequence to a `.bozzetto/warmup-cache.json` (keyed by `.fsproj` hash), skip scanning on subsequent starts.
 5. **Pre-compiled warmup assembly** — the "cached hot state" closest to what's actually achievable: compile the warmup namespace opens to a DLL once, `#r` it on subsequent starts.
 
 The memory snapshot / process fork idea is unfortunately not achievable in .NET without heroic effort. The good news is that strategies 1–3 alone could likely cut cold-start from 120s to under 30s for most projects.

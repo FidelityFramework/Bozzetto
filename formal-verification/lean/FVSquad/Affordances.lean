@@ -1,13 +1,13 @@
 /-
   Affordances.lean
-  Formal specification for SageFs.Core.Affordances.availableTools.
+  Formal specification for Bozzetto.Core.Affordances.availableTools.
 
   The F# source maps each SessionState (5 cases) to a fixed list of MCP tool
   names (strings).  Because the domain is finite and all lists are concrete,
   every property stated here is provable by `decide` or `native_decide`.
 
   Key abstractions:
-  - `SageFsError.ToolNotAvailable` payload (toolName, state, availableTools)
+  - `BozzettoError.ToolNotAvailable` payload (toolName, state, availableTools)
     is simplified to `checkToolAvailability returning Bool false`
   - `EvalStats` (timing statistics) is out of scope — unrelated to tool gating
 

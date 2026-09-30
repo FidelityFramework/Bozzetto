@@ -1,0 +1,355 @@
+module Bozzetto.Tests.ShadowCopyTests
+
+open System
+open System.IO
+open Expecto
+open Expecto.Flip
+open Bozzetto.ProjectLoading
+open Ionide.ProjInfo.Types
+
+/// Helper to create a minimal ProjectOptions with only TargetPath set.
+let mkProjectOptions (targetPath: string) : ProjectOptions =
+  { ProjectId = None
+    ProjectFileName = "Test.fsproj"
+    TargetFramework = "net10.0"
+    SourceFiles = []
+    OtherOptions = []
+    ReferencedProjects = []
+    PackageReferences = []
+    LoadTime = DateTime.UtcNow
+    TargetPath = targetPath
+    TargetRefPath = None
+    ProjectOutputType = ProjectOutputType.Library
+    ProjectSdkInfo =
+      { IsTestProject = false
+        Configuration = "Debug"
+        IsPackable = false
+        TargetFramework = "net10.0"
+        TargetFrameworkIdentifier = ".NETCoreApp"
+        TargetFrameworkVersion = "v10.0"
+        MSBuildAllProjects = []
+        MSBuildToolsVersion = ""
+        ProjectAssetsFile = ""
+        RestoreSuccess = true
+        Configurations = []
+        TargetFrameworks = []
+        RunArguments = None
+        RunCommand = None
+        IsPublishable = None }
+    Items = []
+    Properties = []
+    CustomProperties = []
+    AllProperties = Map.empty
+    AllItems = Map.empty
+    Analyzers = [] }
+
+/// Creates a unique temp directory for test isolation.
+let createTestDir () =
+  let dir =
+    Path.Combine(
+      Path.GetTempPath(),
+      sprintf "bozzetto-test-%s" (Guid.NewGuid().ToString("N").[..7]))
+  Directory.CreateDirectory dir |> ignore
+  dir
+
+/// Safely removes a directory if it exists.
+let safeDelete dir =
+  match Directory.Exists dir with
+  | true -> Directory.Delete(dir, true)
+  | false -> ()
+
+[<Tests>]
+let tests =
+  testList "ShadowCopy" [
+
+    testCase "createShadowDir creates a directory with correct prefix" <| fun _ ->
+      let dir = Bozzetto.ShadowCopy.createShadowDir ()
+      try
+        Directory.Exists dir |> Expect.isTrue "directory should exist"
+        Path.GetFileName dir
+        |> fun name -> name.StartsWith "bozzetto-shadow-"
+        |> Expect.isTrue "name should start with bozzetto-shadow-"
+      finally
+        safeDelete dir
+
+    testCase "createShadowDir creates unique dirs" <| fun _ ->
+      let dir1 = Bozzetto.ShadowCopy.createShadowDir ()
+      let dir2 = Bozzetto.ShadowCopy.createShadowDir ()
+      try
+        dir1 |> Expect.notEqual "two calls should return different paths" dir2
+      finally
+        safeDelete dir1
+        safeDelete dir2
+
+    testCase "shadowCopyFile copies DLL" <| fun _ ->
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      let srcDir = createTestDir ()
+      try
+        let srcDll = Path.Combine(srcDir, "Test.dll")
+        File.WriteAllBytes(srcDll, [| 0xDEuy; 0xADuy |])
+        let dest = Bozzetto.ShadowCopy.shadowCopyFile shadowDir srcDll
+        File.Exists dest |> Expect.isTrue "shadow DLL should exist"
+        File.ReadAllBytes dest
+        |> Expect.equal "content should match" [| 0xDEuy; 0xADuy |]
+      finally
+        safeDelete shadowDir
+        safeDelete srcDir
+
+    testCase "shadowCopyFile copies companion PDB" <| fun _ ->
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      let srcDir = createTestDir ()
+      try
+        let srcDll = Path.Combine(srcDir, "WithPdb.dll")
+        let srcPdb = Path.Combine(srcDir, "WithPdb.pdb")
+        File.WriteAllText(srcDll, "dll-data")
+        File.WriteAllText(srcPdb, "pdb-data")
+        let dest = Bozzetto.ShadowCopy.shadowCopyFile shadowDir srcDll
+        let destPdb = Path.ChangeExtension(dest, ".pdb")
+        File.Exists destPdb |> Expect.isTrue "companion PDB should be copied"
+        File.ReadAllText destPdb
+        |> Expect.equal "PDB content should match" "pdb-data"
+      finally
+        safeDelete shadowDir
+        safeDelete srcDir
+
+    // ─── origin sidecar (run_app's missing-dependency fix) ─────────────────
+    // Bug: `run_app`'s `Assembly.LoadFrom` on a shadow copy fails with
+    // FileNotFoundException for the project's first NuGet/project-reference
+    // dependency, because the shadow dir (by design — see the doc comment
+    // above `shadowCopyFile`) contains ONLY the entry assembly. The sidecar
+    // is how `AppRunner.ManagedDependencyResolution` finds its way back to
+    // the original build output directory, where every real dependency lives.
+
+    testCase "WHY — shadowCopyFile records the original directory in a .origin sidecar" <| fun _ ->
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      let srcDir = createTestDir ()
+      try
+        let srcDll = Path.Combine(srcDir, "App.dll")
+        File.WriteAllText(srcDll, "app-dll")
+        let dest = Bozzetto.ShadowCopy.shadowCopyFile shadowDir srcDll
+        File.Exists (Bozzetto.ShadowCopy.originSidecarPath dest)
+        |> Expect.isTrue "a .origin sidecar must exist next to the shadow copy"
+      finally
+        safeDelete shadowDir
+        safeDelete srcDir
+
+    testCase "WHY — tryReadOriginDir round-trips exactly what shadowCopyFile recorded" <| fun _ ->
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      let srcDir = createTestDir ()
+      try
+        let srcDll = Path.Combine(srcDir, "App.dll")
+        File.WriteAllText(srcDll, "app-dll")
+        let dest = Bozzetto.ShadowCopy.shadowCopyFile shadowDir srcDll
+        Bozzetto.ShadowCopy.tryReadOriginDir dest
+        |> Expect.equal "the recorded origin is the source directory, not the shadow dir" (Some (Path.GetFullPath srcDir))
+      finally
+        safeDelete shadowDir
+        safeDelete srcDir
+
+    testCase "the bug itself: the origin must NOT be the shadow directory" <| fun _ ->
+      // Proves the test has teeth — a broken implementation that recorded
+      // (or fell back to) the SHADOW dir would defeat the whole fix, since
+      // the shadow dir is exactly where the missing dependency is NOT.
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      let srcDir = createTestDir ()
+      try
+        let srcDll = Path.Combine(srcDir, "App.dll")
+        File.WriteAllText(srcDll, "app-dll")
+        let dest = Bozzetto.ShadowCopy.shadowCopyFile shadowDir srcDll
+        Bozzetto.ShadowCopy.tryReadOriginDir dest
+        |> Expect.notEqual "must not equal the shadow dir itself" (Some (Path.GetFullPath shadowDir))
+      finally
+        safeDelete shadowDir
+        safeDelete srcDir
+
+    testCase "tryReadOriginDir is None when no sidecar was ever written" <| fun _ ->
+      let fakeShadowedPath = Path.Combine(Path.GetTempPath(), sprintf "bozzetto-no-sidecar-%s.dll" (Guid.NewGuid().ToString("N").[..7]))
+      Bozzetto.ShadowCopy.tryReadOriginDir fakeShadowedPath
+      |> Expect.equal "no sidecar, no origin" None
+
+    testCase "shadowCopyFile with a missing source writes no sidecar" <| fun _ ->
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      try
+        let fakePath = Path.Combine(Path.GetTempPath(), "nonexistent-sidecar-42.dll")
+        let result = Bozzetto.ShadowCopy.shadowCopyFile shadowDir fakePath
+        File.Exists (Bozzetto.ShadowCopy.originSidecarPath result)
+        |> Expect.isFalse "the early-return (no copy) path must not fabricate a sidecar"
+      finally
+        safeDelete shadowDir
+
+    testCase "shadowCopySolution's rewritten TargetPath also carries an origin sidecar" <| fun _ ->
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      let srcDir = createTestDir ()
+      try
+        let dllPath = Path.Combine(srcDir, "Proj.dll")
+        File.WriteAllText(dllPath, "proj-dll")
+        let sln: Solution =
+          { emptySolution with
+              Projects = [ mkProjectOptions dllPath ] }
+        let result = Bozzetto.ShadowCopy.shadowCopySolution shadowDir sln
+        let shadowedTarget = (result.Projects |> List.head).TargetPath
+        Bozzetto.ShadowCopy.tryReadOriginDir shadowedTarget
+        |> Expect.equal "AppRunner must be able to find this project's original build output" (Some (Path.GetFullPath srcDir))
+      finally
+        safeDelete shadowDir
+        safeDelete srcDir
+
+    testCase "shadowCopyFile returns original path when source doesn't exist" <| fun _ ->
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      try
+        let fakePath = Path.Combine(Path.GetTempPath(), "nonexistent-42.dll")
+        let result = Bozzetto.ShadowCopy.shadowCopyFile shadowDir fakePath
+        result |> Expect.equal "should return original path" fakePath
+      finally
+        safeDelete shadowDir
+
+    testCase "shadowCopyFile without PDB only copies DLL" <| fun _ ->
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      let srcDir = createTestDir ()
+      try
+        let srcDll = Path.Combine(srcDir, "NoPdb.dll")
+        File.WriteAllText(srcDll, "dll-only")
+        let dest = Bozzetto.ShadowCopy.shadowCopyFile shadowDir srcDll
+        File.Exists dest |> Expect.isTrue "DLL should be copied"
+        Path.ChangeExtension(dest, ".pdb")
+        |> File.Exists
+        |> Expect.isFalse "PDB should NOT exist when source has no PDB"
+      finally
+        safeDelete shadowDir
+        safeDelete srcDir
+
+    testCase "shadowCopySolution rewrites TargetPath" <| fun _ ->
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      let srcDir = createTestDir ()
+      try
+        let dllPath = Path.Combine(srcDir, "Proj.dll")
+        File.WriteAllText(dllPath, "proj-dll")
+        let sln: Solution =
+          { emptySolution with
+              Projects = [ mkProjectOptions dllPath ] }
+        let result = Bozzetto.ShadowCopy.shadowCopySolution shadowDir sln
+        result.Projects
+        |> List.head
+        |> fun p -> p.TargetPath.StartsWith shadowDir
+        |> Expect.isTrue "TargetPath should point to shadow dir"
+        result.Projects
+        |> List.head
+        |> fun p -> File.Exists p.TargetPath
+        |> Expect.isTrue "shadow-copied project DLL should exist"
+      finally
+        safeDelete shadowDir
+        safeDelete srcDir
+
+    testCase "shadowCopySolution keeps References in place" <| fun _ ->
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      let srcDir = createTestDir ()
+      try
+        let refDll = Path.Combine(srcDir, "Ref.dll")
+        File.WriteAllText(refDll, "ref-content")
+        let sln: Solution =
+          { emptySolution with References = [ refDll ] }
+        let result = Bozzetto.ShadowCopy.shadowCopySolution shadowDir sln
+        result.References
+        |> List.head
+        |> fun r -> r = refDll
+        |> Expect.isTrue "References should stay in place (shadowing them breaks FSI #load transitive resolution)"
+      finally
+        safeDelete shadowDir
+        safeDelete srcDir
+
+    testCase "shadowCopySolution preserves emptySolution" <| fun _ ->
+      let shadowDir = Bozzetto.ShadowCopy.createShadowDir ()
+      try
+        let result = Bozzetto.ShadowCopy.shadowCopySolution shadowDir emptySolution
+        result.Projects |> Expect.isEmpty "Projects should be empty"
+        result.References |> Expect.isEmpty "References should be empty"
+        result.StartupFiles |> Expect.isEmpty "StartupFiles should be empty"
+        result.OtherArgs |> Expect.isEmpty "OtherArgs should be empty"
+      finally
+        safeDelete shadowDir
+
+    testCase "cleanupShadowDir removes directory" <| fun _ ->
+      let dir = Bozzetto.ShadowCopy.createShadowDir ()
+      File.WriteAllText(Path.Combine(dir, "test.dll"), "data")
+      Directory.Exists dir |> Expect.isTrue "should exist before cleanup"
+      Bozzetto.ShadowCopy.cleanupShadowDir dir
+      Directory.Exists dir |> Expect.isFalse "should be gone after cleanup"
+
+    testCase "cleanupShadowDir on nonexistent dir is no-op" <| fun _ ->
+      let fakePath =
+        Path.Combine(
+          Path.GetTempPath(),
+          sprintf "bozzetto-shadow-nonexist-%s" (Guid.NewGuid().ToString("N").[..7]))
+      // Throwing here fails the test; a no-op must also not create the directory.
+      Bozzetto.ShadowCopy.cleanupShadowDir fakePath
+      Directory.Exists fakePath |> Expect.isFalse "cleanup of a missing dir should leave nothing behind"
+
+    testCase "cleanupAllPending clears pendingCleanups" <| fun _ ->
+      let dir1 = createTestDir ()
+      let dir2 = createTestDir ()
+      try
+        Bozzetto.ShadowCopy.pendingCleanups.Add dir1
+        Bozzetto.ShadowCopy.pendingCleanups.Add dir2
+        Bozzetto.ShadowCopy.cleanupAllPending ()
+        Directory.Exists dir1 |> Expect.isFalse "dir1 should be removed"
+        Directory.Exists dir2 |> Expect.isFalse "dir2 should be removed"
+      finally
+        safeDelete dir1
+        safeDelete dir2
+  ]
+
+let private liveOnly (alive: Set<int>) (pid: int) =
+  match alive.Contains pid with
+  | true -> Bozzetto.ShadowCopy.OwnerLiveness.Running
+  | false -> Bozzetto.ShadowCopy.OwnerLiveness.Gone
+
+[<Tests>]
+let staleSweepTests =
+  testList "ShadowCopy stale sweep" [
+    testCase "WHY — ShadowDirOwner — a shadow dir records the process that owns it, because only its owner may decide it is garbage" <| fun _ ->
+      let dir = Bozzetto.ShadowCopy.createShadowDir ()
+      try
+        Bozzetto.ShadowCopy.ShadowDirOwner.ofDirName dir
+        |> Expect.equal "created dirs are owned by this process" (Bozzetto.ShadowCopy.ShadowDirOwner.OwnedBy Environment.ProcessId)
+      finally
+        safeDelete dir
+
+    testCase "WHY — ShadowDirOwner — a legacy name without an owner is UnknownOwner, because its owner can never be proven dead" <| fun _ ->
+      Bozzetto.ShadowCopy.ShadowDirOwner.ofDirName "/tmp/bozzetto-shadow-20c3008c"
+      |> Expect.equal "legacy dirs have no owner" Bozzetto.ShadowCopy.ShadowDirOwner.UnknownOwner
+
+    testProperty "WHY — staleShadowDirs — only dirs whose owner is provably gone are swept, because deleting a live worker's shadow copy breaks every compile in that session" <|
+      fun (owners: (FsCheck.NonNegativeInt * bool) list) (legacyCount: byte) ->
+        let owned =
+          owners |> List.mapi (fun i (pid, alive) -> sprintf "/tmp/bozzetto-shadow-%d-%08x" (pid.Get + 1) i, pid.Get + 1, alive)
+        let alivePids = owned |> List.choose (fun (_, pid, alive) -> match alive with | true -> Some pid | false -> None) |> Set.ofList
+        let legacy = [ for i in 1 .. int legacyCount % 5 -> sprintf "/tmp/bozzetto-shadow-%08x" i ]
+        let swept =
+          Bozzetto.ShadowCopy.staleShadowDirs (liveOnly alivePids) ((owned |> List.map (fun (d, _, _) -> d)) @ legacy)
+          |> Set.ofList
+        let expected =
+          owned
+          |> List.choose (fun (d, pid, _) -> match alivePids.Contains pid with | true -> None | false -> Some d)
+          |> Set.ofList
+        swept = expected
+
+    testCase "WHY — staleShadowDirs — an owner whose liveness cannot be determined keeps its dir, because a sweep must fail closed" <| fun _ ->
+      Bozzetto.ShadowCopy.staleShadowDirs (fun _ -> Bozzetto.ShadowCopy.OwnerLiveness.Unknown) [ "/tmp/bozzetto-shadow-4242-0000abcd" ]
+      |> Expect.isEmpty "unknown liveness is never swept"
+
+    testCase "WHY — cleanupStaleDirsIn — another running process's shadow dir survives a sweep, because one session's hard reset deleted every other session's shadow copy" <| fun _ ->
+      let root = Directory.CreateTempSubdirectory("bozzetto-sweep-").FullName
+      try
+        let live = Directory.CreateDirectory(Path.Combine(root, sprintf "bozzetto-shadow-%d-aaaaaaaa" Environment.ProcessId)).FullName
+        let gone = Directory.CreateDirectory(Path.Combine(root, "bozzetto-shadow-999999999-bbbbbbbb")).FullName
+        let legacy = Directory.CreateDirectory(Path.Combine(root, "bozzetto-shadow-cccccccc")).FullName
+        Bozzetto.ShadowCopy.cleanupStaleDirsIn root (fun pid ->
+          match pid = Environment.ProcessId with
+          | true -> Bozzetto.ShadowCopy.OwnerLiveness.Running
+          | false -> Bozzetto.ShadowCopy.OwnerLiveness.Gone)
+        Directory.Exists live |> Expect.isTrue "a live owner's shadow dir is kept"
+        Directory.Exists legacy |> Expect.isTrue "an ownerless legacy dir is kept"
+        Directory.Exists gone |> Expect.isFalse "a dead owner's shadow dir is swept"
+      finally
+        safeDelete root
+  ]

@@ -1,7 +1,7 @@
 #!/usr/bin/env dotnet fsi
-// Zero-dependency build script for SageFs.
+// Zero-dependency build script for Bozzetto.
 // Usage:
-//   dotnet fsi build.fsx            # fetch MCP SDK + build
+//   dotnet fsi build.fsx            # restore pinned packages + build
 //   dotnet fsi build.fsx -- test    # build + run tests
 //   dotnet fsi build.fsx -- install # build + pack + install as global tool
 //   dotnet fsi build.fsx -- ext     # build + package + install editor extensions
@@ -13,10 +13,8 @@ open System.IO
 open System.Runtime.InteropServices
 
 let rootDir = __SOURCE_DIRECTORY__
-let mcpSdkDir = Path.Combine(rootDir, "mcp-sdk")
-let mcpNupkgDir = Path.Combine(rootDir, "mcp-sdk-nupkg")
-let vscodeDir = Path.Combine(rootDir, "sagefs-vscode")
-let vsProjDir = Path.Combine(rootDir, "sagefs-vs", "SageFs.VisualStudio")
+let vscodeDir = Path.Combine(rootDir, "bozzetto-vscode")
+let vsProjDir = Path.Combine(rootDir, "bozzetto-vs", "Bozzetto.VisualStudio")
 
 /// Run a command. On Windows, .cmd/.bat scripts (npm, npx, code, etc.)
 /// need to go through cmd.exe since FSI can't launch them directly.
@@ -91,49 +89,34 @@ let findVsixInstaller () =
     Path.Combine(vsPath, "Common7", "IDE", "VSIXInstaller.exe"))
   |> Option.filter File.Exists
 
-// --- Step 1: Fetch MCP SDK (if not already present) ---
-printfn "=== Fetch MCP SDK ==="
-if Directory.Exists mcpSdkDir then
-  printfn "  mcp-sdk/ already present, skipping clone."
-else
-  run "git" (sprintf "clone --depth 1 https://github.com/WillEhrendreich/ModelContextProtocolSdk.git %s" mcpSdkDir) rootDir
-  printfn "  Cloned MCP SDK."
-
-// --- Step 2: Pack MCP SDK sub-projects ---
-printfn "=== Pack MCP SDK ==="
-for sub in [ "ModelContextProtocol.Core"; "ModelContextProtocol"; "ModelContextProtocol.AspNetCore" ] do
-  let proj = Path.Combine(mcpSdkDir, "src", sub)
-  run "dotnet" (sprintf "pack \"%s\" -o \"%s\" -c Release /p:SignAssembly=false" proj mcpNupkgDir) rootDir
-  printfn "  Packed %s" sub
-
-// --- Step 3: Build ---
+// --- Step 1: Build ---
 printfn "=== Build ==="
 run "dotnet" "build" rootDir
 printfn "  Build succeeded."
 
-// --- Step 4 (optional): Test ---
+// --- Step 2 (optional): Test ---
 if target = "test" || target = "all" then
   printfn "=== Test ==="
   // Expecto exit code 2 = no TTY (cosmetic), treat as success
-  runAllowCodes [2] "dotnet" "run --no-build --project SageFs.Tests -- --summary" rootDir
+  runAllowCodes [2] "dotnet" "run --no-build --project Bozzetto.Tests -- --summary" rootDir
   printfn "  Tests passed."
 
-// --- Step 5 (optional): Pack + Install ---
+// --- Step 3 (optional): Pack + Install ---
 if target = "install" || target = "all" then
   printfn "=== Pack CLI ==="
-  run "dotnet" "pack SageFs -c Release" rootDir
-  printfn "  Packed SageFs CLI."
+  run "dotnet" "pack Bozzetto -c Release" rootDir
+  printfn "  Packed Bozzetto CLI."
 
   printfn "=== Install CLI ==="
   let nupkgDir = Path.Combine(rootDir, "nupkg")
   try
-    run "dotnet" (sprintf "tool update --global SageFs --add-source \"%s\" --no-cache" nupkgDir) rootDir
-    printfn "  Updated global SageFs tool."
+    run "dotnet" (sprintf "tool update --global Bozzetto --add-source \"%s\" --no-cache" nupkgDir) rootDir
+    printfn "  Updated global Bozzetto tool."
   with _ ->
-    run "dotnet" (sprintf "tool install --global SageFs --add-source \"%s\" --no-cache" nupkgDir) rootDir
-    printfn "  Installed global SageFs tool."
+    run "dotnet" (sprintf "tool install --global Bozzetto --add-source \"%s\" --no-cache" nupkgDir) rootDir
+    printfn "  Installed global Bozzetto tool."
 
-// --- Step 6 (optional): Build + Install Extensions ---
+// --- Step 4 (optional): Build + Install Extensions ---
 if target = "ext" || target = "extensions" || target = "all" then
   // -- VS Code extension --
   printfn "=== VS Code Extension ==="
@@ -147,7 +130,7 @@ if target = "ext" || target = "extensions" || target = "all" then
     let props = File.ReadAllText(Path.Combine(rootDir, "Directory.Build.props"))
     let m = Text.RegularExpressions.Regex.Match(props, @"<Version>([^<]+)</Version>")
     if m.Success then m.Groups.[1].Value else "0.0.0"
-  let vsixPath = Path.Combine(vscodeDir, sprintf "sagefs-%s.vsix" version)
+  let vsixPath = Path.Combine(vscodeDir, sprintf "bozzetto-%s.vsix" version)
   run "npx" (sprintf "@vscode/vsce package -o \"%s\"" vsixPath) vscodeDir
   printfn "  Packaged: %s" vsixPath
 
@@ -161,7 +144,7 @@ if target = "ext" || target = "extensions" || target = "all" then
   // -- Visual Studio extension (Windows only) --
   if RuntimeInformation.IsOSPlatform(OSPlatform.Windows) then
     printfn "=== Visual Studio Extension ==="
-    let vsCsproj = Path.Combine(vsProjDir, "SageFs.VisualStudio.csproj")
+    let vsCsproj = Path.Combine(vsProjDir, "Bozzetto.VisualStudio.csproj")
     try
       run "dotnet" (sprintf "build \"%s\" -c Release" vsCsproj) rootDir
       printfn "  Built VS extension."

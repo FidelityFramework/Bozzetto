@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Discriminated Unions — SageFs Edition
+//  🧘  About Discriminated Unions — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutDiscriminatedUnions.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

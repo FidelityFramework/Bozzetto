@@ -1,6 +1,6 @@
 /-
   Composition.lean
-  Cross-file composition theorems for SageFs formal verification.
+  Cross-file composition theorems for Bozzetto formal verification.
 
   This file imports from SessionLifecycle.lean and Affordances.lean to prove
   system-level properties that span the session lifecycle and MCP tool affordances.
@@ -26,7 +26,7 @@
   - No Mathlib. Pure Lean 4 stdlib only (network firewalled on CI).
 
   Sources:
-    SageFs.Core/AppState.fs, SageFs.Core/SessionState.fs, SageFs.Core/Affordances.fs
+    Bozzetto.Core/AppState.fs, Bozzetto.Core/SessionState.fs, Bozzetto.Core/Affordances.fs
 -/
 
 import FVSquad.SessionLifecycle

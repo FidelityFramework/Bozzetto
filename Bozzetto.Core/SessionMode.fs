@@ -1,0 +1,79 @@
+namespace Bozzetto
+
+open System.Threading.Tasks
+open Bozzetto.WorkerProtocol
+
+/// Functions a daemon provides for managing worker sessions.
+/// Pure data — no actor, no transport, just function signatures.
+type SessionManagementOps = {
+  CreateSession: SessionProjectTarget list -> string -> WorkflowTypes.SessionWorkflow -> Task<Result<string, BozzettoError>>
+  ListSessions: unit -> Task<string>
+  StopSession: string -> Task<Result<string, BozzettoError>>
+  /// Purge — stop the session AND remove its entry from the .bozzettofm manifest (gone from the resume picker too).
+  /// For corrupted state, this is the equivalent of deleting obj/bin folders.
+  PurgeSession: string -> Task<Result<string, BozzettoError>>
+  /// Stop worker, optionally rebuild, respawn with same session ID.
+  /// Solves CLR assembly identity cache: fresh process = fresh assemblies.
+  RestartSession: SessionId -> bool -> Task<Result<string, BozzettoError>>
+  /// Get the session proxy for routing commands to a specific worker.
+  GetProxy: SessionId -> Task<SessionProxy option>
+  /// Get the SessionInfo for a specific session.
+  GetSessionInfo: SessionId -> Task<SessionInfo option>
+  /// Get all active sessions with their metadata.
+  GetAllSessions: unit -> Task<SessionInfo list>
+  /// Update the daemon-side snapshot status for an existing session.
+  /// Used when the worker changes phase without a full process restart.
+  UpdateSessionStatus: SessionId -> SessionLifecycleStatus -> Task<unit>
+  /// Notify that a worker died unexpectedly (pipe broken mid-request).
+  /// Closes the race window between pipe failure and proc.Exited event firing.
+  NotifyWorkerDied: SessionId -> unit
+  /// Ask the session's owner to run `project` ("Run App"). The owner decides:
+  /// it refuses while an app is running or starting, and an accepted run gets
+  /// the generation every later step of it must carry.
+  ClaimRun: SessionId -> string -> Task<Result<AppRun.RunClaim, BozzettoError>>
+  /// Ask the owner to stop the app. The stop takes a new generation, so no
+  /// step of an earlier run can be applied after it.
+  ClaimStop: SessionId -> Task<Result<AppRun.StopClaim, BozzettoError>>
+  /// Record one step of a run, applied only while its generation owns the app.
+  AdvanceRun: SessionId -> AppRun.RunGeneration -> AppRun.AppRunState -> Task<AppRun.StepOutcome>
+  /// Record that run `runId` ended — applied only while that run is still current.
+  EndAppRun: SessionId -> AppRun.RunGeneration -> string -> AppRun.AppRunState -> Task<AppRun.RunEnd>
+  /// Wait until the session's worker is Ready (e.g. after a workflow restart).
+  AwaitReady: SessionId -> System.TimeSpan -> Task<Result<unit, BozzettoError>>
+  /// Switch the workflow for a session.
+  SwitchWorkflow: string -> WorkflowTypes.SessionWorkflow -> Task<Result<string, BozzettoError>>
+  /// Identity `(assemblyVersion, originalBuildWriteTimeUtc)` of the Bozzetto.Core
+  /// build this session's worker adopted at spawn, or `None` when the session
+  /// does not self-host Bozzetto.Core. Drives the self-host staleness affordance.
+  GetAdoptedCore: SessionId -> Task<(string * System.DateTime) option>
+  /// The last warmup-progress line a warming worker's stdout reported (e.g.
+  /// "2/4 Scanned 12 files"), if any. `None` before the first line or once
+  /// the session has left Starting. get_fsi_status surfaces this so a
+  /// WarmingUp poll on a big repo shows real, moving evidence of progress
+  /// instead of a static "15-30s" estimate (fcs-trial-a/b: no progress
+  /// reporting was the single biggest complaint).
+  GetWarmupProgress: SessionId -> Task<string option>
+}
+
+module SessionManagementOps =
+  /// A no-op stub for testing — all operations return sensible defaults.
+  let stub : SessionManagementOps = {
+    CreateSession = fun _ _ _ -> Task.FromResult(Result.Error (BozzettoError.SessionCreationFailed "Not available"))
+    ListSessions = fun () -> Task.FromResult("No sessions")
+    StopSession = fun _ -> Task.FromResult(Result.Error (BozzettoError.SessionCreationFailed "Not available"))
+    PurgeSession = fun _ -> Task.FromResult(Result.Error (BozzettoError.SessionCreationFailed "Not available"))
+    RestartSession = fun _ _ -> Task.FromResult(Result.Error (BozzettoError.HardResetFailed "Not available"))
+    GetProxy = fun _ -> Task.FromResult(None)
+    GetSessionInfo = fun _ -> Task.FromResult(None)
+    GetAllSessions = fun () -> Task.FromResult([])
+    UpdateSessionStatus = fun _ _ -> Task.FromResult(())
+    NotifyWorkerDied = fun _ -> ()
+    ClaimRun = fun sid _ -> Task.FromResult(Result.Error (BozzettoError.SessionNotFound (SessionId.value sid)))
+    ClaimStop = fun sid -> Task.FromResult(Result.Error (BozzettoError.SessionNotFound (SessionId.value sid)))
+    AdvanceRun = fun _ _ _ -> Task.FromResult(AppRun.StepOutcome.Stale AppRun.AppRunState.NotRunning)
+    EndAppRun = fun _ _ _ _ -> Task.FromResult(AppRun.RunEnd.NotCurrent)
+    AwaitReady = fun _ _ -> Task.FromResult(Result.Error (BozzettoError.HardResetFailed "Not available"))
+    SwitchWorkflow = fun _ _ -> Task.FromResult(Result.Error (BozzettoError.HardResetFailed "Not available"))
+    GetAdoptedCore = fun _ -> Task.FromResult(None)
+    GetWarmupProgress = fun _ -> Task.FromResult(None)
+  }

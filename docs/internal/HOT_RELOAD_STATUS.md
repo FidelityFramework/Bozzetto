@@ -1,11 +1,11 @@
-# SageFs Hot Reload Status
+# Bozzetto Hot Reload Status
 
 > ## ✅ Status: Working for function-body changes
 >
 > A save propagates into the running app for **module-declared, route-captured
 > apps** — the Falco/Giraffe/Saturn/Oxpecker pattern (`module App.Program` +
 > `let routes = [...]` captured by value at startup). Verified live against
-> `samples/demos/SageFs.Samples.WebappDatastar`: the same running process served
+> `samples/demos/Bozzetto.Samples.WebappDatastar`: the same running process served
 > the new text after a save, with no restart, including for a handler whose
 > parameter type is declared in the same file.
 >
@@ -30,12 +30,12 @@
 > **Genuine remaining limitations** (each pinned by a matrix cell, see below):
 > value bindings, eagerly-computed handlers, mutable fields, and signature/type
 > changes take effect at startup and cannot be patched into a process that
-> already started. SageFs restarts the app when it is the one running it;
+> already started. Bozzetto restarts the app when it is the one running it;
 > otherwise it logs that a restart is needed and re-evaluates the file.
 
 ## The shape matrix (the gate)
 
-`SageFs.Tests/WebAppHotReloadVerificationTests.fs` holds `ShapeMatrix.cells`.
+`Bozzetto.Tests/WebAppHotReloadVerificationTests.fs` holds `ShapeMatrix.cells`.
 Every cell starts a real app whose handler table is captured at startup, saves a
 real source file, and asserts what the SAME process serves afterwards — never
 "the pipeline ran", never "a detour was planned".
@@ -52,38 +52,38 @@ as explicit `RestartOnly` cells with their reason.
 ## ✅ What Works
 
 ### 6. Browser Auto-Refresh via DevReload
-- **`SageFs.DevReload`** — pure broadcaster in `SageFs.Core` with zero ASP.NET dependency
-- **`SageFs.DevReloadMiddleware`** — ASP.NET Core middleware in `SageFs` project
-- **`SageFs.DevReloadInjector`** — Harmony auto-injection into `WebApplication.Run/RunAsync`
+- **`Bozzetto.DevReload`** — pure broadcaster in `Bozzetto.Core` with zero ASP.NET dependency
+- **`Bozzetto.DevReloadMiddleware`** — ASP.NET Core middleware in `Bozzetto` project
+- **`Bozzetto.DevReloadInjector`** — Harmony auto-injection into `WebApplication.Run/RunAsync`
 - Injects a tiny `<script>` before `</body>` in all `text/html` responses
-- Script opens SSE connection to `/__sagefs__/reload`
-- **Zero configuration** — works automatically for any ASP.NET Core app loaded in SageFs
+- Script opens SSE connection to `/__bozzetto__/reload`
+- **Zero configuration** — works automatically for any ASP.NET Core app loaded in Bozzetto
 
 #### DevReload Event Lifecycle
 
-`DevReloadEvent` (`SageFs.Core/DevReload.fs`) has one non-terminal case and four
+`DevReloadEvent` (`Bozzetto.Core/DevReload.fs`) has one non-terminal case and four
 terminal outcomes — deliberately no bare "Reload" case, because a save can do more
 than one thing to a running app:
 
 ```
 Compiling(fileName)  → Patched(report)            (one or more functions re-pointed; browser refreshes)
-Compiling(fileName)  → Restarted(report)           (SageFs itself restarted the app; browser refreshes once it's back up)
-Compiling(fileName)  → NotApplied(report)          (no-op save, or a change that needs a restart SageFs isn't driving; browser does NOT refresh)
+Compiling(fileName)  → Restarted(report)           (Bozzetto itself restarted the app; browser refreshes once it's back up)
+Compiling(fileName)  → NotApplied(report)          (no-op save, or a change that needs a restart Bozzetto isn't driving; browser does NOT refresh)
 Compiling(fileName)  → CompilationFailed(error, report, diagnostics)  (browser shows the error overlay, no refresh)
 ```
 
 `report` is the `ReloadOutcome` translated into `{ Outcome, Patched, Considered, Message,
-SuggestedAction, Reasons }` (`SageFs.Core/Features/ReloadBroadcast.fs`) — the same values
+SuggestedAction, Reasons }` (`Bozzetto.Core/Features/ReloadBroadcast.fs`) — the same values
 every client (browser overlay, VS Code, an editor extension) reads, so they cannot disagree
 about what a save did. `DevReloadEvent.refreshes` is the single place that decides whether
 the browser refreshes; only `Patched` and `Restarted` return `true` — a save that patched
-nothing, or a save that needs a restart SageFs isn't driving, does not send a refresh.
+nothing, or a save that needs a restart Bozzetto isn't driving, does not send a refresh.
 
 #### Safety Features
 - **Infinite-reload guard**: sessionStorage counter — if >3 reloads in 5s, pauses with red warning
 - **Error overlay**: compilation errors shown directly in the browser (red panel, `#dc2626`)
-- **Idempotent injection**: `data-sagefs-injected` attribute prevents double script injection
-- **Kill switch**: Set `SAGEFS_DEVRELOAD=false` or `0` to disable entirely
+- **Idempotent injection**: `data-bozzetto-injected` attribute prevents double script injection
+- **Kill switch**: Set `BOZZETTO_DEVRELOAD=false` or `0` to disable entirely
 - **SSE retry**: `retry: 1000` header ensures automatic reconnection after network hiccups
 
 ### 1. Automatic File Watching
@@ -95,27 +95,27 @@ nothing, or a save that needs a restart SageFs isn't driving, does not send a re
 - 500ms debounce prevents thrashing on rapid saves
 - **`--no-watch` does not disable this.** It is parsed but not wired to anything —
   `SessionManager.startWorkerProcess` always spawns workers with watching on — and
-  `sagefs`'s CLI refuses the flag with a message saying so (`SageFs.Core/Args.fs`,
-  `SageFs/Program.fs`). There is currently no daemon-startup or session-creation
+  `boz`'s CLI refuses the flag with a message saying so (`Bozzetto.Core/Args.fs`,
+  `Bozzetto/Program.fs`). There is currently no daemon-startup or session-creation
   control to turn file watching off.
 
 ### 2. Hot Reload with Harmony Method Detouring
 - Handlers can be updated in real-time — no restart needed, proven by
-  `SageFs.Tests/WebAppHotReloadVerificationTests.fs`'s shape matrix against a real
+  `Bozzetto.Tests/WebAppHotReloadVerificationTests.fs`'s shape matrix against a real
   running process (see the banner at the top of this file)
 - This works for both:
   - REPL-typed code (interactive)
   - File-change-triggered reloads (automatic)
 - Changes appear live in the browser via DevReload once the detour succeeds
 
-### 3. FSI Compatibility Middleware  
+### 3. FSI Compatibility Middleware
 - Automatically rewrites `use` → `let` for indented use statements
 - Applies to interactively-sent code via MCP
 - Handles FSI incompatibilities transparently
-- Located in `SageFs/FsiRewrite.fs` and `SageFs/Middleware/FsiCompatibility.fs`
+- Located in `Bozzetto/FsiRewrite.fs` and `Bozzetto/Middleware/FsiCompatibility.fs`
 
 ### 4. Multi-line Code Submission
-- Fixed in `SageFs/Mcp.fs` sendFsharpCode 
+- Fixed in `Bozzetto/Mcp.fs` sendFsharpCode
 - Splits code by `;;` delimiter
 - Executes each statement sequentially
 - Returns all results concatenated
@@ -126,7 +126,7 @@ nothing, or a save that needs a restart SageFs isn't driving, does not send a re
   - Message
   - Stack trace
   - Inner exceptions (recursively)
-- Located in `SageFs/Mcp.fs` formatEvalResult
+- Located in `Bozzetto/Mcp.fs` formatEvalResult
 
 ## 🔥 How Hot Reload Works End-to-End
 
@@ -145,7 +145,7 @@ nothing, or a save that needs a restart SageFs isn't driving, does not send a re
    refreshes. A save that changed nothing patchable reports `NoEffect` with a reason and a
    remedy, and does **not** refresh the browser.
 6. **On a startup-only change** (a value binding, `let mutable` state, a changed signature or
-   type): SageFs restarts the app itself when it is the one running it (`Restarted`), or falls
+   type): Bozzetto restarts the app itself when it is the one running it (`Restarted`), or falls
    back to re-evaluating the whole file and tells you a restart is needed (`RestartRequired`)
 7. **On failure**: `CompilationFailed` → browser shows the error overlay (red), no refresh
 8. **No restart needed for a patch** → the next HTTP request uses the new code automatically
@@ -155,13 +155,13 @@ nothing, or a save that needs a restart SageFs isn't driving, does not send a re
 These design decisions exist for specific reasons. Before changing them, understand why they're there.
 
 ### AppDomain.CurrentDomain for shared state
-**Why**: `DevReload.getChannels()` stores the ConcurrentDictionary in `AppDomain.CurrentDomain.GetData()` instead of a static field. This is because Harmony's auto-injection causes SageFs.Core.dll to be loaded multiple times in the same process (host copy + FSI shadow copy). A static field would create two separate dictionaries — the browser's SSE client registers against the shadow-copy DLL, while the broadcast functions (`DevReload.broadcastPatched`, `broadcastRestarted`, `broadcastNotApplied`, `broadcastCompilationFailed`) run in the host DLL. AppDomain storage is shared across all assembly loads, solving this mismatch.
+**Why**: `DevReload.getChannels()` stores the ConcurrentDictionary in `AppDomain.CurrentDomain.GetData()` instead of a static field. This is because Harmony's auto-injection causes Bozzetto.Core.dll to be loaded multiple times in the same process (host copy + FSI shadow copy). A static field would create two separate dictionaries — the browser's SSE client registers against the shadow-copy DLL, while the broadcast functions (`DevReload.broadcastPatched`, `broadcastRestarted`, `broadcastNotApplied`, `broadcastCompilationFailed`) run in the host DLL. AppDomain storage is shared across all assembly loads, solving this mismatch.
 
 ### Channel-per-client (not shared Channel)
 **Why**: Each SSE client gets its own `Channel<DevReloadEvent>`. A shared channel with multiple readers would require fan-out logic and risk one slow reader blocking others. Per-client channels provide natural backpressure isolation — if one browser tab is slow, others aren't affected. The ConcurrentDictionary keyed by connection ID supports this cleanly.
 
 ### Harmony auto-injection (not manual middleware registration)
-**Why**: `DevReloadInjector.install()` patches `WebApplication.Run/RunAsync` via Harmony prefix. This means DevReload works **without any code changes** to the user's app — they just load their project in SageFs and it works. Manual `app.Use(middleware)` requires users to modify their code, which is worse DX and breaks the "zero-config" principle.
+**Why**: `DevReloadInjector.install()` patches `WebApplication.Run/RunAsync` via Harmony prefix. This means DevReload works **without any code changes** to the user's app — they just load their project in Bozzetto and it works. Manual `app.Use(middleware)` requires users to modify their code, which is worse DX and breaks the "zero-config" principle.
 
 ### Pre-allocated SSE byte arrays
 **Why**: The SSE endpoint in `WorkerHttpTransport.fs` pre-allocates `heartbeatBytes`, `connectedBytes`, `compilingBytes`, and `reloadBytes` as module-level `ReadOnlyMemory<byte>` values. SSE heartbeats fire every 15s per client — allocating fresh byte arrays each time creates unnecessary GC pressure. Only `Compiling(Some file)` and `CompilationFailed(error)` allocate dynamically because their payloads vary.
@@ -191,7 +191,7 @@ A running process cannot be given a new module initialisation. These shapes are
 
 Note what is NOT a limitation: `[<MethodImpl(MethodImplOptions.NoInlining)>]`
 is **not** required on the user's own source. The `tiny` matrix cell is a
-one-line function with no attribute and it reloads. SageFs injects `NoInlining`
+one-line function with no attribute and it reloads. Bozzetto injects `NoInlining`
 on the code it emits (`HotReloading.injectNoInlining`); the compiled side does
 not need it.
 
@@ -223,9 +223,9 @@ This works for most CSP configurations. However, it does **not** work when:
 **Workarounds for edge cases:**
 ```bash
 # Option 1: Disable DevReload entirely
-SAGEFS_DEVRELOAD=0 SageFs
+BOZZETTO_DEVRELOAD=0 Bozzetto
 
-# Option 2: Add SageFs's script hash to your CSP
+# Option 2: Add Bozzetto's script hash to your CSP
 # (hash changes each release — not recommended for long-term use)
 
 # Option 3: Use 'unsafe-inline' in development CSP only
@@ -237,7 +237,7 @@ messages confirming nonce injection is working.
 
 ### Project Loading via sessions
 When the daemon is running bare and a client creates a session for `MyProject.fsproj`:
-- SageFs loads **compiled DLLs**, not source code
+- Bozzetto loads **compiled DLLs**, not source code
 - The FSI compatibility rewrite only affects:
   - Files loaded with `--use` flag (`.fsx` scripts)
   - Code sent interactively via MCP
@@ -245,7 +245,7 @@ When the daemon is running bare and a client creates a session for `MyProject.fs
 - Already-compiled DLL code is NOT rewritten
 
 ### Console I/O — Resolved
-- PrettyPrompt has been **removed** from SageFs. The daemon-first architecture runs headless; `SageFs connect` provides the REPL client.
+- PrettyPrompt has been **removed** from Bozzetto. The daemon-first architecture runs headless; `Bozzetto connect` provides the REPL client.
 
 ## 🎯 How to Use Hot Reload
 
@@ -254,41 +254,41 @@ The daemon is headless — there is no `--use <script>` script-launch mode and n
 automatically once a session is created:
 
 ```bash
-sagefs                       # start the daemon bare, waits for clients
+boz                       # start the daemon bare, waits for clients
 ```
 
 Create a session for your project from an editor, MCP, or the dashboard
-(`http://localhost:37750/dashboard`), start your app in it — either you run it yourself
+(`http://localhost:47750/dashboard`), start your app in it — either you run it yourself
 in the REPL, or `run_app` runs it for you — then just edit `.fs` files and save. Look for
 `[DevReload]`/`[HotReload]` log lines in the daemon console.
 
-Set `SAGEFS_DEVRELOAD=0` (or `false`) to disable the browser-refresh injection specifically;
+Set `BOZZETTO_DEVRELOAD=0` (or `false`) to disable the browser-refresh injection specifically;
 there is currently no way to disable file watching itself.
 
 ## 📁 Key Files
 
 | File | Purpose |
 |------|---------|
-| `SageFs.Core/DevReload.fs` | Pure broadcaster: `Compiling` + 4 terminal outcomes (`Patched`/`Restarted`/`NotApplied`/`CompilationFailed`), Channel-per-client, AppDomain shared state, diagnostic logging |
-| `SageFs.Core/Features/ReloadOutcome.fs` | `ReloadOutcome` (`Patched`/`NoEffect`/`Restarted`/`RestartRequired`/`CompileFailed`) and `RestartReason`, each with a `describe` and a `remedy` |
-| `SageFs.Core/Features/ReloadBroadcast.fs` | Translates a `ReloadOutcome` into the one `DevReloadEvent`/`ReloadReport` every client reads |
-| `SageFs.Host/Resources/devreload.js` | Browser-side JS: WCAG AA error panel, smart auto-reload, editor links, ARIA |
-| `SageFs.Host/DevReloadMiddleware.fs` | ASP.NET middleware: body-swap injection, CSP nonce, template placeholders |
-| `SageFs.Host/DevReloadInjector.fs` | Harmony auto-injection: patches WebApplication.Run/RunAsync |
-| `SageFs.Host/WorkerHttpTransport.fs` | SSE endpoint: pre-allocated bytes, diagnostic logging, hardened exception handling |
-| `SageFs.Host/WorkerMain.fs` | Starts file watcher, routes changes through `ReloadPlanning` → FSI, wires error path |
-| `SageFs.Core/FileWatcher.fs` | Pure file watching with debounce, diagnostic logging |
-| `SageFs.Core/Middleware/HotReloading.fs` | Harmony method detouring |
-| `SageFs.Core/Middleware/CompilationContext.fs` | File preprocessing, module detection, line offset mapping |
-| `SageFs.Core/ActorCreation.fs` | Registers middleware pipeline |
-| `SageFs.Core/Features/ReloadPlanning.fs` | `routeFor` (patch in place vs re-evaluate whole file), `planReload`, `confirmPatch`, `baselineIsTrustworthy` |
-| `SageFs.Tests/fixtures/WebAppFixture/Shapes.fs` | The shape-matrix fixture: handlers captured by value at startup, no `NoInlining`, un-patchable shapes included |
-| `SageFs.Tests/WebAppHotReloadVerificationTests.fs` | `ShapeMatrix.cells` + the outcome gates (real app, real save, real HTTP) |
-| `SageFs.Tests/DevReloadMiddlewareTests.fs` | 40 tests: CSP nonce, encoding, embedded JS, 13 UX features |
-| `SageFs.Tests/DevReloadTests.fs` | 31 tests: 6 FsCheck property + 25 unit (lifecycle, middleware, SSE) |
-| `SageFs.Tests/HotReloadingPropertyTests.fs` | Property-based tests for HotReloading pipeline |
-| `SageFs.Tests/HotReloadTests.fs` | 21 integration tests |
-| `SageFs.Tests/FileWatcherTests.fs` | Pure function tests |
+| `Bozzetto.Core/DevReload.fs` | Pure broadcaster: `Compiling` + 4 terminal outcomes (`Patched`/`Restarted`/`NotApplied`/`CompilationFailed`), Channel-per-client, AppDomain shared state, diagnostic logging |
+| `Bozzetto.Core/Features/ReloadOutcome.fs` | `ReloadOutcome` (`Patched`/`NoEffect`/`Restarted`/`RestartRequired`/`CompileFailed`) and `RestartReason`, each with a `describe` and a `remedy` |
+| `Bozzetto.Core/Features/ReloadBroadcast.fs` | Translates a `ReloadOutcome` into the one `DevReloadEvent`/`ReloadReport` every client reads |
+| `Bozzetto.Host/Resources/devreload.js` | Browser-side JS: WCAG AA error panel, smart auto-reload, editor links, ARIA |
+| `Bozzetto.Host/DevReloadMiddleware.fs` | ASP.NET middleware: body-swap injection, CSP nonce, template placeholders |
+| `Bozzetto.Host/DevReloadInjector.fs` | Harmony auto-injection: patches WebApplication.Run/RunAsync |
+| `Bozzetto.Host/WorkerHttpTransport.fs` | SSE endpoint: pre-allocated bytes, diagnostic logging, hardened exception handling |
+| `Bozzetto.Host/WorkerMain.fs` | Starts file watcher, routes changes through `ReloadPlanning` → FSI, wires error path |
+| `Bozzetto.Core/FileWatcher.fs` | Pure file watching with debounce, diagnostic logging |
+| `Bozzetto.Core/Middleware/HotReloading.fs` | Harmony method detouring |
+| `Bozzetto.Core/Middleware/CompilationContext.fs` | File preprocessing, module detection, line offset mapping |
+| `Bozzetto.Core/ActorCreation.fs` | Registers middleware pipeline |
+| `Bozzetto.Core/Features/ReloadPlanning.fs` | `routeFor` (patch in place vs re-evaluate whole file), `planReload`, `confirmPatch`, `baselineIsTrustworthy` |
+| `Bozzetto.Tests/fixtures/WebAppFixture/Shapes.fs` | The shape-matrix fixture: handlers captured by value at startup, no `NoInlining`, un-patchable shapes included |
+| `Bozzetto.Tests/WebAppHotReloadVerificationTests.fs` | `ShapeMatrix.cells` + the outcome gates (real app, real save, real HTTP) |
+| `Bozzetto.Tests/DevReloadMiddlewareTests.fs` | 40 tests: CSP nonce, encoding, embedded JS, 13 UX features |
+| `Bozzetto.Tests/DevReloadTests.fs` | 31 tests: 6 FsCheck property + 25 unit (lifecycle, middleware, SSE) |
+| `Bozzetto.Tests/HotReloadingPropertyTests.fs` | Property-based tests for HotReloading pipeline |
+| `Bozzetto.Tests/HotReloadTests.fs` | 21 integration tests |
+| `Bozzetto.Tests/FileWatcherTests.fs` | Pure function tests |
 
 ## ✨ Summary
 

@@ -1,20 +1,20 @@
-# SageFs Demo Applications
+# Bozzetto Demo Applications
 
-Working applications demonstrating SageFs with different frameworks.
+Working applications demonstrating Bozzetto with different frameworks.
 
 ## Projects
 
 ### 🎨 Raylib Hello — Animated Shapes
 
 A simple Raylib window with animated circle and pulsing ring.
-Great for learning how SageFs hot-reloads graphics code.
+Great for learning how Bozzetto hot-reloads graphics code.
 
 ```bash
-cd SageFs.Samples.RaylibHello
+cd Bozzetto.Samples.RaylibHello
 dotnet run
 ```
 
-Change colors, shapes, or animation speeds — SageFs patches function
+Change colors, shapes, or animation speeds — Bozzetto patches function
 pointers via Harmony, so your changes appear instantly in the running window.
 
 ### 🎮 Raylib Game — Star Catcher
@@ -23,7 +23,7 @@ A simple game: catch falling stars with arrow keys. Demonstrates game loops,
 scoring, and collision detection.
 
 ```bash
-cd SageFs.Samples.RaylibGame
+cd Bozzetto.Samples.RaylibGame
 dotnet run
 ```
 
@@ -33,22 +33,22 @@ A real-time web application using Falco (F# web framework) and Datastar
 (SSE-based reactivity). Add, toggle, and delete todos with instant updates.
 
 ```bash
-cd SageFs.Samples.WebappDatastar
+cd Bozzetto.Samples.WebappDatastar
 dotnet run
 ```
 
 Then open `http://localhost:5000` in your browser.
 
-## Using with SageFs
+## Using with Bozzetto
 
 For the best development experience:
 
 ```bash
-cd SageFs.Samples.RaylibHello   # or any demo
-sagefs watch .
+cd Bozzetto.Samples.RaylibHello   # or any demo
+boz watch .
 ```
 
-SageFs provides:
+Bozzetto provides:
 - **Hot reload** — edit functions and see changes in the running app
 - **Alt+Enter** — evaluate any expression inline
 - **Gutter markers** — see test results next to your code

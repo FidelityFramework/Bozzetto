@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <GenerateProgramFile>false</GenerateProgramFile>
+  </PropertyGroup>
+  <Target Name="RequireComposerDistribution" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(ComposerDistribution)' == '' Or !$([System.IO.Path]::IsPathFullyQualified('$(ComposerDistribution)'))"
+      Text="ComposerDistribution must be an explicit absolute directory." />
+    <Error Condition="!Exists('$(ComposerDistribution)/Composer.dll')"
+      Text="Supply -p:ComposerDistribution=/absolute/path/to/a/built/Composer/distribution. The provider never builds or guesses a sibling compiler checkout." />
+  </Target>
+  <ItemGroup>
+    <Reference Include="$(ComposerDistribution)/*.dll" />
+    <Compile Include="ProviderContracts.fs" />
+    <Compile Include="ProviderSession.fs" />
+    <Compile Include="ComposerAdapter.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+</Project>

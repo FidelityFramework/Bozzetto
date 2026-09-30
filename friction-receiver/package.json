@@ -1,8 +1,8 @@
 {
-  "name": "sagefs-friction-receiver",
+  "name": "bozzetto-friction-receiver",
   "version": "0.1.0",
   "private": true,
-  "description": "Cloudflare Worker that receives sanitized SageFs friction reports and stores them in R2, with optional Discord notification.",
+  "description": "Cloudflare Worker that receives sanitized Bozzetto friction reports and stores them in R2, with optional Discord notification.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

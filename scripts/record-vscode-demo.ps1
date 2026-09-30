@@ -10,7 +10,7 @@
 
   Two demos are available:
     hero      — Opens getting-started.fsx, scrolls through F# code (no extension needed)
-    extension — Shows SageFs extension: eval, live testing, command palette
+    extension — Shows Bozzetto extension: eval, live testing, command palette
 
 .PARAMETER Demo
   Which demo to record: 'hero', 'extension', or 'all' (default: all).
@@ -22,7 +22,7 @@
   - VS Code installed and on PATH
   - ffmpeg installed (choco install ffmpeg)
   - Playwright Chromium browsers installed (dotnet tool run playwright install chromium)
-  - For 'extension' demo: SageFs VS Code extension installed + daemon running
+  - For 'extension' demo: Bozzetto VS Code extension installed + daemon running
 
 .EXAMPLE
   .\scripts\record-vscode-demo.ps1
@@ -56,8 +56,8 @@ Write-Host "  ✓ VS Code found" -ForegroundColor Green
 Write-Host "  ✓ ffmpeg found" -ForegroundColor Green
 
 # ---- Build test project ----
-Write-Host "`n🔨 Building SageFs.Tests..." -ForegroundColor Cyan
-dotnet build "$repoRoot\SageFs.Tests\SageFs.Tests.fsproj" -c Debug --nologo -v q
+Write-Host "`n🔨 Building Bozzetto.Tests..." -ForegroundColor Cyan
+dotnet build "$repoRoot\Bozzetto.Tests\Bozzetto.Tests.fsproj" -c Debug --nologo -v q
 if ($LASTEXITCODE -ne 0) { Write-Error "Build failed"; exit 1 }
 Write-Host "  ✓ Build succeeded" -ForegroundColor Green
 
@@ -74,14 +74,14 @@ Write-Host "   This launches VS Code, drives interactions, and captures screensh
 Write-Host "   The VS Code window must remain visible during recording." -ForegroundColor Yellow
 
 # Run via the compiled test exe for cleaner output
-$testExe = "$repoRoot\SageFs.Tests\bin\Debug\net10.0\SageFs.Tests.exe"
+$testExe = "$repoRoot\Bozzetto.Tests\bin\Debug\net10.0\Bozzetto.Tests.exe"
 & $testExe --filter "$filter"
 $testExit = $LASTEXITCODE
 
 # ---- Report results ----
 Write-Host ""
 $gifDir = "$repoRoot\docs\media"
-$gifs = Get-ChildItem $gifDir -Filter "sagefs-*.gif" -ErrorAction SilentlyContinue |
+$gifs = Get-ChildItem $gifDir -Filter "bozzetto-*.gif" -ErrorAction SilentlyContinue |
   Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-5) }
 
 if ($gifs) {
@@ -93,7 +93,7 @@ if ($gifs) {
   Write-Host "`n   Files: $gifDir" -ForegroundColor Gray
 } else {
   Write-Warning "No GIFs found. Check output above for errors."
-  Write-Host "   Frame directories: C:\temp\sagefs-demo-frames\" -ForegroundColor Gray
+  Write-Host "   Frame directories: C:\temp\bozzetto-demo-frames\" -ForegroundColor Gray
 }
 
 if ($testExit -ne 0 -and $testExit -ne 2) {

@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased] — Bozzetto
 
 ### Changed
-- Hard fork of [SageFs](https://github.com/WillEhrendreich/SageFs) at `5b685fb`. [SAGEFS_HERITAGE.md](SAGEFS_HERITAGE.md) records the lineage and credits.
+- Hard fork of [SageFs](https://github.com/WillEhrendreich/SageFs) at `5b685fb`. [SAGEFS_HERITAGE.md](UPSTREAM_HERITAGE.md) records the lineage and credits.
 - Updated the inherited engine and editor integrations to SageFs v0.6.834 (`c86c3402`), preserving Bozzetto's documentation identity and Clef/Fidelity direction. See [the integration and validation record](docs/UPSTREAM_SYNC.md).
 - Documentation uses Bozzetto; code and public identifiers retain upstream spelling until the coordinated rename.
 - Replaced obsolete setup and feature descriptions with the current binary persistence, session, live testing, and hot reload contracts. Old fork notes remain in `docs/internal/fork-history/`.

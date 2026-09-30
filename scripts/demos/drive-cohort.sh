@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# drive-cohort.sh — SageFs-specific driver for the COHORT landing-gate demo
+# drive-cohort.sh — Bozzetto-specific driver for the COHORT landing-gate demo
 # recording.
 #
 # Meant to run as the --command of record-x11.sh (which owns Xvfb and
@@ -7,10 +7,10 @@
 #   1. Builds a throwaway temp git repo carrying a real, tiny, PREBUILT
 #      Expecto fixture project via the CohortOrchestrator's `setup-fixture`
 #      subcommand — see scripts/demos/cohort-orchestrator/Program.fs and
-#      SageFs.Tests/CohortLandingGateIntegrationTests.fs's header for why the
+#      Bozzetto.Tests/CohortLandingGateIntegrationTests.fs's header for why the
 #      fixture must be prebuilt and SDK-pinned before the daemon ever sees it.
-#   2. Starts an ISOLATED SageFs daemon (own --mcp-port, own SAGEFS_DATA_DIR,
-#      --owner-pid/--ttl/--no-resume, NEVER the real ~/.SageFs) rooted at
+#   2. Starts an ISOLATED Bozzetto daemon (own --mcp-port, own BOZZETTO_DATA_DIR,
+#      --owner-pid/--ttl/--no-resume, NEVER the real ~/.bozzetto) rooted at
 #      that fixture repo.
 #   3. Opens the dashboard in Chromium under the X display it inherits via
 #      $DISPLAY (forced X11 backend, windowed — not --headless, which never
@@ -38,7 +38,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MCP_PORT=""
 DATA_DIR=""
 DURATION=200
-SAGEFS_BIN=""
+BOZZETTO_BIN=""
 CHROMIUM_BIN=""
 ORCHESTRATOR_DLL=""
 LOG_DIR=""
@@ -50,13 +50,13 @@ usage() {
 Usage: $SCRIPT_NAME --mcp-port N --data-dir DIR [options]
 
 Required:
-  --mcp-port N          Port for this job's isolated SageFs daemon (the
+  --mcp-port N          Port for this job's isolated Bozzetto daemon (the
                          dashboard listens on N+1). Must not collide with any
                          other running daemon (default main daemon uses
-                         37749/37750 — never use those here).
-  --data-dir DIR         Directory for this job's SAGEFS_DATA_DIR AND the
+                         47749/47750 — never use those here).
+  --data-dir DIR         Directory for this job's BOZZETTO_DATA_DIR AND the
                          throwaway fixture git repo. Must be fresh — the real
-                         ~/.SageFs is never touched.
+                         ~/.bozzetto is never touched.
 
 Options:
   --duration SECONDS         Roughly how long the caller will be recording
@@ -64,9 +64,9 @@ Options:
                               duration+15s as a safety margin (default: 200 —
                               the full five-beat choreography, including the
                               gate-proof poll, needs real wall-clock time).
-  --sagefs-bin PATH           Path to the built SageFs executable (default:
-                              <repo>/SageFs/bin/Release/net10.0/SageFs — build
-                              it first: dotnet build SageFs/SageFs.fsproj -c Release)
+  --bozzetto-bin PATH           Path to the built Bozzetto executable (default:
+                              <repo>/Bozzetto/bin/Release/net10.0/Bozzetto — build
+                              it first: dotnet build Bozzetto/Bozzetto.fsproj -c Release)
   --chromium PATH              Path to a chromium binary (default: first of
                               'chromium'/'chromium-browser' on PATH)
   --orchestrator-dll PATH       Path to the built CohortOrchestrator.dll
@@ -92,7 +92,7 @@ while [[ $# -gt 0 ]]; do
     --mcp-port) MCP_PORT="$2"; shift 2 ;;
     --data-dir) DATA_DIR="$2"; shift 2 ;;
     --duration) DURATION="$2"; shift 2 ;;
-    --sagefs-bin) SAGEFS_BIN="$2"; shift 2 ;;
+    --bozzetto-bin) BOZZETTO_BIN="$2"; shift 2 ;;
     --chromium) CHROMIUM_BIN="$2"; shift 2 ;;
     --orchestrator-dll) ORCHESTRATOR_DLL="$2"; shift 2 ;;
     --log-dir) LOG_DIR="$2"; shift 2 ;;
@@ -113,8 +113,8 @@ done
 
 DASHBOARD_PORT=$((MCP_PORT + 1))
 
-[[ -n "$SAGEFS_BIN" ]] || SAGEFS_BIN="$REPO_ROOT/SageFs/bin/Release/net10.0/SageFs"
-[[ -x "$SAGEFS_BIN" ]] || die "sagefs binary not found or not executable: $SAGEFS_BIN (build it first: dotnet build SageFs/SageFs.fsproj -c Release)"
+[[ -n "$BOZZETTO_BIN" ]] || BOZZETTO_BIN="$REPO_ROOT/Bozzetto/bin/Release/net10.0/Bozzetto"
+[[ -x "$BOZZETTO_BIN" ]] || die "bozzetto binary not found or not executable: $BOZZETTO_BIN (build it first: dotnet build Bozzetto/Bozzetto.fsproj -c Release)"
 
 [[ -n "$ORCHESTRATOR_DLL" ]] || ORCHESTRATOR_DLL="$SCRIPT_DIR/cohort-orchestrator/bin/Release/net10.0/CohortOrchestrator.dll"
 [[ -f "$ORCHESTRATOR_DLL" ]] || die "orchestrator dll not found: $ORCHESTRATOR_DLL (build it first: dotnet build scripts/demos/cohort-orchestrator/CohortOrchestrator.fsproj -c Release)"
@@ -129,7 +129,7 @@ mkdir -p "$DATA_DIR" "$LOG_DIR"
 FIXTURE_REPO="$DATA_DIR/fixture-repo"
 
 log "mcp-port=$MCP_PORT dashboard-port=$DASHBOARD_PORT data-dir=$DATA_DIR display=$DISPLAY"
-log "sagefs-bin=$SAGEFS_BIN chromium=$CHROMIUM_BIN orchestrator-dll=$ORCHESTRATOR_DLL"
+log "bozzetto-bin=$BOZZETTO_BIN chromium=$CHROMIUM_BIN orchestrator-dll=$ORCHESTRATOR_DLL"
 log "fixture-repo=$FIXTURE_REPO pause=${PAUSE_SECONDS}s gate-timeout=${GATE_TIMEOUT_SECONDS}s"
 
 DAEMON_PID=""
@@ -176,15 +176,15 @@ dotnet "$ORCHESTRATOR_DLL" setup-fixture --dir "$FIXTURE_REPO" >"$LOG_DIR/fixtur
   || die "fixture setup failed, see $LOG_DIR/fixture-setup.log"
 log "fixture ready at $FIXTURE_REPO"
 
-log "starting isolated SageFs daemon rooted at the fixture repo"
+log "starting isolated Bozzetto daemon rooted at the fixture repo"
 # The daemon's OWN process working directory is what set_integration_ref
 # treats as "the main repo" (there is no --working-directory flag) — a
-# subshell cd's into the fixture repo and execs SageFs there, exactly
+# subshell cd's into the fixture repo and execs Bozzetto there, exactly
 # CohortLandingGateIntegrationTests.fs's startIsolatedDaemon
 # (psi.WorkingDirectory <- workingDir).
 (
   cd "$FIXTURE_REPO"
-  exec env SAGEFS_DATA_DIR="$DATA_DIR" "$SAGEFS_BIN" \
+  exec env BOZZETTO_DATA_DIR="$DATA_DIR" "$BOZZETTO_BIN" \
     --mcp-port "$MCP_PORT" \
     --owner-pid "$$" \
     --ttl 10m \

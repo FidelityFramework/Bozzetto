@@ -1,4 +1,4 @@
-# SAGEFS ARCHITECTURE - CONCRETE CODE SIGNATURES
+# BOZZETTO ARCHITECTURE - CONCRETE CODE SIGNATURES
 
 ## Features Layer - Exact Public APIs
 
@@ -181,8 +181,8 @@ type McpContext = {
   SessionOps: SessionManagementOps
   SessionMap: ConcurrentDictionary<string, string>
   McpPort: int
-  Dispatch: (SageFsMsg → unit) option
-  GetElmModel: (unit → SageFsModel) option
+  Dispatch: (BozzettoMsg → unit) option
+  GetElmModel: (unit → BozzettoModel) option
   GetElmRegions: (unit → RenderRegion list) option
   GetWarmupContext: (string → Task<WarmupContext option>) option
   GetFeatureState: (unit → FeaturePushState) option

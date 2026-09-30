@@ -7,8 +7,8 @@ This file contains:
 3. Proved propositions covering seqId monotonicity, well-formedness preservation,
    and the four exhaustive cases of `replayFrom`
 
-> 🔬 Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.
-> Source: `SageFs.Core/SseReplayBuffer.fs`
+> 🔬 Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.
+> Source: `Bozzetto.Core/SseReplayBuffer.fs`
 >
 > **Model abstractions**:
 > - Event content (`EventType`, `Payload`, `Timestamp`) is abstracted away; only

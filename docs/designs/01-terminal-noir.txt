@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>SageFs ? Terminal Noir</title>
+<title>Bozzetto ? Terminal Noir</title>
 <style>
   :root {
     --bg: #0a0a0f;
@@ -249,7 +249,7 @@
 <body>
   <div class="titlebar">
     <div class="brand">
-      <span class="logo">?</span><span>SageFs</span>
+      <span class="logo">?</span><span>Bozzetto</span>
       <span class="v">v0.6.303.0</span>
     </div>
     <div class="tabs">
@@ -272,7 +272,7 @@
     <span class="sep">?</span>
     <span>mem 7899MB</span>
     <span class="sep">?</span>
-    <span><span class="led">?</span> SageFs.Samples.WebappDatastar.fsproj</span>
+    <span><span class="led">?</span> Bozzetto.Samples.WebappDatastar.fsproj</span>
     <span class="sep">?</span>
     <span><span style="color:var(--dim)">?</span> SageTech.fsproj</span>
     <span style="margin-left:auto; color:var(--dim)">120 evals ? avg 14ms ? max 2.3s</span>
@@ -300,7 +300,7 @@
           <div class="line dim"><span class="ts">16:21:01</span><span class="tag">?</span>[5/8] ? open Falco.Markup (116ms)</div>
           <div class="line dim"><span class="ts">16:21:01</span><span class="tag">?</span>[6/8] ? open Falco.Datastar (116ms)</div>
           <div class="line dim"><span class="ts">16:21:01</span><span class="tag">?</span>[7/8] ? open Microsoft.AspNetCore.Builder (116ms)</div>
-          <div class="line dim"><span class="ts">16:21:01</span><span class="tag">?</span>[8/8] ? open SageFs (116ms)</div>
+          <div class="line dim"><span class="ts">16:21:01</span><span class="tag">?</span>[8/8] ? open Bozzetto (116ms)</div>
           <div class="line info"><span class="ts">16:21:01</span><span class="tag">?</span>warm-up complete ? 3 838ms ? 8 namespaces</div>
           <div class="line"><span class="ts">16:21:15</span><span class="tag">?</span>let greet name = sprintf "hello, %s" name</div>
           <div class="line result"><span class="ts">16:21:15</span><span class="tag">val</span>greet : name:string -> string</div>
@@ -347,8 +347,8 @@
             <div>
               <div class="row1"><span class="id">e0fcb2a4</span><span class="badge run">run</span></div>
               <div class="row2"><span style="color:var(--accent)">?</span> active ? <span style="color:var(--dim)">? 6m</span></div>
-              <div class="cwd" title="C:\Code\Repos\SageFs\samples\demos\SageFs.Samples.WebappDatastar">~/samples/demos/SageFs.Samples.WebappDatastar</div>
-              <div><span class="proj">SageFs.Samples.WebappDatastar</span></div>
+              <div class="cwd" title="C:\Code\Repos\Bozzetto\samples\demos\Bozzetto.Samples.WebappDatastar">~/samples/demos/Bozzetto.Samples.WebappDatastar</div>
+              <div><span class="proj">Bozzetto.Samples.WebappDatastar</span></div>
               <div class="row3">last eval: 16:21:48 ? 14ms</div>
             </div>
             <div class="acts">
@@ -367,8 +367,8 @@
             <div>
               <div class="row1"><span class="id">87ec774d</span><span class="badge">idle</span></div>
               <div class="row2"><span style="color:var(--dim)">?</span> standby ? <span style="color:var(--dim)">? 9m</span></div>
-              <div class="cwd">~/samples/demos/SageFs.Samples.WebappDatastar</div>
-              <div><span class="proj">SageFs.Samples.WebappDatastar</span></div>
+              <div class="cwd">~/samples/demos/Bozzetto.Samples.WebappDatastar</div>
+              <div><span class="proj">Bozzetto.Samples.WebappDatastar</span></div>
               <div class="row3">last eval: 6m ago</div>
             </div>
             <div class="acts">

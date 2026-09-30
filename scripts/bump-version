@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/bump-version   raise the patch version in Directory.Build.props and
-#                        sync it into sagefs-vscode/package.json.
+#                        sync it into bozzetto-vscode/package.json.
 #
 # Nothing bumps on commit any more: one push to master is one release, so
 # scripts/ship owns the bump and scripts/pre-push refuses a master push whose
@@ -12,7 +12,7 @@
 set -euo pipefail
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 PROPS="$REPO/Directory.Build.props"
-PKG="$REPO/sagefs-vscode/package.json"
+PKG="$REPO/bozzetto-vscode/package.json"
 
 version=$(grep -oP '(?<=<Version>)[^<]+' "$PROPS" 2>/dev/null || true)
 if [ -z "$version" ]; then

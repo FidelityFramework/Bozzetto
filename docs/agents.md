@@ -1,9 +1,9 @@
-# Using SageFs with AI agents
+# Using Bozzetto with AI agents
 
-If you give an agent SageFs and don't tell it how to use it, it'll do what
+If you give an agent Bozzetto and don't tell it how to use it, it'll do what
 agents do in every .NET repo: edit, `dotnet build`, wait, `dotnet test`, wait,
-repeat. That's the slow loop SageFs exists to get rid of. An eval in a warm
-SageFs session takes milliseconds. A build takes tens of seconds, and a test run
+repeat. That's the slow loop Bozzetto exists to get rid of. An eval in a warm
+Bozzetto session takes milliseconds. A build takes tens of seconds, and a test run
 takes longer. The difference isn't small. It's most of the day.
 
 So this page is about making the agent actually use the REPL, and pulling it
@@ -12,7 +12,7 @@ of this is hypothetical.
 
 ## The rule
 
-**The SageFs REPL is the inner loop. `dotnet build` / `dotnet test` is the final
+**The Bozzetto REPL is the inner loop. `dotnet build` / `dotnet test` is the final
 gate, run once when the work is done.**
 
 The loop:
@@ -26,7 +26,7 @@ The loop:
 
 ## 1. Install the skill
 
-The whole playbook is one file: [`skills/sagefs/SKILL.md`](../skills/sagefs/SKILL.md).
+The whole playbook is one file: [`skills/bozzetto/SKILL.md`](../skills/bozzetto/SKILL.md).
 It covers:
 - the first-minute checklist
 - the loop
@@ -36,20 +36,20 @@ It covers:
 
 **Claude Code:**
 ```bash
-mkdir -p ~/.claude/skills/sagefs
+mkdir -p ~/.claude/skills/bozzetto
 curl -fsSL https://raw.githubusercontent.com/WillEhrendreich/SageFs/master/skills/sagefs/SKILL.md \
-  -o ~/.claude/skills/sagefs/SKILL.md
+  -o ~/.claude/skills/bozzetto/SKILL.md
 ```
-For one repo only, put it in that repo's `.claude/skills/sagefs/SKILL.md`
+For one repo only, put it in that repo's `.claude/skills/bozzetto/SKILL.md`
 instead.
 
 **Other agents (Codex, Copilot, Cursor, OpenCode and so on):** most of them read
 an `AGENTS.md` at the repo root. Add this to yours:
 
 ```markdown
-## F# work: use SageFs
+## F# work: use Bozzetto
 
-This repo is developed with SageFs. The SageFs REPL (MCP tools) is the inner
+This repo is developed with Bozzetto. The Bozzetto REPL (MCP tools) is the inner
 loop. `dotnet build` / `dotnet test` is only the final gate.
 Before any F# change, read and follow
 https://github.com/WillEhrendreich/SageFs/blob/master/skills/sagefs/SKILL.md
@@ -58,24 +58,24 @@ https://github.com/WillEhrendreich/SageFs/blob/master/skills/sagefs/SKILL.md
   agent's own worktree session with `create_project_session`,
   `create_solution_session`, or `create_bare_session`. A worktree is its own
   routing boundary. Wait for that session's `get_session_status` to say Ready.
-  If generated build state is missing, SageFs builds it before creating the
+  If generated build state is missing, Bozzetto builds it before creating the
   session.
 - Show the problem with `send_fsharp_code`, fix it there, write the fix to the
   file, run `hard_reset_fsi_session rebuild=true`, check it again, commit.
 - If the REPL fights you, report the exact error. Don't quietly switch to
   dotnet.
-- Never stop, restart or reinstall the SageFs daemon without asking.
+- Never stop, restart or reinstall the Bozzetto daemon without asking.
 ```
 
-## 2. Let the agent call SageFs without asking every time
+## 2. Let the agent call Bozzetto without asking every time
 
-In Claude Code, allow the SageFs tools once, in `.claude/settings.json` (for one
+In Claude Code, allow the Bozzetto tools once, in `.claude/settings.json` (for one
 repo) or `~/.claude/settings.json` (everywhere):
 
 ```json
 {
   "permissions": {
-    "allow": ["mcp__sagefs__*"]
+    "allow": ["mcp__bozzetto__*"]
   }
 }
 ```
@@ -90,8 +90,8 @@ Details are in Claude Code's
 
 ## 3. Connect the MCP server
 
-Point your agent at `http://localhost:37749/` (streamable HTTP), or
-`http://localhost:37749/sse` for older clients. When an agent connects, SageFs
+Point your agent at `http://localhost:47749/` (streamable HTTP), or
+`http://localhost:47749/sse` for older clients. When an agent connects, Bozzetto
 sends it a short version of the rules, so even an agent without the skill gets
 the core of it. The skill is the full version, and you want both.
 
@@ -102,22 +102,22 @@ session that isn't ready yet) and quietly goes back to building. Three ways to
 pull it back, from least to most enforced:
 
 > If it was a version mismatch, check your own daemon before you blame the
-> agent. `sagefs status` prints when it started — a daemon that's been up since
+> agent. `boz status` prints when it started — a daemon that's been up since
 > before your last build is serving old code, and the agent was right that
 > something was wrong, just not about what. See
 > [stale daemon](TROUBLESHOOTING.md#stale-daemon--the-one-that-wastes-the-most-time).
 
 - **Tell it.** "Back to the REPL" or "mandate 1". The skill tells the agent
   what those mean: stop, say where it left the loop, and resume from the REPL.
-- **Use the prompt.** SageFs ships an MCP prompt, `back_to_the_repl`. In Claude
-  Code that's the slash command `/mcp__sagefs__back_to_the_repl`. It puts the
+- **Use the prompt.** Bozzetto ships an MCP prompt, `back_to_the_repl`. In Claude
+  Code that's the slash command `/mcp__bozzetto__back_to_the_repl`. It puts the
   loop back in front of the agent in one keystroke.
 - **Make drift impossible to miss.** [`tools/agent-hooks/`](../tools/agent-hooks/)
-  has a Claude Code `PreToolUse` hook, `sagefs-repl-guard`. It stops `dotnet
+  has a Claude Code `PreToolUse` hook, `bozzetto-repl-guard`. It stops `dotnet
   build`, `dotnet test`, `dotnet run` and `dotnet fsi` mid-task in an F# repo
-  while SageFs is running, and tells the agent why. The final gate goes through
-  with `SAGEFS_FINAL_GATE=1` in front of the command. Packaging and tool
-  commands are never blocked, and neither is anything when SageFs isn't
+  while Bozzetto is running, and tells the agent why. The final gate goes through
+  with `BOZZETTO_FINAL_GATE=1` in front of the command. Packaging and tool
+  commands are never blocked, and neither is anything when Bozzetto isn't
   running.
 
 ## 5. When the REPL really is broken

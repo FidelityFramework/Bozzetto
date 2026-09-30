@@ -1,21 +1,21 @@
 #!/bin/bash
-# SageFs VSCode Configuration Script
-# Automatically configures Ionide to use SageFs
+# Bozzetto VSCode Configuration Script
+# Automatically configures Ionide to use Bozzetto
 
 set -e
 
-echo "🔍 Finding SageFs installation..."
+echo "🔍 Finding Bozzetto installation..."
 
-# Find SageFs.Server.dll
-SageFs_DLL=$(find ~/.dotnet/tools/.store -name "SageFs.Server.dll" 2>/dev/null | head -n 1)
+# Find Bozzetto.Server.dll
+Bozzetto_DLL=$(find ~/.dotnet/tools/.store -name "Bozzetto.Server.dll" 2>/dev/null | head -n 1)
 
-if [ -z "$SageFs_DLL" ]; then
-    echo "❌ SageFs not found. Please install it first:"
-    echo "   dotnet tool install -g SageFs.Server"
+if [ -z "$Bozzetto_DLL" ]; then
+    echo "❌ Bozzetto not found. Please install it first:"
+    echo "   dotnet tool install -g Bozzetto.Server"
     exit 1
 fi
 
-echo "✅ Found SageFs at: $SageFs_DLL"
+echo "✅ Found Bozzetto at: $Bozzetto_DLL"
 
 # Find VSCode settings file
 if [ "$(uname)" == "Darwin" ]; then
@@ -40,13 +40,13 @@ if ! command -v jq &> /dev/null; then
 fi
 
 # Update the setting
-jq --arg path "$SageFs_DLL" '."FSharp.fsiSdkFilePath" = $path' "$SETTINGS_PATH" > "$SETTINGS_PATH.tmp"
+jq --arg path "$Bozzetto_DLL" '."FSharp.fsiSdkFilePath" = $path' "$SETTINGS_PATH" > "$SETTINGS_PATH.tmp"
 mv "$SETTINGS_PATH.tmp" "$SETTINGS_PATH"
 
 echo "✅ VSCode configured successfully!"
 echo ""
-echo "You can now use SageFs with Ionide:"
+echo "You can now use Bozzetto with Ionide:"
 echo "  1. Press Ctrl+Shift+P → 'FSI: Start'"
-echo "  2. Use Alt+Enter to send code to SageFs"
+echo "  2. Use Alt+Enter to send code to Bozzetto"
 echo ""
-echo "Setting: FSharp.fsiSdkFilePath = $SageFs_DLL"
+echo "Setting: FSharp.fsiSdkFilePath = $Bozzetto_DLL"

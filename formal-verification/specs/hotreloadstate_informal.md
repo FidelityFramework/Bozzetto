@@ -1,14 +1,14 @@
 # Informal Specification: HotReloadState
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
-> Source: `SageFs.Core/HotReloadState.fs`
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
+> Source: `Bozzetto.Core/HotReloadState.fs`
 
 ---
 
 ## Purpose
 
 `HotReloadState` manages the set of file paths that are opted-in for hot-reload
-in a live SageFs session. Each session starts with an empty watched set; users
+in a live Bozzetto session. Each session starts with an empty watched set; users
 explicitly add or remove paths. The module provides pure functional operations
 over an immutable state record.
 

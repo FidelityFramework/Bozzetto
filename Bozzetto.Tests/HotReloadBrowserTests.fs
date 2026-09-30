@@ -1,0 +1,351 @@
+module Bozzetto.Tests.HotReloadBrowserTests
+
+open System
+open System.IO
+open System.Net.Http
+open System.Threading.Tasks
+open Expecto
+open Microsoft.Playwright
+open Bozzetto.Tests.DashboardBrowserTests
+
+module Integration = Bozzetto.Tests.TestInfrastructure.Integration
+
+/// The hot-reload panel's Watch All button, found by the accessibility rule the
+/// markup actually follows rather than an exact-name match it never promised.
+///
+/// The button's visible text is "Watch All", and it carries
+/// `aria-label="Watch All — hot-reload every discovered source file"` because
+/// the dashboard's tooltips are drawn from `[aria-label]` (dashboard.css).
+/// An aria-label REPLACES the accessible name, so `Name = "Watch All", Exact =
+/// true` stopped matching the day the tooltip text was added (fe31252b) — and
+/// nobody saw, because the `integration host` stage ahead of this one was red
+/// and the pipeline never reached it. All three journeys errored with the same
+/// 30s locator timeout on their first CI run afterwards.
+///
+/// WCAG 2.5.3 (Label in Name) requires the accessible name to CONTAIN the
+/// visible label; it starts with it here. Anchoring on that start is exact
+/// enough to keep "Unwatch All — ..." out, and stays true however the tooltip
+/// wording evolves.
+let private watchAllButton (panel: ILocator) =
+  panel.GetByRole(
+    AriaRole.Button,
+    LocatorGetByRoleOptions(NameRegex = System.Text.RegularExpressions.Regex("^Watch All\\b")))
+
+/// HR-DASH browser journeys — real save -> changed running app through the
+/// live dashboard. These run under `--integration-hr` (HotReloadBrowserRunner
+/// owns the daemon + a HotReload session on a temp WebAppFixture copy whose app
+/// serves `Greeting.greeting()`).
+///
+/// The runner sets:
+///   BOZZETTO_DASHBOARD_PORT — dashboard URL for the page
+///   BOZZETTO_HR_APP_URL     — base URL of the running fixture app (value A)
+///   BOZZETTO_HR_FIXTURE_DIR — the temp fixture dir (Greeting.fs lives here)
+///
+/// The env is read LAZILY (per access, not at module load): the module is
+/// always linked into the test assembly, so a static throw would break
+/// Expecto's discovery of every other suite on machines where the env is
+/// unset. Only a journey that actually runs touches these.
+module HrEnv =
+  let appUrl =
+    lazy
+      (match Environment.GetEnvironmentVariable("BOZZETTO_HR_APP_URL") with
+       | null | "" -> failwith "BOZZETTO_HR_APP_URL not set (run under --integration-hr)"
+       | u -> u.TrimEnd('/'))
+
+  let fixtureDir =
+    lazy
+      (match Environment.GetEnvironmentVariable("BOZZETTO_HR_FIXTURE_DIR") with
+       | null | "" -> failwith "BOZZETTO_HR_FIXTURE_DIR not set (run under --integration-hr)"
+       | d -> d)
+
+  let greetingFile = lazy Path.Combine(fixtureDir.Value, "Greeting.fs")
+
+  let counterFile = lazy Path.Combine(fixtureDir.Value, "Counter.fs")
+
+/// HTTP GET the running app's / route.
+// WHY this awaits rather than blocking: every caller is already inside a task,
+// so `.GetAwaiter().GetResult()` here bought nothing and spent a pool thread.
+// The "Architecture — blocking-call budgets" ratchet counts exactly this, and
+// the rule is to shrink the debt rather than raise the number.
+let private httpGet (url: string) = task {
+  use client = new HttpClient()
+  client.Timeout <- TimeSpan.FromSeconds(10.0)
+  try
+    return! client.GetStringAsync(url + "/")
+  with ex ->
+    return failwithf "HTTP GET %s/ failed: %s" url ex.Message
+}
+
+/// Poll the running app until its body contains `needle` (or timeout).
+let private waitForAppBody (url: string) (needle: string) (timeoutMs: int) = task {
+  let sw = Diagnostics.Stopwatch.StartNew()
+  let mutable found = ""
+  while found = "" && sw.ElapsedMilliseconds < int64 timeoutMs do
+    try
+      let! body = httpGet url
+      if body.Contains needle then found <- body
+    with _ -> ()
+    if found = "" then do! Task.Delay(250)
+  Expect.isTrue (found <> "") (sprintf "app at %s never served '%s' within %dms" url needle timeoutMs)
+  return found
+}
+
+/// Write Greeting.fs with retry (the host can briefly hold the file).
+let private writeGreeting (content: string) =
+  let sw = Diagnostics.Stopwatch.StartNew()
+  let mutable written = false
+  while not written && sw.ElapsedMilliseconds < 15000L do
+    try
+      File.WriteAllText(HrEnv.greetingFile.Value, content)
+      written <- true
+    with :? IOException ->
+      Threading.Thread.Sleep(200)
+  Expect.isTrue written "Greeting.fs should be writable within 15s"
+
+/// GET one of the running app's routes, the body trimmed.
+let private appRoute (route: string) = task {
+  use client = new HttpClient()
+  client.Timeout <- TimeSpan.FromSeconds(10.0)
+  let! body = client.GetStringAsync(HrEnv.appUrl.Value + route)
+  return body.Trim()
+}
+
+/// Write a fixture file with retry (the host can briefly hold it).
+let private writeFixtureFile (path: string) (content: string) = task {
+  let sw = Diagnostics.Stopwatch.StartNew()
+  let mutable written = false
+  while not written && sw.ElapsedMilliseconds < 15000L do
+    try
+      do! File.WriteAllTextAsync(path, content)
+      written <- true
+    with :? IOException ->
+      do! Task.Delay 200
+  written |> Expecto.Flip.Expect.isTrue (sprintf "%s should be writable within 15s" path)
+}
+
+/// Does `locator`'s text contain `text` within `ms`? A bool, not an assertion,
+/// so the caller can decide what one miss means.
+let private showsWithin (ms: int) (locator: ILocator) (text: string) = task {
+  let sw = Diagnostics.Stopwatch.StartNew()
+  let mutable found = false
+  while not found && sw.ElapsedMilliseconds < int64 ms do
+    let! content = locator.TextContentAsync()
+    match content with
+    | null -> do! Task.Delay 200
+    | c when c.Contains text -> found <- true
+    | _ -> do! Task.Delay 200
+  return found
+}
+
+/// Read `route` until it serves `want`, for up to `ms`. The reset's HTTP
+/// answer and the app's own route travel on different sockets, so the last
+/// value read comes back and the caller's assertion says what it was.
+let private appServes (ms: int) (route: string) (want: string) = task {
+  let sw = Diagnostics.Stopwatch.StartNew()
+  let! first = appRoute route
+  let mutable served = first
+  while served <> want && sw.ElapsedMilliseconds < int64 ms do
+    do! Task.Delay 250
+    let! next = appRoute route
+    served <- next
+  return served
+}
+
+/// The original fixture content (value A).
+let private valueAGreeting = "let greeting () = \"hello from bozzetto\""
+let private valueBGreeting = "let greeting () = \"hello from hot reload (value B)\""
+
+let private hrPlaywrightTest name (body: IPage -> Task<unit>) =
+  testCase (sprintf "[Integration] HR browser: %s" name) (fun () ->
+    let t = task {
+      let! page = PlaywrightFixture.newPage ()
+      try
+        let! _ = page.GotoAsync(
+          sprintf "%s/dashboard" PlaywrightFixture.dashboardUrl)
+        do! body page
+      finally
+        PlaywrightFixture.closePage(page).GetAwaiter().GetResult()
+    }
+    t.GetAwaiter().GetResult())
+  |> Integration.register (Integration.Dedicated "--integration-hr")
+
+[<Tests>]
+let tests =
+  testSequenced <|
+  testList "Hot-reload dashboard browser tests" [
+
+    hrPlaywrightTest "watch all arms the file watcher and the panel reflects it" (fun page -> task {
+      do! PlaywrightExpect.waitForSelectorText 30_000 page "#session-status" "Ready"
+      // #hot-reload-panel lives inside an `.expanded-only` wrapper, which is
+      // display:none until #main gains the `expanded` class. Without this the
+      // panel is never visible and every assertion below fails on a dashboard
+      // that is working correctly. Idempotent.
+      do! DashboardDom.ensureExpanded page
+      let panel = page.Locator("#hot-reload-panel")
+      do! PlaywrightExpect.isVisibleAsync panel "hot reload panel visible"
+      do! PlaywrightExpect.waitForText 10_000 panel "Hot Reload: OFF"
+      // Click Watch All.
+      let watchAll =
+        watchAllButton panel
+      do! watchAll.ClickAsync()
+      // The panel header flips to ON with a watched count > 0.
+      do! PlaywrightExpect.waitForText 30_000 panel "Hot Reload: ON"
+      let! header = panel.Locator("h2").TextContentAsync()
+      Expect.isTrue (header.Contains("of") && header.Contains("files"))
+        (sprintf "header should show 'N of N files', was: %s" header)
+    })
+
+    hrPlaywrightTest "saving a watched file hot-reloads the running app (value A -> value B)" (fun page -> task {
+      do! PlaywrightExpect.waitForSelectorText 30_000 page "#session-status" "Ready"
+      // #hot-reload-panel lives inside an `.expanded-only` wrapper, which is
+      // display:none until #main gains the `expanded` class. Without this the
+      // panel is never visible and every assertion below fails on a dashboard
+      // that is working correctly. Idempotent.
+      do! DashboardDom.ensureExpanded page
+      // Establish value A from the running app.
+      let! bodyA = waitForAppBody HrEnv.appUrl.Value "hello from bozzetto" 15_000
+      Expect.isTrue (bodyA.Contains("hello from bozzetto")) "app should serve value A before the edit"
+
+      // Arm the watch set via the dashboard panel (Watch All), same as the UI.
+      let panel = page.Locator("#hot-reload-panel")
+      do! PlaywrightExpect.isVisibleAsync panel "hot reload panel visible"
+      let watchAll =
+        watchAllButton panel
+      do! watchAll.ClickAsync()
+      do! PlaywrightExpect.waitForText 30_000 panel "Hot Reload: ON"
+      // Give the watcher a moment to arm before the edit (a save racing the
+      // watch-set update would be ignored).
+      do! page.WaitForTimeoutAsync(1500.0f)
+
+      // Read the ORIGINAL fixture content, edit value A -> value B on disk.
+      let original = File.ReadAllText(HrEnv.greetingFile.Value)
+      Expect.stringContains original valueAGreeting "fixture should contain the editable greeting"
+      let edited = original.Replace(valueAGreeting, valueBGreeting)
+      writeGreeting edited
+      try
+        // The SAME running process must serve value B (no restart). If the
+        // first save raced the watch set arming, ONE re-save of the same
+        // content kicks the watcher again.
+        //
+        // Exactly one. A newer save of a file CANCELS that file's in-flight
+        // reload (WorkerMain supersedes by design: last save wins). This used
+        // to re-save every second after 15s — so on a CI runner where one
+        // reload takes longer than that gap, each save cancelled the one
+        // before it and no reload could ever finish. The test starved the very
+        // path it was asserting (CI run 35639568321, green locally where the
+        // first reload lands before 15s and the loop never started).
+        let sw = Diagnostics.Stopwatch.StartNew()
+        let mutable served = false
+        let mutable resaved = false
+        while not served && sw.ElapsedMilliseconds < 60_000L do
+          try
+            let! body = httpGet HrEnv.appUrl.Value
+            if body.Contains("hello from hot reload (value B)") then
+              served <- true
+            else
+              if not resaved && sw.ElapsedMilliseconds > 15_000L then
+                writeGreeting edited
+                resaved <- true
+              do! Task.Delay(1000)
+          with _ ->
+            do! Task.Delay(1000)
+        Expect.isTrue served
+          (sprintf "hot reload should serve the new greeting from the running process (value A body: %s)" bodyA)
+      finally
+        // Restore value A so later runs start clean.
+        writeGreeting original
+    })
+
+    hrPlaywrightTest "compile-error save keeps last valid behavior and repair hot-reloads it" (fun page -> task {
+      do! PlaywrightExpect.waitForSelectorText 30_000 page "#session-status" "Ready"
+      // #hot-reload-panel lives inside an `.expanded-only` wrapper, which is
+      // display:none until #main gains the `expanded` class. Without this the
+      // panel is never visible and every assertion below fails on a dashboard
+      // that is working correctly. Idempotent.
+      do! DashboardDom.ensureExpanded page
+      let panel = page.Locator("#hot-reload-panel")
+      do! PlaywrightExpect.isVisibleAsync panel "hot reload panel visible"
+      let watchAll =
+        watchAllButton panel
+      do! watchAll.ClickAsync()
+      do! PlaywrightExpect.waitForText 30_000 panel "Hot Reload: ON"
+      do! page.WaitForTimeoutAsync(1500.0f)
+
+      let original = File.ReadAllText(HrEnv.greetingFile.Value)
+      Expect.stringContains original valueAGreeting "fixture should start from value A"
+
+      // 1. Save BROKEN F# — the app must keep serving value A.
+      let broken = original.Replace(valueAGreeting, "let greeting () : int = \"this will not compile\"")
+      writeGreeting broken
+      try
+        let! bodyAfterFail = waitForAppBody HrEnv.appUrl.Value "hello from bozzetto" 15_000
+        Expect.stringContains bodyAfterFail "hello from bozzetto"
+          "compile error must not take down the running app (last valid behavior retained)"
+
+        // 2. Repair — the fix must hot-reload into the running app.
+        Threading.Thread.Sleep(1000)
+        let repaired = original.Replace(valueAGreeting, valueBGreeting)
+        writeGreeting repaired
+        let! bodyB = waitForAppBody HrEnv.appUrl.Value "hello from hot reload (value B)" 45_000
+        Expect.stringContains bodyB "hello from hot reload (value B)"
+          "repair should hot-reload the new greeting from the running process"
+      finally
+        writeGreeting original
+    })
+
+    // Rule 3 of the state spec, through the real dashboard: a save that edits
+    // live state's initializer keeps the live value and says so in the Hot
+    // Reload panel, and the panel's Reset button runs the new initializer in
+    // the SAME running app. Last in the list: it leaves the counter at 101.
+    hrPlaywrightTest "an edited initializer keeps the live counter, and Reset in the panel runs the new one" (fun page -> task {
+      do! PlaywrightExpect.waitForSelectorText 30_000 page "#session-status" "Ready"
+      do! DashboardDom.ensureExpanded page
+      let panel = page.Locator("#hot-reload-panel")
+      do! PlaywrightExpect.isVisibleAsync panel "hot reload panel visible"
+      do! (watchAllButton panel).ClickAsync()
+      do! PlaywrightExpect.waitForText 30_000 panel "Hot Reload: ON"
+      // Same arming gap the other journeys give the watcher.
+      do! page.WaitForTimeoutAsync(1500.0f)
+
+      let! _ = appRoute "/counter/bump"
+      let! _ = appRoute "/counter/bump"
+      let! bumped = appRoute "/counter/bump"
+      bumped |> Expecto.Flip.Expect.equal "three bumps over HTTP leave the counter at 3" "3"
+
+      let counterFile = HrEnv.counterFile.Value
+      let original = File.ReadAllText counterFile
+      let initializer = "let mutable visits = 0"
+      original |> Expecto.Flip.Expect.stringContains "the fixture starts from the 0 initializer" initializer
+      let edited = original.Replace(initializer, "let mutable visits = 100")
+      let notice = "kept WebAppFixture.Counter.visits = 3, new initializer 100"
+      do! writeFixtureFile counterFile edited
+      try
+        // ONE save, no re-save and no page reload. The notice has to reach
+        // the open page by itself: the worker decides what it kept after the
+        // daemon's own file watcher has already fired, so a panel that only
+        // refreshes on the file event shows the state from before the save.
+        let! shown = showsWithin 30_000 panel notice
+        let! panelText = panel.TextContentAsync()
+        shown
+        |> Expecto.Flip.Expect.isTrue (sprintf "the open Hot Reload panel should say what the save kept, without a reload.\nPanel: %s" panelText)
+        let! kept = appRoute "/counter"
+        kept |> Expecto.Flip.Expect.equal "the save kept the live value, it didn't re-run the initializer" "3"
+
+        let reset =
+          panel.GetByRole(
+            AriaRole.Button,
+            LocatorGetByRoleOptions(NameRegex = Text.RegularExpressions.Regex("^Reset WebAppFixture\\.Counter\\.visits\\b")))
+        do! reset.ClickAsync()
+
+        let! served = appServes 15_000 "/counter" "100"
+        served |> Expecto.Flip.Expect.equal "Reset ran the new initializer in the running app" "100"
+        let! next = appRoute "/counter/bump"
+        next |> Expecto.Flip.Expect.equal "and the app counts on from the new value" "101"
+        // The notice goes away once nothing is waiting for a reset. This
+        // throws a TimeoutException naming the selector if it never does.
+        do! page.Locator("#hot-reload-panel .kept-state").WaitForAsync(
+              LocatorWaitForOptions(State = WaitForSelectorState.Detached, Timeout = 15_000.0f))
+      finally
+        File.WriteAllText(counterFile, original)
+    })
+  ]

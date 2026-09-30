@@ -1,5 +1,5 @@
 /**
- * SageFs Friction Report Receiver
+ * Bozzetto Friction Report Receiver
  *
  * Endpoint: POST /  (Content-Type: application/json)
  *
@@ -23,7 +23,7 @@ export interface Env {
 /** Shape of an incoming friction report. Validated at the edge. */
 interface IncomingFrictionReport {
   schemaVersion: number;
-  sageFsVersion: string;
+  bozzettoVersion: string;
   submittedAtUtc: string;
   totalEvents: number;
   totalFeedbackItems: number;
@@ -189,8 +189,8 @@ export function sanitizeReport(input: unknown): IncomingFrictionReport | { error
   if (typeof r.schemaVersion !== "number" || r.schemaVersion !== CURRENT_SCHEMA) {
     return { error: `unsupported schemaVersion: ${r.schemaVersion} (expected ${CURRENT_SCHEMA})` };
   }
-  if (typeof r.sageFsVersion !== "string" || r.sageFsVersion.length > 50) {
-    return { error: "sageFsVersion missing or too long" };
+  if (typeof r.bozzettoVersion !== "string" || r.bozzettoVersion.length > 50) {
+    return { error: "bozzettoVersion missing or too long" };
   }
   if (typeof r.submittedAtUtc !== "string") {
     return { error: "submittedAtUtc missing" };
@@ -198,7 +198,7 @@ export function sanitizeReport(input: unknown): IncomingFrictionReport | { error
 
   return {
     schemaVersion: CURRENT_SCHEMA,
-    sageFsVersion: sanitizeText(r.sageFsVersion, 50),
+    bozzettoVersion: sanitizeText(r.bozzettoVersion, 50),
     submittedAtUtc: r.submittedAtUtc,
     totalEvents: typeof r.totalEvents === "number" ? Math.max(0, Math.floor(r.totalEvents)) : 0,
     totalFeedbackItems: typeof r.totalFeedbackItems === "number" ? Math.max(0, Math.floor(r.totalFeedbackItems)) : 0,
@@ -244,7 +244,7 @@ async function notifyDiscord(env: Env, reportId: string, r: IncomingFrictionRepo
   const lines = top.map((t) => `• **${t.tool}** — ${t.explicitFeedback} feedback, ${t.blocked} blocked (${t.invocations} calls)`);
   const body = [
     `**Friction report \`${reportId}\`**`,
-    `SageFs \`${r.sageFsVersion}\` · ${r.totalEvents} events · ${r.totalFeedbackItems} feedback items`,
+    `Bozzetto \`${r.bozzettoVersion}\` · ${r.totalEvents} events · ${r.totalFeedbackItems} feedback items`,
     "",
     ...lines,
     "",
@@ -256,7 +256,7 @@ async function notifyDiscord(env: Env, reportId: string, r: IncomingFrictionRepo
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        username: "SageFs Friction",
+        username: "Bozzetto Friction",
         content: body.slice(0, 1900),
         // No embeds — keep the webhook payload simple and small.
       }),
@@ -299,7 +299,7 @@ function tokensEqual(a: string | null, b: string | undefined): boolean {
 }
 
 /// Owner-only gate: list stored report metadata (no contents). The ingest
-/// path is open to every SageFs user, but reading reports is restricted to
+/// path is open to every Bozzetto user, but reading reports is restricted to
 /// the tool owner. `OWNER_TOKEN` must be configured or reads return 404
 /// (indistinguishable from "nothing here").
 async function handleOwnerList(req: Request, env: Env): Promise<Response> {
@@ -317,7 +317,7 @@ async function handleOwnerList(req: Request, env: Env): Promise<Response> {
       key: o.key,
       size: o.size,
       uploaded: o.uploaded,
-      sageFsVersion: o.customMetadata?.sageFsVersion ?? null,
+      bozzettoVersion: o.customMetadata?.bozzettoVersion ?? null,
     }));
     return jsonResponse(200, { count: reports.length, reports });
   } catch (err) {
@@ -353,7 +353,7 @@ async function handleOwnerGet(req: Request, env: Env, key: string): Promise<Resp
 /// Method router. POST / is the open ingest path (sanitized, size-capped).
 /// GET /api/reports (owner) lists stored report metadata; GET /api/reports/{key}
 /// (owner) returns one stored report. Everything read-side requires the owner
-/// token — SageFs users can always submit, but only the tool owner can read.
+/// token — Bozzetto users can always submit, but only the tool owner can read.
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -376,9 +376,9 @@ export default {
 
     // Token check (if configured).
     if (env.INGEST_TOKEN) {
-      const got = req.headers.get("X-SageFs-Token");
+      const got = req.headers.get("X-Bozzetto-Token");
       if (got !== env.INGEST_TOKEN) {
-        return jsonResponse(401, { error: "invalid or missing X-SageFs-Token" });
+        return jsonResponse(401, { error: "invalid or missing X-Bozzetto-Token" });
       }
     }
 
@@ -437,7 +437,7 @@ export default {
     try {
       await env.FRICTION_BUCKET.put(key, JSON.stringify(stored, null, 2), {
         httpMetadata: { contentType: "application/json" },
-        customMetadata: { sageFsVersion: report.sageFsVersion },
+        customMetadata: { bozzettoVersion: report.bozzettoVersion },
       });
     } catch (err) {
       return jsonResponse(500, { error: `R2 put failed: ${(err as Error).message}` });

@@ -1,10 +1,10 @@
 # SessionLifecycle — Informal Specification
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
 
 ## Target
 
-- **F# source**: `SageFs.Core/AppState.fs`, `SageFs.Core/SessionState.fs`
+- **F# source**: `Bozzetto.Core/AppState.fs`, `Bozzetto.Core/SessionState.fs`
 - **Types**: `SessionActivity`, `SessionPhase`, `SessionState`
 - **Functions**: `SessionPhase.toSessionState`, `SessionPhase.tryAppState`, `SessionState.label`
 
@@ -12,7 +12,7 @@
 
 ## Purpose
 
-SageFs maintains a live F# Interactive session. The session can be warming up,
+Bozzetto maintains a live F# Interactive session. The session can be warming up,
 active-and-idle, active-and-evaluating, or faulted. Two types model this:
 
 - `SessionPhase` — the **rich internal representation**, making impossible states

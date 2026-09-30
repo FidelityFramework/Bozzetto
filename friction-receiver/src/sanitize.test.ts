@@ -52,7 +52,7 @@ function truthy(actual: unknown, name: string): void {
 function makeMinimalReport() {
   return {
     schemaVersion: 1,
-    sageFsVersion: "0.6.999",
+    bozzettoVersion: "0.6.999",
     submittedAtUtc: "2026-01-01T00:00:00.000Z",
     totalEvents: 0,
     totalFeedbackItems: 0,
@@ -192,7 +192,7 @@ truthy(redacted.includes("<path>"), "combined: should contain <path>");
 truthy(redacted.includes("<ip>"), "combined: should contain <ip>");
 
 console.log("sanitizeReport — schema validation");
-const badSchema = sanitizeReport({ schemaVersion: 99, sageFsVersion: "0.6.0", submittedAtUtc: "2026-01-01T00:00:00Z" });
+const badSchema = sanitizeReport({ schemaVersion: 99, bozzettoVersion: "0.6.0", submittedAtUtc: "2026-01-01T00:00:00Z" });
 truthy("error" in badSchema, "wrong schema rejected");
 const notObject = sanitizeReport("not an object");
 truthy("error" in notObject, "non-object rejected");
@@ -202,7 +202,7 @@ truthy("error" in missingFields, "missing fields rejected");
 console.log("sanitizeReport — full round trip");
 const input = {
   schemaVersion: 1,
-  sageFsVersion: "0.6.315",
+  bozzettoVersion: "0.6.315",
   submittedAtUtc: "2026-01-01T00:00:00.000Z",
   totalEvents: 16,
   totalFeedbackItems: 4,
@@ -247,7 +247,7 @@ if ("error" in r) {
   console.log(`  ✗ full round trip rejected: ${r.error}`);
 } else {
   eq(r.schemaVersion, 1, "schemaVersion preserved");
-  eq(r.sageFsVersion, "0.6.315", "sageFsVersion preserved");
+  eq(r.bozzettoVersion, "0.6.315", "bozzettoVersion preserved");
   eq(r.toolsWithFriction.length, 1, "tools array preserved");
   const t = r.toolsWithFriction[0]!;
   eq(t.tool, "send_fsharp_code", "tool name preserved");

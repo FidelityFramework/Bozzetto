@@ -1,14 +1,14 @@
-# SageFs Binary Format Benchmarks
+# Bozzetto Binary Format Benchmarks
 
-Benchmark results comparing the `.sagefs` v3 and `.sagetc` v1 binary formats against JSON (System.Text.Json) serialization.
+Benchmark results comparing the `.bozzetto` v3 and `.bozzettotc` v1 binary formats against JSON (System.Text.Json) serialization.
 
-> **Note:** the `.sagefs` per-session format is no longer written in production — durable session state is now the daemon manifest (`.sagefm` v1). These numbers stand as a benchmark of the binary-vs-JSON codec approach the current formats share, not of an active persistence path.
+> **Note:** the `.bozzetto` per-session format is no longer written in production — durable session state is now the daemon manifest (`.bozzettofm` v1). These numbers stand as a benchmark of the binary-vs-JSON codec approach the current formats share, not of an active persistence path.
 
 ---
 
 ## 1. Methodology
 
-- **Runtime**: .NET 10 Preview, F# Interactive (FSI session via SageFs)
+- **Runtime**: .NET 10 Preview, F# Interactive (FSI session via Bozzetto)
 - **Measurement**: `System.Diagnostics.Stopwatch`, averaged over 100 iterations (after 10 warmup)
 - **JSON baseline**: `System.Text.Json.JsonSerializer` with default options
 - **Binary**: Hand-coded `BinaryWriter`/`BinaryReader` using `MemoryStream`
@@ -16,7 +16,7 @@ Benchmark results comparing the `.sagefs` v3 and `.sagetc` v1 binary formats aga
 
 ---
 
-## 2. `.sagefs` v3 — Session Persistence
+## 2. `.bozzetto` v3 — Session Persistence
 
 ### 2.1 Scenario
 
@@ -45,7 +45,7 @@ Benchmark results comparing the `.sagefs` v3 and `.sagetc` v1 binary formats aga
 
 ---
 
-## 3. `.sagetc` v1 — Test Cache
+## 3. `.bozzettotc` v1 — Test Cache
 
 ### 3.1 Scenarios
 
@@ -83,7 +83,7 @@ Each test entry includes: test ID, outcome (random Pass/Fail/Skip/Error), durati
 | 100 tests, 1,000 words | 344 | 2,610 | **7.6×** |
 | 1,000 tests, 1,000 words | 3,120 | 24,024 | **7.7×** |
 
-**Read verdict**: Binary reads are **5–8.5× faster** across all scenarios. This is the key win — the daemon reads `.sagetc` on startup to restore coverage state. At 1,000 tests, binary read completes in ~0.3ms vs ~2.4ms for JSON.
+**Read verdict**: Binary reads are **5–8.5× faster** across all scenarios. This is the key win — the daemon reads `.bozzettotc` on startup to restore coverage state. At 1,000 tests, binary read completes in ~0.3ms vs ~2.4ms for JSON.
 
 ### 3.4 Write Performance
 
@@ -118,7 +118,7 @@ Each test entry includes: test ID, outcome (random Pass/Fail/Skip/Error), durati
 
 ### 4.1 Key Findings
 
-| Metric | `.sagefs` | `.sagetc` |
+| Metric | `.bozzetto` | `.bozzettotc` |
 |--------|-----------|-----------|
 | **Read speed** | 4.1× faster | 5–8.5× faster |
 | **Write speed** | 57.7× faster | 0.3–1.8× (varies) |
@@ -130,13 +130,13 @@ Each test entry includes: test ID, outcome (random Pass/Fail/Skip/Error), durati
 Both binary formats are justified for production use:
 
 1. **Read performance is the primary win** — both formats serve daemon cold start, where minimizing startup latency directly improves developer experience.
-2. **`.sagefs` write performance** is excellent because session persistence writes happen infrequently (on session save) and the format avoids JSON string escaping overhead.
-3. **`.sagetc` write performance** needs optimization for large test suites. The current MemoryStream-based writer can be improved with buffer pooling and span-based serialization.
+2. **`.bozzetto` write performance** is excellent because session persistence writes happen infrequently (on session save) and the format avoids JSON string escaping overhead.
+3. **`.bozzettotc` write performance** needs optimization for large test suites. The current MemoryStream-based writer can be improved with buffer pooling and span-based serialization.
 4. **File size** is secondary to read performance for both use cases. Neither format produces unreasonably large files.
 
 ### 4.3 Benchmark Methodology Notes
 
-- Benchmarks ran in the SageFs FSI REPL, not via BenchmarkDotNet
+- Benchmarks ran in the Bozzetto FSI REPL, not via BenchmarkDotNet
 - Timing uses `Stopwatch.GetTimestamp()` (high-resolution)
 - Allocation measurement uses `GC.GetAllocatedBytesForCurrentThread()` delta
 - Each measurement is the median of 100 iterations after 10 warmup runs

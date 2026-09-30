@@ -8,7 +8,7 @@
 ///     `CohortLandingGateIntegrationTests.fs` documents in its own header
 ///     ("WHY THE FIXTURE COMMITS bin/obj", "WHY THE FIXTURE PINS AN SDK")
 ///     — a fresh git WORKTREE never inherits the previous checkout's
-///     untracked bin/obj, and SageFs never runs `dotnet build` itself at
+///     untracked bin/obj, and Bozzetto never runs `dotnet build` itself at
 ///     session-create time, so an unbuilt fixture would race warmup.
 ///
 ///   run-beats --mcp-port N --main-repo DIR
@@ -31,8 +31,8 @@
 ///          the loop rejected it; the real, discovered, failing test did.
 ///
 /// Every helper here mirrors (not imports — this is standalone demo
-/// tooling, not test code) `SageFs.Tests/CohortLandingGateIntegrationTests.fs`
-/// and `SageFs.Tests/CohortDogfoodIntegrationTests.fs`, which are the
+/// tooling, not test code) `Bozzetto.Tests/CohortLandingGateIntegrationTests.fs`
+/// and `Bozzetto.Tests/CohortDogfoodIntegrationTests.fs`, which are the
 /// proven, CI-passing shape of this exact flow. Camera pauses
 /// (`--pause-seconds`) are inserted between beats purely for the
 /// recording — they play no role in correctness.
@@ -163,8 +163,8 @@ let private setupFixture (dir: string) : Task<unit> =
   task {
     Directory.CreateDirectory dir |> ignore
     let! _ = git dir [ "init"; "--quiet"; "-b"; "main" ]
-    let! _ = git dir [ "config"; "user.email"; "sagefs-cohort-demo@example.com" ]
-    let! _ = git dir [ "config"; "user.name"; "SageFs Cohort Demo" ]
+    let! _ = git dir [ "config"; "user.email"; "bozzetto-cohort-demo@example.com" ]
+    let! _ = git dir [ "config"; "user.name"; "Bozzetto Cohort Demo" ]
     writeFixtureSources dir
     do! dotnetBuildQuiet dir
     let! _ = git dir [ "add"; "-A" ]

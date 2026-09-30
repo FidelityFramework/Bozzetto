@@ -1,19 +1,19 @@
-# SageFs Binary Format Specification
+# Bozzetto Binary Format Specification
 
 **Version**: 1.1
 **Date**: 2026-03-02
-**Formats**: `.sagefm` v1 (daemon session manifest — the durable session registry), `.sagetc` v1 (test cache). (`.sagefs` v3 below is the historical per-session format; it is retained in the codebase but is no longer written in production — the daemon manifest is the durable session state.)
+**Formats**: `.bozzettofm` v1 (daemon session manifest — the durable session registry), `.bozzettotc` v1 (test cache). (`.bozzetto` v3 below is the historical per-session format; it is retained in the codebase but is no longer written in production — the daemon manifest is the durable session state.)
 
 ---
 
 ## 1. Overview
 
-SageFs uses two binary file formats for persistence:
+Bozzetto uses two binary file formats for persistence:
 
 | Format | Extension | Magic | Purpose |
 |--------|-----------|-------|---------|
-| Session | `.sagefs` | `SFS3` | FSI session state: interactions, outputs, assembly blobs, references, profiling |
-| Test cache | `.sagetc` | `STC1` | Coverage bitmaps, test outcomes, instrumentation map hash |
+| Session | `.bozzetto` | `SFS3` | FSI session state: interactions, outputs, assembly blobs, references, profiling |
+| Test cache | `.bozzettotc` | `STC1` | Coverage bitmaps, test outcomes, instrumentation map hash |
 
 Both formats share a common framing: 64-byte header, section directory, and CRC-validated payloads. Magic bytes and section tags distinguish them. All multi-byte integers are **little-endian**.
 
@@ -37,7 +37,7 @@ Each principle is stated along with why it was chosen and what alternatives were
 
 8. **Validate early, trust late.** All CRCs are checked when the file is opened. After validation passes, iterate the TOC without per-field checks. The section CRC guarantees structural integrity — if it passes, every field within is sound. Don't re-check CRCs per entry during replay.
 
-9. **Human-inspectable with standard tools.** A well-designed binary format is MORE debuggable than minified JSON because every byte has a defined purpose. Magic bytes jump out in hex dumps. Length-prefixed fields are self-navigating. Section markers are visible signposts. `xxd session.sagefs | head` shows magic, version, section count immediately.
+9. **Human-inspectable with standard tools.** A well-designed binary format is MORE debuggable than minified JSON because every byte has a defined purpose. Magic bytes jump out in hex dumps. Length-prefixed fields are self-navigating. Section markers are visible signposts. `xxd session.bozzetto | head` shows magic, version, section count immediately.
 
 ### 1.2 Notation
 
@@ -64,7 +64,7 @@ u8[N]   utf8_bytes      (N = byte_length, no null terminator)
 
 ---
 
-## 2. `.sagefs` v3 — Session Persistence Format
+## 2. `.bozzetto` v3 — Session Persistence Format
 
 ### 2.1 File Layout
 
@@ -182,7 +182,7 @@ Flat sequence of fields. No internal header.
 ```
 Field                  Type            Description
 ─────                  ────            ───────────
-sagefs_version         lp-string       e.g. "3.0.0"
+bozzetto_version         lp-string       e.g. "3.0.0"
 fsharp_version         lp-string       e.g. "12.9.100.0"
 dotnet_version         lp-string       e.g. "10.0.0"
 project_path           lp-string       Absolute path to .fsproj
@@ -349,9 +349,9 @@ binding_count          u32             Number of bound values
 
 ---
 
-## 3. `.sagetc` v1 — Test Cache Format
+## 3. `.bozzettotc` v1 — Test Cache Format
 
-> **Rationale — Reuse SFS framing, different magic/tags:** The test cache format reuses the same 64-byte header layout, section directory, CRC scheme, and lp-string encoding as `.sagefs`. This avoids a second binary format implementation and its associated testing burden. The formats differ only in magic bytes (`STC1` vs `SFS3`), section tags, and payload schemas. A single `BinaryFormat` module handles low-level I/O for both.
+> **Rationale — Reuse SFS framing, different magic/tags:** The test cache format reuses the same 64-byte header layout, section directory, CRC scheme, and lp-string encoding as `.bozzetto`. This avoids a second binary format implementation and its associated testing burden. The formats differ only in magic bytes (`STC1` vs `SFS3`), section tags, and payload schemas. A single `BinaryFormat` module handles low-level I/O for both.
 
 ### 3.1 File Layout
 
@@ -484,10 +484,10 @@ entry's timeout span is carried in the message string ("Timed out after
 
 CRC-32 serves as a **data integrity check**, not a security mechanism. The threat model is:
 
-- **Truncated writes:** If SageFs is killed mid-write, the OS file system journal protects FS metadata (directory entries, allocation tables) but NOT application data. A half-written `.sagefs` file will have valid sectors and pass OS-level checks, but be semantically incomplete. CRC catches this.
+- **Truncated writes:** If Bozzetto is killed mid-write, the OS file system journal protects FS metadata (directory entries, allocation tables) but NOT application data. A half-written `.bozzetto` file will have valid sectors and pass OS-level checks, but be semantically incomplete. CRC catches this.
 - **Cross-system transfer:** Files copied between machines via USB, network share, cloud sync, or HTTP transfer can be corrupted in transit by faulty hardware, interrupted connections, or encoding errors.
 - **Bit rot:** While rare on modern SSDs, magnetic drives can experience silent data corruption where sectors read successfully but contain wrong data. The OS and file system do not detect this — the sectors pass hardware checks, but the payload is corrupted.
-- **Truncated/partial cache loads:** The `.sagetc` test cache is loaded eagerly on daemon startup for <100ms cold-start UX. A fast integrity check prevents parsing garbage bytes from an incomplete previous write.
+- **Truncated/partial cache loads:** The `.bozzettotc` test cache is loaded eagerly on daemon startup for <100ms cold-start UX. A fast integrity check prevents parsing garbage bytes from an incomplete previous write.
 
 CRC-32 is **explicitly NOT a security measure.** It provides zero protection against intentional tampering — CRC-32 collisions can be forged trivially (in milliseconds). If tamper-proofing is ever needed (e.g., signed session exports for cross-organization sharing), the appropriate tools are HMAC-SHA256 or Ed25519 signatures. Flag bits 5–31 in the header are reserved, and a future `is_signed` flag + `SIGN` section tag are logical extensions if that need arises. But that is a different feature from integrity checking.
 
@@ -525,9 +525,9 @@ Each section directory entry contains a `crc32` field covering the section's pay
 CRC32(file[offset .. offset + size - 1])
 ```
 
-For `.sagefs` with compression: decompress first, then CRC the decompressed bytes.
+For `.bozzetto` with compression: decompress first, then CRC the decompressed bytes.
 
-> **Rationale — Two-level CRC:** The header CRC alone would suffice for detecting any corruption. Section CRCs add a second benefit: **per-section error localization.** When the header CRC fails, you know the file is corrupted but not where. Section CRCs let a diagnostic tool (`sagefs inspect --validate`) report which specific section is damaged, enabling partial recovery of undamaged sections in future tooling. The two-level approach also enables progressive validation: validate the header CRC (cheap, covers structure), then validate only the sections you actually need to parse.
+> **Rationale — Two-level CRC:** The header CRC alone would suffice for detecting any corruption. Section CRCs add a second benefit: **per-section error localization.** When the header CRC fails, you know the file is corrupted but not where. Section CRCs let a diagnostic tool (`boz inspect --validate`) report which specific section is damaged, enabling partial recovery of undamaged sections in future tooling. The two-level approach also enables progressive validation: validate the header CRC (cheap, covers structure), then validate only the sections you actually need to parse.
 
 ### 4.3 Validation Order
 
@@ -553,15 +553,15 @@ A reader with version `R` can read a file if `R >= min_reader_version`.
 
 ### 5.2 Forward Compatibility
 
-**`.sagefs`**: The INPT section's `toc_entry_stride` field enables forward compatibility. A v3 reader encountering a v4 file with 64-byte TOC entries (stride = 64) reads its known 48 bytes per entry and skips the remaining 16.
+**`.bozzetto`**: The INPT section's `toc_entry_stride` field enables forward compatibility. A v3 reader encountering a v4 file with 64-byte TOC entries (stride = 64) reads its known 48 bytes per entry and skips the remaining 16.
 
-**Both formats**: Unknown section tags are skipped by following the directory entry's offset and size (`.sagefs`) or offset and next-section offset (`.sagetc`).
+**Both formats**: Unknown section tags are skipped by following the directory entry's offset and size (`.bozzetto`) or offset and next-section offset (`.bozzettotc`).
 
 > **Rationale — Conservative extensibility over negotiation:** New sections get new tags. New TOC fields append to the end. Old readers skip what they don't understand. There is no version negotiation, no feature capability exchange, no conditional parsing beyond the `min_reader_version` gate. This follows the BARE encoding philosophy: extend by appending, never by redefining.
 
 ### 5.3 Format Differences Summary
 
-| Aspect               | `.sagefs` v3                             | `.sagetc` v1                |
+| Aspect               | `.bozzetto` v3                             | `.bozzettotc` v1                |
 | -------------------- | ---------------------------------------- | --------------------------- |
 | Magic                | `SFS3` (0x33534653)                      | `STC1` (0x31435453)         |
 | Header size          | 64 bytes                                 | 64 bytes                    |
@@ -589,6 +589,6 @@ Writers use write-to-tmp-then-rename to avoid partial writes:
 1. Write bytes to `<path>.tmp`
 2. `File.Move(<path>.tmp, <path>, overwrite=true)`
 
-On startup, readers **SHOULD** delete orphaned `.sagefs.tmp` and `.sagetc.tmp` files in their respective directories. These indicate interrupted writes and contain incomplete data.
+On startup, readers **SHOULD** delete orphaned `.bozzetto.tmp` and `.bozzettotc.tmp` files in their respective directories. These indicate interrupted writes and contain incomplete data.
 
-> **Rationale — Write-to-tmp-then-rename:** If the process crashes between `File.WriteAllBytes` and completion, the primary file is left untouched — the reader loads the old (complete) file on next startup, which is correct behavior. `File.Move` with `overwrite: true` is atomic at the filesystem level on NTFS, ext4, and APFS. This means concurrent writes from multiple SageFs instances (e.g., racing on the same cache file) result in last-writer-wins, which is acceptable for a cache. The `.tmp` cleanup policy exists because crash-between-write-and-move leaves orphaned temp files that may confuse users debugging stale caches.
+> **Rationale — Write-to-tmp-then-rename:** If the process crashes between `File.WriteAllBytes` and completion, the primary file is left untouched — the reader loads the old (complete) file on next startup, which is correct behavior. `File.Move` with `overwrite: true` is atomic at the filesystem level on NTFS, ext4, and APFS. This means concurrent writes from multiple Bozzetto instances (e.g., racing on the same cache file) result in last-writer-wins, which is acceptable for a cache. The `.tmp` cleanup policy exists because crash-between-write-and-move leaves orphaned temp files that may confuse users debugging stale caches.

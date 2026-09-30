@@ -1,6 +1,6 @@
 // ============================================================
 //  🐍 → 🦅  Coming from Python? Welcome to F#!
-//  Open this file in SageFs, hit Alt+Enter on any line,
+//  Open this file in Bozzetto, hit Alt+Enter on any line,
 //  and watch results appear inline — no print() required.
 // ============================================================
 
@@ -102,9 +102,9 @@ let fetchData url = async {
 // ── 11. No semicolons. No curly braces. No colons after if/for. ──
 //    You're going to be so much less tired at the end of the day.
 
-// ── 12. The SageFs difference from Jupyter ──
+// ── 12. The Bozzetto difference from Jupyter ──
 //    Jupyter: you run cells in sequence, hoping for the best
-//    SageFs:  • Live test results in your gutter as you type
+//    Bozzetto:  • Live test results in your gutter as you type
 //             • Hot reload — save a .fs file, your web app updates in <100ms
 //             • Works in VS Code, Neovim, or a terminal TUI — no browser tab
 //             • AI agents (MCP) can run your code directly — no copy-paste

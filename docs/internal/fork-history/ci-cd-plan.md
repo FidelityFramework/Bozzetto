@@ -9,7 +9,7 @@ Three workflow files exist but are **partially broken**:
 | File | Status | Issues |
 |------|--------|--------|
 | `main.yml` | ⚠️ Partial | Uses `dotnet test --no-build` (Expecto needs `dotnet run`); no integration tests; no caching |
-| `publish.yml` | ❌ Broken | References `SageFs.Cli/`, `SageFs.Cli.Web/`, `SageFs.Daemon/` — projects that no longer exist; changelog reader expects `CHANGELOG.md` which doesn't exist |
+| `publish.yml` | ❌ Broken | References `Bozzetto.Cli/`, `Bozzetto.Cli.Web/`, `Bozzetto.Daemon/` — projects that no longer exist; changelog reader expects `CHANGELOG.md` which doesn't exist |
 | `copilot-setup-steps.yml` | ⚠️ Partial | Has `npx run build` (should be `dotnet build`); good Playwright install step |
 
 ### Native dependency gap
@@ -60,7 +60,7 @@ Already on GitHub, excellent .NET support, free minutes for public repos, OIDC N
 - **macOS**: Unit tests (skip tree-sitter-dependent until native is built)
 - Repo is **public** so all runner minutes are free — no reason to skip macOS
 
-### 3. Test runner: **`dotnet run --project SageFs.Tests`** (not `dotnet test`)
+### 3. Test runner: **`dotnet run --project Bozzetto.Tests`** (not `dotnet test`)
 
 Expecto uses custom `--all`/`--integration` filtering via `[<Tests>]` attributes. `dotnet test` with TestSdk adapter works for discovery but doesn't support the custom filter flags. Use `dotnet run` for full control.
 
@@ -72,27 +72,27 @@ Already implemented — each test gets isolated, disposable Postgres. Docker pre
 
 Both F# Playwright (.NET) and TS Playwright tests need a running Bozzetto daemon:
 1. Pack and install Bozzetto as global tool
-2. Start daemon in background (`sagefs --daemon &`)
-3. Health-check `http://localhost:37750/api/daemon-info`
+2. Start daemon in background (`boz --daemon &`)
+3. Health-check `http://localhost:47750/api/daemon-info`
 4. Run F# integration tests (Expecto `--all`)
 5. Run TS Playwright tests (`npx playwright test`)
 
 ### 6. Publishing: **NuGet.org + GitHub Packages (dual)**
 
-- NuGet.org for public discovery (`dotnet tool install --global SageFs`)
+- NuGet.org for public discovery (`dotnet tool install --global Bozzetto`)
 - GitHub Packages for pre-release/organizational use
 - OIDC via `NuGet/login@v1` (no long-lived API keys)
 
 ### 7. Versioning: **Manual in .fsproj + tag-triggered publish**
 
-- Source of truth: `SageFs/SageFs.fsproj` `<Version>` element
+- Source of truth: `Bozzetto/Bozzetto.fsproj` `<Version>` element
 - Release: bump version → commit → `git tag v0.5.3` → push tag → CI publishes
 - No GitVersion/semantic-release — overkill for current cadence
 - CI preview builds: append `-ci.{run_number}` suffix for non-tag builds
 
 ### 8. GUI distribution: **Bundled (no separate artifact yet)**
 
-SageFs.Gui is already a ProjectReference in SageFs.fsproj — `sagefs --gui` launches from the same tool. Separate self-contained executables are a future option when needed.
+Bozzetto.Gui is already a ProjectReference in Bozzetto.fsproj — `boz --gui` launches from the same tool. Separate self-contained executables are a future option when needed.
 
 ### 9. Docker image: **Not yet**
 
@@ -149,10 +149,10 @@ jobs:
         run: dotnet build --no-restore
 
       - name: Unit tests
-        run: dotnet run --project SageFs.Tests --no-build -- --summary
+        run: dotnet run --project Bozzetto.Tests --no-build -- --summary
 
       - name: Pack (verify nupkg)
-        run: dotnet pack SageFs -c Release -o nupkg --no-restore
+        run: dotnet pack Bozzetto -c Release -o nupkg --no-restore
         if: matrix.os == 'ubuntu-latest'
 
       - name: Upload nupkg
@@ -183,19 +183,19 @@ jobs:
 
       - name: Install as global tool
         run: |
-          dotnet pack SageFs -c Release -o nupkg
-          dotnet tool install --global SageFs --add-source ./nupkg --no-cache
+          dotnet pack Bozzetto -c Release -o nupkg
+          dotnet tool install --global Bozzetto --add-source ./nupkg --no-cache
 
       - name: Start daemon
         run: |
-          sagefs --daemon --proj SageFs.Tests/SageFs.Tests.fsproj &
+          boz --daemon --proj Bozzetto.Tests/Bozzetto.Tests.fsproj &
           for i in $(seq 1 30); do
-            curl -sf http://localhost:37750/api/daemon-info && break
+            curl -sf http://localhost:47750/api/daemon-info && break
             sleep 2
           done
 
       - name: Integration tests (Expecto + Playwright .NET)
-        run: dotnet run --project SageFs.Tests --no-build -- --all --summary
+        run: dotnet run --project Bozzetto.Tests --no-build -- --all --summary
 
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
@@ -220,8 +220,8 @@ jobs:
 
 Fix broken artifact paths and remove non-existent project references:
 
-- `SageFs.Cli/nupkg/` → `SageFs/nupkg/`
-- Remove `SageFs.Cli.Web/nupkg/` and `SageFs.Daemon/nupkg/`
+- `Bozzetto.Cli/nupkg/` → `Bozzetto/nupkg/`
+- Remove `Bozzetto.Cli.Web/nupkg/` and `Bozzetto.Daemon/nupkg/`
 - Remove changelog reader (no `CHANGELOG.md` exists) — use `generate_release_notes: true` instead
 - Add build+test step before publish
 

@@ -1,8 +1,8 @@
-# Can I use SageFs with…?
+# Can I use Bozzetto with…?
 
 The short answer for most of the F# ecosystem is **yes**. This page says exactly where the
 edges are, and why they're there, so you can tell in advance which half of your project
-SageFs is the right tool for. I'd rather tell you the edge exists than have you find it
+Bozzetto is the right tool for. I'd rather tell you the edge exists than have you find it
 yourself at 11pm.
 
 Every claim here was checked against a real project that was actually built and run. Where
@@ -14,17 +14,17 @@ you're staring at is the one they meant.
 
 ## The one rule that explains every row
 
-SageFs runs your code in a live .NET process. Its REPL is F# Interactive; its hot reload
+Bozzetto runs your code in a live .NET process. Its REPL is F# Interactive; its hot reload
 patches **.NET method bodies in that running process** (via Harmony method detours); its live
 testing and coverage read .NET assemblies.
 
 So there is exactly one question behind every row below:
 
-> **Is the thing you want SageFs to change a .NET method, running under the JIT, in a process
-> SageFs controls?**
+> **Is the thing you want Bozzetto to change a .NET method, running under the JIT, in a process
+> Bozzetto controls?**
 
 - **Yes** → everything works: REPL, hot reload, live testing, coverage, `run_app`.
-- **No, it's JavaScript in a browser** (Fable client code) → SageFs can't patch it, because
+- **No, it's JavaScript in a browser** (Fable client code) → Bozzetto can't patch it, because
   there's no .NET method there to patch. Vite's HMR already does that job well, and better
   than I could.
 - **No, it's an already-AOT-compiled native binary** → nothing can patch it. There's no JIT
@@ -38,15 +38,15 @@ Those last two aren't missing features. They're different machines.
 
 | You're building | REPL | Hot reload | Live testing + coverage | Notes |
 |---|---|---|---|---|
-| **Falco** | ✅ | ✅ browser refresh | ✅ | Fully supported; used by SageFs's own dashboard |
+| **Falco** | ✅ | ✅ browser refresh | ✅ | Fully supported; used by Bozzetto's own dashboard |
 | **Giraffe** | ✅ | ✅ browser refresh | ✅ | Fully supported |
 | **Saturn** | ✅ | ✅ browser refresh | ✅ | Fully supported |
 | **Oxpecker** | ✅ | ✅ browser refresh | ✅ | Supported since the detection fix below |
 | **Plain ASP.NET Core / Minimal API** | ✅ | ✅ browser refresh | ✅ | Supported since the detection fix below |
 | **Shared / domain projects** (SAFE `Shared`) | ✅ | ✅ | ✅ | Ordinary .NET. The best-supported thing in the list |
 | **Fable / Elmish / Feliz client** | ⚠️ partial | ❌ for browser code | ⚠️ partial | Builds and loads fine; browser bindings throw when evaluated. Use Vite HMR |
-| **SAFE-stack full-stack app** | ✅ server + shared | ✅ server + shared | ✅ server + shared | Point SageFs at Server and Shared; let Vite handle Client |
-| **React / Vue / Angular front end + F# API** | ✅ | ✅ | ✅ | Your front end is a separate process SageFs never touches; nothing to support |
+| **SAFE-stack full-stack app** | ✅ server + shared | ✅ server + shared | ✅ server + shared | Point Bozzetto at Server and Shared; let Vite handle Client |
+| **React / Vue / Angular front end + F# API** | ✅ | ✅ | ✅ | Your front end is a separate process Bozzetto never touches; nothing to support |
 | **Native AOT** (developing one) | ✅ | ✅ | ✅ | Dev-time is JIT. See the caveat below; it's real |
 | **Native AOT** (an already-published binary) | ❌ | ❌ | ❌ | Impossible on any tool. CLR limit |
 | **.NET Framework** (`net48` etc.) | ❌ | ❌ | ❌ | Refused up front with a clear message, see [issue #135](https://github.com/WillEhrendreich/SageFs/issues/135) |
@@ -85,14 +85,14 @@ declares its own `Microsoft.AspNetCore.App` framework reference, so a plain
 
 ### What was actually broken until recently
 
-SageFs decided "is this a web app?" by looking only at `<PackageReference>` names. A modern
+Bozzetto decided "is this a web app?" by looking only at `<PackageReference>` names. A modern
 ASP.NET Core or Minimal API project gets ASP.NET from `Sdk="Microsoft.NET.Sdk.Web"` plus a
 `<FrameworkReference Include="Microsoft.AspNetCore.App" />`, **not** from any package
 reference. So those projects got classified as console apps and were never offered the
 hot-reload workflow. An Oxpecker project hit the same wall twice: Oxpecker wasn't in the list,
 and the project shape didn't help either. Embarrassing bug, easy fix once I actually looked.
 
-SageFs now reads the SDK attribute and framework references out of the `.fsproj` itself, so a
+Bozzetto now reads the SDK attribute and framework references out of the `.fsproj` itself, so a
 web project with zero package references is recognised as one. It also reads
 `paket.references`, because Paket-managed projects (the SAFE template among them) carry no
 `<PackageReference>` at all.
@@ -112,7 +112,7 @@ injects MSBuild targets. There's no compile error to report.
 
 **A Fable project doesn't poison your session.** A SAFE-shaped
 `Server` / `Shared` / `Client` solution builds clean, and the Client produces a real
-`Client.dll`. Building the Server alone works. Building the Client alone works. A SageFs
+`Client.dll`. Building the Server alone works. Building the Client alone works. A Bozzetto
 session over that solution warms up without a single build error.
 
 **`Fable.Elmish` genuinely runs on .NET.** Its MVU core is a portable library:
@@ -141,29 +141,29 @@ For a SAFE-stack or any Fable + F#-server app, the work splits cleanly:
 
 | Part of your app | Tool | What you get |
 |---|---|---|
-| **Server** (Falco / Giraffe / Saturn / Oxpecker / ASP.NET) | **SageFs** | Full REPL, hot reload, browser refresh, live testing, coverage |
-| **Shared / domain `.fs`** | **SageFs** | Full REPL, hot reload, live testing, coverage (plain .NET) |
+| **Server** (Falco / Giraffe / Saturn / Oxpecker / ASP.NET) | **Bozzetto** | Full REPL, hot reload, browser refresh, live testing, coverage |
+| **Shared / domain `.fs`** | **Bozzetto** | Full REPL, hot reload, live testing, coverage (plain .NET) |
 | **Client** (Fable → JS) | **Vite HMR** | Fable's own toolchain already does sub-second client hot reload well |
 
-Point SageFs at `Server.fsproj` and `Shared.fsproj`. Run `dotnet fable watch` / Vite alongside,
-as you already would. You lose nothing, because the client half was never SageFs's job.
+Point Bozzetto at `Server.fsproj` and `Shared.fsproj`. Run `dotnet fable watch` / Vite alongside,
+as you already would. You lose nothing, because the client half was never Bozzetto's job.
 
 Since your `Shared` project is usually where the domain types, validation and business rules
 live, that's exactly where live testing and the REPL help most.
 
-SageFs will tell you this itself: create a session on a Fable client project and the reply
+Bozzetto will tell you this itself: create a session on a Fable client project and the reply
 names the project, the references that identified it, what still works, and what to use
 instead.
 
 ### Other SPA front ends: React, Vue, Angular, Svelte, HTMX
 
 If your front end is TypeScript or JavaScript talking to an F# API over HTTP, **there's nothing
-to support**. Your front end runs in its own dev server, in its own process, and SageFs never
-sees it. SageFs hot-reloads your F# API; your front end's own dev server hot-reloads itself.
+to support**. Your front end runs in its own dev server, in its own process, and Bozzetto never
+sees it. Bozzetto hot-reloads your F# API; your front end's own dev server hot-reloads itself.
 That combination works today and always has, because neither side needs the other to change.
 
 HTMX and Datastar go further: because the server renders the markup, hot-reloading the server
-*is* hot-reloading the UI. SageFs pushes a browser refresh over SSE on save. `Falco.Htmx`,
+*is* hot-reloading the UI. Bozzetto pushes a browser refresh over SSE on save. `Falco.Htmx`,
 `Oxpecker.Htmx` and `Falco.Datastar` / `StarFederation.Datastar.FSharp` all work. This
 combination is basically my daily driver.
 
@@ -173,16 +173,16 @@ combination is basically my daily driver.
 
 ### Developing an app you will later AOT-publish: fully supported
 
-Add `<PublishAot>true</PublishAot>` and keep using SageFs normally. Warmup, eval, hot reload,
+Add `<PublishAot>true</PublishAot>` and keep using Bozzetto normally. Warmup, eval, hot reload,
 live testing and `run_app` all behave exactly as they do for any other project.
 
-The reason is that SageFs's FSI host is a **separate process with its own runtime
+The reason is that Bozzetto's FSI host is a **separate process with its own runtime
 configuration**. Your project's DLL is loaded into it as a library, not as the entry assembly,
 so your project's AOT settings don't govern that process. I verified this directly: loading
 an AOT-flagged assembly into an FSI host leaves `RuntimeFeature.IsDynamicCodeSupported = true`,
 and reflection-emit, `System.Text.Json` and eval all work.
 
-`run_app` is the same story: SageFs invokes your project's entry point **in-process** via
+`run_app` is the same story: Bozzetto invokes your project's entry point **in-process** via
 `Assembly.LoadFrom`, so your app's own `runtimeconfig.json` is never read.
 
 Two smaller worries that turn out to be unfounded:
@@ -193,7 +193,7 @@ Two smaller worries that turn out to be unfounded:
   are Roslyn analyzers and don't run on F#, so you get zero `IL2xxx`/`IL3xxx` warnings at build
   time even with `TreatWarningsAsErrors`.
 
-### The caveat that is real, and is not about SageFs
+### The caveat that is real, and is not about Bozzetto
 
 `<PublishAot>true</PublishAot>` **does** change your `bin/Debug` output, not just `dotnet publish`.
 The SDK writes AOT feature switches into your app's `runtimeconfig.json` at **build** time:
@@ -212,12 +212,12 @@ InvalidOperationException: Reflection-based serialization has been disabled for 
 PlatformNotSupportedException: Dynamic code generation is not supported on this platform.
 ```
 
-**Practical consequence, stated plainly: SageFs is more permissive than your own app.** Because
+**Practical consequence, stated plainly: Bozzetto is more permissive than your own app.** Because
 `run_app` hosts your entry point inside the FSI worker, those switches never apply, so code that
-works under SageFs can still fail under `dotnet run` and fail again at `dotnet publish`.
-**SageFs cannot tell you your app is AOT-safe.** Since F# gets no AOT analyzer coverage either,
+works under Bozzetto can still fail under `dotnet run` and fail again at `dotnet publish`.
+**Bozzetto cannot tell you your app is AOT-safe.** Since F# gets no AOT analyzer coverage either,
 `dotnet publish -r <rid>` is the only thing that will, and it remains a required step in your CI.
-I'd rather say that plainly than let a green SageFs session give you false confidence.
+I'd rather say that plainly than let a green Bozzetto session give you false confidence.
 
 ### Hosting an already-AOT-compiled binary: impossible
 
@@ -230,8 +230,8 @@ to AOT.
 
 ## .NET Framework
 
-Not supported. SageFs's FSI host runs on modern .NET (Core) and can't load .NET Framework
-assemblies. SageFs refuses the session up front with a message naming the project, its target
+Not supported. Bozzetto's FSI host runs on modern .NET (Core) and can't load .NET Framework
+assemblies. Bozzetto refuses the session up front with a message naming the project, its target
 framework, and why, rather than letting warmup fail with a misleading "project has not been
 built".
 
@@ -259,7 +259,7 @@ far more common than any named framework.
 **3. Shared/domain projects in a SAFE app: the thing actually worth emphasising.** This is the
 one I think is under-sold. The `Shared` project is where the domain types and business rules
 live, and it's 100% ordinary .NET. Live testing on save, full REPL, coverage: all of it applies.
-When someone asks "does SageFs work with SAFE?", the useful answer is "yes, for the
+When someone asks "does Bozzetto work with SAFE?", the useful answer is "yes, for the
 two thirds of your code where it helps most."
 
 **4. Fable client hot reload: not worth building, and I should say so loudly.** I couldn't
@@ -270,8 +270,8 @@ tool you already have is the wrong use of my time. **What is worth doing is the
 truthfulness work**: detecting the case and explaining it, which is what shipped.
 
 **5. Native AOT: worth a warning, not a feature.** Dev-time already works, and post-publish
-hosting is impossible. The genuinely useful thing is the caveat above: SageFs is *more*
-permissive than your own app's `dotnet run`, so a green SageFs session is not evidence of AOT
+hosting is impossible. The genuinely useful thing is the caveat above: Bozzetto is *more*
+permissive than your own app's `dotnet run`, so a green Bozzetto session is not evidence of AOT
 safety. That gap is worth stating clearly and isn't worth trying to close, because closing it
 would mean reproducing AOT's restrictions inside the REPL and making the REPL worse for the 99%
 of users who don't publish AOT.
@@ -280,7 +280,7 @@ of users who don't publish AOT.
 category difference; it's a real limitation with real users behind it, and it would require a
 second host. It's tracked, not dismissed.
 
-The pattern: I support what is .NET-and-JIT, because that's where SageFs has something no
+The pattern: I support what is .NET-and-JIT, because that's where Bozzetto has something no
 other tool has. Where another tool already owns the job (Vite for browser code) or where the
 platform forbids it (AOT, .NET Framework's assembly format), the valuable work is telling you
 the truth quickly instead of failing in a confusing way.
@@ -292,10 +292,10 @@ the truth quickly instead of failing in a confusing way.
 Not from documentation or memory. For each claim:
 
 - **Detection**: checked against this repo's own
-  `SageFs.Tests/fixtures/WebAppFixture/WebAppFixture.fsproj` (an `Sdk="Microsoft.NET.Sdk.Web"`
+  `Bozzetto.Tests/fixtures/WebAppFixture/WebAppFixture.fsproj` (an `Sdk="Microsoft.NET.Sdk.Web"`
   project), which the running daemon reported with `PackageRefs: []`, confirming that package
   references alone can't see an ASP.NET project. Covered by tests in
-  `SageFs.Tests/ProjectClassificationTests.fs`.
+  `Bozzetto.Tests/ProjectClassificationTests.fs`.
 - **Fable**: five packages restored and built individually and together on `net10.0`; their
   nupkg layouts inspected; a program written that calls the browser bindings and run, capturing
   the verbatim exceptions quoted above; and a full `Server`/`Shared`/`Client` solution built as a

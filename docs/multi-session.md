@@ -6,7 +6,7 @@ session can't corrupt or crash another. SSE events carry a `SessionId`, so
 editor windows watching different projects never see each other's output.
 Create, switch, and stop sessions from any client.
 
-This exists because I kept wanting to work on SageFs itself while also
+This exists because I kept wanting to work on Bozzetto itself while also
 having a session open on whatever project I was dogfooding it against, and
 one shared FSI process for both is a recipe for a bad afternoon.
 
@@ -16,7 +16,7 @@ Clients (editors, AI agents, the dashboard) create sessions on demand. The
 daemon starts bare and waits for create requests.
 
 ```
-POST /api/sessions/create        (on the MCP port, 37749)
+POST /api/sessions/create        (on the MCP port, 47749)
 {
   "workingDirectory": "path/to/project",
   "projects": ["path/to/MyProject.fsproj"],

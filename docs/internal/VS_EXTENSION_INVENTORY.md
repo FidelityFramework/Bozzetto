@@ -1,4 +1,4 @@
-# SageFs Visual Studio Extension — Sprint Planning Inventory
+# Bozzetto Visual Studio Extension — Sprint Planning Inventory
 
 **Generated for:** Rapid sprint planning exercise  
 **Scope:** Extension state analysis (real vs placeholder), architecture assessment  
@@ -7,24 +7,24 @@
 
 ## 1. EXTENSION METADATA & CONFIGURATION
 
-### 1.1 SageFsExtension.cs (Main Entry Point)
+### 1.1 BozzettoExtension.cs (Main Entry Point)
 
 **Type:** C# thin shim (source generators require C#)  
 **Real vs Placeholder:** ✓ **REAL** (functional DI + minimal boilerplate)
 
 **Key Facts:**
-- Extension ID: SageFs.VisualStudio.a3f9c1e2-7b5d-4e8a-9c1f-2d3e4f5a6b7c
+- Extension ID: Bozzetto.VisualStudio.a3f9c1e2-7b5d-4e8a-9c1f-2d3e4f5a6b7c
 - Publisher: WillEhrendreich
-- Display Name: "SageFs — F# Live Development"
-- Description: "Inline eval, session management, and hot-reload for F# via SageFs daemon"
+- Display Name: "Bozzetto — F# Live Development"
+- Description: "Inline eval, session management, and hot-reload for F# via Bozzetto daemon"
 
 **DI Registration:**
-- **SageFsClient** (singleton) — HTTP client for daemon communication
+- **BozzettoClient** (singleton) — HTTP client for daemon communication
 - **EvalCancellation** (singleton) — Cooperative cancellation token source
-- **LiveTestingSubscriber** (singleton) — Starts WebSocket listener on port 37749
+- **LiveTestingSubscriber** (singleton) — Starts WebSocket listener on port 47749
 
 **Architectural Notes:**
-- All real logic lives in F# project: SageFs.VisualStudio.Core
+- All real logic lives in F# project: Bozzetto.VisualStudio.Core
 - C# layer is just a shim for VS integration (attribute routing, commands, tool windows)
 - This is a clean design — no business logic in C#
 
@@ -217,7 +217,7 @@
 
 #### **ConfigureWarmupAutoOpenCommand**
 - **Shortcut:** None
-- **Behavior:** Creates/opens \.SageFs/config.fsx\ with \AutoOpenNamespaces = false\
+- **Behavior:** Creates/opens \.bozzetto/config.fsx\ with \AutoOpenNamespaces = false\
 - **Logic:** \WarmupAutoOpenConfig.Ensure(workingDir)\ + \TryOpen(path)\
 - **UserInput:** ShowPromptAsync with status message
 - **Status:** ✓ REAL (utility command)
@@ -240,7 +240,7 @@
 
 #### **OpenDashboardCommand**
 - **Shortcut:** None
-- **Behavior:** Opens browser to localhost:37750
+- **Behavior:** Opens browser to localhost:47750
 - **API:** \Core.DaemonManager.openDashboard(dashboardPort)\
 - **Status:** ✓ REAL
 
@@ -369,7 +369,7 @@
 
 ---
 
-## 4. SAGEFSCLIENT.FS — HTTP API Surface
+## 4. BOZZETTOCLIENT.FS — HTTP API Surface
 
 **Type:** F# HTTP client  
 **Real vs Placeholder:** ✓ **REAL** (comprehensive coverage of daemon endpoints)
@@ -467,8 +467,8 @@
 ### 4.10 Configuration
 
 **Public Properties:**
-- \McpPort\ (default 37749) — MCP (message control protocol) port
-- \DashboardPort\ (default 37750) — Web dashboard port
+- \McpPort\ (default 47749) — MCP (message control protocol) port
+- \DashboardPort\ (default 47750) — Web dashboard port
 - \BaseUrl\ — \http://localhost:{McpPort}\
 - \DashUrl\ — \http://localhost:{DashboardPort}\
 
@@ -484,40 +484,40 @@
 
 \\\json
 {
-  "SageFs.EvalSelection.DisplayName": "SageFs: Evaluate Selection",
-  "SageFs.EvalFile.DisplayName": "SageFs: Evaluate File",
-  "SageFs.StartDaemon.DisplayName": "SageFs: Start Daemon",
-  "SageFs.StopDaemon.DisplayName": "SageFs: Stop Daemon",
-  "SageFs.OpenDashboard.DisplayName": "SageFs: Open Dashboard",
-  "SageFs.CreateSession.DisplayName": "SageFs: Create Session",
-  "SageFs.ConfigureWarmupAutoOpen.DisplayName": "SageFs: Configure Warmup Auto-Open",
-  "SageFs.SwitchSession.DisplayName": "SageFs: Switch Session",
-  "SageFs.StopSession.DisplayName": "SageFs: Stop Session",
-  "SageFs.ResetSession.DisplayName": "SageFs: Reset Session",
-  "SageFs.HardReset.DisplayName": "SageFs: Hard Reset",
-  "SageFs.ClearResults.DisplayName": "SageFs: Clear Inline Results",
-  "SageFs.ShowSessionContext.DisplayName": "SageFs: Session Context",
-  "SageFs.HotReloadToggle.DisplayName": "SageFs: Toggle Hot Reload for File",
-  "SageFs.HotReloadWatchAll.DisplayName": "SageFs: Watch All Files",
-  "SageFs.HotReloadUnwatchAll.DisplayName": "SageFs: Unwatch All Files",
-  "SageFs.HotReloadRefresh.DisplayName": "SageFs: Refresh Hot Reload",
-  "SageFs.ToggleErrorList.DisplayName": "SageFs: Toggle Error List Bridge",
-  "SageFs.CodeLens.DisplayName": "SageFs Eval",
-  "SageFs.HotReloadToggleDirectory.DisplayName": "SageFs: Toggle Hot Reload for Directory",
-  "SageFs.EvalRange.DisplayName": "SageFs: Evaluate Code Block",
-  "SageFs.LiveTesting.DisplayName": "SageFs: Enable/Disable Live Testing",
-  "SageFs.RunTests.DisplayName": "SageFs: Run All Tests",
-  "SageFs.ShowRecentEvents.DisplayName": "SageFs: Show Recent Events",
-  "SageFs.TestCodeLens.DisplayName": "SageFs Live Tests",
-  "SageFs.ShowLiveTesting.DisplayName": "SageFs: Live Testing Dashboard",
-  "SageFs.ShowTypeExplorer.DisplayName": "SageFs: Type Explorer",
-  "SageFs.ShowHotReload.DisplayName": "SageFs: Hot Reload Files",
-  "SageFs.SetRunPolicy.DisplayName": "SageFs: Set Run Policy",
-  "SageFs.CancelEval.DisplayName": "SageFs: Cancel Evaluation",
-  "SageFs.NextBlock.DisplayName": "SageFs: Move to Next ;; Block",
-  "SageFs.PrevBlock.DisplayName": "SageFs: Move to Previous ;; Block",
-  "SageFs.EvalAndAdvance.DisplayName": "SageFs: Evaluate Block and Advance",
-  "SageFs.LoadScript.DisplayName": "SageFs: Load Script File"
+  "Bozzetto.EvalSelection.DisplayName": "Bozzetto: Evaluate Selection",
+  "Bozzetto.EvalFile.DisplayName": "Bozzetto: Evaluate File",
+  "Bozzetto.StartDaemon.DisplayName": "Bozzetto: Start Daemon",
+  "Bozzetto.StopDaemon.DisplayName": "Bozzetto: Stop Daemon",
+  "Bozzetto.OpenDashboard.DisplayName": "Bozzetto: Open Dashboard",
+  "Bozzetto.CreateSession.DisplayName": "Bozzetto: Create Session",
+  "Bozzetto.ConfigureWarmupAutoOpen.DisplayName": "Bozzetto: Configure Warmup Auto-Open",
+  "Bozzetto.SwitchSession.DisplayName": "Bozzetto: Switch Session",
+  "Bozzetto.StopSession.DisplayName": "Bozzetto: Stop Session",
+  "Bozzetto.ResetSession.DisplayName": "Bozzetto: Reset Session",
+  "Bozzetto.HardReset.DisplayName": "Bozzetto: Hard Reset",
+  "Bozzetto.ClearResults.DisplayName": "Bozzetto: Clear Inline Results",
+  "Bozzetto.ShowSessionContext.DisplayName": "Bozzetto: Session Context",
+  "Bozzetto.HotReloadToggle.DisplayName": "Bozzetto: Toggle Hot Reload for File",
+  "Bozzetto.HotReloadWatchAll.DisplayName": "Bozzetto: Watch All Files",
+  "Bozzetto.HotReloadUnwatchAll.DisplayName": "Bozzetto: Unwatch All Files",
+  "Bozzetto.HotReloadRefresh.DisplayName": "Bozzetto: Refresh Hot Reload",
+  "Bozzetto.ToggleErrorList.DisplayName": "Bozzetto: Toggle Error List Bridge",
+  "Bozzetto.CodeLens.DisplayName": "Bozzetto Eval",
+  "Bozzetto.HotReloadToggleDirectory.DisplayName": "Bozzetto: Toggle Hot Reload for Directory",
+  "Bozzetto.EvalRange.DisplayName": "Bozzetto: Evaluate Code Block",
+  "Bozzetto.LiveTesting.DisplayName": "Bozzetto: Enable/Disable Live Testing",
+  "Bozzetto.RunTests.DisplayName": "Bozzetto: Run All Tests",
+  "Bozzetto.ShowRecentEvents.DisplayName": "Bozzetto: Show Recent Events",
+  "Bozzetto.TestCodeLens.DisplayName": "Bozzetto Live Tests",
+  "Bozzetto.ShowLiveTesting.DisplayName": "Bozzetto: Live Testing Dashboard",
+  "Bozzetto.ShowTypeExplorer.DisplayName": "Bozzetto: Type Explorer",
+  "Bozzetto.ShowHotReload.DisplayName": "Bozzetto: Hot Reload Files",
+  "Bozzetto.SetRunPolicy.DisplayName": "Bozzetto: Set Run Policy",
+  "Bozzetto.CancelEval.DisplayName": "Bozzetto: Cancel Evaluation",
+  "Bozzetto.NextBlock.DisplayName": "Bozzetto: Move to Next ;; Block",
+  "Bozzetto.PrevBlock.DisplayName": "Bozzetto: Move to Previous ;; Block",
+  "Bozzetto.EvalAndAdvance.DisplayName": "Bozzetto: Evaluate Block and Advance",
+  "Bozzetto.LoadScript.DisplayName": "Bozzetto: Load Script File"
 }
 \\\
 
@@ -538,7 +538,7 @@
 7. **Daemon Lifecycle (3):** Auto-discovery, start/stop, dashboard launch
 8. **Cancellation Support:** Cooperative eval abort (Ctrl+Alt+C)
 9. **Error List Bridge:** Diagnostics forwarding to VS Error List
-10. **SageFsClient.fs:** Comprehensive HTTP API with proper error handling, JSON parsing, model types
+10. **BozzettoClient.fs:** Comprehensive HTTP API with proper error handling, JSON parsing, model types
 11. **MEF Editor Assembly (net472):** Glyphs, squiggles, inline failure adornments (Sprints 4-5)
 
 ### ⚠️ PLACEHOLDER / INCOMPLETE
@@ -548,14 +548,14 @@
 
 ### ⚠️ STUB / NOP
 
-1. **StartDaemonAsync** in SageFsClient.fs — currently a no-op (`return ()`). Daemon lifecycle is handled in DaemonCommands.cs via `Core.DaemonManager` (F#).
+1. **StartDaemonAsync** in BozzettoClient.fs — currently a no-op (`return ()`). Daemon lifecycle is handled in DaemonCommands.cs via `Core.DaemonManager` (F#).
 
 ### 🔮 FUTURE (Sprint 6+)
 
 1. **CodeLens provider** — `file_annotations.CodeLenses` already emits `{Line, Label, Command: RunTest|DebugTest|ShowHistory}` — wire `ICodeLensProvider` for '▶ Run | 🐛 Debug | 📜 History' above test functions
 2. **Inline eval adornments** — show `// => result` right of eval lines (like Rider), dims to 35% opacity on edit, clears on re-eval
 3. **Session management panel** — Sessions tool window: list FSI sessions, start/kill, show eval counts
-4. **Status bar indicator** — 'SageFs ● connected' in VS status bar via `IVsStatusbar`
+4. **Status bar indicator** — 'Bozzetto ● connected' in VS status bar via `IVsStatusbar`
 ---
 
 ## 7. KEYBOARD SHORTCUTS
@@ -570,7 +570,7 @@
 | PrevBlock | Ctrl+Alt+[ | Go to previous ;; block and eval |
 | EvalAndAdvance | Ctrl+Alt+Shift+Enter | Evaluate current block + step forward |
 
-**All others:** Menu only (Extensions → SageFs → ...)
+**All others:** Menu only (Extensions → Bozzetto → ...)
 
 ---
 
@@ -581,7 +581,7 @@
 \\\
 VS Extension (C#)
   ├─ Commands (25)
-  │   └─ All delegate to SageFsClient
+  │   └─ All delegate to BozzettoClient
   ├─ Tool Windows (4)
   │   ├─ XAML UI (WPF DataTemplates)
   │   └─ Data context (C#) binds to daemon HTTP API
@@ -591,7 +591,7 @@ VS Extension (C#)
       └─ DiagnosticsBridge
          
 Core Logic (F#)
-  ├─ SageFsClient — HTTP + JSON parsing
+  ├─ BozzettoClient — HTTP + JSON parsing
   ├─ LiveTestingSubscriber — WebSocket stream
   ├─ DaemonManager — Process lifecycle
   └─ Type definitions
@@ -645,7 +645,7 @@ Core Logic (F#)
 
 ---
 
-## 10. MEF EDITOR ASSEMBLY — `SageFs.VisualStudio.Editor` (net472)
+## 10. MEF EDITOR ASSEMBLY — `Bozzetto.VisualStudio.Editor` (net472)
 
 **Status:** ✅ Fully implemented through Sprint 5. 39/39 unit tests passing.
 
@@ -693,7 +693,7 @@ SseConnectionHub                     — deduplicates SSE connections (2 total: 
   │
   └─ /diagnostics ──────────────────────────────────────────────────────────┐
        └─ DiagnosticStateTracker     — volatile List<DiagnosticEntry> per session
-            → SquiggleTagger         — ITagger<SageFsErrorTag> per ITextBuffer
+            → SquiggleTagger         — ITagger<BozzettoErrorTag> per ITextBuffer
 ```
 
 ### Key Design Decisions
@@ -703,7 +703,7 @@ SseConnectionHub                     — deduplicates SSE connections (2 total: 
 3. **`HttpClient.Timeout = 75s`** (NOT `InfiniteTimeSpan`) — prevents zombie connections
 4. **`[ContentType("F#")]` + `[ContentType("F# Script")]`** on ALL MEF exports — VS does NOT walk the base-type chain for tagger/factory/listener exports; `.fsx` needs an explicit second attribute
 5. **`SseConnectionHub`** — static per-endpoint multiplexer; at most 2 HTTP SSE connections total
-6. **`SageFsFeatureFlags`** — per-feature runtime disable flags in `%LOCALAPPDATA%\SageFs\`:
+6. **`BozzettoFeatureFlags`** — per-feature runtime disable flags in `%LOCALAPPDATA%\Bozzetto\`:
    - `disable-glyphs.flag` — all features (legacy, from GlyphSpikeGuard)
    - `disable-squiggles.flag` — squiggles only
    - `disable-inline-hints.flag` — inline adornments only
@@ -714,16 +714,16 @@ SseConnectionHub                     — deduplicates SSE connections (2 total: 
 ### Kill Switches (4 layers)
 
 1. **Build gate:** `$(EnableGlyphSpike)=true` must be set to include the MEF project reference
-2. **Runtime — all off:** `%LOCALAPPDATA%\SageFs\disable-glyphs.flag`
-3. **Runtime — squiggles off:** `%LOCALAPPDATA%\SageFs\disable-squiggles.flag`
-4. **Runtime — adornments off:** `%LOCALAPPDATA%\SageFs\disable-inline-hints.flag`
-5. **Clean boundary:** all spike code isolated in `SageFs.VisualStudio.Editor\` — delete folder + remove project ref to fully revert
+2. **Runtime — all off:** `%LOCALAPPDATA%\Bozzetto\disable-glyphs.flag`
+3. **Runtime — squiggles off:** `%LOCALAPPDATA%\Bozzetto\disable-squiggles.flag`
+4. **Runtime — adornments off:** `%LOCALAPPDATA%\Bozzetto\disable-inline-hints.flag`
+5. **Clean boundary:** all spike code isolated in `Bozzetto.VisualStudio.Editor\` — delete folder + remove project ref to fully revert
 
 ### Port Discovery
 
-- Written by: `SageFsExtension.InitializeServices` → `%LOCALAPPDATA%\SageFs\daemon.json`
+- Written by: `BozzettoExtension.InitializeServices` → `%LOCALAPPDATA%\Bozzetto\daemon.json`
   ```json
-  {"Url":"http://localhost:37749"}
+  {"Url":"http://localhost:47749"}
   ```
 - Read by: `PortConfig.TryGetDaemonUrl()` in the net472 MEF assembly
 
@@ -731,9 +731,9 @@ SseConnectionHub                     — deduplicates SSE connections (2 total: 
 
 | File | Purpose |
 |------|---------|
-| `SageFs.VisualStudio.Editor.csproj` | net472, opts out of central pkgs, `PrivateAssets="all"` |
+| `Bozzetto.VisualStudio.Editor.csproj` | net472, opts out of central pkgs, `PrivateAssets="all"` |
 | `PortConfig.cs` | Reads daemon.json; `GlyphSpikeGuard` kill switch |
-| `SageFsFeatureFlags.cs` | Per-feature runtime disable flags |
+| `BozzettoFeatureFlags.cs` | Per-feature runtime disable flags |
 | `SseClient.cs` | Background SSE subscriber, exponential-backoff reconnect |
 | `SseConnectionHub.cs` | Static per-endpoint SSE connection multiplexer |
 | `TestStateTracker.cs` | Processes `test_results_batch` events |
@@ -751,7 +751,7 @@ SseConnectionHub                     — deduplicates SSE connections (2 total: 
 
 ### Test Coverage
 
-`SageFs.VisualStudio.Editor.Tests` (net472 xUnit, 39 tests):
+`Bozzetto.VisualStudio.Editor.Tests` (net472 xUnit, 39 tests):
 - `TestStateTrackerTests` (20) — all daemon JSON shapes
 - `PortConfigTests` (1) — smoke test
 - `DiagnosticStateTrackerTests` (8) — /diagnostics parsing

@@ -1,24 +1,24 @@
 # Agent hooks
 
-## sagefs-repl-guard
+## bozzetto-repl-guard
 
 A Claude Code `PreToolUse` hook for the Bash tool. When an agent reaches for
 `dotnet build`, `dotnet test`, `dotnet run` or `dotnet fsi` in an F# repo while
-a SageFs daemon is up, the hook denies the call and tells the agent to go back
-to the REPL loop (see `skills/sagefs/SKILL.md`).
+a Bozzetto daemon is up, the hook denies the call and tells the agent to go back
+to the REPL loop (see `skills/bozzetto/SKILL.md`).
 
 It fires only when all four are true:
 
 - the command runs one of those four dotnet verbs (after a `cd`, `&&`, `timeout`,
   `env` and the like is fine, a mention inside quotes or after `echo` is not)
 - the hook's working directory has an `.fsproj`, `.slnx` or `.sln` at or above it
-- something answers `http://localhost:37749/health` within 800ms
-  (`SAGEFS_MCP_PORT` overrides the port)
+- something answers `http://localhost:47749/health` within 800ms
+  (`BOZZETTO_MCP_PORT` overrides the port)
 - that same `/health` reports a **Ready** session whose working directory
   is the command's `cwd`, or an ancestor of it
 
-If SageFs isn't running, everything passes. There's no REPL to go back to.
-The last condition matters just as much: with SageFs up but no Ready
+If Bozzetto isn't running, everything passes. There's no REPL to go back to.
+The last condition matters just as much: with Bozzetto up but no Ready
 session rooted at (or above) `cwd`, there's *still* no REPL to go back to —
 that's exactly the one build `create_session` itself needs before there can
 be a session at all, so it passes too (issue #144). A session that exists
@@ -34,14 +34,14 @@ The final gate, and the one build before `create_session`, are real uses of
 dotnet. Say so in the command's environment prefix:
 
 ```sh
-SAGEFS_FINAL_GATE=1 dotnet test SageFs.Tests
-export SAGEFS_FINAL_GATE=1 && dotnet build -c Release && dotnet test
+BOZZETTO_FINAL_GATE=1 dotnet test Bozzetto.Tests
+export BOZZETTO_FINAL_GATE=1 && dotnet build -c Release && dotnet test
 ```
 
 The prefix covers the one call it's on. An `export` covers everything after it.
 
 **Declaring the gate doesn't skip the memory check.** A `dotnet build` costs
-real memory whether or not SageFs itself ran it — that's exactly how one
+real memory whether or not Bozzetto itself ran it — that's exactly how one
 night five agents each ran their own final-gate build against one daemon and
 took it to 55GB, invisibly to the daemon's own accounting. So a declared
 final gate now asks the daemon for an expensive-work lease
@@ -58,14 +58,14 @@ final gate now asks the daemon for an expensive-work lease
 
 The hook does not release the lease afterward (a `PreToolUse` hook can't wrap
 the command's own execution) — it relies on the lease's own TTL (10-15
-minutes for a build/test run) to expire it. See `skills/sagefs/SKILL.md`'s
+minutes for a build/test run) to expire it. See `skills/bozzetto/SKILL.md`'s
 "Before anything expensive: ask" section for the full lease contract, and
 "Busy versus broken" for why this distinction is the whole point.
 
 ### Install
 
 Add this to `.claude/settings.json` (the project's) or `~/.claude/settings.json`
-(yours), with the path pointing at your SageFs checkout:
+(yours), with the path pointing at your Bozzetto checkout:
 
 ```json
 {
@@ -76,7 +76,7 @@ Add this to `.claude/settings.json` (the project's) or `~/.claude/settings.json`
         "hooks": [
           {
             "type": "command",
-            "command": "/path/to/SageFs/tools/agent-hooks/sagefs-repl-guard",
+            "command": "/path/to/Bozzetto/tools/agent-hooks/bozzetto-repl-guard",
             "timeout": 15
           }
         ]
@@ -86,19 +86,19 @@ Add this to `.claude/settings.json` (the project's) or `~/.claude/settings.json`
 }
 ```
 
-In the SageFs repo itself, `"$CLAUDE_PROJECT_DIR/tools/agent-hooks/sagefs-repl-guard"`
+In the Bozzetto repo itself, `"$CLAUDE_PROJECT_DIR/tools/agent-hooks/bozzetto-repl-guard"`
 works.
 
 ### How it's built
 
 - `ReplGuard.fs` is the decision: command plus context in, `Allow` or
-  `Deny reason` out. It's pure, and SageFs.Tests compiles the same file and tests
+  `Deny reason` out. It's pure, and Bozzetto.Tests compiles the same file and tests
   it (`ReplGuardTests.fs`). `sessionProbe`/`directoryContains` in there are the
   "is there a Ready REPL for this cwd" check, also unit-tested directly.
-- `sagefs-repl-guard.fsx` is the IO around it: reads the hook JSON from stdin,
+- `bozzetto-repl-guard.fsx` is the IO around it: reads the hook JSON from stdin,
   walks up for a project file, probes `/health` once (for both daemon-liveness
   and its `sessionStates`), and writes the deny JSON.
-- `sagefs-repl-guard` is a small POSIX sh wrapper. `dotnet fsi` takes about a
+- `bozzetto-repl-guard` is a small POSIX sh wrapper. `dotnet fsi` takes about a
   second and a half to start, and a hook runs before every Bash call, so the
   wrapper exits straight away for commands that never mention dotnet. Only the
   ones that do pay for the F# script.
@@ -111,10 +111,10 @@ A broken guard never blocks you.
 
 ```sh
 echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"'"$PWD"'","tool_input":{"command":"dotnet test"}}' \
-  | tools/agent-hooks/sagefs-repl-guard
+  | tools/agent-hooks/bozzetto-repl-guard
 ```
 
-With SageFs up and a Ready session rooted at (or above) `$PWD`, that prints
-the deny JSON. With SageFs down, with no Ready session covering `$PWD` yet,
-or with `SAGEFS_FINAL_GATE=1 dotnet test` as the command, it prints nothing
+With Bozzetto up and a Ready session rooted at (or above) `$PWD`, that prints
+the deny JSON. With Bozzetto down, with no Ready session covering `$PWD` yet,
+or with `BOZZETTO_FINAL_GATE=1 dotnet test` as the command, it prints nothing
 and exits 0.

@@ -1,7 +1,7 @@
-# Project types SageFs can load — and what each one needs
+# Project types Bozzetto can load — and what each one needs
 
-What every conceivable .NET/F# project type requires to load and run in a SageFs
-FSI session, grounded in the Microsoft MSBuild docs, with SageFs's current
+What every conceivable .NET/F# project type requires to load and run in a Bozzetto
+FSI session, grounded in the Microsoft MSBuild docs, with Bozzetto's current
 handling. Three independent things must line up for a project to load: its
 **shared framework** (managed assemblies FSI must reference), its **native
 runtime packs** (`runtimes/<rid>/native/`), and its **kind** (which decides how
@@ -16,7 +16,7 @@ Sources: [Microsoft.NET.Sdk.Desktop MSBuild props](https://learn.microsoft.com/e
 FSI needs the managed assemblies of every shared framework the project uses.
 These are NOT in the project's `bin/` — they come from `<dotnet-root>/shared/`.
 
-| Shared framework | Enabled by | SageFs |
+| Shared framework | Enabled by | Bozzetto |
 |---|---|---|
 | `Microsoft.NETCore.App` | every project (base runtime) | implicit |
 | `Microsoft.AspNetCore.App` | `Sdk="Microsoft.NET.Sdk.Web"`, `Sdk.Razor`, Blazor, or an explicit `FrameworkReference` | resolved (aspNetShared fallback in `ProjectLoading`) |
@@ -28,7 +28,7 @@ P/Invoke'd native libraries the build deposits under the project output. FSI /
 the worker must resolve them or the P/Invoke throws `DllNotFound` and (on an
 unguarded thread) FailFasts the worker.
 
-| Native dep | Projects | SageFs |
+| Native dep | Projects | Bozzetto |
 |---|---|---|
 | `libraylib.so`, SDL2, etc. | games | resolved (`NativeResolution.fs` probes `runtimes/<rid>/native/`) |
 | `libSkiaSharp.so`, `libHarfBuzzSharp.so` | Avalonia, Uno (Skia), MAUI | same resolver (Avalonia E2E verification in progress) |
@@ -47,7 +47,7 @@ markers so they still classify as NativeGui.
 
 ## The per-project-type table
 
-| Project type | Enabled by | Shared framework | Native deps | ProjectKind | Runs on Linux? | SageFs status |
+| Project type | Enabled by | Shared framework | Native deps | ProjectKind | Runs on Linux? | Bozzetto status |
 |---|---|---|---|---|---|---|
 | Console / library | `Sdk` default | NETCore.App | none | Console | yes | works |
 | ASP.NET Core / Falco / Giraffe / Saturn | `Sdk.Web` or AspNetCore FrameworkRef or web package | + AspNetCore.App | none | Web | yes | works (web reload proven) |

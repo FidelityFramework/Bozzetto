@@ -1,7 +1,7 @@
-SAGEFS DAEMON HEALTH PANEL - COMPLETE GUIDE
+BOZZETTO DAEMON HEALTH PANEL - COMPLETE GUIDE
 ═════════════════════════════════════════════
 
-GENERATED REFERENCE FILES (in C:\Code\Repos\SageFs\)
+GENERATED REFERENCE FILES (in C:\Code\Repos\Bozzetto\)
 ────────────────────────────────────────────────────
 1. DAEMON_HEALTH_QUICK_REF.md - START HERE FOR IMPLEMENTATION
 2. DAEMON_HEALTH_EXPLORATION.md - REFERENCE FOR UNDERSTANDING
@@ -77,28 +77,28 @@ IMPLEMENTATION ORDER
 KEY FILES & LINE NUMBERS
 ───────────────────────────────────────────────────
 DaemonHealth.fs
-  C:\Code\Repos\SageFs\SageFs.Core\Features\DaemonHealth.fs
+  C:\Code\Repos\Bozzetto\Bozzetto.Core\Features\DaemonHealth.fs
   Types: 6-47, Functions: 49-127
 
 SseWriter.fs
-  C:\Code\Repos\SageFs\SageFs.Core\SseWriter.fs
+  C:\Code\Repos\Bozzetto\Bozzetto.Core\SseWriter.fs
   formatSseEvent: 15-21
   injectSessionId: 49-56
   formatEvalTimelineEvent (pattern): 246-255
 
 DashboardFragments.fs
-  C:\Code\Repos\SageFs\SageFs\DashboardFragments.fs
+  C:\Code\Repos\Bozzetto\Bozzetto\DashboardFragments.fs
   renderEvalStats (pattern): 131-145
   renderMainContent (integration): 743-800
 
 Dashboard.fs
-  C:\Code\Repos\SageFs\SageFs\Dashboard.fs
+  C:\Code\Repos\Bozzetto\Bozzetto\Dashboard.fs
   pushState: 225-373
   GetEvalTimeline: 250-251
   DashboardSnapshot construction: 355-372
 
 DashboardTypes.fs
-  C:\Code\Repos\SageFs\SageFs\DashboardTypes.fs
+  C:\Code\Repos\Bozzetto\Bozzetto\DashboardTypes.fs
   DomIds: 17-44
   EvalStatsView (template): 140-166
   DashboardQueries: 380-402

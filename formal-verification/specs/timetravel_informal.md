@@ -1,6 +1,6 @@
 # Informal Specification: TimeTravel
 
-**Source**: `SageFs.Core/TimeTravel.fs`
+**Source**: `Bozzetto.Core/TimeTravel.fs`
 **Target**: `TimeTravel.TimeTravelState` and its navigation operations
 **Phase**: 2 → 3
 

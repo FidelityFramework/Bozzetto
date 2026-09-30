@@ -1,6 +1,6 @@
 # Warmup Design: Next Steps
 
-Three design proposals for reducing SageFs warmup latency. Each is scoped to a specific concern: caching the replay plan, eagerly prewarming sessions, and measuring ReadyToRun impact.
+Three design proposals for reducing Bozzetto warmup latency. Each is scoped to a specific concern: caching the replay plan, eagerly prewarming sessions, and measuring ReadyToRun impact.
 
 **Baseline architecture** (read `docs/fsi warmup.md` for full analysis):
 
@@ -38,7 +38,7 @@ resolveWarmupReplayPlan(fingerprint):
 
 **Cache key**: structural equality on `Fingerprint`. If any file stamp changes (size or mtime), the fingerprint mismatches and the cache is invalidated.
 
-**Storage**: JSON at `{projectDir}/.SageFs/warmup-replay-cache.json`, created by `tryGetCachePath` (`WarmupReplayCache.fs:132–143`).
+**Storage**: JSON at `{projectDir}/.bozzetto/warmup-replay-cache.json`, created by `tryGetCachePath` (`WarmupReplayCache.fs:132–143`).
 
 ### What's NOT Cached
 
@@ -55,7 +55,7 @@ The replay cache saves which namespaces to open, but the actual `EvalInteraction
 - .NET SDK version change (detected via assembly file stamps changing after rebuild)
 - Schema version bump in `WarmupReplayCache.SchemaVersion`
 
-**Storage format**: The compiled DLL at `{projectDir}/.SageFs/warmup-precompiled.dll`, keyed by the same fingerprint.
+**Storage format**: The compiled DLL at `{projectDir}/.bozzetto/warmup-precompiled.dll`, keyed by the same fingerprint.
 
 **Compilation step**: After warmup completes, emit a script like:
 
@@ -90,11 +90,11 @@ Add a histogram metric in `Instrumentation.fs`:
 ```fsharp
 let warmupOpenPhaseMs =
   sessionMeter.CreateHistogram<float>(
-    "sagefs.warmup.open_phase_ms", "ms",
+    "bozzetto.warmup.open_phase_ms", "ms",
     "Warmup namespace-opening phase duration")
 let warmupOpenBatchMs =
   sessionMeter.CreateHistogram<float>(
-    "sagefs.warmup.open_batch_ms", "ms",
+    "bozzetto.warmup.open_batch_ms", "ms",
     "Per-batch open duration during warmup")
 ```
 
@@ -161,11 +161,11 @@ If an explicit `CreateSession` request arrives while a standby is still in `Warm
    ```fsharp
    let eagerPrewarmAttempts =
      sessionMeter.CreateCounter<int64>(
-       "sagefs.standby.eager_prewarm_attempts_total",
+       "bozzetto.standby.eager_prewarm_attempts_total",
        description = "Total eager prewarm attempts at daemon boot")
    let eagerPrewarmHits =
      sessionMeter.CreateCounter<int64>(
-       "sagefs.standby.eager_prewarm_hits_total",
+       "bozzetto.standby.eager_prewarm_hits_total",
        description = "Eager prewarmed standbys consumed by CreateSession")
    ```
 
@@ -177,18 +177,18 @@ If an explicit `CreateSession` request arrives while a standby is still in `Warm
 
 `PublishReadyToRun` (R2R) pre-JITs IL to native code at publish time. The produced assemblies contain both IL (for portability) and native code (for fast startup). The JIT still runs for methods not covered by the R2R image, but the hot startup path is pre-compiled.
 
-SageFs is published as a global dotnet tool (`PackAsTool=true` in `SageFs.fsproj:5`). R2R is compatible with tools — the NuGet package includes platform-specific native images.
+Bozzetto is published as a global dotnet tool (`PackAsTool=true` in `Bozzetto.fsproj:5`). R2R is compatible with tools — the NuGet package includes platform-specific native images.
 
 ### Current State
 
-No R2R configuration exists. `SageFs.fsproj` has no `PublishReadyToRun` property. The tool runs with full JIT on every invocation.
+No R2R configuration exists. `Bozzetto.fsproj` has no `PublishReadyToRun` property. The tool runs with full JIT on every invocation.
 
 ### What to Measure
 
 **Milestone 1: Process startup to FSI session creation**
 - Start: process entry point (`Program.fs` main)
 - End: `FsiEvaluationSession.Create` returns (`AppState.fs:593`)
-- This captures .NET runtime init + SageFs bootstrap + F# compiler JIT
+- This captures .NET runtime init + Bozzetto bootstrap + F# compiler JIT
 
 **Milestone 2: JIT time during warmup**
 - Use `System.Runtime.JitInfo.GetCompiledMethodCount()` and `GetCompiledILBytes()` before and after warmup
@@ -211,20 +211,20 @@ No R2R configuration exists. `SageFs.fsproj` has no `PublishReadyToRun` property
 
 ```powershell
 # Build and pack without R2R
-dotnet pack SageFs -o nupkg -c Release
+dotnet pack Bozzetto -o nupkg -c Release
 # Record nupkg size
 Get-ChildItem nupkg/*.nupkg | Select-Object Name, Length
 # Install and run
-dotnet tool install --global SageFs --add-source nupkg --no-cache
+dotnet tool install --global Bozzetto --add-source nupkg --no-cache
 # Measure cold start (3 runs, take median)
-Measure-Command { SageFs --proj SageFs.Tests/SageFs.Tests.fsproj --headless --quit-after-warmup }
+Measure-Command { Bozzetto --proj Bozzetto.Tests/Bozzetto.Tests.fsproj --headless --quit-after-warmup }
 ```
 
-Note: `--headless --quit-after-warmup` doesn't exist yet. For the experiment, add a temporary `--benchmark-warmup` flag that runs the full warmup pipeline and exits with timing on stdout. Or, use the existing `WarmupPhaseTiming` logged to the SageFs console.
+Note: `--headless --quit-after-warmup` doesn't exist yet. For the experiment, add a temporary `--benchmark-warmup` flag that runs the full warmup pipeline and exits with timing on stdout. Or, use the existing `WarmupPhaseTiming` logged to the Bozzetto console.
 
 **With R2R**:
 
-Add to `SageFs.fsproj`:
+Add to `Bozzetto.fsproj`:
 
 ```xml
 <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -240,14 +240,14 @@ Repeat the same measurement. R2R only applies to Release builds, so Debug is una
 
 | Metric | Expected Change | Confidence |
 |---|---|---|
-| Process startup → FSI create | 20–40% faster | High — R2R eliminates first-invocation JIT for SageFs code |
+| Process startup → FSI create | 20–40% faster | High — R2R eliminates first-invocation JIT for Bozzetto code |
 | JIT bytes during warmup | 10–30% reduction | Medium — FSI's internal JIT is not covered by R2R |
-| Total warmup wall clock | 5–15% faster | Low-medium — most time is in FSI eval, not SageFs JIT |
+| Total warmup wall clock | 5–15% faster | Low-medium — most time is in FSI eval, not Bozzetto JIT |
 | Binary size | 2–3x larger nupkg | High — standard R2R overhead |
 
 ### Why This Might NOT Help Much
 
-The F# compiler (`FSharp.Compiler.Service.dll`) is the biggest JIT consumer during warmup, and it's a NuGet dependency — not part of SageFs's own assemblies. R2R only pre-compiles assemblies in the SageFs tool package. FCS would need its own R2R treatment (which the F# team has not shipped).
+The F# compiler (`FSharp.Compiler.Service.dll`) is the biggest JIT consumer during warmup, and it's a NuGet dependency — not part of Bozzetto's own assemblies. R2R only pre-compiles assemblies in the Bozzetto tool package. FCS would need its own R2R treatment (which the F# team has not shipped).
 
 ### Recommendation
 

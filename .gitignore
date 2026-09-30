@@ -1,7 +1,7 @@
 .vscode/
 bin/
 obj/
-.sagefs_history
+.bozzetto_history
 .idea/
 *.DotSettings.user
 /packages/
@@ -24,30 +24,18 @@ playwright-report/
 analyzers/community
 
 .fake
-# nuget.config declares mcp-sdk-nupkg/ as a local package source, so the
-# directory must exist whenever NuGet reads that config -- including at the
-# moment `dotnet fsi ci-pipeline.fsx` resolves its own `#r "nuget:"` on a cold
-# machine, BEFORE any pipeline stage can pack into it. Track an empty dir via
-# .gitkeep (a missing local source is NU1301) while ignoring the packed output.
-mcp-sdk-nupkg/*
-!mcp-sdk-nupkg/.gitkeep
-mcp-sdk/
-# Same for the patched Harmony fork (LibHarmony): cloned + packed by ci-pipeline.fsx, referenced via nuget.config.
-harmony-nupkg/*
-!harmony-nupkg/.gitkeep
-# The packed nupkg IS committed: LibHarmony builds are not byte-reproducible, and packages.lock.json pins the
-# package's content hash, so a locked-mode restore needs one fixed artifact (see Directory.Packages.props).
-!harmony-nupkg/SageFs.Harmony.*.nupkg
-harmony-fork/
+# The owned Harmony artifact is a reviewed vendored dependency, not build scratch.
+# Refresh builds run in the separately controlled fork and use external cache.
+!vendor/Bozzetto.Harmony/*.nupkg
 *.log
 aspire-traces.png
 otel-*.png
 **/TestResults.junit.xml
 
 BenchmarkDotNet.Artifacts/
-# sagefs-demos recording scratch output (demo-gif-plan.md §1, §4.1) — the
+# bozzetto-demos recording scratch output (demo-gif-plan.md §1, §4.1) — the
 # published, committed artifacts live under docs/demos/, written only by an
-# explicit `sagefs-demos publish` step (Part II). artifacts/ is throwaway
+# explicit `bozzetto-demos publish` step (Part II). artifacts/ is throwaway
 # local build output, same as bin/obj/.
 /artifacts/
 viz-output/*
@@ -65,7 +53,7 @@ viz-output/code-city-tests/bin/
 viz-output/code-city-tests/obj/
 
 test-output.txt
-.SageFs/
+.bozzetto/
 .commandcode/
 .playwright-mcp/
 .slopwatch/
@@ -80,14 +68,14 @@ coverage-report/
 # in c6be863d; this keeps that from happening again.
 /release-blockers.md
 /standby-session-rework.md
-/sagefs-roast.md
-/sagefs-roast-2.md
-/sagefs-roast-3.md
-/sagefs-roast-4.md
+/bozzetto-roast.md
+/bozzetto-roast-2.md
+/bozzetto-roast-3.md
+/bozzetto-roast-4.md
 
 # Local output of the ci-pipeline.fsx release stages (nupkg + vsix + manifest);
 # on CI it is uploaded as the release-assets artifact, never committed.
 release/
 
 # Scratch copies the hot-reload state tests build per runtime (HotReloadStateHarness).
-SageFs.Tests/fixtures/HotReloadStateFixture/.runs/
+Bozzetto.Tests/fixtures/HotReloadStateFixture/.runs/

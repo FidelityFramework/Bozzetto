@@ -1,6 +1,6 @@
 # Formal Verification Correspondence
 
-> 🔬 Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.
+> 🔬 Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.
 
 > ⚠️ **HAND-MAINTAINED, DRIFT-PRONE, NOT MECHANICALLY CHECKED (2026-09-14).** This
 > table is a manual mapping pinned to commit `bb95c100` (2026-05-11); no test or
@@ -23,13 +23,13 @@ known divergence so that the validity of the associated proofs can be assessed h
 ## RingBuffer
 
 **Lean file**: `formal-verification/lean/FVSquad/RingBuffer.lean`
-**F# source**: `SageFs.Core/RingBuffer.fs`
+**F# source**: `Bozzetto.Core/RingBuffer.fs`
 
 ### Type correspondence
 
 | Lean name | F# name | F# file + location | Correspondence | Notes |
 |---|---|---|---|---|
-| `RingBuffer α` | `RingBuffer<'T>` | `SageFs.Core/RingBuffer.fs` | **Abstraction** | F# is a mutable record; Lean is immutable. Field names differ (see below). |
+| `RingBuffer α` | `RingBuffer<'T>` | `Bozzetto.Core/RingBuffer.fs` | **Abstraction** | F# is a mutable record; Lean is immutable. Field names differ (see below). |
 | `RingBuffer.items` | `Items : 'T array` | `RingBuffer.fs` | **Exact** | Both are fixed-capacity arrays. |
 | `RingBuffer.head` | `Head : int` | `RingBuffer.fs` | **Approximation** | F# uses `int` (signed, 64-bit on 64-bit targets); Lean uses `Nat`. Negative values are impossible by invariant, so the invariant holds on both representations. |
 | `RingBuffer.count` | `Count : int` | `RingBuffer.fs` | **Approximation** | Same as above — F# `int`, Lean `Nat`. |
@@ -40,11 +40,11 @@ known divergence so that the validity of the associated proofs can be assessed h
 
 | Lean name | F# name | F# file | Correspondence level | Notes |
 |---|---|---|---|---|
-| `rbCreate default cap h` | `RingBuffer.create` | `SageFs.Core/RingBuffer.fs` | **Exact** | Returns empty buffer with `Array.replicate cap default`. Lean requires `h : 0 < cap` explicitly; F# raises an exception. |
-| `rbPush x buf` | `RingBuffer.push` | `SageFs.Core/RingBuffer.fs` | **Abstraction** | F# mutates `Items[newHead] <- x` in place; Lean uses `Array.set` to produce a new array. Observable input/output semantics are identical. Eviction (when `Count = Capacity`) is captured: `count = min (count+1) size`. |
-| `rbTryGet age buf` | `RingBuffer.tryGet` | `SageFs.Core/RingBuffer.fs` | **Exact** | Both return `None`/`none` for `age ≥ count` and `Some items[(head + age) % capacity]` otherwise. |
-| `rbClear buf` | `RingBuffer.clear` | `SageFs.Core/RingBuffer.fs` | **Exact** | Lean preserves `total`, resets `head=0`, `count=0`. Matches F# `clear` behaviour. |
-| `rbToList buf` | *(not a direct F# function)* | `SageFs.Core/RingBuffer.fs` | **Abstraction** | No direct F# equivalent; models the observable contents as a `List α` ordered from most-recent to oldest. Useful for stating and proving invariants about the sequence of pushed values. |
+| `rbCreate default cap h` | `RingBuffer.create` | `Bozzetto.Core/RingBuffer.fs` | **Exact** | Returns empty buffer with `Array.replicate cap default`. Lean requires `h : 0 < cap` explicitly; F# raises an exception. |
+| `rbPush x buf` | `RingBuffer.push` | `Bozzetto.Core/RingBuffer.fs` | **Abstraction** | F# mutates `Items[newHead] <- x` in place; Lean uses `Array.set` to produce a new array. Observable input/output semantics are identical. Eviction (when `Count = Capacity`) is captured: `count = min (count+1) size`. |
+| `rbTryGet age buf` | `RingBuffer.tryGet` | `Bozzetto.Core/RingBuffer.fs` | **Exact** | Both return `None`/`none` for `age ≥ count` and `Some items[(head + age) % capacity]` otherwise. |
+| `rbClear buf` | `RingBuffer.clear` | `Bozzetto.Core/RingBuffer.fs` | **Exact** | Lean preserves `total`, resets `head=0`, `count=0`. Matches F# `clear` behaviour. |
+| `rbToList buf` | *(not a direct F# function)* | `Bozzetto.Core/RingBuffer.fs` | **Abstraction** | No direct F# equivalent; models the observable contents as a `List α` ordered from most-recent to oldest. Useful for stating and proving invariants about the sequence of pushed values. |
 
 ### Known divergences
 
@@ -123,7 +123,7 @@ All theorems below are proved by `lake build` with Lean 4.30.0-rc2 (no `sorry`),
 ## ResultEx
 
 **Lean file**: `formal-verification/lean/FVSquad/ResultEx.lean`
-**F# source**: `SageFs.Core/ResultEx.fs`
+**F# source**: `Bozzetto.Core/ResultEx.fs`
 
 ### Type correspondence
 
@@ -193,7 +193,7 @@ No runnable correspondence test harness exists yet. Manual review confirms seman
 ## RestartPolicy
 
 **Lean file**: `formal-verification/lean/FVSquad/RestartPolicy.lean`
-**F# source**: `SageFs.Core/RestartPolicy.fs`
+**F# source**: `Bozzetto.Core/RestartPolicy.fs`
 
 ### Type correspondence
 
@@ -221,7 +221,7 @@ No runnable correspondence test harness exists yet. Manual review confirms seman
 #### D2 — Error payload omitted
 
 - **Lean**: `RPDecision.giveUp` carries no error value.
-- **F#**: `Decision.GiveUp of SageFsError` carries an error.
+- **F#**: `Decision.GiveUp of BozzettoError` carries an error.
 - **Impact**: No theorem refers to the error content, so no proved theorem is invalidated.
 
 ### Proved theorems and validity (8/8)
@@ -246,7 +246,7 @@ No runnable test harness. Manual code review confirms all proved theorems reflec
 ## RetryPolicy
 
 **Lean file**: `formal-verification/lean/FVSquad/RetryPolicy.lean`
-**F# source**: `SageFs.Core/RetryPolicy.fs`
+**F# source**: `Bozzetto.Core/RetryPolicy.fs`
 
 ### Type correspondence
 
@@ -308,13 +308,13 @@ No runnable test harness. Jitter divergence is the key limitation — formally n
 ## Affordances
 
 **Lean file**: `formal-verification/lean/FVSquad/Affordances.lean`
-**F# source**: `SageFs.Core/Affordances.fs`
+**F# source**: `Bozzetto.Core/Affordances.fs`
 
 ### Type correspondence
 
 | Lean name | F# name | F# file | Correspondence | Notes |
 |---|---|---|---|---|
-| `SessionState` | `SageFs.SessionState` | `SageFs.Core/SessionLifecycle.fs` | **Exact** | `Uninitialized \| WarmingUp \| Ready \| Evaluating \| Faulted \| ShuttingDown`. |
+| `SessionState` | `Bozzetto.SessionState` | `Bozzetto.Core/SessionLifecycle.fs` | **Exact** | `Uninitialized \| WarmingUp \| Ready \| Evaluating \| Faulted \| ShuttingDown`. |
 
 ### Function correspondence
 
@@ -379,14 +379,14 @@ All 19 theorems are proved by `decide` (fully enumerated over the finite `Sessio
 ## HotReloadState
 
 **Lean file**: `formal-verification/lean/FVSquad/HotReloadState.lean`
-**F# source**: `SageFs.Core/HotReloadState.fs`
+**F# source**: `Bozzetto.Core/HotReloadState.fs`
 
 ### Type correspondence
 
 | Lean name | F# name | F# file + location | Correspondence | Notes |
 |---|---|---|---|---|
-| `HRS` | `HotReloadState.T` | `SageFs.Core/HotReloadState.fs` | **Abstraction** | F# uses `Set<string>` (a balanced BST giving O(log n) membership and uniqueness by construction). Lean models this as `List String` with idempotent `watch` (no-op if already present) to enforce absence of duplicates. Ordering is not preserved — only membership matters for the verified properties. |
-| `HRS.watched` | `T.Watched : Set<string>` | `SageFs.Core/HotReloadState.fs` | **Approximation** | `Set<string>` has no duplicates and has a defined ordering; `List String` may have duplicates only in states produced by `unwatch` after prior direct list manipulation (impossible via the public API). All public operations preserve no-duplicate invariant. |
+| `HRS` | `HotReloadState.T` | `Bozzetto.Core/HotReloadState.fs` | **Abstraction** | F# uses `Set<string>` (a balanced BST giving O(log n) membership and uniqueness by construction). Lean models this as `List String` with idempotent `watch` (no-op if already present) to enforce absence of duplicates. Ordering is not preserved — only membership matters for the verified properties. |
+| `HRS.watched` | `T.Watched : Set<string>` | `Bozzetto.Core/HotReloadState.fs` | **Approximation** | `Set<string>` has no duplicates and has a defined ordering; `List String` may have duplicates only in states produced by `unwatch` after prior direct list manipulation (impossible via the public API). All public operations preserve no-duplicate invariant. |
 
 ### Function correspondence
 
@@ -458,23 +458,23 @@ All 19 theorems are proved by `decide` (fully enumerated over the finite `Sessio
 ### Validation evidence
 
 No Aeneas-generated Lean file or separate test harness exists yet (Task 8 not yet run for this target).
-The Lean model has been manually cross-referenced against `SageFs.Core/HotReloadState.fs` line by line.
+The Lean model has been manually cross-referenced against `Bozzetto.Core/HotReloadState.fs` line by line.
 
 ---
 
 ## EvalPipeline
 
 **Lean file**: `formal-verification/lean/FVSquad/EvalPipeline.lean`
-**F# source**: `SageFs.Core/EvalPipeline.fs`
+**F# source**: `Bozzetto.Core/EvalPipeline.fs`
 
 ### Type correspondence
 
 | Lean name | F# name | F# file + location | Correspondence | Notes |
 |---|---|---|---|---|
-| `EPOutcome` | `StageOutcome` | `SageFs.Core/EvalPipeline.fs` | **Abstraction** | F# `StageOutcome.Failed` carries a `SageFsError` payload; Lean `EPOutcome.failed` carries `Unit`. Error payloads are irrelevant to structural trace properties. |
-| `EPStage` | `CompletedStage` | `SageFs.Core/EvalPipeline.fs` | **Abstraction** | F# struct includes `ElapsedMs : float<ms>`; Lean omits timing (it is a measured side effect). Both have `name : string` / `Name : string` and an outcome field. |
-| `EPTracked α` | `TrackedResult<'T>` | `SageFs.Core/EvalPipeline.fs` | **Abstraction** | F# struct includes `ElapsedMs`; Lean omits it. F# uses `Result<'T, SageFsError>`; Lean uses `Except Unit α`. |
-| `EPTrace α` | `PipelineTrace<'T>` | `SageFs.Core/EvalPipeline.fs` | **Exact** | Same structure: `result` + `stages` (F# list, Lean list). |
+| `EPOutcome` | `StageOutcome` | `Bozzetto.Core/EvalPipeline.fs` | **Abstraction** | F# `StageOutcome.Failed` carries a `BozzettoError` payload; Lean `EPOutcome.failed` carries `Unit`. Error payloads are irrelevant to structural trace properties. |
+| `EPStage` | `CompletedStage` | `Bozzetto.Core/EvalPipeline.fs` | **Abstraction** | F# struct includes `ElapsedMs : float<ms>`; Lean omits timing (it is a measured side effect). Both have `name : string` / `Name : string` and an outcome field. |
+| `EPTracked α` | `TrackedResult<'T>` | `Bozzetto.Core/EvalPipeline.fs` | **Abstraction** | F# struct includes `ElapsedMs`; Lean omits it. F# uses `Result<'T, BozzettoError>`; Lean uses `Except Unit α`. |
+| `EPTrace α` | `PipelineTrace<'T>` | `Bozzetto.Core/EvalPipeline.fs` | **Exact** | Same structure: `result` + `stages` (F# list, Lean list). |
 
 ### Function correspondence
 
@@ -497,7 +497,7 @@ The Lean model has been manually cross-referenced against `SageFs.Core/HotReload
 #### D2 — Error payload abstracted to `Unit`
 
 - **Lean model**: `EPTracked.value : Except Unit α`; error carries no information.
-- **F# source**: `TrackedResult.Value : Result<'T, SageFsError>`; errors carry typed error data.
+- **F# source**: `TrackedResult.Value : Result<'T, BozzettoError>`; errors carry typed error data.
 - **Impact**: Theorems about *which* error is propagated are not provable in the current model. Theorems about *structural* error propagation (an error short-circuits; the stage is recorded as `failed`) remain valid because the error payload is ignored.
 - **Proof impact**: Structural theorems are unaffected.
 
@@ -528,7 +528,7 @@ The Lean model has been manually cross-referenced against `SageFs.Core/HotReload
 ### Validation evidence
 
 No Aeneas-generated Lean file or runnable correspondence test harness exists yet.
-The Lean model has been manually cross-referenced against `SageFs.Core/EvalPipeline.fs`
+The Lean model has been manually cross-referenced against `Bozzetto.Core/EvalPipeline.fs`
 line by line.
 
 ---
@@ -536,15 +536,15 @@ line by line.
 ## SessionLifecycle
 
 **Lean file**: `formal-verification/lean/FVSquad/SessionLifecycle.lean`
-**F# source**: `SageFs.Core/AppState.fs`, `SageFs.Core/SessionState.fs`
+**F# source**: `Bozzetto.Core/AppState.fs`, `Bozzetto.Core/SessionState.fs`
 
 ### Type correspondence
 
 | Lean name | F# name | F# file + location | Correspondence | Notes |
 |---|---|---|---|---|
-| `Activity` | `SessionActivity` | `SageFs.Core/AppState.fs:156–161` | **Exact** | Two constructors: `Idle`/`Evaluating`. Lean `deriving DecidableEq, Repr`. |
-| `Phase α` | `SessionPhase` | `SageFs.Core/AppState.fs:163–166` | **Abstraction** | F# carries a concrete `AppState` inside `Active`; Lean abstracts it to a type variable `α`. The internal AppState fields are irrelevant to lifecycle state machine properties. |
-| `State` | `SessionState` | `SageFs.Core/SessionState.fs` | **Exact** | Five constructors: `Uninitialized / WarmingUp / Ready / Evaluating / Faulted`. Same semantics. |
+| `Activity` | `SessionActivity` | `Bozzetto.Core/AppState.fs:156–161` | **Exact** | Two constructors: `Idle`/`Evaluating`. Lean `deriving DecidableEq, Repr`. |
+| `Phase α` | `SessionPhase` | `Bozzetto.Core/AppState.fs:163–166` | **Abstraction** | F# carries a concrete `AppState` inside `Active`; Lean abstracts it to a type variable `α`. The internal AppState fields are irrelevant to lifecycle state machine properties. |
+| `State` | `SessionState` | `Bozzetto.Core/SessionState.fs` | **Exact** | Five constructors: `Uninitialized / WarmingUp / Ready / Evaluating / Faulted`. Same semantics. |
 
 ### Function correspondence
 
@@ -587,22 +587,22 @@ line by line.
 ### Validation evidence
 
 No Aeneas-generated Lean file or runnable test harness exists. The Lean model
-has been manually cross-referenced against `SageFs.Core/AppState.fs` (lines
-163–180) and `SageFs.Core/SessionState.fs`.
+has been manually cross-referenced against `Bozzetto.Core/AppState.fs` (lines
+163–180) and `Bozzetto.Core/SessionState.fs`.
 
 ---
 
 ## Theme
 
 **Lean file**: `formal-verification/lean/FVSquad/Theme.lean`
-**F# source**: `SageFs.Core/Theme.fs`
+**F# source**: `Bozzetto.Core/Theme.fs`
 
 ### Type correspondence
 
 | Lean name | F# name | F# file + location | Correspondence | Notes |
 |---|---|---|---|---|
-| `ThemeConfig` | `ThemeConfig` | `SageFs.Core/Theme.fs` | **Exact** | All 34 color fields present in both. F# uses `PascalCase` fields (e.g. `FgDefault`); Lean uses `camelCase` (e.g. `fgDefault`). Field order matches. |
-| `defaults` | `Theme.defaults` | `SageFs.Core/Theme.fs` | **Exact** | All 34 hex string values are identical between Lean and F#. |
+| `ThemeConfig` | `ThemeConfig` | `Bozzetto.Core/Theme.fs` | **Exact** | All 34 color fields present in both. F# uses `PascalCase` fields (e.g. `FgDefault`); Lean uses `camelCase` (e.g. `fgDefault`). Field order matches. |
+| `defaults` | `Theme.defaults` | `Bozzetto.Core/Theme.fs` | **Exact** | All 34 hex string values are identical between Lean and F#. |
 
 ### Function correspondence
 
@@ -645,14 +645,14 @@ has been manually cross-referenced against `SageFs.Core/AppState.fs` (lines
 ### Validation evidence
 
 No Aeneas-generated Lean file or runnable test harness exists. The Lean model
-has been manually cross-referenced against `SageFs.Core/Theme.fs`.
+has been manually cross-referenced against `Bozzetto.Core/Theme.fs`.
 
 ---
 
 ## Composition
 
 **Lean file**: `formal-verification/lean/FVSquad/Composition.lean`
-**F# source**: `SageFs.Core/AppState.fs`, `SageFs.Core/SessionState.fs`, `SageFs.Core/Affordances.fs`
+**F# source**: `Bozzetto.Core/AppState.fs`, `Bozzetto.Core/SessionState.fs`, `Bozzetto.Core/Affordances.fs`
 
 This file is a cross-module composition file; it does not introduce new F# types, but
 bridges the `SessionLifecycle` and `Affordances` models.
@@ -691,10 +691,10 @@ The bridge function `stateToSessionState` was manually verified to match the F# 
 ## PhaseTransition
 
 **Lean file**: `formal-verification/lean/FVSquad/PhaseTransition.lean`
-**F# source**: `SageFs.Core/AppState.fs` (eval actor, EvalReset, EvalHardReset handlers)
+**F# source**: `Bozzetto.Core/AppState.fs` (eval actor, EvalReset, EvalHardReset handlers)
 
 This file defines a formal `validTransition` relation that captures which phase-to-phase
-transitions are permitted in the SageFs session actor, and proves safety invariants about it.
+transitions are permitted in the Bozzetto session actor, and proves safety invariants about it.
 
 ### Transition relation correspondence
 
@@ -742,7 +742,7 @@ transitions are permitted in the SageFs session actor, and proves safety invaria
 ### Validation evidence
 
 No runnable test harness. The transition relation was manually derived from the
-F# session actor pattern matches in `SageFs.Core/AppState.fs`, cross-referenced
+F# session actor pattern matches in `Bozzetto.Core/AppState.fs`, cross-referenced
 against the EvalRun, EvalFinished, EvalReset, EvalHardReset, and EvalEnableStdout
 message handlers (approximately lines 984–1350).
 
@@ -751,7 +751,7 @@ message handlers (approximately lines 984–1350).
 ## Target 12: SmartReset
 
 - **Lean file**: `formal-verification/lean/FVSquad/SmartReset.lean`
-- **F# source**: `SageFs.Core/SmartReset.fs`
+- **F# source**: `Bozzetto.Core/SmartReset.fs`
 - **Phase**: 5 ✅ (all theorems proved, 0 sorry)
 
 ### Key functions
@@ -759,7 +759,7 @@ message handlers (approximately lines 984–1350).
 | Lean name | F# name | F# location | Correspondence | Notes |
 |---|---|---|---|---|
 | `SROutcome` | `SmartReset.Outcome` | `SmartReset.fs:1–5` | **Exact** | Three-case DU maps directly: `SoftResetSucceeded`, `EscalatedToHardReset`, `AllResetsFailed` |
-| `smartResetLogic` | `SmartReset.execute` (pure logic) | `SmartReset.fs:7–17` | **Abstraction** | `Task<_>` async execution modelled as pure synchronous function; `SageFsError` abstracted as `String` |
+| `smartResetLogic` | `SmartReset.execute` (pure logic) | `SmartReset.fs:7–17` | **Abstraction** | `Task<_>` async execution modelled as pure synchronous function; `BozzettoError` abstracted as `String` |
 | `srDescribe` | `SmartReset.describe` | `SmartReset.fs:20–26` | **Exact** | String descriptions match the F# implementation |
 
 ### Known divergences
@@ -770,10 +770,10 @@ message handlers (approximately lines 984–1350).
 - **F# source**: `execute` returns `Task<Outcome>`, awaiting two async operations sequentially.
 - **Impact**: Race conditions, cancellation, and timeout are not modelled. The pure logic of the escalation decision is fully captured.
 
-#### D2 — `SageFsError` abstracted as `String`
+#### D2 — `BozzettoError` abstracted as `String`
 
 - **Lean model**: Both error cases use `String`.
-- **F# source**: Errors are `SageFsError` (a structured union type with more context).
+- **F# source**: Errors are `BozzettoError` (a structured union type with more context).
 - **Impact**: Error-message content properties cannot be stated. Structural correctness of outcome selection is not affected.
 
 ### Theorems proved (all without `sorry`)
@@ -792,7 +792,7 @@ message handlers (approximately lines 984–1350).
 ### Validation evidence
 
 No runnable test harness yet (Task 8). The Lean model was derived directly from
-`SageFs.Core/SmartReset.fs` lines 1–26. The three-case DU and the escalation
+`Bozzetto.Core/SmartReset.fs` lines 1–26. The three-case DU and the escalation
 decision (`match softResult with | .ok () => … | .error e => match hardResult …`)
 are structurally identical in both F# and Lean.
 
@@ -801,19 +801,19 @@ are structurally identical in both F# and Lean.
 ## SseReplayBuffer
 
 **Lean file**: `formal-verification/lean/FVSquad/SseReplayBuffer.lean`
-**F# source**: `SageFs.Core/SseReplayBuffer.fs`
+**F# source**: `Bozzetto.Core/SseReplayBuffer.fs`
 **Informal spec**: `formal-verification/specs/ssereplaybuffer_informal.md`
 
 ### Type correspondence
 
 | Lean name | F# name | F# file + location | Correspondence | Notes |
 |---|---|---|---|---|
-| `SseBuffer` | `Buffer` (inner record of `SseReplayBuffer`) | `SageFs.Core/SseReplayBuffer.fs` | **Abstraction** | F# Buffer wraps a `RingBuffer<SequencedSseEvent>`; Lean abstracts to `(total, count, cap)` — the three fields that drive replay logic. Event content (`Payload`, `Timestamp`) is omitted. |
-| `SseWellFormed` | — (implicit invariant) | `SageFs.Core/SseReplayBuffer.fs` | **Abstraction** | Codifies `cap > 0`, `count ≤ cap`, and `count ≤ total` as a Lean Prop. |
-| `ReplayResult` | `ReplayResult` DU | `SageFs.Core/SseReplayBuffer.fs` | **Exact** | `Replayed n` / `GapDetected firstAvail` — same two cases; event list abstracted to count `n`. |
-| `sseCreate` | `SseReplayBuffer.create` | `SageFs.Core/SseReplayBuffer.fs` | **Exact** | Zero-initialised buffer; takes `cap` and positivity proof. |
-| `ssePush` | `SseReplayBuffer.push` | `SageFs.Core/SseReplayBuffer.fs` | **Abstraction** | F# mutates the inner `RingBuffer` and emits the event with `DateTimeOffset`; Lean returns `(seqId, newBuffer)` purely. |
-| `sseReplayFrom` | `SseReplayBuffer.replayFrom` | `SageFs.Core/SseReplayBuffer.fs` | **Exact** | The four-branch conditional is structurally identical. Event list is abstracted to count. |
+| `SseBuffer` | `Buffer` (inner record of `SseReplayBuffer`) | `Bozzetto.Core/SseReplayBuffer.fs` | **Abstraction** | F# Buffer wraps a `RingBuffer<SequencedSseEvent>`; Lean abstracts to `(total, count, cap)` — the three fields that drive replay logic. Event content (`Payload`, `Timestamp`) is omitted. |
+| `SseWellFormed` | — (implicit invariant) | `Bozzetto.Core/SseReplayBuffer.fs` | **Abstraction** | Codifies `cap > 0`, `count ≤ cap`, and `count ≤ total` as a Lean Prop. |
+| `ReplayResult` | `ReplayResult` DU | `Bozzetto.Core/SseReplayBuffer.fs` | **Exact** | `Replayed n` / `GapDetected firstAvail` — same two cases; event list abstracted to count `n`. |
+| `sseCreate` | `SseReplayBuffer.create` | `Bozzetto.Core/SseReplayBuffer.fs` | **Exact** | Zero-initialised buffer; takes `cap` and positivity proof. |
+| `ssePush` | `SseReplayBuffer.push` | `Bozzetto.Core/SseReplayBuffer.fs` | **Abstraction** | F# mutates the inner `RingBuffer` and emits the event with `DateTimeOffset`; Lean returns `(seqId, newBuffer)` purely. |
+| `sseReplayFrom` | `SseReplayBuffer.replayFrom` | `Bozzetto.Core/SseReplayBuffer.fs` | **Exact** | The four-branch conditional is structurally identical. Event list is abstracted to count. |
 | `applyPushN` | — (reasoning helper) | — | **N/A** | Not in F#; used for inductive arguments about `n` pushes. |
 
 ### Known divergences
@@ -850,7 +850,7 @@ are structurally identical in both F# and Lean.
 ### Validation evidence
 
 No runnable test harness yet (Task 8). The Lean model was derived directly from
-`SageFs.Core/SseReplayBuffer.fs`. The four-case `replayFrom` branch structure is
+`Bozzetto.Core/SseReplayBuffer.fs`. The four-case `replayFrom` branch structure is
 structurally identical in both F# and Lean. All 19 theorems verified by
 `lake build` with Lean 4 v4.30.0-rc2 (0 sorry).
 
@@ -859,27 +859,27 @@ structurally identical in both F# and Lean. All 19 theorems verified by
 ## TimeTravel
 
 **Lean file**: `formal-verification/lean/FVSquad/TimeTravel.lean`
-**F# source**: `SageFs.Core/TimeTravel.fs`, `SageFs.Core/ModelSnapshot.fs`
+**F# source**: `Bozzetto.Core/TimeTravel.fs`, `Bozzetto.Core/ModelSnapshot.fs`
 
 ### Type correspondence
 
 | Lean name | F# name | F# file + location | Correspondence | Notes |
 |---|---|---|---|---|
-| `Mode` | `TimeTravelMode` | `SageFs.Core/TimeTravel.fs` | **Exact** | Both have `Live` and `Viewing` (with age payload). Lean uses `Nat` for age; F# uses `int`. Age ≥ 1 invariant is made explicit in Lean. |
-| `TTState` | *(internal state record)* | `SageFs.Core/TimeTravel.fs` | **Abstraction** | Lean models only `mode`, `count` (number of recorded snapshots), and `capacity`. The underlying ring buffer array is not represented — only its logical count matters for mode transitions. |
-| `WellFormed s` | *(implicit invariant)* | `SageFs.Core/TimeTravel.fs` | **Abstraction** | Explicit Lean predicate capturing: `count ≤ capacity`, viewing age ≥ 1. Made explicit in Lean; implicit by construction in F#. |
-| `isLive s` | *(pattern match on mode)* | `SageFs.Core/TimeTravel.fs` | **Exact** | `true` iff `s.mode = Mode.Live`. |
-| `viewingAge s` | *(pattern match on mode)* | `SageFs.Core/TimeTravel.fs` | **Exact** | Returns `some age` when Viewing, `none` when Live. |
+| `Mode` | `TimeTravelMode` | `Bozzetto.Core/TimeTravel.fs` | **Exact** | Both have `Live` and `Viewing` (with age payload). Lean uses `Nat` for age; F# uses `int`. Age ≥ 1 invariant is made explicit in Lean. |
+| `TTState` | *(internal state record)* | `Bozzetto.Core/TimeTravel.fs` | **Abstraction** | Lean models only `mode`, `count` (number of recorded snapshots), and `capacity`. The underlying ring buffer array is not represented — only its logical count matters for mode transitions. |
+| `WellFormed s` | *(implicit invariant)* | `Bozzetto.Core/TimeTravel.fs` | **Abstraction** | Explicit Lean predicate capturing: `count ≤ capacity`, viewing age ≥ 1. Made explicit in Lean; implicit by construction in F#. |
+| `isLive s` | *(pattern match on mode)* | `Bozzetto.Core/TimeTravel.fs` | **Exact** | `true` iff `s.mode = Mode.Live`. |
+| `viewingAge s` | *(pattern match on mode)* | `Bozzetto.Core/TimeTravel.fs` | **Exact** | Returns `some age` when Viewing, `none` when Live. |
 
 ### Function correspondence
 
 | Lean name | F# name | F# file | Correspondence level | Notes |
 |---|---|---|---|---|
-| `create cap` | `RingBuffer.create` + initial state | `SageFs.Core/TimeTravel.fs` | **Exact** | Creates state with `mode=Live`, `count=0`, `capacity=cap`. |
-| `record s` | push to ring buffer | `SageFs.Core/TimeTravel.fs` | **Abstraction** | Lean models only the `count` update (capped at `capacity`). Actual snapshot data is not represented. Viewing mode is a no-op in both. |
-| `stepBack s` | `stepBack` / scroll-back | `SageFs.Core/TimeTravel.fs` | **Exact** | Live+count>1 → Viewing 1; Live+count≤1 → no-op; Viewing age+1<count → Viewing(age+1); Viewing at oldest → no-op. |
-| `stepForward s` | `stepForward` / scroll-forward | `SageFs.Core/TimeTravel.fs` | **Exact** | Viewing 1 → Live; Viewing age>1 → Viewing(age-1); Live → no-op. |
-| `goLive s` | `goLive` / return-to-live | `SageFs.Core/TimeTravel.fs` | **Exact** | Always returns to Live mode, preserving count and capacity. |
+| `create cap` | `RingBuffer.create` + initial state | `Bozzetto.Core/TimeTravel.fs` | **Exact** | Creates state with `mode=Live`, `count=0`, `capacity=cap`. |
+| `record s` | push to ring buffer | `Bozzetto.Core/TimeTravel.fs` | **Abstraction** | Lean models only the `count` update (capped at `capacity`). Actual snapshot data is not represented. Viewing mode is a no-op in both. |
+| `stepBack s` | `stepBack` / scroll-back | `Bozzetto.Core/TimeTravel.fs` | **Exact** | Live+count>1 → Viewing 1; Live+count≤1 → no-op; Viewing age+1<count → Viewing(age+1); Viewing at oldest → no-op. |
+| `stepForward s` | `stepForward` / scroll-forward | `Bozzetto.Core/TimeTravel.fs` | **Exact** | Viewing 1 → Live; Viewing age>1 → Viewing(age-1); Live → no-op. |
+| `goLive s` | `goLive` / return-to-live | `Bozzetto.Core/TimeTravel.fs` | **Exact** | Always returns to Live mode, preserving count and capacity. |
 
 ### Known divergences
 
@@ -927,7 +927,7 @@ structurally identical in both F# and Lean. All 19 theorems verified by
 ### Validation evidence
 
 No runnable test harness yet (Task 8). The Lean model was derived directly from
-`SageFs.Core/TimeTravel.fs`. The five-case mode-transition structure (stepBack and
+`Bozzetto.Core/TimeTravel.fs`. The five-case mode-transition structure (stepBack and
 stepForward branching) is structurally identical in both F# and Lean. All 30 theorems
 verified by `lake build` with Lean 4 v4.30.0-rc2 (0 sorry).
 

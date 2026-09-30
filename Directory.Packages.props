@@ -7,9 +7,9 @@
     <!-- Verified against nuget.org 2026-09-12: Expecto 11.0.0/11.1.0 are now
          stable, so this alpha is stale and should be re-verified/upgraded.
          Originally pinned to the 11.x line for its Expecto.FsCheck 3.x support
-         (stable "10.2.3-fscheck3" existed too, but SageFs.Tests/Program.fs
+         (stable "10.2.3-fscheck3" existed too, but Bozzetto.Tests/Program.fs
          depends on Expecto-11-era API surface — e.g. the args-list-first
-         Tests.runTestsWithCLIArgs signature used at SageFs.Tests/Program.fs:69,
+         Tests.runTestsWithCLIArgs signature used at Bozzetto.Tests/Program.fs:69,
          121, 190, 206). TODO: reconfirm against stable 11.1.0 and drop the
          prerelease pin. -->
     <PackageVersion Include="Expecto" Version="11.0.0-alpha8" />
@@ -20,10 +20,10 @@
     <PackageVersion Include="Falco.Markup" Version="1.4.0" />
     <!-- Only prerelease ever published for the 8.x line (nuget.org tops out at
          8.0.0-beta-003 as of 2026-09-12; there is no stable Fantomas.Core 8.0.0).
-         SageFs.Core hosts Fantomas.FCS parsing directly (CompilationContext.fs,
+         Bozzetto.Core hosts Fantomas.FCS parsing directly (CompilationContext.fs,
          Features/ReloadPlanning.fs) and VariantSelector.fs pins exactly two
          host preprocessing variants users' projects may target — "Fantomas6"
-         and "Fantomas8" (SageFs.Core/VariantSelector.fs:36-37) — so this pin
+         and "Fantomas8" (Bozzetto.Core/VariantSelector.fs:36-37) — so this pin
          is the newest variant's only available build, not a convenience
          choice. -->
     <PackageVersion Include="Fantomas.Core" Version="8.0.0-alpha-002" />
@@ -43,38 +43,21 @@
     <PackageVersion Include="FuzzySharp" Version="2.0.2" />
     <PackageVersion Include="Ionide.ProjInfo" Version="0.74.1" />
     <PackageVersion Include="Ionide.ProjInfo.FCS" Version="0.74.1" />
-    <!-- SageFs.Harmony = WillEhrendreich/LibHarmony: upstream Harmony (same HarmonyLib API) built on our
-         patched MonoMod fork so detours work on CoreCLR 11. Not on any feed: ci-pipeline.fsx's
-         "restore harmony fork" stage clones the pinned commit and packs it into harmony-nupkg/. The version
-         suffix is the pack's SageFsBuild number; bump it together with harmonyCommit/harmonyBuild there.
-         The packed nupkg is COMMITTED (harmony-nupkg/): the fork's build is not byte-reproducible (even the ILRepack-merged
-         DLL differs between clean builds), and packages.lock.json pins the package's content hash, so a package packed
-         fresh in CI would fail a locked-mode restore. To bump: delete the nupkg, let the stage repack, refresh the locks,
-         commit the new nupkg. -->
-    <PackageVersion Include="SageFs.Harmony" Version="2.4.2-sagefs.1" />
+    <!-- Owned patched Harmony fork. The reviewed source-built package and its
+         provenance/hash manifest live in vendor/Bozzetto.Harmony. CI validates
+         it without cloning or rebuilding upstream. Refresh explicitly with
+         scripts/update-harmony /absolute/path/to/Bozzetto.Harmony; lockfiles pin
+         the resulting artifact because merged packages are not byte-reproducible. -->
+    <PackageVersion Include="Bozzetto.Harmony" Version="2.4.2-bozzetto.1" />
     <PackageVersion Include="Microsoft.Bcl.Memory" Version="10.0.5" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.1" />
     <PackageVersion Include="Mono.Cecil" Version="0.11.6" />
     <PackageVersion Include="Microsoft.NET.StringTools" Version="18.0.2" />
-    <!-- Intended to resolve from the local "mcp-sdk-fork" nuget.config source
-         (WillEhrendreich/ModelContextProtocolSdk, packed by ci-pipeline.fsx's
-         "restore mcp sdk fork" stage), which carries an unmerged SSE fix not
-         in the upstream C# SDK: idle-session tracking + a circuit breaker in
-         SseHandler, closing an unbounded-session-accumulation bug that the
-         stock SDK's SseHandler has (StreamableHttpHandler already had this
-         via IdleTrackingBackgroundService; SseHandler didn't) — see the
-         fork's "fix(sse): add idle tracking and circuit breaker to
-         SseHandler" commit. VERIFIED 2026-09-12: this pin is currently STALE
-         — the fork's own Directory.Build.props packs as
-         ModelContextProtocol.Core 0.9.0-preview.3, not 1.0.0-rc.1, so a
-         restore does not necessarily consume the fork's fix at this pinned
-         version; 1.0.0-rc.1 is also a real version of the *official* upstream
-         package (confirmed via the nuget.org flat-container index), which has
-         since shipped stable through 2.2.0. TODO: either re-pin to match
-         whatever version the fork currently packs, or (since the official SDK
-         is stable now) confirm whether upstream has absorbed an equivalent
-         SSE fix and drop the fork entirely. -->
+    <!-- Official ModelContextProtocol packages from nuget.org. The inherited
+         fork bootstrap packed 0.9.0-preview.3, which never supplied these
+         1.0.0-rc.1 pins; removing it leaves the resolved package versions and
+         lock-file content hashes unchanged. -->
     <PackageVersion Include="ModelContextProtocol" Version="1.0.0-rc.1" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.0.0-rc.1" />
     <PackageVersion Include="OpenTelemetry" Version="1.18.0" />
@@ -92,16 +75,16 @@
          dependency closure targets Microsoft.Extensions.* 9.0.0 (confirmed
          via the nuget.org nuspec), matching this repo's
          Microsoft.Extensions.Hosting 9.0.1 pin (~:48) and its `AddFile` call
-         at SageFs/McpServer.fs:1205. No stable release compatible with
+         at Bozzetto/McpServer.fs:1205. No stable release compatible with
          Microsoft.Extensions.* 9.x exists to fall back to. -->
     <PackageVersion Include="Serilog.Extensions.Logging.File" Version="9.0.0-dev-02303" />
     <PackageVersion Include="Serilog.Sinks.Console" Version="6.0.0" />
     <!-- TODO: justify or downgrade — verified 2026-09-12 that NO project in
          this repo has a `<PackageReference Include="StreamJsonRpc" />` (grep
          across every .fsproj/.csproj is empty); the only mention is
-         SageFs.Tests/ArchitectureTests.fs:311,387 asserting the daemon/host
+         Bozzetto.Tests/ArchitectureTests.fs:311,387 asserting the daemon/host
          assemblies must NOT reference it, which reads as a leftover guard
-         from when the now-deprecated sagefs-vs Visual Studio extension used
+         from when the now-deprecated bozzetto-vs Visual Studio extension used
          it for JSON-RPC transport. This pin appears to be dead weight with no
          current consumer; stable releases (2.25.x+) exist if it is ever
          needed again. Consider removing this PackageVersion entirely rather
@@ -118,7 +101,7 @@
          bundles SQLite < 3.50.2 (memory corruption, high severity). 2.1.12 is the
          first patched release; Microsoft.Data.Sqlite still resolves the bundle
          to 2.1.11 transitively, so the native lib is pinned directly (see
-         SageFs.Core.fsproj). -->
+         Bozzetto.Core.fsproj). -->
     <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
     <PackageVersion Include="NetMQ" Version="4.0.2.2" />
     <PackageVersion Include="Raylib-cs" Version="7.0.2" />

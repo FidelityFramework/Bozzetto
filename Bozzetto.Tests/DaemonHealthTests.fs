@@ -1,0 +1,265 @@
+module Bozzetto.Tests.DaemonHealthTests
+
+open System
+open Expecto
+open Expecto.Flip
+open Bozzetto.Features
+
+[<Tests>]
+let healthSnapshotTests =
+  testList "DaemonHealth snapshot" [
+
+    testCase "healthy daemon with ready sessions" <| fun _ ->
+      let snapshot = {
+        DaemonPid = 1234
+        DaemonPort = 47749
+        Uptime = TimeSpan.FromHours 2.5
+        Version = "0.5.761"
+        SessionSummaries = [
+          { SessionId = "abc123"; ProjectName = "MyLib"; Status = SessionHealthStatus.Ready; EvalCount = 42; LastActivity = DateTimeOffset.UtcNow }
+        ]
+        LiveTestingSummary = Some { TotalTests = 100; Passed = 98; Failed = 2; Running = 0 }
+        MemoryMB = 256
+        Anomalies = []
+        GcDumpOutcome = None
+        MemoryPressure = Bozzetto.MemoryPressure.Normal
+      }
+      let health = DaemonHealth.overallStatus snapshot
+      health |> Expect.equal "should be healthy" OverallHealth.Healthy
+
+    testCase "degraded when any session is faulted" <| fun _ ->
+      let snapshot = {
+        DaemonPid = 1234
+        DaemonPort = 47749
+        Uptime = TimeSpan.FromMinutes 5.0
+        Version = "0.5.761"
+        SessionSummaries = [
+          { SessionId = "abc"; ProjectName = "Good"; Status = SessionHealthStatus.Ready; EvalCount = 10; LastActivity = DateTimeOffset.UtcNow }
+          { SessionId = "def"; ProjectName = "Bad"; Status = SessionHealthStatus.Faulted; EvalCount = 0; LastActivity = DateTimeOffset.UtcNow }
+        ]
+        LiveTestingSummary = None
+        MemoryMB = 128
+        Anomalies = []
+        GcDumpOutcome = None
+        MemoryPressure = Bozzetto.MemoryPressure.Normal
+      }
+      let health = DaemonHealth.overallStatus snapshot
+      health |> Expect.equal "should be degraded" OverallHealth.Degraded
+
+    testCase "healthy when no sessions exist (idle daemon)" <| fun _ ->
+      let snapshot = {
+        DaemonPid = 1234
+        DaemonPort = 47749
+        Uptime = TimeSpan.FromSeconds 2.0
+        Version = "0.5.761"
+        SessionSummaries = []
+        LiveTestingSummary = None
+        MemoryMB = 64
+        Anomalies = []
+        GcDumpOutcome = None
+        MemoryPressure = Bozzetto.MemoryPressure.Normal
+      }
+      let health = DaemonHealth.overallStatus snapshot
+      health |> Expect.equal "no sessions = healthy (idle)" OverallHealth.Healthy
+
+    testCase "WHY — overallStatus — critical machine memory pressure is Unhealthy even with anomalies: [] and every session Ready, because a smooth RSS ramp never trips the shape-based detector" <| fun _ ->
+      let snapshot = {
+        DaemonPid = 1234
+        DaemonPort = 47749
+        Uptime = TimeSpan.FromHours 3.0
+        Version = "0.6.820"
+        SessionSummaries = [
+          { SessionId = "abc123"; ProjectName = "MyLib"; Status = SessionHealthStatus.Ready; EvalCount = 42; LastActivity = DateTimeOffset.UtcNow }
+        ]
+        LiveTestingSummary = None
+        MemoryMB = 55_000
+        // Empty — the EWMA/CUSUM detector's own learned baseline rose right
+        // along with a smooth ramp, exactly like both real incidents. This
+        // snapshot has to be judged unhealthy some other way.
+        Anomalies = []
+        GcDumpOutcome = None
+        MemoryPressure = Bozzetto.MemoryPressure.Critical
+      }
+      let health = DaemonHealth.overallStatus snapshot
+      health |> Expect.equal "the machine is almost out of memory, whatever the shape detector says" OverallHealth.Unhealthy
+
+    testCase "WHY — overallStatus — tight machine memory pressure degrades, the same as a faulted session, even with anomalies: []" <| fun _ ->
+      let snapshot = {
+        DaemonPid = 1234
+        DaemonPort = 47749
+        Uptime = TimeSpan.FromHours 1.0
+        Version = "0.6.820"
+        SessionSummaries = [
+          { SessionId = "abc123"; ProjectName = "MyLib"; Status = SessionHealthStatus.Ready; EvalCount = 10; LastActivity = DateTimeOffset.UtcNow }
+        ]
+        LiveTestingSummary = None
+        MemoryMB = 40_000
+        Anomalies = []
+        GcDumpOutcome = None
+        MemoryPressure = Bozzetto.MemoryPressure.Tight
+      }
+      let health = DaemonHealth.overallStatus snapshot
+      health |> Expect.equal "the machine is short on memory — worth degrading for, not staying silent about" OverallHealth.Degraded
+
+    testCase "WHY — overallStatus — normal machine memory pressure changes nothing for an otherwise-healthy daemon" <| fun _ ->
+      let snapshot = {
+        DaemonPid = 1234
+        DaemonPort = 47749
+        Uptime = TimeSpan.FromMinutes 10.0
+        Version = "0.6.820"
+        SessionSummaries = [
+          { SessionId = "abc123"; ProjectName = "MyLib"; Status = SessionHealthStatus.Ready; EvalCount = 5; LastActivity = DateTimeOffset.UtcNow }
+        ]
+        LiveTestingSummary = None
+        MemoryMB = 300
+        Anomalies = []
+        GcDumpOutcome = None
+        MemoryPressure = Bozzetto.MemoryPressure.Normal
+      }
+      let health = DaemonHealth.overallStatus snapshot
+      health |> Expect.equal "plenty of machine memory, nothing anomalous, nothing faulted" OverallHealth.Healthy
+  ]
+
+[<Tests>]
+let healthFormatTests =
+  testList "DaemonHealth formatting" [
+
+    testCase "summary includes key metrics" <| fun _ ->
+      let snapshot = {
+        DaemonPid = 5678
+        DaemonPort = 47749
+        Uptime = TimeSpan.FromHours 1.5
+        Version = "0.5.761"
+        SessionSummaries = [
+          { SessionId = "s1"; ProjectName = "Lib"; Status = SessionHealthStatus.Ready; EvalCount = 25; LastActivity = DateTimeOffset.UtcNow }
+        ]
+        LiveTestingSummary = Some { TotalTests = 50; Passed = 48; Failed = 2; Running = 0 }
+        MemoryMB = 200
+        Anomalies = []
+        GcDumpOutcome = None
+        MemoryPressure = Bozzetto.MemoryPressure.Normal
+      }
+      let text = DaemonHealth.formatSummary snapshot
+      text |> Expect.stringContains "has pid" "5678"
+      text |> Expect.stringContains "has version" "0.5.761"
+      text |> Expect.stringContains "has session" "Lib"
+
+    testCase "emoji health indicator" <| fun _ ->
+      DaemonHealth.healthEmoji OverallHealth.Healthy |> Expect.equal "green" "🟢"
+      DaemonHealth.healthEmoji OverallHealth.Degraded |> Expect.equal "yellow" "🟡"
+      DaemonHealth.healthEmoji OverallHealth.Unhealthy |> Expect.equal "red" "🔴"
+
+    testCase "health label" <| fun _ ->
+      DaemonHealth.healthLabel OverallHealth.Healthy |> Expect.equal "healthy" "Healthy"
+      DaemonHealth.healthLabel OverallHealth.Degraded |> Expect.equal "degraded" "Degraded"
+      DaemonHealth.healthLabel OverallHealth.Unhealthy |> Expect.equal "unhealthy" "Unhealthy"
+
+    testCase "diagnostic summary explains missing sessions" <| fun _ ->
+      let snapshot = {
+        DaemonPid = 4321
+        DaemonPort = 47749
+        Uptime = TimeSpan.FromMinutes 1.0
+        Version = "0.5.761"
+        SessionSummaries = []
+        LiveTestingSummary = None
+        MemoryMB = 64
+        Anomalies = []
+        GcDumpOutcome = None
+        MemoryPressure = Bozzetto.MemoryPressure.Normal
+      }
+      let text = DaemonHealth.diagnosticSummary snapshot
+      text |> Expect.equal "should explain the missing session state" "No sessions registered with the daemon."
+
+    testCase "diagnostic summary includes faulted projects and status breakdown" <| fun _ ->
+      let snapshot = {
+        DaemonPid = 4321
+        DaemonPort = 47749
+        Uptime = TimeSpan.FromMinutes 10.0
+        Version = "0.5.761"
+        SessionSummaries = [
+          { SessionId = "ready"; ProjectName = "ReadyProject"; Status = SessionHealthStatus.Ready; EvalCount = 5; LastActivity = DateTimeOffset.UtcNow }
+          { SessionId = "faulted"; ProjectName = "FaultedProject"; Status = SessionHealthStatus.Faulted; EvalCount = 0; LastActivity = DateTimeOffset.UtcNow }
+          { SessionId = "warming"; ProjectName = "WarmProject"; Status = SessionHealthStatus.WarmingUp; EvalCount = 0; LastActivity = DateTimeOffset.UtcNow }
+        ]
+        LiveTestingSummary = None
+        MemoryMB = 64
+        Anomalies = []
+        GcDumpOutcome = None
+        MemoryPressure = Bozzetto.MemoryPressure.Normal
+      }
+      let text = DaemonHealth.diagnosticSummary snapshot
+      text |> Expect.stringContains "should mention the faulted project" "FaultedProject"
+      text |> Expect.stringContains "should include the ready count" "Ready=1"
+      text |> Expect.stringContains "should include the faulted count" "Faulted=1"
+      text |> Expect.stringContains "should include the warming up count" "Warming Up=1"
+
+    testCase "primary session status prefers ready over warming sessions" <| fun _ ->
+      let sessions = [
+        { SessionId = "warming"; ProjectName = "WarmProject"; Status = SessionHealthStatus.WarmingUp; EvalCount = 0; LastActivity = DateTimeOffset.UtcNow }
+        { SessionId = "ready"; ProjectName = "ReadyProject"; Status = SessionHealthStatus.Ready; EvalCount = 3; LastActivity = DateTimeOffset.UtcNow }
+      ]
+
+      DaemonHealth.primarySessionStatus sessions
+      |> Expect.equal "ready should win over warming" (Some SessionHealthStatus.Ready)
+
+      DaemonHealth.primarySessionStatusLabel sessions
+      |> Expect.equal "label should reflect ready state" "Ready"
+  ]
+
+[<Tests>]
+let sessionHealthTests =
+  testList "DaemonHealth session status" [
+
+    testCase "session status labels" <| fun _ ->
+      DaemonHealth.sessionStatusLabel SessionHealthStatus.Ready |> Expect.equal "ready" "Ready"
+      DaemonHealth.sessionStatusLabel SessionHealthStatus.Evaluating |> Expect.equal "eval" "Evaluating"
+      DaemonHealth.sessionStatusLabel SessionHealthStatus.WarmingUp |> Expect.equal "warmup" "Warming Up"
+      DaemonHealth.sessionStatusLabel SessionHealthStatus.Faulted |> Expect.equal "faulted" "Faulted"
+      DaemonHealth.sessionStatusLabel SessionHealthStatus.Stopped |> Expect.equal "stopped" "Stopped"
+
+    testCase "session status emoji" <| fun _ ->
+      DaemonHealth.sessionStatusEmoji SessionHealthStatus.Ready |> Expect.equal "ready" "✅"
+      DaemonHealth.sessionStatusEmoji SessionHealthStatus.Faulted |> Expect.equal "faulted" "❌"
+      DaemonHealth.sessionStatusEmoji SessionHealthStatus.WarmingUp |> Expect.equal "warmup" "⏳"
+
+    testCase "uptime formatting" <| fun _ ->
+      DaemonHealth.formatUptime (TimeSpan.FromMinutes 45.0)
+      |> Expect.equal "minutes" "45m"
+      DaemonHealth.formatUptime (TimeSpan.FromHours 2.5)
+      |> Expect.equal "hours" "2h 30m"
+      DaemonHealth.formatUptime (TimeSpan.FromDays 1.5)
+      |> Expect.equal "days" "1d 12h"
+  ]
+
+[<Tests>]
+let structuredErrorTests =
+  testList "DaemonHealth structured error" [
+
+    testCase "no error for a ready session" <| fun _ ->
+      DaemonHealth.structuredErrorForFault "Ready" (Some "nope")
+      |> Expect.equal "ready session carries no error" None
+
+    testCase "faulted session with reason surfaces structured message" <| fun _ ->
+      match DaemonHealth.structuredErrorForFault "Faulted" (Some "worker crashed") with
+      | Some err ->
+        let props =
+          err.GetType().GetProperties()
+          |> Array.map (fun p -> p.Name, p.GetValue(err))
+          |> Map.ofArray
+        props.TryFind "message" |> Expect.isSome "message field present"
+        props.TryFind "suggestedAction" |> Expect.isSome "suggestedAction field present"
+        props.TryFind "message" |> Option.bind (fun v -> v :?> string |> Some) |> Expect.equal "message carries the reason" (Some "worker crashed")
+      | None -> failwith "expected a structured error for the faulted session"
+
+    testCase "faulted session without reason carries no error" <| fun _ ->
+      DaemonHealth.structuredErrorForFault "Faulted" None
+      |> Expect.equal "no reason means no error object" None
+
+    testCase "stopped session with reason surfaces structured message" <| fun _ ->
+      DaemonHealth.structuredErrorForFault "Stopped" (Some "session ended")
+      |> Expect.isSome "stopped session with reason should surface an error"
+
+    testCase "warming session with reason carries no error" <| fun _ ->
+      DaemonHealth.structuredErrorForFault "Warming Up" (Some "still warming")
+      |> Expect.equal "warming is not a fault" None
+  ]

@@ -1,6 +1,6 @@
 # SSE Events Reference
 
-Editors receive daemon events over the main SSE stream, `GET /events` on port 37749. Most events carry a `SessionId` field so a client can filter to the session it cares about. The four cohort events are the exception: one cohort spans every session on the daemon, so they carry no `SessionId`.
+Editors receive daemon events over the main SSE stream, `GET /events` on port 47749. Most events carry a `SessionId` field so a client can filter to the session it cares about. The four cohort events are the exception: one cohort spans every session on the daemon, so they carry no `SessionId`.
 
 The daemon emits 26 event types across four sources: 23 `SseWriter` events on `/events`, one `session` event (8 subtypes), one `state` event (8 variants), and `diagnostics` on its own stream.
 
@@ -17,7 +17,7 @@ The daemon sends a `retry:` hint at connection time so clients reconnect automat
 
 ## SseWriter Events (23)
 
-The event names are defined in `allSseEventTypes` in `SageFs.Core/SseWriter.fs`.
+The event names are defined in `allSseEventTypes` in `Bozzetto.Core/SseWriter.fs`.
 
 ### Warmup
 
@@ -65,7 +65,7 @@ The event names are defined in `allSseEventTypes` in `SageFs.Core/SseWriter.fs`.
 
 ### Multi-Agent Cohort
 
-One cohort spans every session and agent on the daemon, so these four events carry no `SessionId`. They are backed by `SageFs.Core/Features/CohortOwner.fs`, pushed live from its `Events` stream and replayed to a newly connected client on `/events`.
+One cohort spans every session and agent on the daemon, so these four events carry no `SessionId`. They are backed by `Bozzetto.Core/Features/CohortOwner.fs`, pushed live from its `Events` stream and replayed to a newly connected client on `/events`.
 
 | Event | Payload | Description |
 |:---|:---|:---|

@@ -1,6 +1,6 @@
 # 🧘 Coming from FSharpKoans?
 
-You already know F#. You filled in the blanks, matched the patterns, piped the lists. What SageFs gives you is that same F#, minus the `dotnet watch run` cycle, the terminal-only pass/fail output, and the squinting to figure out which koan you broke this time.
+You already know F#. You filled in the blanks, matched the patterns, piped the lists. What Bozzetto gives you is that same F#, minus the `dotnet watch run` cycle, the terminal-only pass/fail output, and the squinting to figure out which koan you broke this time.
 
 You leave behind the `dotnet watch run` loop, terminal-only output, the custom `[<Koan>]` framework that only exists inside the koans repo, and the gap between "I finished the exercises" and "I built something real."
 
@@ -10,7 +10,7 @@ You leave behind the `dotnet watch run` loop, terminal-only output, the custom `
 - No more `dotnet run` cycles; feedback is instant.
 - The skills the koans taught you (DUs, pipelines, options, pattern matching) apply directly to real code, unchanged.
 
-**→ [Start here: `samples/from-koans/00-about-sagefs-koans.fsx`](../samples/from-koans/00-about-sagefs-koans.fsx)** (the roadmap; then work through `01-about-asserts.fsx` → `21-about-filtering.fsx` at your own pace, with `22-graduation-guide.fsx` at the end)
+**→ [Start here: `samples/from-koans/00-about-bozzetto-koans.fsx`](../samples/from-koans/00-about-bozzetto-koans.fsx)** (the roadmap; then work through `01-about-asserts.fsx` → `21-about-filtering.fsx` at your own pace, with `22-graduation-guide.fsx` at the end)
 
 ```fsharp
 // Koans taught you this:
@@ -18,7 +18,7 @@ You leave behind the `dotnet watch run` loop, terminal-only output, the custom `
 //     AssertEquality expected_value actual_value
 //     dotnet run → FAIL → fix → run → PASS → next (~3 sec cycle)
 
-// SageFs: just evaluate it.
+// Bozzetto: just evaluate it.
 let x = 1 + 1   // Alt+Enter → 2, right here
 
 // Your DU skills, applied to a real domain:

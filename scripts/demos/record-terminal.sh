@@ -6,7 +6,7 @@
 # deterministic than video capture for terminal-only demos (nvim, CLI tools)
 # and avoids Xvfb/GPU/font fragility entirely.
 #
-# This script knows nothing about SageFs. It is a reusable building block:
+# This script knows nothing about Bozzetto. It is a reusable building block:
 # callers pass in the command to record (e.g. a script that drives nvim
 # headlessly over RPC and prints progress, or any scripted CLI session).
 #

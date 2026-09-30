@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘 → 🦅  Graduation Guide — SageFs Edition
+//  🧘 → 🦅  Graduation Guide — Bozzetto Edition
 //
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.
 //
@@ -18,7 +18,7 @@
 // is a wall of terminal text. You squint. You scroll. You guess
 // which koan broke.
 //
-// SageFs kills that loop. You're about to see why.
+// Bozzetto kills that loop. You're about to see why.
 
 // ── 1. The instant feedback upgrade ──────────────────────────
 //
@@ -26,7 +26,7 @@
 //     let x = 1 + 1
 //     AssertEquality x __    ← figure it out, run, check terminal
 //
-// In SageFs, just evaluate the expression:
+// In Bozzetto, just evaluate the expression:
 
 let x = 1 + 1              // Alt+Enter → 2 (inline, right here)
 let name = "F#"             // Alt+Enter → "F#"
@@ -34,7 +34,7 @@ let greeting = $"Hello, {name}!"
 // Alt+Enter → "Hello, F#!" — no print, no assertion, just the answer.
 
 // You already KNOW what 1 + 1 is. Koans made you prove it.
-// SageFs lets you explore and see results as you think.
+// Bozzetto lets you explore and see results as you think.
 
 
 // ── 2. Everything you learned, but now it's useful ──────────
@@ -163,7 +163,7 @@ let safeValue = invalid |> Option.defaultValue 0
 //         AssertEquality (1 + 1) __
 //
 // Expecto is the F# community standard.
-// SageFs runs these on every save — green gutter markers:
+// Bozzetto runs these on every save — green gutter markers:
 
 #r "nuget: Expecto"
 open Expecto
@@ -185,7 +185,7 @@ let orderTests = testList "order status" [
 ]
 
 // In Koans:  dotnet watch run → see terminal pass/fail → scroll to find failure
-// In SageFs: save → gutter markers turn green → you see WHICH tests pass/fail
+// In Bozzetto: save → gutter markers turn green → you see WHICH tests pass/fail
 //            right next to the code. No scrolling. No terminal.
 
 let pipelineTests = testList "pipeline exercises" [
@@ -235,9 +235,9 @@ toKg 150.0<lb>   // → 68.0388<kg>
 // Try: toKg 150.0<kg>  — compiler ERROR. Can't pass kg where lb expected.
 
 
-// ── 8. The SageFs workflow vs the Koans workflow ─────────────
+// ── 8. The Bozzetto workflow vs the Koans workflow ─────────────
 //
-// FSharpKoans:                    SageFs:
+// FSharpKoans:                    Bozzetto:
 // ─────────────                   ───────
 // Edit → dotnet run → terminal    Edit → Alt+Enter → inline result
 // ~3 sec feedback loop            ~200ms feedback loop

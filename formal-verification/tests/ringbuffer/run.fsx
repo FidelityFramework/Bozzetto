@@ -3,15 +3,15 @@
 // Validates that the F# implementation satisfies the same properties proved in Lean
 
 #r "nuget: Expecto"
-// WHY — the module under test lives in SageFs.Core; the workflow builds it
+// WHY — the module under test lives in Bozzetto.Core; the workflow builds it
 // (Debug) before invoking this script so the relative reference resolves.
-#r "../../../SageFs.Core/bin/Debug/net10.0/SageFs.Core.dll"
+#r "../../../Bozzetto.Core/bin/Debug/net10.0/Bozzetto.Core.dll"
 
 open System
 open Expecto
 open Expecto.Flip
 
-module RingBuffer = SageFs.RingBuffer
+module RingBuffer = Bozzetto.RingBuffer
 
 // Helper: create a buffer and push items, returning (buffer, list of items pushed)
 let pushN n buf =

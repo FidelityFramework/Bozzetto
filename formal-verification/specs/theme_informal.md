@@ -1,20 +1,20 @@
 # Informal Specification: Theme
 
-🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
-Source: `SageFs.Core/Theme.fs`
+🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
+Source: `Bozzetto.Core/Theme.fs`
 
 ---
 
 ## Purpose
 
-The `Theme` module defines a typed color palette for the SageFs TUI, GUI, and
+The `Theme` module defines a typed color palette for the Bozzetto TUI, GUI, and
 dashboard. It provides:
 
 1. **`ThemeConfig`** — a 34-field record where each field is a named hex RGB
    string (format `#rrggbb`), covering foreground colors, background colors,
    border colors, status indicator colors, and syntax-highlighting token colors.
 
-2. **`defaults`** — the default SageFs "dark" theme, fully specified with
+2. **`defaults`** — the default Bozzetto "dark" theme, fully specified with
    hard-coded hex strings.
 
 3. **`withOverrides`** — a combinator that layers a partial `Map<string, string>`

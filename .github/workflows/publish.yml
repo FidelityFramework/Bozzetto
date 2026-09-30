@@ -32,7 +32,7 @@ jobs:
         github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.head_branch == 'master') ||
        github.event_name == 'workflow_dispatch')
-    runs-on: [self-hosted, sagefs-local]
+    runs-on: [self-hosted, bozzetto-local]
     timeout-minutes: 60
     concurrency:
       group: ${{ github.event_name == 'workflow_dispatch' && format('publish-{0}', github.event.inputs.source_run_id) || format('publish-{0}', github.event.workflow_run.id) }}
@@ -108,7 +108,7 @@ jobs:
       shell: bash
       env:
         VSCE_PAT: ${{ secrets.VSCE_PAT }}
-      run: npx @vscode/vsce publish --packagePath "release/sagefs-vscode-${{ steps.manifest.outputs.version }}.vsix" --skip-duplicate
+      run: npx @vscode/vsce publish --packagePath "release/bozzetto-vscode-${{ steps.manifest.outputs.version }}.vsix" --skip-duplicate
 
     - name: Create Open VSX namespace (idempotent)
       continue-on-error: true
@@ -116,21 +116,21 @@ jobs:
       env:
         OVSX_PAT: ${{ secrets.OVSX_PAT }}
       run: |
-        echo "Creating Open VSX namespace 'willehrendreich' (a non-zero exit here just means it already exists)."
-        npx ovsx create-namespace willehrendreich --pat "$OVSX_PAT" || true
+        echo "Creating Open VSX namespace 'fidelityframework' (a non-zero exit here just means it already exists)."
+        npx ovsx create-namespace fidelityframework --pat "$OVSX_PAT" || true
 
     - name: Publish VS Code extension to Open VSX
       continue-on-error: true
       shell: bash
       env:
         OVSX_PAT: ${{ secrets.OVSX_PAT }}
-      run: npx ovsx publish "release/sagefs-vscode-${{ steps.manifest.outputs.version }}.vsix" --pat "$OVSX_PAT" --skip-duplicate
+      run: npx ovsx publish "release/bozzetto-vscode-${{ steps.manifest.outputs.version }}.vsix" --pat "$OVSX_PAT" --skip-duplicate
 
     - name: Push to NuGet
       shell: bash
       env:
         NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-      run: dotnet nuget push "release/SageFs.${{ steps.manifest.outputs.version }}.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+      run: dotnet nuget push "release/Bozzetto.${{ steps.manifest.outputs.version }}.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
     - name: Generate release notes
       id: release_notes
@@ -148,26 +148,3 @@ jobs:
           ${{ github.workspace }}/release/*.vsix
         body_path: ${{ steps.release_notes.outputs.notes_path }}
         make_latest: true
-
-    - name: Sync sagefs.nvim version tag
-      env:
-        NVIM_PAT: ${{ secrets.SAGEFS_NVIM_PAT }}
-        VERSION: ${{ steps.manifest.outputs.version }}
-      if: env.NVIM_PAT != ''
-      continue-on-error: true
-      shell: bash
-      run: |
-        set -euo pipefail
-        tmp=$(mktemp -d)
-        git clone --depth 1 "https://x-access-token:${NVIM_PAT}@github.com/WillEhrendreich/sagefs.nvim.git" "$tmp"
-        cd "$tmp"
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        printf "return '%s'\n" "$VERSION" > lua/sagefs/version.lua
-        git add lua/sagefs/version.lua
-        git diff --cached --quiet || git commit -m "chore: sync version to v${VERSION}"
-        git push origin main
-        git tag -f "v${VERSION}" -m "Release v${VERSION} (synced from SageFs)"
-        git push origin "v${VERSION}" --force
-        cd /
-        rm -rf "$tmp"

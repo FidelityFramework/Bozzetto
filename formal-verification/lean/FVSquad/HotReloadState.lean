@@ -1,8 +1,8 @@
 /-
   HotReloadState.lean
-  Formal specification and proofs for SageFs hot-reload file tracking.
+  Formal specification and proofs for Bozzetto hot-reload file tracking.
 
-  Target: `HotReloadState` module in `SageFs.Core/HotReloadState.fs`
+  Target: `HotReloadState` module in `Bozzetto.Core/HotReloadState.fs`
 
   What is modelled:
   - `HRS` (state record): `watched : List String`
@@ -19,9 +19,9 @@
     `watch` (no-op if already present) preserving absence of duplicates.
 
   No Mathlib. Pure Lean 4 stdlib only (network firewalled in sandbox/CI).
-  Source: SageFs.Core/HotReloadState.fs
+  Source: Bozzetto.Core/HotReloadState.fs
 
-  🔬 Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.
+  🔬 Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.
 -/
 
 namespace HotReloadState

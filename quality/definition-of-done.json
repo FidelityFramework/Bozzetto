@@ -3,7 +3,7 @@
   "statuses": ["verified", "deferred", "not-applicable"],
   "evidenceKinds": ["ci", "external"],
   "externalClients": ["neovim"],
-  "externalClientsNote": "A client listed here is one this repository structurally cannot execute (its source lives in another repository), so its evidence can only ever be an attestation pinned to a foreign commit — never something the gate re-runs. The list is deliberately short and structural: any client whose tests CAN run from this checkout must use kind 'ci', whose every field the gate resolves against ci-pipeline.fsx, SageFs.Tests/Program.fs, SageFs.Tests.fsproj and the cited files on disk.",
+  "externalClientsNote": "A client listed here is one this repository structurally cannot execute (its source lives in another repository), so its evidence can only ever be an attestation pinned to a foreign commit — never something the gate re-runs. The list is deliberately short and structural: any client whose tests CAN run from this checkout must use kind 'ci', whose every field the gate resolves against ci-pipeline.fsx, Bozzetto.Tests/Program.fs, Bozzetto.Tests.fsproj and the cited files on disk.",
   "rows": [
     {
       "id": "HR-DASH-E2E",
@@ -13,7 +13,7 @@
       "status": "verified",
       "evidence": {
         "kind": "ci",
-        "tests": ["SageFs.Tests/HotReloadBrowserTests.fs"],
+        "tests": ["Bozzetto.Tests/HotReloadBrowserTests.fs"],
         "runner": "--integration-hr",
         "stage": "test tiers",
         "run": "35656311515",
@@ -29,12 +29,12 @@
       "status": "verified",
       "evidence": {
         "kind": "ci",
-        "tests": ["SageFs.Tests/VscodeCommandProofTests.fs"],
+        "tests": ["Bozzetto.Tests/VscodeCommandProofTests.fs"],
         "runner": "--integration-host",
         "stage": "test tiers",
         "run": "35523239725",
         "commit": "88991359",
-        "summary": "sagefs.hotReloadWatchAll / sagefs.hotReloadUnwatchAll invoked via vscode.commands.executeCommand inside a real @vscode/test-electron extension host, proven against the real daemon's GET /api/sessions/{sid}/hotreload (watchedCount 0 -> N -> 0). Issue #133 closed."
+        "summary": "bozzetto.hotReloadWatchAll / bozzetto.hotReloadUnwatchAll invoked via vscode.commands.executeCommand inside a real @vscode/test-electron extension host, proven against the real daemon's GET /api/sessions/{sid}/hotreload (watchedCount 0 -> N -> 0). Issue #133 closed."
       }
     },
     {
@@ -60,7 +60,7 @@
       "status": "verified",
       "evidence": {
         "kind": "ci",
-        "tests": ["SageFs.Tests/LiveTestingBrowserTests.fs"],
+        "tests": ["Bozzetto.Tests/LiveTestingBrowserTests.fs"],
         "runner": "--integration-lt",
         "stage": "test tiers",
         "run": "35656311515",
@@ -76,12 +76,12 @@
       "status": "verified",
       "evidence": {
         "kind": "ci",
-        "tests": ["SageFs.Tests/VscodeCommandProofTests.fs"],
+        "tests": ["Bozzetto.Tests/VscodeCommandProofTests.fs"],
         "runner": "--integration-host",
         "stage": "test tiers",
         "run": "35523239725",
         "commit": "88991359",
-        "summary": "sagefs.enableLiveTesting / sagefs.disableLiveTesting invoked via vscode.commands.executeCommand inside a real @vscode/test-electron extension host, proven against the real daemon's GET /api/live-testing/status (Enabled true/false transitions, real discovery: 11 tests, 1 genuinely failing on the sample). Issue #133 closed."
+        "summary": "bozzetto.enableLiveTesting / bozzetto.disableLiveTesting invoked via vscode.commands.executeCommand inside a real @vscode/test-electron extension host, proven against the real daemon's GET /api/live-testing/status (Enabled true/false transitions, real discovery: 11 tests, 1 genuinely failing on the sample). Issue #133 closed."
       }
     },
     {
@@ -107,7 +107,7 @@
       "status": "verified",
       "evidence": {
         "kind": "ci",
-        "tests": ["SageFs.Tests/DashboardBrowserTests.fs"],
+        "tests": ["Bozzetto.Tests/DashboardBrowserTests.fs"],
         "runner": "--integration-browser",
         "stage": "test tiers",
         "run": "35523239725",
@@ -121,7 +121,7 @@
       "layer": "real-client-e2e",
       "client": "vscode",
       "status": "not-applicable",
-      "reason": "No friction-reporting surface in sagefs-vscode (grep: no report_friction UI/command); friction is recorded agent/MCP-side into the daemon's local store and viewed in the dashboard (FR-DASH-E2E verified)."
+      "reason": "No friction-reporting surface in bozzetto-vscode (grep: no report_friction UI/command); friction is recorded agent/MCP-side into the daemon's local store and viewed in the dashboard (FR-DASH-E2E verified)."
     },
     {
       "id": "FR-NVIM-E2E",

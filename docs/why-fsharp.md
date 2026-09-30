@@ -1,6 +1,6 @@
-# Why F#? — Lessons from Building SageFs
+# Why F#? — Lessons from Building Bozzetto
 
-I built SageFs (a live F# development environment: a REPL engine, web dashboard, editor integrations, an MCP
+I built Bozzetto (a live F# development environment: a REPL engine, web dashboard, editor integrations, an MCP
 surface, and a daemon holding it all together) almost entirely in F#. Here's what I actually learned doing it,
 with real code from the codebase as the receipts.
 
@@ -8,7 +8,7 @@ with real code from the codebase as the receipts.
 
 ## 1. Discriminated Unions Make Impossible States Unrepresentable
 
-SageFs models session lifecycle with a discriminated union. Here's the real one, unedited:
+Bozzetto models session lifecycle with a discriminated union. Here's the real one, unedited:
 
 ```fsharp
 type SessionState =
@@ -31,7 +31,7 @@ you remember or not.
 
 ## 2. Railway-Oriented Programming Eliminates Try/Catch Spaghetti
 
-SageFs uses `Result<'T, SageFsError>` throughout. Errors are values, not exceptions.
+Bozzetto uses `Result<'T, BozzettoError>` throughout. Errors are values, not exceptions.
 The `ResultEx` module gives you composable combinators:
 
 ```fsharp
@@ -46,7 +46,7 @@ Every function in the chain either succeeds and passes the value forward, or fai
 typed error. No hidden control flow. No forgotten catch block. No `NullReferenceException` surfacing three
 stack frames away from where it actually went wrong.
 
-The `SageFsError` DU has cases across four categories (client/server/gateway/infra). An architecture test
+The `BozzettoError` DU has cases across four categories (client/server/gateway/infra). An architecture test
 verifies every case has exactly one classification and a valid HTTP status code, so you cannot add a new error
 case without classifying it. The compiler and the test suite both hold you to it.
 
@@ -54,7 +54,7 @@ case without classifying it. The compiler and the test suite both hold you to it
 
 ## 3. Immutability by Default Eliminates Entire Bug Categories
 
-SageFs pushes state transitions through pure update functions:
+Bozzetto pushes state transitions through pure update functions:
 
 ```fsharp
 let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
@@ -85,7 +85,7 @@ doesn't have that problem.
 
 ## 4. Units of Measure Prevent Timing Bugs at Compile Time
 
-SageFs defines:
+Bozzetto defines:
 
 ```fsharp
 [<Measure>] type ms
@@ -112,7 +112,7 @@ safety for a whole class of numerical mistakes I'd otherwise make eventually.
 
 ## 5. Pattern Matching Replaces If/Else Chains
 
-Every control-flow decision in SageFs goes through pattern matching:
+Every control-flow decision in Bozzetto goes through pattern matching:
 
 ```fsharp
 match response.EvaluationResult with
@@ -134,7 +134,7 @@ the codebase, each one a place a new case can slip through unnoticed.
 
 ## 6. Computation Expressions Are a Superpower
 
-SageFs's eval pipeline uses a custom computation expression:
+Bozzetto's eval pipeline uses a custom computation expression:
 
 ```fsharp
 let result = pipeline {
@@ -155,11 +155,11 @@ generation, just the type system doing what it's there for.
 
 ## 7. The Module System Scales Without Ceremony
 
-SageFs.Core alone is organized into roughly 190 top-level modules, no class hierarchies, no
+Bozzetto.Core alone is organized into roughly 190 top-level modules, no class hierarchies, no
 dependency-injection containers, no abstract factory patterns in sight.
 
 ```fsharp
-module SageFs.Middleware.Tracing
+module Bozzetto.Middleware.Tracing
 
 let buildTracedPipeline (middleware: NamedMiddleware list) (evalFn: MiddlewareNext) =
   // 40 lines of pure pipeline composition
@@ -174,7 +174,7 @@ doesn't save you from writing a 5,000-line file if you're not paying attention. 
 
 ## 8. Property-Based Testing Finds Bugs Example Tests Miss
 
-SageFs uses FsCheck to throw thousands of random inputs at the code and check invariants hold:
+Bozzetto uses FsCheck to throw thousands of random inputs at the code and check invariants hold:
 
 ```fsharp
 testProperty "RingBuffer push/toList length ≤ capacity" (fun (items: int list, cap: int) ->
@@ -215,7 +215,7 @@ Same safety. A fraction of the noise. I'll take it.
 
 ## 10. The Ecosystem Effect
 
-Because SageFs is written in F#, it gets to:
+Because Bozzetto is written in F#, it gets to:
 - **Hot-reload F# source files** into a live FSI session. The language's own REPL is first-class, so I'm not bolting one on
 - **Use FSharp.Compiler.Service** directly for real-time diagnostics, completions, and symbol analysis
 - **Generate Fable JavaScript** for the VS Code extension from the same F# source
@@ -243,8 +243,8 @@ heavy lifting so I don't have to.
 ## Getting Started
 
 ```bash
-dotnet tool install --global SageFs
-sagefs
+dotnet tool install --global Bozzetto
+boz
 ```
 
 That starts the daemon in the foreground. It's not a REPL by itself, it's the thing your editor, an MCP
@@ -252,4 +252,4 @@ client, or the dashboard talks to. Point one of them at `MyProject.fsproj` and i
 
 ---
 
-SageFs is open source. Tell me I'm wrong about any of this. That can be fun too.
+Bozzetto is open source. Tell me I'm wrong about any of this. That can be fun too.

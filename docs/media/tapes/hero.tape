@@ -1,4 +1,4 @@
-Output ../sagefs-hero.gif
+Output ../bozzetto-hero.gif
 Set FontSize 20
 Set Width 1200
 Set Height 600
@@ -11,11 +11,11 @@ Enter
 Sleep 500ms
 Show
 
-Type "# SageFs — F# Live Development"
+Type "# Bozzetto — F# Live Development"
 Enter
 Sleep 1s
 
-Type "sagefs --proj MyApp.fsproj"
+Type "boz --proj MyApp.fsproj"
 Enter
 Sleep 2s
 

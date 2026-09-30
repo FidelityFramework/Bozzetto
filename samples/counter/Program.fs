@@ -1,10 +1,10 @@
-module SageFs.Samples.Counter.Program
+module Bozzetto.Samples.Counter.Program
 
 #nowarn "3391"
 
 open Raylib_cs
 open System
-open SageFs.Samples.DemoEnv
+open Bozzetto.Samples.DemoEnv
 
 type CounterTheme =
   { Background: Color
@@ -272,14 +272,14 @@ let initState () =
     LastInteraction = "boot" }
 
 // ── Demo-recording controls (env-driven, off by default — see DemoEnv.fs) ──
-// SAGEFS_DEMO_WINDOW="x,y,w,h" places/sizes the window at startup.
+// BOZZETTO_DEMO_WINDOW="x,y,w,h" places/sizes the window at startup.
 // Unset or malformed values leave the window exactly as it was before this file existed.
 let private envVar name = Environment.GetEnvironmentVariable name |> Option.ofObj
-let demoWindow = parseWindow (envVar "SAGEFS_DEMO_WINDOW")
+let demoWindow = parseWindow (envVar "BOZZETTO_DEMO_WINDOW")
 
 [<EntryPoint>]
 let main _argv =
-  Raylib.InitWindow(screenWidth, screenHeight, "Counter Studio — SageFs sample")
+  Raylib.InitWindow(screenWidth, screenHeight, "Counter Studio — Bozzetto sample")
   Raylib.SetTargetFPS(60)
 
   match demoWindow with

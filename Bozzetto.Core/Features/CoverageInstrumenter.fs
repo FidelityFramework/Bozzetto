@@ -1,0 +1,352 @@
+namespace Bozzetto.Features.LiveTesting
+
+open System
+open System.IO
+open System.Reflection
+open Mono.Cecil
+open Mono.Cecil.Cil
+open Mono.Cecil.Rocks
+open Bozzetto.Utils
+
+/// Cecil-based IL instrumentation for branch coverage.
+/// Injects a __BozzettoCoverage tracker class with bool[] Hits field,
+/// and inserts Hit(slotId) calls at every non-hidden sequence point.
+module CoverageInstrumenter =
+
+  /// Collect all non-hidden sequence points across all methods,
+  /// including methods in nested types (F# closures, lambdas).
+  let collectSequencePoints (moduleDef: ModuleDefinition) =
+    let mutable slotId = 0
+    let rec methodsOf (t: TypeDefinition) =
+      seq {
+        yield! t.Methods
+        for nt in t.NestedTypes do
+          yield! methodsOf nt
+      }
+    [|
+      for t in moduleDef.Types do
+        for m in methodsOf t do
+          match m.HasBody
+                && m.DebugInformation <> null
+                && m.DebugInformation.HasSequencePoints with
+          | true ->
+            for sp in m.DebugInformation.SequencePoints do
+              match sp.IsHidden with
+              | false ->
+                yield (m, sp, slotId)
+                slotId <- slotId + 1
+              | true -> ()
+          | false -> ()
+    |]
+
+  /// Inject the __BozzettoCoverage static class into the module.
+  let injectTracker (moduleDef: ModuleDefinition) (totalSlots: int) =
+    let objectType = moduleDef.ImportReference(typeof<obj>)
+    let voidType = moduleDef.ImportReference(typeof<Void>)
+    let int32Type = moduleDef.ImportReference(typeof<int32>)
+    let boolType = moduleDef.ImportReference(typeof<bool>)
+
+    let tracker =
+      TypeDefinition(
+        "", "__BozzettoCoverage",
+        TypeAttributes.Class
+        ||| TypeAttributes.Public
+        ||| TypeAttributes.Sealed
+        ||| TypeAttributes.Abstract
+        ||| TypeAttributes.BeforeFieldInit,
+        objectType)
+
+    let hitsField =
+      FieldDefinition(
+        "Hits",
+        FieldAttributes.Public ||| FieldAttributes.Static,
+        ArrayType(boolType))
+    tracker.Fields.Add(hitsField)
+
+    // .cctor: Hits = new bool[totalSlots]
+    let cctor =
+      MethodDefinition(
+        ".cctor",
+        MethodAttributes.Static
+        ||| MethodAttributes.Private
+        ||| MethodAttributes.SpecialName
+        ||| MethodAttributes.RTSpecialName
+        ||| MethodAttributes.HideBySig,
+        voidType)
+    let il = cctor.Body.GetILProcessor()
+    il.Append(il.Create(OpCodes.Ldc_I4, totalSlots))
+    il.Append(il.Create(OpCodes.Newarr, boolType))
+    il.Append(il.Create(OpCodes.Stsfld, hitsField))
+    il.Append(il.Create(OpCodes.Ret))
+    tracker.Methods.Add(cctor)
+
+    // Hit(int id): Hits[id] = true
+    let hitMethod =
+      MethodDefinition(
+        "Hit",
+        MethodAttributes.Public
+        ||| MethodAttributes.Static
+        ||| MethodAttributes.HideBySig,
+        voidType)
+    hitMethod.Parameters.Add(
+      ParameterDefinition("id", ParameterAttributes.None, int32Type))
+    let hitIl = hitMethod.Body.GetILProcessor()
+    hitIl.Append(hitIl.Create(OpCodes.Ldsfld, hitsField))
+    hitIl.Append(hitIl.Create(OpCodes.Ldarg_0))
+    hitIl.Append(hitIl.Create(OpCodes.Ldc_I4_1))
+    hitIl.Append(hitIl.Create(OpCodes.Stelem_I1))
+    hitIl.Append(hitIl.Create(OpCodes.Ret))
+    tracker.Methods.Add(hitMethod)
+
+    moduleDef.Types.Add(tracker)
+    (tracker, hitMethod, hitsField)
+
+  /// Insert instructions before target, updating all exception handler
+  /// boundaries and branch operands that reference the target instruction.
+  /// Cecil's InsertBefore does NOT update these references — we must do it
+  /// ourselves, exactly as AltCover and Coverlet both do.
+  let private insertBeforeWithFixup
+    (il: ILProcessor) (target: Instruction) (newInstrs: Instruction list) =
+    let firstInserted =
+      newInstrs
+      |> List.rev
+      |> List.fold (fun next instr -> il.InsertBefore(next, instr); instr) target
+
+    for handler in il.Body.ExceptionHandlers do
+      match handler.TryStart = target with
+      | true -> handler.TryStart <- firstInserted
+      | false -> ()
+      match handler.TryEnd = target with
+      | true -> handler.TryEnd <- firstInserted
+      | false -> ()
+      match handler.HandlerStart = target with
+      | true -> handler.HandlerStart <- firstInserted
+      | false -> ()
+      match handler.HandlerEnd = target with
+      | true -> handler.HandlerEnd <- firstInserted
+      | false -> ()
+      match handler.FilterStart = target with
+      | true -> handler.FilterStart <- firstInserted
+      | false -> ()
+
+    for instr in il.Body.Instructions do
+      match instr.OpCode.OperandType with
+      | OperandType.InlineBrTarget
+      | OperandType.ShortInlineBrTarget ->
+        match Object.ReferenceEquals(instr.Operand, target) with
+        | true -> instr.Operand <- firstInserted
+        | false -> ()
+      | OperandType.InlineSwitch ->
+        let targets = instr.Operand :?> Instruction array
+        for i in 0 .. targets.Length - 1 do
+          match Object.ReferenceEquals(targets.[i], target) with
+          | true -> targets.[i] <- firstInserted
+          | false -> ()
+      | _ -> ()
+
+    firstInserted
+
+  /// Insert Hit(slotId) calls before each sequence point instruction.
+  /// Uses SimplifyMacros/OptimizeMacros to prevent short-branch overflow
+  /// when probe instructions push branch targets beyond ±127 byte range.
+  let insertProbes
+    (hitMethod: MethodDefinition)
+    (points: (MethodDefinition * Cil.SequencePoint * int) array) =
+    let byMethod = points |> Array.groupBy (fun (m, _, _) -> m)
+    for (m, methodPoints) in byMethod do
+      m.Body.SimplifyMacros()
+      let il = m.Body.GetILProcessor()
+      // Insert from end to start to preserve IL offsets for lookup
+      let sorted =
+        methodPoints
+        |> Array.sortByDescending (fun (_, sp, _) -> sp.Offset)
+      for (_, sp, slotId) in sorted do
+        let target =
+          m.Body.Instructions
+          |> Seq.tryFind (fun i -> i.Offset = sp.Offset)
+        match target with
+        | Some instr ->
+          let loadId = il.Create(OpCodes.Ldc_I4, slotId)
+          let callHit =
+            il.Create(OpCodes.Call, hitMethod :> MethodReference)
+          insertBeforeWithFixup il instr [ loadId; callHit ] |> ignore
+        | None -> ()
+      m.Body.OptimizeMacros()
+
+  /// Instrument an assembly: inject tracker + probes at sequence points.
+  /// Returns (InstrumentationMap, instrumentedAssemblyPath) or error.
+  let instrumentAssembly (assemblyPath: string)
+    : Result<InstrumentationMap * string, string> =
+    let sw = System.Diagnostics.Stopwatch.StartNew()
+    let activity =
+      Bozzetto.Instrumentation.startSpan Bozzetto.Instrumentation.testCycleSource "coverage.instrument_assembly"
+        [ ("coverage.assembly_path", box assemblyPath) ]
+    try
+      let pdbPath = Path.ChangeExtension(assemblyPath, ".pdb")
+      let hasPdb = File.Exists(pdbPath)
+      let readerParams =
+        ReaderParameters(
+          ReadSymbols = hasPdb,
+          ReadingMode = ReadingMode.Deferred)
+      use asm = AssemblyDefinition.ReadAssembly(assemblyPath, readerParams)
+      let moduleDef = asm.MainModule
+      let points = collectSequencePoints moduleDef
+      match points.Length = 0 with
+      | true ->
+        sw.Stop()
+        match isNull activity with
+        | false -> activity.SetTag("coverage.probe_count", 0) |> ignore
+        | true -> ()
+        Bozzetto.Instrumentation.succeedSpan activity
+        Ok(InstrumentationMap.empty, assemblyPath)
+      | false ->
+        let slots =
+          points
+          |> Array.map (fun (_, sp, slotId) ->
+            { File =
+                match sp.Document <> null with
+                | true -> sp.Document.Url
+                | false -> ""
+              Line = sp.StartLine
+              Column = sp.StartColumn
+              EndLine = sp.EndLine
+              EndColumn = sp.EndColumn
+              BranchId = slotId }
+            : Bozzetto.Features.LiveTesting.SequencePoint)
+        let map =
+          { Slots = slots
+            TotalProbes = points.Length
+            TrackerTypeName = "__BozzettoCoverage"
+            HitsFieldName = "Hits" }
+        let (_, hitMethod, _) =
+          injectTracker moduleDef points.Length
+        insertProbes hitMethod points
+        let dir = Path.GetDirectoryName(assemblyPath)
+        let name = Path.GetFileNameWithoutExtension(assemblyPath)
+        let ext = Path.GetExtension(assemblyPath)
+        let instrPath =
+          Path.Combine(dir, sprintf "%s.instrumented%s" name ext)
+        let writerParams = WriterParameters(WriteSymbols = hasPdb)
+        asm.Write(instrPath, writerParams)
+        sw.Stop()
+        match isNull activity with
+        | false ->
+          activity.SetTag("coverage.probe_count", points.Length) |> ignore
+          activity.SetTag("duration_ms", sw.Elapsed.TotalMilliseconds) |> ignore
+        | true -> ()
+        Bozzetto.Instrumentation.succeedSpan activity
+        Ok(map, instrPath)
+    with ex ->
+      sw.Stop()
+      Bozzetto.Instrumentation.failSpan activity ex.Message
+      Error(sprintf "Instrumentation failed: %s" ex.Message)
+
+  /// Instrument an assembly in-place by writing to temp then replacing.
+  /// Returns InstrumentationMap or error. The original path is overwritten.
+  let instrumentAssemblyInPlace (assemblyPath: string)
+    : Result<InstrumentationMap, string> =
+    instrumentAssembly assemblyPath
+    |> Result.bind (fun (map, instrPath) ->
+      match instrPath = assemblyPath with
+      | true -> Ok map
+      | false ->
+        try
+          let pdbPath = Path.ChangeExtension(assemblyPath, ".pdb")
+          let instrPdb = Path.ChangeExtension(instrPath, ".pdb")
+          File.Delete(assemblyPath)
+          File.Move(instrPath, assemblyPath)
+          match File.Exists(instrPdb) && File.Exists(pdbPath) with
+          | true ->
+            File.Delete(pdbPath)
+            File.Move(instrPdb, pdbPath)
+          | false -> ()
+          Ok map
+        with ex ->
+          Error(sprintf "Failed to replace assembly: %s" ex.Message))
+
+  /// Collect coverage hits from an instrumented assembly via reflection.
+  let collectCoverageHits
+    (asm: Assembly)
+    (map: InstrumentationMap)
+    : CoverageState option =
+    match map.TotalProbes = 0 with
+    | true ->
+      None
+    | false ->
+      let trackerType = asm.GetType(map.TrackerTypeName)
+      match trackerType = null with
+      | true ->
+        None
+      | false ->
+        let hitsField = trackerType.GetField(map.HitsFieldName)
+        match hitsField = null with
+        | true ->
+          None
+        | false ->
+          let hits = hitsField.GetValue(null) :?> bool array
+          Some(InstrumentationMap.toCoverageState hits map)
+
+  /// Reset coverage hits to prepare for a new test run.
+  let resetCoverageHits
+    (asm: Assembly)
+    (map: InstrumentationMap)
+    : unit =
+    match map.TotalProbes > 0 with
+    | true ->
+      let trackerType = asm.GetType(map.TrackerTypeName)
+      match trackerType <> null with
+      | true ->
+        let hitsField = trackerType.GetField(map.HitsFieldName)
+        match hitsField <> null with
+        | true ->
+          hitsField.SetValue(null, Array.create map.TotalProbes false)
+        | false -> ()
+      | false -> ()
+    | false -> ()
+
+  /// Track consecutive instrumentation failures for circuit breaker.
+  let mutable private consecutiveFailures = 0
+  let private maxConsecutiveFailures = 3
+
+  /// Reset the circuit breaker (e.g., after a successful instrumentation).
+  let resetCircuitBreaker () = consecutiveFailures <- 0
+
+  /// Check if the circuit breaker has tripped.
+  let isCircuitBroken () = consecutiveFailures >= maxConsecutiveFailures
+
+  /// Instrument all project DLLs in a shadow-copied solution for IL coverage.
+  /// Returns the instrumentation maps for all successfully instrumented assemblies.
+  /// Circuit breaker: after 3 consecutive failures, disables instrumentation.
+  let instrumentShadowSolution (projectTargetPaths: string list)
+    : InstrumentationMap array =
+    match isCircuitBroken () with
+    | true ->
+      Log.warn "IL coverage instrumentation disabled after %d consecutive failures" consecutiveFailures
+      [||]
+    | false ->
+      let mutable hadFailure = false
+      let results =
+        projectTargetPaths
+        |> List.toArray
+        |> Array.choose (fun targetPath ->
+          match File.Exists(targetPath) with
+          | true ->
+            match instrumentAssemblyInPlace targetPath with
+            | Ok map when map.TotalProbes > 0 ->
+              Some map
+            | Ok _ -> None
+            | Error msg ->
+              hadFailure <- true
+              Log.warn "IL instrumentation failed for %s: %s" (Path.GetFileName targetPath) msg
+              None
+          | false -> None)
+      match hadFailure with
+      | true ->
+        consecutiveFailures <- consecutiveFailures + 1
+        match isCircuitBroken () with
+        | true ->
+          Log.error "IL coverage circuit breaker tripped after %d failures — instrumentation disabled for this session" consecutiveFailures
+        | false -> ()
+      | false ->
+        consecutiveFailures <- 0
+      results

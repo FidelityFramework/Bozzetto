@@ -1,6 +1,6 @@
-# SageFs Friction Receiver
+# Bozzetto Friction Receiver
 
-A small Cloudflare Worker that receives sanitized SageFs friction reports
+A small Cloudflare Worker that receives sanitized Bozzetto friction reports
 and stores them in R2, with an optional Discord notification.
 
 ## Cost
@@ -19,14 +19,14 @@ tier even with thousands of users.
 ### 1. Create the R2 bucket
 
 ```sh
-wrangler r2 bucket create sagefs-friction
-wrangler r2 bucket create sagefs-friction-preview  # for `wrangler dev`
+wrangler r2 bucket create bozzetto-friction
+wrangler r2 bucket create bozzetto-friction-preview  # for `wrangler dev`
 ```
 
 ### 2. (Optional) Set secrets
 
 ```sh
-# If set, submissions must include this token in the X-SageFs-Token header.
+# If set, submissions must include this token in the X-Bozzetto-Token header.
 # Prevents random internet noise from filling your bucket.
 wrangler secret put INGEST_TOKEN
 # paste a long random string, e.g. `openssl rand -hex 32`
@@ -44,7 +44,7 @@ npm install
 npm run deploy
 ```
 
-Note the Worker URL — it will be `https://sagefs-friction-receiver.<your-subdomain>.workers.dev`
+Note the Worker URL — it will be `https://bozzetto-friction-receiver.<your-subdomain>.workers.dev`
 or whatever custom domain you configure.
 
 ### 4. (Optional) Custom domain
@@ -53,9 +53,9 @@ In the Cloudflare dashboard, add a route for the Worker on a subdomain
 of sagetech.dev (e.g. `friction.sagetech.dev`). Workers → your worker →
 Triggers → Custom Domains.
 
-### 5. Configure SageFs
+### 5. Configure Bozzetto
 
-In the SageFs dashboard, open the Friction panel (right-side drawer).
+In the Bozzetto dashboard, open the Friction panel (right-side drawer).
 Enter your endpoint URL and (if set) the ingest token. The endpoint
 URL and token are stored locally — never sent anywhere automatically.
 
@@ -64,11 +64,11 @@ URL and token are stored locally — never sent anywhere automatically.
 ```
 POST / HTTP/1.1
 Content-Type: application/json
-X-SageFs-Token: <optional, required if INGEST_TOKEN is set>
+X-Bozzetto-Token: <optional, required if INGEST_TOKEN is set>
 
 {
   "schemaVersion": 1,
-  "sageFsVersion": "0.6.315",
+  "bozzettoVersion": "0.6.315",
   "submittedAtUtc": "2026-01-01T00:00:00.000Z",
   "totalEvents": 16,
   "totalFeedbackItems": 4,
@@ -85,7 +85,7 @@ The schema is `1`. The server rejects anything else with a 400.
 ## What the Worker does
 
 1. **Token check** — if `INGEST_TOKEN` is set, requests without a matching
-   `X-SageFs-Token` header are rejected with 401.
+   `X-Bozzetto-Token` header are rejected with 401.
 2. **Size check** — requests over `MAX_PAYLOAD_BYTES` (default 64KB) are
    rejected with 413.
 3. **Schema validation** — the body must be a JSON object with the
@@ -105,21 +105,21 @@ The Worker returns `{ "reportId": "...", "key": "..." }` on success.
 
 ## Browsing submissions
 
-In the Cloudflare dashboard, R2 → sagefs-fucket → object list.
+In the Cloudflare dashboard, R2 → bozzetto-fucket → object list.
 Files are organized by date prefix (`2026/01/15/...`).
 
 Or from the CLI:
 ```sh
-wrangler r2 object list sagefs-friction --prefix 2026/01/
-wrangler r2 object get sagefs-friction 2026/01/15/lwxyz-abc12345.json
+wrangler r2 object list bozzetto-friction --prefix 2026/01/
+wrangler r2 object get bozzetto-friction 2026/01/15/lwxyz-abc12345.json
 ```
 
-The full JSON is what SageFs sent after server-side sanitization. If
+The full JSON is what Bozzetto sent after server-side sanitization. If
 anything sensitive ever lands here, it's a bug — report it.
 
-## What SageFs sends
+## What Bozzetto sends
 
-The SageFs dashboard's Friction panel lets you:
+The Bozzetto dashboard's Friction panel lets you:
 
 1. Generate a friction report from local telemetry
 2. See both the **raw** report (with your free-text `reason` fields) and
@@ -131,7 +131,7 @@ The SageFs dashboard's Friction panel lets you:
 Nothing is sent automatically. The button is opt-in per report. The
 endpoint URL is empty by default.
 
-## What the SageFs daemon never sends
+## What the Bozzetto daemon never sends
 
 - File paths (Windows or Unix)
 - IP addresses (private or public)

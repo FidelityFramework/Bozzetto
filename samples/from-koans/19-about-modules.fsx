@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Modules — SageFs Edition
+//  🧘  About Modules — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutModules.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

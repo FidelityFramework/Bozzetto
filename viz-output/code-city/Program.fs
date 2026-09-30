@@ -9133,7 +9133,7 @@ let drawHUD
   Raylib.DrawRectangle(8, 8, panelW, panelH, Color(8uy, 8uy, 16uy, 185uy))
   Raylib.DrawRectangleLines(8, 8, panelW, panelH, Color(77uy, 201uy, 240uy, 70uy))
 
-  drawUiText "SageFs Code City — Function View" 16 14 theme.HudTitle (Color(77uy, 201uy, 240uy, 255uy))
+  drawUiText "Bozzetto Code City — Function View" 16 14 theme.HudTitle (Color(77uy, 201uy, 240uy, 255uy))
   drawUiText
     (sprintf "%d functions  ·  %d LOC  ·  %d districts" totalFuncs totalLOC districts.Length)
     16 46 theme.HudStats (Color(190uy, 190uy, 200uy, 255uy))
@@ -9334,9 +9334,9 @@ let drawSelectionPanel
       drawUiText text (px + 12) y size color
       y <- y + size + 5
 
-// ─── SageFs Integration ───────────────────────────────────────
+// ─── Bozzetto Integration ───────────────────────────────────────
 
-/// Parse the workingDirectory field from SageFs's /api/daemon-info JSON response.
+/// Parse the workingDirectory field from Bozzetto's /api/daemon-info JSON response.
 let parseDaemonInfoJson (json: string) : string option =
   try
     let doc = System.Text.Json.JsonDocument.Parse(json)
@@ -9345,18 +9345,18 @@ let parseDaemonInfoJson (json: string) : string option =
     else Some wd
   with _ -> None
 
-/// Resolve repo root from CLI args, SageFs query result, and fallback (pure, no IO).
-/// Priority: explicit argv[0] > SageFs working dir > fallback dir.
-let resolveRepoRootPure (argv: string[]) (sageFsDir: string option) (fallbackDir: string) : string =
+/// Resolve repo root from CLI args, Bozzetto query result, and fallback (pure, no IO).
+/// Priority: explicit argv[0] > Bozzetto working dir > fallback dir.
+let resolveRepoRootPure (argv: string[]) (bozzettoDir: string option) (fallbackDir: string) : string =
   match argv |> Array.tryHead with
   | Some p when not (String.IsNullOrWhiteSpace(p)) -> p
   | _ ->
-    match sageFsDir with
+    match bozzettoDir with
     | Some d -> d
     | None -> fallbackDir
 
-/// Query the SageFs dashboard HTTP server for the active project's working directory.
-let tryQuerySageFsRoot (dashboardPort: int) : string option =
+/// Query the Bozzetto dashboard HTTP server for the active project's working directory.
+let tryQueryBozzettoRoot (dashboardPort: int) : string option =
   try
     use client = new System.Net.Http.HttpClient()
     client.Timeout <- TimeSpan.FromMilliseconds(700.0)
@@ -9406,13 +9406,13 @@ let main argv =
       if File.Exists(path) then Path.GetDirectoryName(path)  // .fsproj/.sln file
       else path
     | _ ->
-      // Auto-detect from SageFs daemon (dashboard port = MCP port + 1)
+      // Auto-detect from Bozzetto daemon (dashboard port = MCP port + 1)
       let mcpPort =
-        match Environment.GetEnvironmentVariable("SageFs_MCP_PORT") with
-        | s when String.IsNullOrWhiteSpace(s) -> 37749
-        | s -> match Int32.TryParse(s) with true, p -> p | _ -> 37749
-      let sageFsDir = tryQuerySageFsRoot (mcpPort + 1)
-      // Walk up from CWD for any solution file if SageFs not available
+        match Environment.GetEnvironmentVariable("Bozzetto_MCP_PORT") with
+        | s when String.IsNullOrWhiteSpace(s) -> 47749
+        | s -> match Int32.TryParse(s) with true, p -> p | _ -> 47749
+      let bozzettoDir = tryQueryBozzettoRoot (mcpPort + 1)
+      // Walk up from CWD for any solution file if Bozzetto not available
       let fallback =
         let mutable dir = Directory.GetCurrentDirectory()
         let mutable found = false
@@ -9423,7 +9423,7 @@ let main argv =
           if hasSln then found <- true
           else dir <- Directory.GetParent(dir).FullName
         if found then dir else Directory.GetCurrentDirectory()
-      resolveRepoRootPure [||] sageFsDir fallback
+      resolveRepoRootPure [||] bozzettoDir fallback
   let projectFile =
     match explicitPath |> Option.bind tryResolveProjectFile with
     | Some project -> Some project

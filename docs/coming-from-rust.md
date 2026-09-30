@@ -7,7 +7,7 @@ You leave behind borrow-checker fights over code that isn't actually doing anyth
 **What you'll notice right away:**
 - `Option<'T>`, `Result<'T, 'E>`, and exhaustive pattern matching, same as Rust.
 - Records and DUs get structural equality by default, no `#[derive(PartialEq)]` needed.
-- Hot reload: SageFs watches your files and re-evaluates on save, refreshing running web apps in the browser.
+- Hot reload: Bozzetto watches your files and re-evaluates on save, refreshing running web apps in the browser.
 - `.fsx` scripts give you the interactive exploration Rust never gave you.
 
 **→ [Start here: `samples/from-rust/hello.fsx`](../samples/from-rust/hello.fsx)**

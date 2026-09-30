@@ -1,4 +1,4 @@
-# EXECUTIVE SUMMARY - SageFs Phase 3 Design
+# EXECUTIVE SUMMARY - Bozzetto Phase 3 Design
 
 ## What Exists Today
 
@@ -26,7 +26,7 @@
   - Hash-based duplicate detection
 
 - **CoverageInstrumenter.fs**: IL-level branch coverage
-  - Cecil-based probe injection (__SageFsCoverage class)
+  - Cecil-based probe injection (__BozzettoCoverage class)
   - bool[] hits array indexed by sequence point
 
 - **LiveTestingTypes.fs**: Test state & coverage
@@ -188,7 +188,7 @@ response + elm events + event persistence
 | SSE events | McpPushNotifications.fs | PushEvent, EventAccumulator |
 | Test state | LiveTestingTypes.fs | LiveTestState |
 | Coverage | LiveTestingTypes.fs | CoverageBitmap |
-| Instrumentation | CoverageInstrumenter.fs | __SageFsCoverage injection |
+| Instrumentation | CoverageInstrumenter.fs | __BozzettoCoverage injection |
 
 ---
 

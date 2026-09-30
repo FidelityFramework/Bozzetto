@@ -1,11 +1,11 @@
 # Informal Specification: `Affordances.availableTools`
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
 
 ## Source
 
-- **F# file**: `SageFs.Core/Affordances.fs`
-- **Types**: `SessionState` (`SageFs.Core/SessionState.fs`), `SageFsError` (`SageFs.Core/SageFsError.fs`)
+- **F# file**: `Bozzetto.Core/Affordances.fs`
+- **Types**: `SessionState` (`Bozzetto.Core/SessionState.fs`), `BozzettoError` (`Bozzetto.Core/BozzettoError.fs`)
 
 ---
 
@@ -14,7 +14,7 @@
 `availableTools (state: SessionState) : string list`
 
 Returns the list of MCP tool names that are valid for an agent to invoke
-when the SageFs daemon is in the given session lifecycle state. The list is
+when the Bozzetto daemon is in the given session lifecycle state. The list is
 used by `checkToolAvailability` to gate tool invocations and return an
 error when a tool is called in a state that does not support it.
 

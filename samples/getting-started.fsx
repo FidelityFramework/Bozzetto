@@ -1,7 +1,7 @@
 // ============================================================
-//  🦅  Welcome to SageFs — Your F# Live Development Environment
+//  🦅  Welcome to Bozzetto — Your F# Live Development Environment
 //
-//  This file teaches you SageFs in 5 minutes, one block at a time.
+//  This file teaches you Bozzetto in 5 minutes, one block at a time.
 //  Place your cursor on any expression and press Alt+Enter.
 //  You'll see the result appear inline. No build step. No waiting.
 // ============================================================
@@ -9,11 +9,11 @@
 // ── 1. Instant feedback ──
 // Put your cursor here and press Alt+Enter:
 1 + 1
-// → 2   That's it. You just used SageFs.
+// → 2   That's it. You just used Bozzetto.
 
 // ── 2. Let bindings — names for values ──
-let greeting = "Hello from SageFs!"
-// Alt+Enter on `greeting` → "Hello from SageFs!"
+let greeting = "Hello from Bozzetto!"
+// Alt+Enter on `greeting` → "Hello from Bozzetto!"
 
 let year = 2026
 let pi  = 3.14159
@@ -82,7 +82,7 @@ describe 42  // → "big"
 describe -3  // → "negative"
 
 // ── 8. Writing tests with Expecto ──
-// SageFs uses Expecto for testing. Here's the basics:
+// Bozzetto uses Expecto for testing. Here's the basics:
 //
 // open Expecto
 //
@@ -97,11 +97,11 @@ describe -3  // → "negative"
 //   }
 // ]
 //
-// Save the file → SageFs runs your tests automatically (live testing).
+// Save the file → Bozzetto runs your tests automatically (live testing).
 // Green gutter marks = passing. Red = failing. It's that simple.
 
 // ── 9. Hot reload — edit and see changes instantly ──
-// SageFs watches your source files. When you save:
+// Bozzetto watches your source files. When you save:
 //   • Changed files are reloaded into the FSI session
 //   • Affected tests re-run automatically
 //   • Results update in your editor's gutter
@@ -117,7 +117,7 @@ describe -3  // → "negative"
 // ── 10. Where to go next ──
 //
 // 📚 F# Koans (learn F# from scratch):
-//    Open samples/from-koans/00-about-sagefs-koans.fsx
+//    Open samples/from-koans/00-about-bozzetto-koans.fsx
 //    22 progressive exercises, from basics to data pipelines.
 //
 // 🔷 Coming from C#?    → samples/from-csharp/hello.fsx

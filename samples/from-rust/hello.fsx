@@ -123,12 +123,12 @@ counter.Post("inc")
 // Cargo: cargo build, cargo test, cargo add
 // dotnet: dotnet build, dotnet test, dotnet add package <name>
 //         nuget.org = crates.io (equally searchable, larger ecosystem)
-// SageFs: dotnet build is mostly for CI — day-to-day, just hit save.
+// Bozzetto: dotnet build is mostly for CI — day-to-day, just hit save.
 
 // ── Why F# if you love Rust? ──
 // • Faster to write. Same ideas, less syntax.
 // • .NET ecosystem is enormous (NuGet >> crates in some domains)
-// • Hot reload: impossible in Rust, trivial in SageFs
+// • Hot reload: impossible in Rust, trivial in Bozzetto
 // • Interactive scripting: .fsx files are Rust's "missing" REPL
 // • Web apps (Falco), GUIs (Raylib), ML (ML.NET), data (DiffSharp)
 // • Type providers: read a JSON/CSV/DB schema as F# types at compile time

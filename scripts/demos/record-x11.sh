@@ -8,7 +8,7 @@
 # x11grab for a fixed duration, and converts the recording to an animated
 # GIF using ffmpeg's two-pass palette filter.
 #
-# This script knows nothing about SageFs. It is a reusable building block:
+# This script knows nothing about Bozzetto. It is a reusable building block:
 # callers pass in the command that drives whatever they want recorded.
 #
 # Example:

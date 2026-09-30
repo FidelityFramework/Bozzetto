@@ -1,9 +1,9 @@
 // Test script for state change handler extraction
-// Load via SageFs: #load "scripts/test-state-handlers.fsx"
+// Load via Bozzetto: #load "scripts/test-state-handlers.fsx"
 
-open SageFs.McpPushNotifications
-open SageFs.Features.Diagnostics
-open SageFs.Features.LiveTesting
+open Bozzetto.McpPushNotifications
+open Bozzetto.Features.Diagnostics
+open Bozzetto.Features.LiveTesting
 open Expecto
 open Expecto.Flip
 

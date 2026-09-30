@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Unit — SageFs Edition
+//  🧘  About Unit — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutUnit.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

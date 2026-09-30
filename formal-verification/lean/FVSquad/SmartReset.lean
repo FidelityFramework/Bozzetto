@@ -1,7 +1,7 @@
 /-!
   SmartReset.lean
-  🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
-  Source: `SageFs.Core/SmartReset.fs`
+  🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
+  Source: `Bozzetto.Core/SmartReset.fs`
 
   Formalises the **pure escalation logic** of `SmartReset.execute`:
   try soft reset first; if it fails, escalate to hard reset.
@@ -18,7 +18,7 @@
   ## Model
 
   We model the Task<_>/async computation as a pure function of two
-  synchronous results.  `SageFsError` is abstracted as `String`
+  synchronous results.  `BozzettoError` is abstracted as `String`
   (we care only that errors carry a message, not their precise type).
 
   ## Key properties proved
@@ -34,12 +34,12 @@
   ## Abstractions / omissions
 
   - `Task<_>` / async execution modelled as pure synchronous functions.
-  - `SageFsError` abstracted as `String`.
+  - `BozzettoError` abstracted as `String`.
   - Timing and logging are omitted.
   - The `execute` function's `TaskCancellationToken` is not modelled.
 
   No Mathlib. Pure Lean 4 stdlib only (network firewalled in CI).
-  Source: `SageFs.Core/SmartReset.fs`
+  Source: `Bozzetto.Core/SmartReset.fs`
 -/
 
 namespace SmartReset

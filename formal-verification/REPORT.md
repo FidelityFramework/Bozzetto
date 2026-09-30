@@ -1,4 +1,4 @@
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
 
 > ⚠️ **STALE / HISTORICAL REFERENCE — NOT AN ACTIVE GATE (2026-09-14).** This Lean
 > tree was last substantively touched 2026-05-11; its CI job was deleted
@@ -25,9 +25,9 @@
 
 ## Executive Summary
 
-The SageFs Lean Squad has produced twelve Lean 4 formal specification files covering
+The Bozzetto Lean Squad has produced twelve Lean 4 formal specification files covering
 the core data structures, state machines, and system-level composition properties in
-`SageFs.Core`. A total of **191 theorems** have been stated and proved with zero `sorry`
+`Bozzetto.Core`. A total of **191 theorems** have been stated and proved with zero `sorry`
 remaining. The nine base modules verify individual components: `RingBuffer` (20),
 `ResultEx` (17), `RetryPolicy` (13), `RestartPolicy` (9), `Affordances` (19),
 `EvalPipeline` (20), `HotReloadState` (23), `SessionLifecycle` (16), and `Theme`
@@ -308,7 +308,7 @@ projections, and combinator laws all hold as specified.
 
 ```mermaid
 timeline
-  title SageFs FV Project
+  title Bozzetto FV Project
   section Run 1-3
     RingBuffer : 20 theorems - WellFormed invariants
   section Run 4-5

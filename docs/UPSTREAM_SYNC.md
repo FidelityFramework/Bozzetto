@@ -50,7 +50,7 @@ PATH=/home/hhh/.cache/bozzetto-validation/dotnet:$PATH \
 dotnet fsi ci-pipeline.fsx
 ```
 
-The initial pipeline exited **1**: all build/editor stages passed, but two host shards failed because of missing test prerequisites. The full transcript is `/home/hhh/.cache/bozzetto-validation/pipeline.log`; per-tier logs and original ledgers are in `/home/hhh/repos/Bozzetto.tiers/`.
+The initial pipeline exited **1**: all build/editor stages passed, but two host shards failed because of missing test prerequisites. The full transcript is `/home/hhh/.cache/bozzetto-validation/pipeline.log`; per-tier logs and original ledgers were created in `/home/hhh/repos/Bozzetto.tiers/` and relocated on 30 September 2026 to `/home/hhh/.cache/bozzetto/tiers/Bozzetto-9c6966335ce4754f/`. The pipeline now places tier artifacts under `${XDG_CACHE_HOME:-$HOME/.cache}/bozzetto/tiers/<checkout-name>-<path-hash>/` automatically, outside project repositories.
 
 | Check | Result |
 |---|---|

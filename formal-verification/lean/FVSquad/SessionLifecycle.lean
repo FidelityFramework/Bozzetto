@@ -1,6 +1,6 @@
 /-
   SessionLifecycle.lean
-  Formal specification for the SageFs session lifecycle state machine.
+  Formal specification for the Bozzetto session lifecycle state machine.
 
   Targets:
   - `SessionPhase`   (Initializing / Active / Faulted) — rich internal phase
@@ -22,7 +22,7 @@
   We use qualified names throughout to avoid ambiguity.
 
   No Mathlib. Pure Lean 4 stdlib only (network firewalled in sandbox/CI).
-  Source: SageFs.Core/AppState.fs, SageFs.Core/SessionState.fs
+  Source: Bozzetto.Core/AppState.fs, Bozzetto.Core/SessionState.fs
 -/
 
 namespace SessionLifecycle
@@ -38,7 +38,7 @@ inductive Activity where
 
 /-- Rich session lifecycle phase — makes impossible states unrepresentable.
     `AppState` (abstracted as `α`) is only present when `Active`.
-    Mirrors F# `SessionPhase` in SageFs.Core/AppState.fs. -/
+    Mirrors F# `SessionPhase` in Bozzetto.Core/AppState.fs. -/
 inductive Phase (α : Type) where
   | Initializing (msg : Option String)
   | Active (st : α) (act : Activity)
@@ -46,7 +46,7 @@ inductive Phase (α : Type) where
   deriving Repr
 
 /-- Session state for external consumers (MCP, dashboard).
-    Mirrors F# `SessionState` in SageFs.Core/SessionState.fs. -/
+    Mirrors F# `SessionState` in Bozzetto.Core/SessionState.fs. -/
 inductive State where
   | Uninitialized
   | WarmingUp

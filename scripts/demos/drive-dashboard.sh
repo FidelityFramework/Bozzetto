@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# drive-dashboard.sh — SageFs-specific driver for the dashboard demo recording.
+# drive-dashboard.sh — Bozzetto-specific driver for the dashboard demo recording.
 #
 # This script is meant to run as the --command of record-x11.sh (which owns
 # Xvfb and ffmpeg). It:
-#   1. starts an isolated SageFs daemon (own --mcp-port, own SAGEFS_DATA_DIR,
-#      never touches the real ~/.SageFs)
+#   1. starts an isolated Bozzetto daemon (own --mcp-port, own BOZZETTO_DATA_DIR,
+#      never touches the real ~/.bozzetto)
 #   2. creates a bare FSI session through the daemon's HTTP API and runs a
 #      couple of small evals, so the dashboard has real content to show
 #   3. opens the dashboard in Chromium under the X display it inherits via
@@ -32,7 +32,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MCP_PORT=""
 DATA_DIR=""
 DURATION=6
-SAGEFS_BIN=""
+BOZZETTO_BIN=""
 CHROMIUM_BIN=""
 WORKDIR=""
 LOG_DIR=""
@@ -43,22 +43,22 @@ usage() {
 Usage: $SCRIPT_NAME --mcp-port N --data-dir DIR [options]
 
 Required:
-  --mcp-port N          Port for this job's isolated SageFs daemon (the
+  --mcp-port N          Port for this job's isolated Bozzetto daemon (the
                          dashboard listens on N+1). Must not collide with
                          any other running daemon (default main daemon
-                         uses 37749/37750 — never use those here).
-  --data-dir DIR         Directory for this job's SAGEFS_DATA_DIR. Must be
+                         uses 47749/47750 — never use those here).
+  --data-dir DIR         Directory for this job's BOZZETTO_DATA_DIR. Must be
                          a fresh directory dedicated to this job — the real
-                         ~/.SageFs is never touched.
+                         ~/.bozzetto is never touched.
 
 Options:
   --duration SECONDS      Roughly how long the caller will be recording for;
                            this script holds chromium open for duration+10s
                            as a safety margin (default: 6)
-  --sagefs-bin PATH        Path to the built SageFs executable (default:
-                           <repo>/SageFs/bin/Release/net10.0/SageFs — build
+  --bozzetto-bin PATH        Path to the built Bozzetto executable (default:
+                           <repo>/Bozzetto/bin/Release/net10.0/Bozzetto — build
                            it first with:
-                           dotnet build SageFs/SageFs.fsproj -c Release)
+                           dotnet build Bozzetto/Bozzetto.fsproj -c Release)
   --chromium PATH           Path to a chromium binary (default: first of
                              'chromium'/'chromium-browser' on PATH)
   --workdir DIR              Working directory for the FSI session (default:
@@ -83,7 +83,7 @@ while [[ $# -gt 0 ]]; do
     --mcp-port) MCP_PORT="$2"; shift 2 ;;
     --data-dir) DATA_DIR="$2"; shift 2 ;;
     --duration) DURATION="$2"; shift 2 ;;
-    --sagefs-bin) SAGEFS_BIN="$2"; shift 2 ;;
+    --bozzetto-bin) BOZZETTO_BIN="$2"; shift 2 ;;
     --chromium) CHROMIUM_BIN="$2"; shift 2 ;;
     --workdir) WORKDIR="$2"; shift 2 ;;
     --log-dir) LOG_DIR="$2"; shift 2 ;;
@@ -103,8 +103,8 @@ done
 
 DASHBOARD_PORT=$((MCP_PORT + 1))
 
-[[ -n "$SAGEFS_BIN" ]] || SAGEFS_BIN="$REPO_ROOT/SageFs/bin/Release/net10.0/SageFs"
-[[ -x "$SAGEFS_BIN" ]] || die "sagefs binary not found or not executable: $SAGEFS_BIN (build it first: dotnet build SageFs/SageFs.fsproj -c Release)"
+[[ -n "$BOZZETTO_BIN" ]] || BOZZETTO_BIN="$REPO_ROOT/Bozzetto/bin/Release/net10.0/Bozzetto"
+[[ -x "$BOZZETTO_BIN" ]] || die "bozzetto binary not found or not executable: $BOZZETTO_BIN (build it first: dotnet build Bozzetto/Bozzetto.fsproj -c Release)"
 
 if [[ -z "$CHROMIUM_BIN" ]]; then
   CHROMIUM_BIN="$(command -v chromium 2>/dev/null || command -v chromium-browser 2>/dev/null || true)"
@@ -116,7 +116,7 @@ mkdir -p "$DATA_DIR" "$LOG_DIR"
 [[ -n "$WORKDIR" ]] || { WORKDIR="$DATA_DIR/workdir"; mkdir -p "$WORKDIR"; }
 
 log "mcp-port=$MCP_PORT dashboard-port=$DASHBOARD_PORT data-dir=$DATA_DIR display=$DISPLAY"
-log "sagefs-bin=$SAGEFS_BIN chromium=$CHROMIUM_BIN workdir=$WORKDIR"
+log "bozzetto-bin=$BOZZETTO_BIN chromium=$CHROMIUM_BIN workdir=$WORKDIR"
 
 DAEMON_PID=""
 CHROMIUM_PID=""
@@ -154,8 +154,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-log "starting isolated SageFs daemon"
-SAGEFS_DATA_DIR="$DATA_DIR" "$SAGEFS_BIN" \
+log "starting isolated Bozzetto daemon"
+BOZZETTO_DATA_DIR="$DATA_DIR" "$BOZZETTO_BIN" \
   --mcp-port "$MCP_PORT" \
   --owner-pid "$$" \
   --ttl 5m \
@@ -205,7 +205,7 @@ if [[ "$NO_SESSION" -eq 0 ]]; then
     # Plain, quote-free F# so no runtime JSON escaping is needed.
     for code in \
       '1 + 1;;' \
-      'let sageFsDemoNumbers = List.map (fun x -> x * 2) [ 1 .. 5 ];;' \
+      'let bozzettoDemoNumbers = List.map (fun x -> x * 2) [ 1 .. 5 ];;' \
       'System.DateTime.UtcNow.ToString();;'
     do
       curl -sf -m 20 -X POST "http://localhost:$MCP_PORT/exec" \

@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Option Types — SageFs Edition
+//  🧘  About Option Types — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutOptionTypes.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

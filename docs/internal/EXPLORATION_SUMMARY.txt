@@ -1,4 +1,4 @@
-# SageFs Implementation Patterns — Quick Reference
+# Bozzetto Implementation Patterns — Quick Reference
 
 ## 7 CORE PATTERNS TO REPLICATE
 
@@ -68,9 +68,9 @@ Example: SseWriter + FeatureHooks
   □ Edge case tests (capacity, empty, etc.)
   □ Property tests (if applicable)
 
-□ Integrate into SageFs:
+□ Integrate into Bozzetto:
   □ Add state field to FeaturePushState (if UI feature)
-  □ Add feature event to SageFsEvent DU (if event-sourced)
+  □ Add feature event to BozzettoEvent DU (if event-sourced)
   □ Add tool to availableTools if MCP-exposed
   □ Implement MCP tool handler if user-facing
   □ Add SSE push logic if real-time UI
@@ -122,22 +122,22 @@ HEALTH:
 ## KEY FILES TO REFERENCE
 
 ✅ Pattern Examples:
-  • SageFs.Core/Features/MessageJournal.fs — Immutable aggregate + ring buffer
-  • SageFs.Core/Features/EvalProvenance.fs — Struct + DU + pure computation
-  • SageFs.Core/Features/FeatureHooks.fs — Feature aggregation + SSE dedup
-  • SageFs.Core/Features/Events.fs — Event sourcing architecture
-  • SageFs.Core/Affordances.fs — State machine + availability
+  • Bozzetto.Core/Features/MessageJournal.fs — Immutable aggregate + ring buffer
+  • Bozzetto.Core/Features/EvalProvenance.fs — Struct + DU + pure computation
+  • Bozzetto.Core/Features/FeatureHooks.fs — Feature aggregation + SSE dedup
+  • Bozzetto.Core/Features/Events.fs — Event sourcing architecture
+  • Bozzetto.Core/Affordances.fs — State machine + availability
 
 ✅ Integration Hooks:
-  • SageFs.Core/Mcp.fs (lines 400-600) — MCP tool registration
-  • SageFs.Core/McpStateHandlers.fs — Tool implementations
-  • SageFs.Core/ElmLoop.fs — Actor event loop
-  • SageFs.Core/AppState.fs — Global session state
+  • Bozzetto.Core/Mcp.fs (lines 400-600) — MCP tool registration
+  • Bozzetto.Core/McpStateHandlers.fs — Tool implementations
+  • Bozzetto.Core/ElmLoop.fs — Actor event loop
+  • Bozzetto.Core/AppState.fs — Global session state
 
 ✅ Test Examples:
-  • SageFs.Tests/MessageJournalTests.fs — Immutable aggregate testing
-  • SageFs.Tests/EvalProvenanceTests.fs — Property + annotation testing
-  • SageFs.Tests/TestNarrationTests.fs — Narrative generation testing
+  • Bozzetto.Tests/MessageJournalTests.fs — Immutable aggregate testing
+  • Bozzetto.Tests/EvalProvenanceTests.fs — Property + annotation testing
+  • Bozzetto.Tests/TestNarrationTests.fs — Narrative generation testing
 
 ---
 

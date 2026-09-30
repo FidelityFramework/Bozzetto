@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About .NET Collections — SageFs Edition
+//  🧘  About .NET Collections — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutDotNetCollections.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

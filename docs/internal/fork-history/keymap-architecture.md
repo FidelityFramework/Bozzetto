@@ -14,7 +14,7 @@ Current keymap system (`KeyMap = Map<KeyCombo, UiAction>`) only supports single-
 
 ## Design
 
-### Core Types (in `SageFs.Core/KeyMap.fs` — new file)
+### Core Types (in `Bozzetto.Core/KeyMap.fs` — new file)
 
 ```fsharp
 /// Every physical key — a closed DU so the DSL catches typos at compile time.
@@ -340,7 +340,7 @@ All existing bindings preserved exactly, just moved into the new type system. Ev
 ### Config File Format
 
 ```fsx
-// ~/.sagefs/keymap.fsx
+// ~/.bozzetto/keymap.fsx
 let leader = "Space"
 
 // String-based config (parsed with InputMode.tryParse, validated at load time)
@@ -356,7 +356,7 @@ let keybindings = [
 
 **Preferred: Type-safe DSL (compile-time checked, validated at definition):**
 ```fsharp
-open SageFs.Core.KeyMapDsl
+open Bozzetto.Core.KeyMapDsl
 
 // Key.d, Key.g, Key.Enter etc. — DU cases, not strings or chars.
 // Modifiers applied via shift/ctrl/alt combinators.
@@ -476,7 +476,7 @@ When a binding doesn't fire and you're wondering why, you need to answer: "what 
 ### Phase 1: Proved Refactor (no behavior change)
 Port existing `KeyMap.defaults` into the new `KeyMap2` type system. Everything stays in Insert mode. No sequences, no modes, no matcher. Prove the new types work by showing the old and new systems produce identical results.
 
-- [ ] Create `SageFs.Core/KeyMap.fs` with core types (`Key`, `Modifier`, `KeyInput`, `KeySequence`, `InputMode`, `KeyContext`, `BindingScope`, `KeyBinding`, `KeyTrieNode`, `ScopedKeyMap`, `KeyMap2`, `KeyMapBuildError`)
+- [ ] Create `Bozzetto.Core/KeyMap.fs` with core types (`Key`, `Modifier`, `KeyInput`, `KeySequence`, `InputMode`, `KeyContext`, `BindingScope`, `KeyBinding`, `KeyTrieNode`, `ScopedKeyMap`, `KeyMap2`, `KeyMapBuildError`)
 - [ ] Port all `KeyMap.defaults` single-chord bindings to `KeyBinding list` (all in `Insert` mode, `Scope = Global`, no mode transitions)
 - [ ] Implement `KeyMap2.build : KeyBinding list -> Result<KeyMap2, KeyMapBuildError list>` with prefix-collision validation
 - [ ] Wire into both TUI and Raylib: replace `mapKeyWith` with new type lookup (single-key only, no sequences yet)

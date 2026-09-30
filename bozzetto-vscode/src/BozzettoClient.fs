@@ -1,0 +1,732 @@
+module Bozzetto.Vscode.BozzettoClient
+
+open Fable.Core
+open Fable.Core.JsInterop
+open Bozzetto.Vscode.AppRunPure
+open Bozzetto.Vscode.BufferBridge
+open Bozzetto.Vscode.DaemonDiscovery
+open Bozzetto.Vscode.JsHelpers
+open Bozzetto.Vscode.SafeInterop
+
+module ErrorPresentationPure = Bozzetto.Vscode.ErrorPresentationPure
+
+[<Emit("console.warn('[Bozzetto]', $0 + ':', $1)")>]
+let private consoleWarn (context: string) (err: obj) : unit = jsNative
+
+/// Command result: either succeeded with optional message, or failed with error.
+/// Replaces the old { success; result; error } bag-of-optionals — illegal states now unrepresentable.
+type ApiOutcome =
+  | Succeeded of message: string option
+  | Failed of error: string
+
+module ApiOutcome =
+  let message = function Succeeded m -> m | Failed _ -> None
+  let error = function Failed e -> Some e | Succeeded _ -> None
+  let isOk = function Succeeded _ -> true | Failed _ -> false
+  let messageOrDefault fallback = function Succeeded (Some m) -> m | Succeeded None -> fallback | Failed e -> e
+
+type HealthError =
+  { case: string
+    message: string
+    suggestedAction: string }
+
+type SessionHealthSummary =
+  { id: string
+    projectName: string
+    status: string
+    health: {| status: string; reason: string option |}
+    faultReason: string option
+    workingDirectory: string
+    workerPid: int option
+    lastActivity: string
+    workflowLabel: string }
+
+type BozzettoStatus =
+  { connected: bool
+    healthy: bool option
+    status: string option
+    apiVersion: int option
+    features: string list
+    error: HealthError option
+    sessionCount: int option
+    sessionStates: SessionHealthSummary array option
+    diagnosticSummary: string option }
+
+type SystemStatus =
+  { supervised: bool
+    restartCount: int
+    version: string
+    apiVersion: int
+    mcpPort: int option
+    dashboardPort: int option }
+
+type HotReloadFile =
+  { path: string
+    watched: bool }
+
+type HotReloadState =
+  { files: HotReloadFile array
+    watchedCount: int }
+
+type SessionInfo =
+  { id: string
+    name: string option
+    workingDirectory: string
+    status: string
+    projects: string array
+    /// The projects the worker actually loaded. Authoritative over `projects`,
+    /// which is only what the session was created with (and can be empty while
+    /// a project is loaded).
+    loadedProjects: string array
+    evalCount: int
+    workflowLabel: string
+    /// The daemon's own usability verdict (`Bozzetto.Core/SessionHealth.fs`),
+    /// as sent on `/api/sessions`. Every client-side health rendering reads
+    /// THIS — no surface re-derives a verdict of its own.
+    health: SessionsTreePure.SessionHealth }
+
+type LoadedAssemblyInfo =
+  { Name: string
+    Path: string
+    NamespaceCount: int
+    ModuleCount: int }
+
+type OpenedBindingInfo =
+  { Name: string
+    IsModule: bool
+    Source: string }
+
+type WarmupContextInfo =
+  { SourceFilesScanned: int
+    AssembliesLoaded: LoadedAssemblyInfo array
+    NamespacesOpened: OpenedBindingInfo array
+    FailedOpens: string array array
+    WarmupDurationMs: int }
+
+[<Import("httpGet", "./http-helpers.js")>]
+let httpGetRaw (url: string) (timeout: int) : JS.Promise<{| statusCode: int; body: string |}> = jsNative
+
+[<Import("httpPost", "./http-helpers.js")>]
+let httpPostRaw (url: string) (body: string) (timeout: int) : JS.Promise<{| statusCode: int; body: string |}> = jsNative
+
+type Client =
+  { mutable mcpPort: int
+    mutable dashboardPort: int
+    log: string -> unit }
+
+let create (mcpPort: int) (dashboardPort: int) (log: string -> unit) =
+  let configured = normalizeConfiguredPorts mcpPort dashboardPort
+  { mcpPort = configured.McpPort
+    dashboardPort = configured.DashboardPort
+    log = log }
+
+let baseUrl (c: Client) = sprintf "http://localhost:%d" c.mcpPort
+let dashboardUrl (c: Client) = sprintf "http://localhost:%d/dashboard" c.dashboardPort
+
+let updatePorts (mcpPort: int) (dashboardPort: int) (c: Client) =
+  c.mcpPort <- mcpPort
+  c.dashboardPort <- dashboardPort
+
+let applyConfiguredPorts (mcpPort: int) (dashboardPort: int) (c: Client) =
+  let configured = normalizeConfiguredPorts mcpPort dashboardPort
+  updatePorts configured.McpPort configured.DashboardPort c
+  configured
+
+let httpGet (c: Client) (path: string) (timeout: int) =
+  httpGetRaw (sprintf "%s%s" (baseUrl c) path) timeout
+
+let httpPost (c: Client) (path: string) (body: string) (timeout: int) =
+  httpPostRaw (sprintf "%s%s" (baseUrl c) path) body timeout
+
+let dashHttpGet (c: Client) (path: string) (timeout: int) =
+  httpGetRaw (sprintf "http://localhost:%d%s" c.dashboardPort path) timeout
+
+let dashHttpPost (c: Client) (path: string) (body: string) (timeout: int) =
+  httpPostRaw (sprintf "http://localhost:%d%s" c.dashboardPort path) body timeout
+
+// ── JSON field helpers (null-safe boundary parsing) ──────────────────────
+
+let parseOutcome (parsed: obj) : ApiOutcome =
+  let success = fieldBool "success" parsed |> Option.defaultValue false
+  match success with
+  | true ->
+    fieldString "message" parsed
+    |> Option.orElse (fieldString "result" parsed)
+    |> Succeeded
+  | false ->
+    fieldString "error" parsed
+    |> Option.defaultValue "Unknown error"
+    |> Failed
+
+/// POST a command, parse the standard { success, message/result, error } response.
+let postCommand (c: Client) (path: string) (body: string) (timeout: int) : JS.Promise<ApiOutcome> =
+  promise {
+    try
+      let! resp = httpPost c path body timeout
+      match resp.statusCode with
+      | s when s >= 200 && s < 300 ->
+        return jsonParse resp.body |> parseOutcome
+      | s ->
+        // A non-2xx body is one of two well-known shapes: `{success, error}`
+        // for a validation refusal (which carries the daemon's own "did you
+        // mean" text), or `BozzettoError.toJson`'s
+        // `{case, message, suggestedAction}`. Truncating the raw JSON behind
+        // an "HTTP 400:" prefix threw away exactly the half a user can act on
+        // — the same defect §6.4 measured in Neovim's `err_detail`.
+        let parsed = try Some (jsonParse resp.body) with _ -> None
+        match parsed with
+        | None -> return Failed (sprintf "HTTP %d: %s" s (resp.body.Substring(0, min 200 resp.body.Length)))
+        | Some p ->
+          let message =
+            fieldString "error" p
+            |> Option.orElse (fieldString "message" p)
+            |> Option.defaultValue (sprintf "The daemon refused the request (HTTP %d)." s)
+          return
+            Failed (
+              ErrorPresentationPure.describe
+                { Case = fieldString "case" p |> Option.defaultValue ""
+                  Message = message
+                  SuggestedAction = fieldString "suggestedAction" p |> Option.defaultValue "" })
+    with err ->
+      return Failed (string err)
+  }
+
+// ── HTTP helpers (compress repeated GET/POST patterns) ───────────────────
+
+/// GET from MCP port, parse JSON on 200, None otherwise.
+let getJson<'a> (ctx: string) (path: string) (timeout: int) (parse: obj -> 'a) (c: Client) : JS.Promise<'a option> =
+  promise {
+    try
+      let! resp = httpGet c path timeout
+      match resp.statusCode with
+      | 200 -> return jsonParse resp.body |> parse |> Some
+      | _ -> return None
+    with ex ->
+      c.log (sprintf "[warn] %s: %O" ctx ex)
+      return None
+  }
+
+/// GET raw body from MCP port on 200, None otherwise.
+let getRaw (ctx: string) (path: string) (timeout: int) (c: Client) : JS.Promise<string option> =
+  promise {
+    try
+      let! resp = httpGet c path timeout
+      match resp.statusCode with
+      | 200 -> return Some resp.body
+      | _ -> return None
+    with ex ->
+      c.log (sprintf "[warn] %s: %O" ctx ex)
+      return None
+  }
+
+/// GET from dashboard port, parse JSON on 200, None otherwise.
+let dashGetJson<'a> (ctx: string) (path: string) (timeout: int) (parse: obj -> 'a) (c: Client) : JS.Promise<'a option> =
+  promise {
+    try
+      let! resp = dashHttpGet c path timeout
+      match resp.statusCode with
+      | 200 -> return jsonParse resp.body |> parse |> Some
+      | _ -> return None
+    with ex ->
+      c.log (sprintf "[warn] %s: %O" ctx ex)
+      return None
+  }
+
+/// POST to dashboard port, succeed on 2xx, fail otherwise.
+let dashPostOutcome (ctx: string) (path: string) (body: string) (timeout: int) (c: Client) : JS.Promise<ApiOutcome> =
+  promise {
+    try
+      let! resp = dashHttpPost c path body timeout
+      match resp.statusCode with
+      | s when s >= 200 && s < 300 -> return Succeeded None
+      | _ -> return Failed (sprintf "%s: HTTP %d" ctx resp.statusCode)
+    with err ->
+      return Failed (sprintf "%s: %s" ctx (string err))
+  }
+
+let isRunning (c: Client) =
+  promise {
+    try
+      let! resp = httpGet c "/health" 15000
+      return resp.statusCode = 200
+    with _ ->
+      return false
+  }
+
+let parseHealthError (parsed: obj) : HealthError option =
+  let errObj = fieldObj "error" parsed
+  match errObj with
+  | None -> None
+  | Some e ->
+    Some
+      { case = fieldString "case" e |> Option.defaultValue "Unknown"
+        message = fieldString "message" e |> Option.defaultValue ""
+        suggestedAction = fieldString "suggestedAction" e |> Option.defaultValue "" }
+
+let getStatus (c: Client) =
+  promise {
+    try
+      let! resp = httpGet c "/health" 15000
+      match resp.statusCode with
+      | 200 ->
+        let parsed = jsonParse resp.body
+        let features =
+          fieldArray "features" parsed
+          |> Option.map (Array.choose tryCastString >> Array.toList)
+          |> Option.defaultValue []
+        let sessionStates =
+          fieldArray "sessionStates" parsed
+          |> Option.map (Array.map (fun s ->
+            let healthObj = fieldObj "health" s
+            let healthStatus = healthObj |> Option.bind (fieldString "status") |> Option.defaultValue ""
+            let healthReason = healthObj |> Option.bind (fieldString "reason")
+            { id = fieldString "id" s |> Option.defaultValue ""
+              projectName = fieldString "projectName" s |> Option.defaultValue ""
+              status = fieldString "status" s |> Option.defaultValue ""
+              health = {| status = healthStatus; reason = healthReason |}
+              faultReason = fieldString "faultReason" s
+              workingDirectory = fieldString "workingDirectory" s |> Option.defaultValue ""
+              workerPid = fieldInt "workerPid" s
+              lastActivity = fieldString "lastActivity" s |> Option.defaultValue ""
+              workflowLabel = fieldString "workflowLabel" s |> Option.defaultValue "" }))
+        let diagnosticSummary = fieldString "diagnosticSummary" parsed
+        return
+          { connected = true
+            healthy = fieldBool "healthy" parsed |> Option.orElse (Some false)
+            status = fieldString "status" parsed
+            apiVersion = fieldInt "apiVersion" parsed
+            features = features
+            error = parseHealthError parsed
+            sessionCount = fieldInt "sessionCount" parsed
+            sessionStates = sessionStates
+            diagnosticSummary = diagnosticSummary }
+      | _ ->
+        return { connected = true; healthy = Some false; status = Some "no session"; apiVersion = None; features = []; error = None; sessionCount = None; sessionStates = None; diagnosticSummary = None }
+    with _ ->
+      return { connected = false; healthy = None; status = None; apiVersion = None; features = []; error = None; sessionCount = None; sessionStates = None; diagnosticSummary = None }
+  }
+
+/// Returns the features list from the daemon health endpoint, or empty list if unreachable.
+let getFeatures (c: Client) =
+  promise {
+    let! s = getStatus c
+    return s.features
+  }
+
+let evalCode (sessionId: string) (code: string) (workingDirectory: string) (filePath: string option) (evalMode: string option) (blockStartLine: int option) (c: Client) =
+  let fp = filePath |> Option.defaultValue ""
+  let em = evalMode |> Option.defaultValue ""
+  let bsl = blockStartLine |> Option.defaultValue 0
+  postCommand c "/exec" (jsonStringify {| code = code; sessionId = sessionId; working_directory = workingDirectory; file_path = fp; eval_mode = em; block_start_line = bsl |}) 30000
+
+let resetSession (c: Client) =
+  postCommand c "/reset" "{}" 15000
+
+let hardReset (rebuild: bool) (c: Client) =
+  postCommand c "/hard-reset" (jsonStringify {| rebuild = rebuild |}) 60000
+
+let parseSessions (parsed: obj) =
+  fieldArray "sessions" parsed
+  |> Option.defaultValue [||]
+  |> Array.map (fun s ->
+    { id = fieldString "id" s |> Option.defaultValue ""
+      name = None
+      workingDirectory = fieldString "workingDirectory" s |> Option.defaultValue ""
+      status = fieldString "status" s |> Option.defaultValue "unknown"
+      projects = fieldStringArray "projects" s |> Option.defaultValue [||]
+      // Absent on an older daemon: falls back to empty, and the tree then shows
+      // the declared list rather than inventing one.
+      loadedProjects = fieldStringArray "loadedProjects" s |> Option.defaultValue [||]
+      evalCount = fieldInt "evalCount" s |> Option.defaultValue 0
+      workflowLabel = fieldString "workflowLabel" s |> Option.defaultValue "REPL"
+      // `health` is `{status, reason}` — a nested object, absent on a daemon
+      // older than SessionHealth. Absent parses to `Unknown`, which every
+      // renderer treats as "no verdict", never as a verdict of its own.
+      health =
+        match fieldObj "health" s with
+        | None -> SessionsTreePure.SessionHealth.Unknown
+        | Some h ->
+          SessionsTreePure.SessionHealth.ofWire
+            (fieldString "status" h |> Option.defaultValue "")
+            (fieldString "reason" h |> Option.defaultValue "") })
+
+let listSessions (c: Client) =
+  promise {
+    let! result = getJson "listSessions" "/api/sessions" 5000 parseSessions c
+    return result |> Option.defaultValue [||]
+  }
+
+let isReady (c: Client) (sessionId: string option) =
+  promise {
+    match sessionId with
+    | None -> return false
+    | Some id ->
+      let! sessions = listSessions c
+      return sessions |> Array.exists (fun s -> s.id = id && SessionsTreePure.isReadyStatus s.status)
+  }
+
+let private targetPaths (target: SessionsTreePure.SessionTarget) =
+  match target with
+  | SessionsTreePure.SessionTarget.BareSession -> [||]
+  | SessionsTreePure.SessionTarget.ProjectSession path
+  | SessionsTreePure.SessionTarget.SolutionSession path -> [| path |]
+
+let createSession (target: SessionsTreePure.SessionTarget) (workingDirectory: string) (c: Client) =
+  postCommand c "/api/sessions/create" (jsonStringify {| projects = targetPaths target; workingDirectory = workingDirectory |}) 30000
+
+let createSessionWithWorkflow (target: SessionsTreePure.SessionTarget) (workingDirectory: string) (workflow: string) (c: Client) =
+  postCommand c "/api/sessions/create" (jsonStringify {| projects = targetPaths target; workingDirectory = workingDirectory; workflow = workflow |}) 30000
+
+/// Switch an EXISTING session into another workflow, keeping its id.
+///
+/// WHY this and not create-then-stop: the daemon restarts the same session
+/// spawn-first into the target workflow, so there is never a window where two
+/// sessions exist for one working directory — which is the
+/// "Multiple sessions match workingDirectory" routing ambiguity VS Code's old
+/// create-a-second-session-and-never-stop-the-first "switch" reproduced. This
+/// is the same path `AppRunOrchestration` uses to auto-switch into HotReload
+/// for `run_app`.
+///
+/// `workflow` is a `SessionWorkflow.tryOfString` alias; an unknown one is a
+/// 400 carrying the daemon's own "did you mean" text, which `postCommand`
+/// surfaces as the failure message rather than silently defaulting.
+/// Generous timeout: the target session is genuinely restarted and re-warmed.
+let switchSessionWorkflow (sessionId: string) (workflow: string) (c: Client) =
+  postCommand c (sprintf "/api/sessions/%s/workflow" sessionId) (jsonStringify {| workflow = workflow |}) 120000
+
+let switchSession (sessionId: string) (c: Client) =
+  postCommand c "/api/sessions/switch" (jsonStringify {| sessionId = sessionId |}) 5000
+
+let stopSession (sessionId: string) (c: Client) =
+  postCommand c "/api/sessions/stop" (jsonStringify {| sessionId = sessionId |}) 30000
+
+/// Ask the daemon to shut itself down.
+///
+/// WHY this exists: `bozzetto.stop` used to kill only the child process THIS
+/// extension spawned, and then unconditionally told you to "stop the daemon
+/// from its terminal" — including when it had just killed it. Against a daemon
+/// started anywhere else (the common case: the user runs one in a terminal)
+/// the command did nothing at all, and `bozzetto.restart` was stop-then-start
+/// where `startDaemon` short-circuits on a running daemon, so restart silently
+/// did nothing having just told you to go use the terminal.
+///
+/// The route lives on the DASHBOARD port, not the MCP one.
+let shutdownDaemon (c: Client) : JS.Promise<ApiOutcome> =
+  promise {
+    try
+      let! resp = httpPostRaw (sprintf "http://localhost:%d/api/shutdown" c.dashboardPort) "{}" 5000
+      match resp.statusCode with
+      | 200 -> return Succeeded (Some "Daemon shutting down")
+      | code -> return Failed (sprintf "The daemon refused the shutdown request (HTTP %d)." code)
+    with err ->
+      return Failed (sprintf "Could not reach the daemon to shut it down: %s" (string err))
+  }
+
+let postBufferChanged (request: BufferChangedRequest) (c: Client) =
+  postCommand
+    c
+    (bufferChangedPath request.SessionId)
+    (jsonStringify {| filePath = request.FilePath; content = request.Content |})
+    15000
+
+/// Run/stop a session's app: either the daemon's AppStateView (200), or the
+/// BozzettoError case/message/suggestedAction it returned (any other status —
+/// see Bozzetto/McpServer.fs's run-app/stop-app routes for the exact contract).
+type AppRunOutcome =
+  | AppState of AppStateView
+  | AppRunError of HealthError
+
+let private parseAppStateView (parsed: obj) : AppStateView =
+  { State = fieldString "State" parsed |> Option.defaultValue "Unknown"
+    Message = fieldString "Message" parsed |> Option.defaultValue ""
+    Urls = fieldStringArray "Urls" parsed |> Option.map Array.toList |> Option.defaultValue []
+    EntryPoint = fieldString "EntryPoint" parsed |> Option.defaultValue ""
+    RunId = fieldString "RunId" parsed |> Option.defaultValue "" }
+
+let private parseAppRunError (parsed: obj) : HealthError =
+  { case = fieldString "case" parsed |> Option.defaultValue "Unknown"
+    message = fieldString "message" parsed |> Option.defaultValue "Unknown error"
+    suggestedAction = fieldString "suggestedAction" parsed |> Option.defaultValue "" }
+
+let private postAppRun (path: string) (body: string) (timeout: int) (c: Client) : JS.Promise<AppRunOutcome> =
+  promise {
+    try
+      let! resp = httpPost c path body timeout
+      let parsed = jsonParse resp.body
+      match resp.statusCode with
+      | 200 -> return AppState (parseAppStateView parsed)
+      | _ -> return AppRunError (parseAppRunError parsed)
+    with err ->
+      return AppRunError { case = "NetworkError"; message = string err; suggestedAction = "" }
+  }
+
+/// project = None (or blank) asks the daemon to pick its default runnable target.
+let runApp (sessionId: string) (project: string option) (c: Client) : JS.Promise<AppRunOutcome> =
+  postAppRun (sprintf "/api/sessions/%s/run-app" sessionId) (requestBodyForRunApp project) 120000 c
+
+let stopApp (sessionId: string) (c: Client) : JS.Promise<AppRunOutcome> =
+  postAppRun (sprintf "/api/sessions/%s/stop-app" sessionId) "{}" 30000 c
+
+let parseSystemStatus (parsed: obj) =
+  { supervised = fieldBool "supervised" parsed |> Option.defaultValue false
+    restartCount = fieldInt "restartCount" parsed |> Option.defaultValue 0
+    version = fieldString "version" parsed |> Option.defaultValue "?"
+    apiVersion = fieldInt "apiVersion" parsed |> Option.defaultValue 0
+    mcpPort = fieldInt "mcpPort" parsed
+    dashboardPort = fieldInt "dashboardPort" parsed }
+
+let private syncDiscoveredPorts (status: SystemStatus) (c: Client) =
+  let current : PortSnapshot =
+    { McpPort = c.mcpPort
+      DashboardPort = c.dashboardPort }
+
+  let discovered : DiscoveredPorts =
+    { McpPort = status.mcpPort
+      DashboardPort = status.dashboardPort }
+
+  let next : PortSnapshot =
+    resolveDiscoveredPorts current discovered
+
+  match next <> current with
+  | true ->
+    let message =
+      sprintf
+        "[info] syncDiscoveredPorts: daemon reported mcpPort=%d dashboardPort=%d (was mcpPort=%d dashboardPort=%d)"
+        next.McpPort
+        next.DashboardPort
+        current.McpPort
+        current.DashboardPort
+    c.log message
+    updatePorts next.McpPort next.DashboardPort c
+  | false -> ()
+
+let private fallbackStatusForPort (mcpPort: int) =
+  { supervised = false
+    restartCount = 0
+    version = "unknown"
+    apiVersion = 0
+    mcpPort = Some mcpPort
+    dashboardPort = Some (deriveDashboardPort mcpPort) }
+
+let private probeDaemonInfoAt (mcpPort: int) =
+  promise {
+    let dashboardPort = deriveDashboardPort mcpPort
+
+    try
+      let! daemonInfoResp = httpGetRaw (sprintf "http://localhost:%d/api/daemon-info" dashboardPort) 2000
+
+      match daemonInfoResp.statusCode with
+      | 200 ->
+        return Some (jsonParse daemonInfoResp.body |> parseSystemStatus)
+      | _ ->
+        let! dashboardResp = httpGetRaw (sprintf "http://localhost:%d/dashboard" dashboardPort) 2000
+
+        match dashboardResp.statusCode with
+        | 200 -> return Some (fallbackStatusForPort mcpPort)
+        | _ -> return None
+    with _ ->
+      return None
+  }
+
+let discoverDaemon (candidateMcpPorts: int list) (c: Client) =
+  let rec loop candidates =
+    promise {
+      match candidates with
+      | [] -> return false
+      | mcpPort :: rest ->
+        let! statusOpt = probeDaemonInfoAt mcpPort
+
+        match statusOpt with
+        | Some status ->
+          syncDiscoveredPorts status c
+          return true
+        | None ->
+          return! loop rest
+    }
+
+  loop candidateMcpPorts
+
+let [<Literal>] expectedApiVersion = 3
+
+let checkVersion (status: SystemStatus) : Result<unit, string> =
+  match status.apiVersion with
+  | v when v = expectedApiVersion -> Ok ()
+  | v -> Error $"Bozzetto daemon apiVersion={v} is incompatible with this extension (requires apiVersion={expectedApiVersion}). Run 'dotnet tool update --global Bozzetto' then reload VS Code."
+
+let getSystemStatus (c: Client) =
+  promise {
+    let! result = getJson "getSystemStatus" "/api/system/status" 15000 parseSystemStatus c
+    result |> Option.iter (fun status -> syncDiscoveredPorts status c)
+    return result
+  }
+
+let parseHotReloadState (parsed: obj) =
+  let files =
+    fieldArray "files" parsed
+    |> Option.map (fun rawFiles ->
+      rawFiles
+      |> Array.choose (fun f ->
+        fieldString "path" f
+        |> Option.map (fun p ->
+          { path = p
+            watched = fieldBool "watched" f |> Option.defaultValue false })))
+    |> Option.defaultValue [||]
+  let wc = fieldInt "watchedCount" parsed |> Option.defaultValue 0
+  { files = files; watchedCount = wc }
+
+let getHotReloadState (sessionId: string) (c: Client) =
+  dashGetJson "getHotReloadState" (sprintf "/api/sessions/%s/hotreload" sessionId) 5000 parseHotReloadState c
+
+let toggleHotReload (sessionId: string) (path: string) (c: Client) =
+  dashPostOutcome "toggleHotReload" (sprintf "/api/sessions/%s/hotreload/toggle" sessionId) (jsonStringify {| path = path |}) 5000 c
+
+let watchAllHotReload (sessionId: string) (c: Client) =
+  dashPostOutcome "watchAllHotReload" (sprintf "/api/sessions/%s/hotreload/watch-all" sessionId) "{}" 5000 c
+
+let unwatchAllHotReload (sessionId: string) (c: Client) =
+  dashPostOutcome "unwatchAllHotReload" (sprintf "/api/sessions/%s/hotreload/unwatch-all" sessionId) "{}" 5000 c
+
+let watchDirectoryHotReload (sessionId: string) (directory: string) (c: Client) =
+  dashPostOutcome "watchDirectoryHotReload" (sprintf "/api/sessions/%s/hotreload/watch-directory" sessionId) (jsonStringify {| directory = directory |}) 5000 c
+
+let unwatchDirectoryHotReload (sessionId: string) (directory: string) (c: Client) =
+  dashPostOutcome "unwatchDirectoryHotReload" (sprintf "/api/sessions/%s/hotreload/unwatch-directory" sessionId) (jsonStringify {| directory = directory |}) 5000 c
+
+let parseWarmupContext (parsed: obj) =
+  let assemblies =
+    fieldArray "assembliesLoaded" parsed
+    |> Option.defaultValue [||]
+    |> Array.map (fun a ->
+      { Name = fieldString "name" a |> Option.defaultValue ""
+        Path = fieldString "path" a |> Option.defaultValue ""
+        NamespaceCount = fieldInt "namespaceCount" a |> Option.defaultValue 0
+        ModuleCount = fieldInt "moduleCount" a |> Option.defaultValue 0 })
+  let opened =
+    fieldArray "namespacesOpened" parsed
+    |> Option.defaultValue [||]
+    |> Array.map (fun b ->
+      { Name = fieldString "name" b |> Option.defaultValue ""
+        IsModule = fieldBool "isModule" b |> Option.defaultValue false
+        Source = fieldString "source" b |> Option.defaultValue "" })
+  let failed =
+    fieldArray "failedOpens" parsed
+    |> Option.defaultValue [||]
+    |> Array.map (fun f -> tryCastStringArray f |> Option.defaultValue [||])
+  let timing = fieldObj "phaseTiming" parsed
+  let totalMs =
+    match timing with
+    | None -> fieldInt "warmupDurationMs" parsed |> Option.defaultValue 0
+    | Some t -> fieldInt "totalMs" t |> Option.defaultValue 0
+  { SourceFilesScanned = fieldInt "sourceFilesScanned" parsed |> Option.defaultValue 0
+    AssembliesLoaded = assemblies
+    NamespacesOpened = opened
+    FailedOpens = failed
+    WarmupDurationMs = totalMs }
+
+let getWarmupContext (sessionId: string) (c: Client) =
+  dashGetJson "getWarmupContext" (sprintf "/api/sessions/%s/warmup-context" sessionId) 5000 parseWarmupContext c
+
+type CompletionResult =
+  { label: string
+    kind: string
+    insertText: string
+    detail: string option }
+
+let getCompletions (code: string) (cursorPosition: int) (workingDirectory: string option) (c: Client) =
+  promise {
+    try
+      let payload =
+        {| code = code
+           cursor_position = cursorPosition
+           working_directory = workingDirectory |> Option.defaultValue "" |}
+      // The dashboard endpoint is SSE for its live dropdown. Editor clients
+      // need the JSON contract exposed by the MCP HTTP API.
+      let! resp = httpPost c "/api/completions" (jsonStringify payload) 10000
+      match resp.statusCode with
+      | 200 ->
+        let parsed = jsonParse resp.body
+        let items = fieldArray "completions" parsed |> Option.defaultValue [||]
+        return
+          items
+          |> Array.map (fun item ->
+            { label = fieldString "label" item |> Option.defaultValue ""
+              kind = fieldString "kind" item |> Option.defaultValue ""
+              insertText = fieldString "insertText" item |> Option.defaultValue ""
+              detail = fieldString "detail" item })
+      | _ ->
+        return [||]
+    with ex ->
+      c.log (sprintf "[warn] getCompletions: %O" ex)
+      return [||]
+  }
+
+let runTests (pattern: string) (c: Client) =
+  postCommand c "/api/live-testing/run" (jsonStringify {| pattern = pattern; category = "" |}) 60000
+
+let enableLiveTesting (c: Client) =
+  postCommand c "/api/live-testing/enable" "{}" 5000
+
+let disableLiveTesting (c: Client) =
+  postCommand c "/api/live-testing/disable" "{}" 5000
+
+let setRunPolicy (category: string) (policy: string) (c: Client) =
+  postCommand c "/api/live-testing/policy" (jsonStringify {| category = category; policy = policy |}) 5000
+
+let explore (name: string) (c: Client) =
+  promise {
+    try
+      let! resp = httpPost c "/api/explore" (jsonStringify {| name = name |}) 10000
+      match resp.statusCode with
+      | 200 -> return Some resp.body
+      | _ -> return None
+    with ex ->
+      c.log (sprintf "[warn] explore: %O" ex)
+      return None
+  }
+
+/// Ask one session for the members of "Name." as structured JSON:
+/// { completions: [{ label, kind, insertText, detail? }], count }
+let exploreCompletions (qualifiedName: string) (sessionId: string) (c: Client) =
+  promise {
+    try
+      let code = sprintf "%s." qualifiedName
+      // /dashboard/completions answers as an SSE stream for the dashboard's dropdown;
+      // the JSON contract is the MCP API, routed to this session by id.
+      let body = jsonStringify {| code = code; cursor_position = code.Length; sessionId = sessionId |}
+      let! resp = httpPost c "/api/completions" body 10000
+      match resp.statusCode with
+      | 200 -> return Some resp.body
+      | _ ->
+        c.log (sprintf "[warn] exploreCompletions %s: status %d" qualifiedName resp.statusCode)
+        return None
+    with ex ->
+      c.log (sprintf "[warn] exploreCompletions: %O" ex)
+      return None
+  }
+
+let getRecentEvents (count: int) (c: Client) =
+  getRaw "getRecentEvents" (sprintf "/api/recent-events?count=%d" count) 10000 c
+
+let getDependencyGraph (symbol: string) (c: Client) =
+  let path =
+    match symbol with
+    | "" -> "/api/dependency-graph"
+    | s -> sprintf "/api/dependency-graph?symbol=%s" (JS.encodeURIComponent s)
+  getRaw "getDependencyGraph" path 10000 c
+
+let cancelEval (c: Client) =
+  postCommand c "/api/cancel-eval" "{}" 5000
+
+let loadScript (filePath: string) (c: Client) =
+  let code = sprintf "#load @\"%s\";;" filePath
+  postCommand c "/exec" (jsonStringify {| code = code; working_directory = "" |}) 30000
+
+let getTestTrace (c: Client) =
+  getRaw "getTestTrace" "/api/live-testing/test-trace" 5000 c
+
+type ExportResult =
+  { content: string
+    evalCount: int }
+
+let exportSessionAsFsx (sessionId: string) (c: Client) =
+  getJson "exportSessionAsFsx" (sprintf "/api/sessions/%s/export-fsx" (JS.encodeURIComponent sessionId)) 15000 (fun p -> !!p : ExportResult) c

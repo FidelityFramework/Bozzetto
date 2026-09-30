@@ -5,16 +5,16 @@
 ## ✅ What Works
 
 ### 6. Browser Auto-Refresh via DevReload Middleware (NEW)
-- **`SageFs.DevReload`** — pure broadcaster in `SageFs.Core` with zero ASP.NET dependency
-- **`SageFs.DevReloadMiddleware`** — ASP.NET Core middleware in `SageFs` project
+- **`Bozzetto.DevReload`** — pure broadcaster in `Bozzetto.Core` with zero ASP.NET dependency
+- **`Bozzetto.DevReloadMiddleware`** — ASP.NET Core middleware in `Bozzetto` project
 - Injects a tiny `<script>` before `</body>` in all `text/html` responses
-- Script opens SSE connection to `/__sagefs__/reload`  
+- Script opens SSE connection to `/__bozzetto__/reload`
 - When Harmony detours fire after a hot reload, `DevReload.triggerReload()` signals all connected browsers
 - Browser auto-refreshes — **no manual F5 needed**
 
 #### Usage in a Falco app
 ```fsharp
-open SageFs.DevReloadMiddleware
+open Bozzetto.DevReloadMiddleware
 
 webHost [||] {
   use_middleware middleware
@@ -23,7 +23,7 @@ webHost [||] {
 ```
 Or with `IApplicationBuilder` directly:
 ```fsharp
-app.Use(SageFs.DevReloadMiddleware.middleware) |> ignore
+app.Use(Bozzetto.DevReloadMiddleware.middleware) |> ignore
 ```
 
 ### 1. Automatic File Watching (NEW in 0.4.18)
@@ -42,14 +42,14 @@ app.Use(SageFs.DevReloadMiddleware.middleware) |> ignore
   - File-change-triggered reloads (automatic)
 - Changes appear instantly in browser
 
-### 3. FSI Compatibility Middleware  
+### 3. FSI Compatibility Middleware
 - Automatically rewrites `use` → `let` for indented use statements
 - Applies to interactively-sent code via MCP
 - Handles FSI incompatibilities transparently
-- Located in `SageFs/FsiRewrite.fs` and `SageFs/Middleware/FsiCompatibility.fs`
+- Located in `Bozzetto/FsiRewrite.fs` and `Bozzetto/Middleware/FsiCompatibility.fs`
 
 ### 4. Multi-line Code Submission
-- Fixed in `SageFs/Mcp.fs` sendFsharpCode 
+- Fixed in `Bozzetto/Mcp.fs` sendFsharpCode
 - Splits code by `;;` delimiter
 - Executes each statement sequentially
 - Returns all results concatenated
@@ -60,7 +60,7 @@ app.Use(SageFs.DevReloadMiddleware.middleware) |> ignore
   - Message
   - Stack trace
   - Inner exceptions (recursively)
-- Located in `SageFs/Mcp.fs` formatEvalResult
+- Located in `Bozzetto/Mcp.fs` formatEvalResult
 
 ## 🔥 How Hot Reload Works End-to-End
 
@@ -75,7 +75,7 @@ app.Use(SageFs.DevReloadMiddleware.middleware) |> ignore
 ## ⚠️ Known Limitations
 
 ### Project Loading with `--proj`
-When using `SageFs --proj MyProject.fsproj`:
+When using `Bozzetto --proj MyProject.fsproj`:
 - Bozzetto loads **compiled DLLs**, not source code
 - The FSI compatibility rewrite only affects:
   - Files loaded with `--use` flag (`.fsx` scripts)
@@ -84,24 +84,24 @@ When using `SageFs --proj MyProject.fsproj`:
 - Already-compiled DLL code is NOT rewritten
 
 ### Console I/O — Resolved
-- PrettyPrompt has been **removed** from Bozzetto. The daemon-first architecture runs headless; `SageFs connect` provides the REPL client.
+- PrettyPrompt has been **removed** from Bozzetto. The daemon-first architecture runs headless; `Bozzetto connect` provides the REPL client.
 
 ## 🎯 How to Use Hot Reload
 
 ### Automatic (File Watcher — Recommended)
 ```powershell
-# Start SageFs with your project — file watching is ON by default
-SageFs --proj HarmonyServer/HarmonyServer.fsproj
+# Start Bozzetto with your project — file watching is ON by default
+Bozzetto --proj HarmonyServer/HarmonyServer.fsproj
 
 # Start your web server from the REPL, then just edit .fs files
 # Changes are picked up automatically!
-# Look for 🔥 or 📄 messages in the SageFs console
+# Look for 🔥 or 📄 messages in the Bozzetto console
 ```
 
 ### Manual (REPL — For Experimentation)
 ```powershell
-cd C:\Code\Repos\SageFs
-SageFs --use test-hot-reload.fsx
+cd C:\Code\Repos\Bozzetto
+Bozzetto --use test-hot-reload.fsx
 ```
 
 Wait for "Starting web server..." message, then:
@@ -111,21 +111,21 @@ Wait for "Starting web server..." message, then:
 
 ### Disabling File Watching
 ```powershell
-SageFs --proj MyProject.fsproj --no-watch
+Bozzetto --proj MyProject.fsproj --no-watch
 ```
 
 ## 📁 Key Files
 
 | File | Purpose |
 |------|---------|
-| `SageFs/DevReloadMiddleware.fs` | ASP.NET middleware: SSE endpoint + HTML script injection |
-| `SageFs.Core/DevReload.fs` | Pure broadcaster: `triggerReload()`, `registerClient`, `unregisterClient` |
-| `SageFs/WorkerMain.fs` | Starts file watcher, routes changes to FSI |
-| `SageFs.Core/FileWatcher.fs` | Pure file watching with debounce |
-| `SageFs.Core/Middleware/HotReloading.fs` | Harmony method detouring |
-| `SageFs.Core/ActorCreation.fs` | Registers middleware pipeline |
-| `SageFs.Tests/HotReloadTests.fs` | 21 integration tests |
-| `SageFs.Tests/FileWatcherTests.fs` | Pure function tests |
+| `Bozzetto/DevReloadMiddleware.fs` | ASP.NET middleware: SSE endpoint + HTML script injection |
+| `Bozzetto.Core/DevReload.fs` | Pure broadcaster: `triggerReload()`, `registerClient`, `unregisterClient` |
+| `Bozzetto/WorkerMain.fs` | Starts file watcher, routes changes to FSI |
+| `Bozzetto.Core/FileWatcher.fs` | Pure file watching with debounce |
+| `Bozzetto.Core/Middleware/HotReloading.fs` | Harmony method detouring |
+| `Bozzetto.Core/ActorCreation.fs` | Registers middleware pipeline |
+| `Bozzetto.Tests/HotReloadTests.fs` | 21 integration tests |
+| `Bozzetto.Tests/FileWatcherTests.fs` | Pure function tests |
 
 ## ✨ Summary
 

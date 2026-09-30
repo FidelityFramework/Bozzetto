@@ -2,7 +2,7 @@
 
 ### 1. ALL DISCRIMINATED UNIONS (DUs) FOUND
 
-**23 Major DU Types in SageFs.Core**
+**23 Major DU Types in Bozzetto.Core**
 
 USER ACTIONS:
   - EditorAction (26 cases) - text editing, cursor movement, completion, history, sessions
@@ -17,7 +17,7 @@ SESSION MANAGEMENT:
   - WatchStatus (3: Active | Paused | Disabled)
 
 ERRORS & RESULTS:
-  - SageFsError (47 cases!) - unified error type with HTTP classification
+  - BozzettoError (47 cases!) - unified error type with HTTP classification
   - BufferError (2: EmptyLines | CursorOutOfBounds)
   - FileWatchAction (4: Changed | Created | Deleted | Renamed)
   - StageOutcome (2: Succeeded | Failed)
@@ -25,7 +25,7 @@ ERRORS & RESULTS:
 
 EFFECTS & EVENTS:
   - EditorEffect (10: RequestCompletion, RequestEval, RequestReset, etc.)
-  - SageFsEvent (30+ cases) - PRIMARY EVENT BUS driving entire UI
+  - BozzettoEvent (30+ cases) - PRIMARY EVENT BUS driving entire UI
   - OutputKind (4: Result | Error | Info | System)
   - EventSource (4: Console | McpAgent | FileSync | System)
 
@@ -97,7 +97,7 @@ SESSION & OUTPUT:
   - SessionSnapshot: { Id; Name; Projects; Status; LastActivity; EvalCount; UpSince; IsActive; WorkingDirectory }
   - SessionRegistryView: { Sessions; ActiveSessionId; TotalEvals; WatchStatus; Standby }
   - OutputLine: { Kind; Text; Timestamp; SessionId }
-  - SageFsView: { Buffer; CompletionMenu; ActiveSession; RecentOutput; Diagnostics; WatchStatus }
+  - BozzettoView: { Buffer; CompletionMenu; ActiveSession; RecentOutput; Diagnostics; WatchStatus }
 
 RESTART POLICY:
   - RestartPolicy.Policy: { MaxRestarts; BackoffBase; BackoffMax; ResetWindow }
@@ -135,7 +135,7 @@ EVENTS:
 
 ### 3. EditorAction - COMPLETE 26 CASES
 
-FILE: C:\Code\Repos\SageFs\SageFs.Core\RenderPipeline.fs, lines 71-132
+FILE: C:\Code\Repos\Bozzetto\Bozzetto.Core\RenderPipeline.fs, lines 71-132
 
 TEXT EDITING (5):
   1. InsertChar of char
@@ -184,7 +184,7 @@ MODE SWITCHING (1):
 
 ### 4. EditorState & EditorEffect (Editor.fs)
 
-FILE: C:\Code\Repos\SageFs\SageFs.Core\Editor.fs
+FILE: C:\Code\Repos\Bozzetto\Bozzetto.Core\Editor.fs
 
 **EditorEffect** (lines 166-178) - 10 side effect descriptions:
   - RequestCompletion of text: string * cursor: int
@@ -215,7 +215,7 @@ FILE: C:\Code\Repos\SageFs\SageFs.Core\Editor.fs
 
 ### 5. GutterIcon & TestRunStatus (LiveTestingTypes.fs)
 
-FILE: C:\Code\Repos\SageFs\SageFs.Core\Features\LiveTestingTypes.fs
+FILE: C:\Code\Repos\Bozzetto\Bozzetto.Core\Features\LiveTestingTypes.fs
 
 **GutterIcon** (lines 611-620) - 8 visual indicators:
   type GutterIcon =
@@ -252,9 +252,9 @@ FILE: C:\Code\Repos\SageFs\SageFs.Core\Features\LiveTestingTypes.fs
 
 ### 6. SmartReset.fs - FULL FILE (37 lines)
 
-FILE: C:\Code\Repos\SageFs\SageFs.Core\SmartReset.fs
+FILE: C:\Code\Repos\Bozzetto\Bozzetto.Core\SmartReset.fs
 
-namespace SageFs
+namespace Bozzetto
 
 open System.Threading.Tasks
 
@@ -295,7 +295,7 @@ module SmartReset =
 
 ### 7. RestartPolicy.fs - FULL FILE
 
-FILE: C:\Code\Repos\SageFs\SageFs.Core\RestartPolicy.fs (1-104 lines)
+FILE: C:\Code\Repos\Bozzetto\Bozzetto.Core\RestartPolicy.fs (1-104 lines)
 
 Pure, deterministic restart policy for Erlang-style supervision.
 
@@ -307,7 +307,7 @@ Pure, deterministic restart policy for Erlang-style supervision.
 
 **Decision** DU:
   | Restart of delay: TimeSpan
-  | GiveUp of SageFsError
+  | GiveUp of BozzettoError
 
 **Functions**:
   - nextBackoff: exponential backoff with cap (2^(count-1) * base, capped at max)
@@ -321,7 +321,7 @@ Pure, deterministic restart policy for Erlang-style supervision.
 
 ### 8. UiDensity - Cycle/Label Functions
 
-FILE: C:\Code\Repos\SageFs\SageFs.Core\RenderPipeline.fs, lines 162-178
+FILE: C:\Code\Repos\Bozzetto\Bozzetto.Core\RenderPipeline.fs, lines 162-178
 
 type UiDensity =
   | Minimal
@@ -343,23 +343,23 @@ module UiDensity =
 
 ### 9. ERROR TYPES & ERROR FLOW
 
-**Unified Error Model**: SageFsError (47 cases)
+**Unified Error Model**: BozzettoError (47 cases)
 
 CLASSIFICATION FUNCTIONS (module helpers):
-  - describe: SageFsError → string (user-friendly message)
-  - toLogLevel: SageFsError → LogLevel (Critical/Error/Warning/Information)
-  - toHttpStatus: SageFsError → int (404/400/409/504/502/500)
+  - describe: BozzettoError → string (user-friendly message)
+  - toLogLevel: BozzettoError → LogLevel (Critical/Error/Warning/Information)
+  - toHttpStatus: BozzettoError → int (404/400/409/504/502/500)
   - isClientError: bool (4xx - malformed/missing resources)
   - isServerError: bool (5xx - internal failures)
   - isGatewayError: bool (502/504 - worker unreachable)
   - isInfraError: bool (409 - system conflicts)
 
 ERROR FLOW PATTERN:
-  All domain operations: Result<'T, SageFsError>
+  All domain operations: Result<'T, BozzettoError>
   ↓
   Effect returns error case
   ↓
-  ElmLoop dispatches SageFsEvent
+  ElmLoop dispatches BozzettoEvent
   ↓
   UI renders error state
 
@@ -377,13 +377,13 @@ EXPECTED OPERATIONS (LogLevel.Information):
 
 ### 10. SIGNAL/EVENT TYPES FOR INTER-COMPONENT COMMUNICATION
 
-**PRIMARY: SageFsEvent** (30+ cases) - THE EVENT BUS
+**PRIMARY: BozzettoEvent** (30+ cases) - THE EVENT BUS
   Routes to: Editor, Sessions, Output, Live Testing, Diagnostics
 
 **PROTOCOL: WorkerMessage** (11 cases) - Daemon ↔ Worker
   EvalCode, CheckCode, RunTests, ResetSession, etc.
 
-**EVENTS: Features.Events.SageFsEvent** (serializable audit log)
+**EVENTS: Features.Events.BozzettoEvent** (serializable audit log)
   SessionStarted, EvalCompleted, DiagnosticsChecked, etc.
 
 **FILE SYSTEM: FileWatchAction** (4 cases)
@@ -407,13 +407,13 @@ The system uses **Elm-like functional architecture**:
 
 1. User Input → EditorAction (26 cases)
 2. EditorState.update: EditorAction + EditorState → EditorState + EditorEffect list
-3. Effects executed → SageFsEvent (30+ cases)
-4. ElmLoop.update: SageFsEvent → state mutations
+3. Effects executed → BozzettoEvent (30+ cases)
+4. ElmLoop.update: BozzettoEvent → state mutations
 5. Renderer reads state → RenderRegion list
 6. Cycle repeats
 
 **Error Handling**:
-  - All operations: Result<'T, SageFsError>
+  - All operations: Result<'T, BozzettoError>
   - 47 error cases with HTTP/log classification
   - Errors propagate through event system
 

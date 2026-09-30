@@ -1,6 +1,6 @@
-# SageFs — FV Target List
+# Bozzetto — FV Target List
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
 
 ## Last Updated
 - **Date**: 2026-05-11 09:41 UTC
@@ -10,22 +10,22 @@
 
 | # | Target | Source File | Phase | Status | Notes |
 |---|--------|-------------|-------|--------|-------|
-| 1 | `RingBuffer` | `SageFs.Core/RingBuffer.fs` | 5 | ✅ 20 proved (0 sorry) | WellFormed invariants, push_aging, toList_length verified. |
-| 2 | `ResultEx` | `SageFs.Core/ResultEx.fs` | 5 | ✅ 17 proved (0 sorry) | Monad/functor laws + sequence/partition length lemmas all proved. |
-| 3 | `RetryPolicy.decide` | `SageFs.Core/RetryPolicy.fs` | 5 | ✅ 13 proved (0 sorry) | Decision correctness + delay monotonicity fully verified. |
-| 4 | `RestartPolicy.decide` | `SageFs.Core/RestartPolicy.fs` | 5 | ✅ 9 proved (0 sorry) | Backoff correctness verified. |
-| 5 | `Affordances.availableTools` | `SageFs.Core/Affordances.fs` | 5 | ✅ 19 proved (0 sorry) | Tool-gating policy + access-control fully verified. |
-| 6 | `EvalPipeline` | `SageFs.Core/EvalPipeline.fs` | 5 | ✅ 20 proved (0 sorry) | CE trace structure + stage-name tracking + success propagation verified. |
-| 7 | `HotReloadState` | `SageFs.Core/HotReloadState.fs` | 5 | ✅ 23 proved (0 sorry) | Watch/unwatch/toggle invariants + directory ops verified. |
-| 8 | `SessionLifecycle` | `SageFs.Core/AppState.fs` | 5 | ✅ 16 proved (0 sorry) | Phase projection + unreachability of Uninitialized proved. |
-| 9 | `Theme` | `SageFs.Core/Theme.fs` | 5 | ✅ 20 proved (0 sorry) | `withOverrides` identity, idempotency, field isolation; hex length of defaults. |
-| 10 | `Composition` | `SageFs.Core/Composition.fs` | 5 | ✅ 12 proved (0 sorry) | Function composition laws verified. |
-| 11 | `PhaseTransition` | `SageFs.Core/AppState.fs` | 5 | ✅ 14 proved (0 sorry) | Session lifecycle safety: no direct Faulted←Eval, successor coverage, always-successor. |
-| 12 | `SmartReset` | `SageFs.Core/SmartReset.fs` | 5 | ✅ 8 proved (0 sorry) | Escalation logic: outcome biconditionals + negative cases fully proved. |
-| 13 | `SageFsError` | `SageFs.Core/SageFsError.fs` | 5 | ✅ 26 proved (0 sorry) | Error category partition + HTTP status consistency + log severity proved. |
-| 14 | `SseReplayBuffer` | `SageFs.Core/SseReplayBuffer.fs` | 5 | ✅ 19 proved (0 sorry) | seqId monotonicity, well-formedness preservation, 4 exhaustive replay cases proved. |
-| 15 | `FsiRewrite` | `SageFs/FsiRewrite.fs` | 5 | ✅ proved (0 sorry) | FsiRewrite transformation correctness. |
-| 16 | `TimeTravel` | `SageFs.Core/TimeTravel.fs` | 5 | ✅ 30 proved (0 sorry) | Mode transitions, roundtrip, count invariants, boundary conditions all proved. |
+| 1 | `RingBuffer` | `Bozzetto.Core/RingBuffer.fs` | 5 | ✅ 20 proved (0 sorry) | WellFormed invariants, push_aging, toList_length verified. |
+| 2 | `ResultEx` | `Bozzetto.Core/ResultEx.fs` | 5 | ✅ 17 proved (0 sorry) | Monad/functor laws + sequence/partition length lemmas all proved. |
+| 3 | `RetryPolicy.decide` | `Bozzetto.Core/RetryPolicy.fs` | 5 | ✅ 13 proved (0 sorry) | Decision correctness + delay monotonicity fully verified. |
+| 4 | `RestartPolicy.decide` | `Bozzetto.Core/RestartPolicy.fs` | 5 | ✅ 9 proved (0 sorry) | Backoff correctness verified. |
+| 5 | `Affordances.availableTools` | `Bozzetto.Core/Affordances.fs` | 5 | ✅ 19 proved (0 sorry) | Tool-gating policy + access-control fully verified. |
+| 6 | `EvalPipeline` | `Bozzetto.Core/EvalPipeline.fs` | 5 | ✅ 20 proved (0 sorry) | CE trace structure + stage-name tracking + success propagation verified. |
+| 7 | `HotReloadState` | `Bozzetto.Core/HotReloadState.fs` | 5 | ✅ 23 proved (0 sorry) | Watch/unwatch/toggle invariants + directory ops verified. |
+| 8 | `SessionLifecycle` | `Bozzetto.Core/AppState.fs` | 5 | ✅ 16 proved (0 sorry) | Phase projection + unreachability of Uninitialized proved. |
+| 9 | `Theme` | `Bozzetto.Core/Theme.fs` | 5 | ✅ 20 proved (0 sorry) | `withOverrides` identity, idempotency, field isolation; hex length of defaults. |
+| 10 | `Composition` | `Bozzetto.Core/Composition.fs` | 5 | ✅ 12 proved (0 sorry) | Function composition laws verified. |
+| 11 | `PhaseTransition` | `Bozzetto.Core/AppState.fs` | 5 | ✅ 14 proved (0 sorry) | Session lifecycle safety: no direct Faulted←Eval, successor coverage, always-successor. |
+| 12 | `SmartReset` | `Bozzetto.Core/SmartReset.fs` | 5 | ✅ 8 proved (0 sorry) | Escalation logic: outcome biconditionals + negative cases fully proved. |
+| 13 | `BozzettoError` | `Bozzetto.Core/BozzettoError.fs` | 5 | ✅ 26 proved (0 sorry) | Error category partition + HTTP status consistency + log severity proved. |
+| 14 | `SseReplayBuffer` | `Bozzetto.Core/SseReplayBuffer.fs` | 5 | ✅ 19 proved (0 sorry) | seqId monotonicity, well-formedness preservation, 4 exhaustive replay cases proved. |
+| 15 | `FsiRewrite` | `Bozzetto/FsiRewrite.fs` | 5 | ✅ proved (0 sorry) | FsiRewrite transformation correctness. |
+| 16 | `TimeTravel` | `Bozzetto.Core/TimeTravel.fs` | 5 | ✅ 30 proved (0 sorry) | Mode transitions, roundtrip, count invariants, boundary conditions all proved. |
 
 ## Phase Legend
 
@@ -53,7 +53,7 @@
 | `lean/FVSquad/Composition.lean` | 12 | 0 | 5 ✅ |
 | `lean/FVSquad/PhaseTransition.lean` | 14 | 0 | 5 ✅ |
 | `lean/FVSquad/SmartReset.lean` | 8 | 0 | 5 ✅ |
-| `lean/FVSquad/SageFsError.lean` | 26 | 0 | 5 ✅ |
+| `lean/FVSquad/BozzettoError.lean` | 26 | 0 | 5 ✅ |
 | `lean/FVSquad/SseReplayBuffer.lean` | 19 | 0 | 5 ✅ |
 | `lean/FVSquad/FsiRewrite.lean` | 17 | 0 | 5 ✅ |
 | `lean/FVSquad/TimeTravel.lean` | 30 | 0 | 5 ✅ |
@@ -66,6 +66,6 @@
 - Task 8 (Correspondence): No runnable test harnesses yet — HIGH PRIORITY
 - Task 7 (Critique): ✅ DONE — CRITIQUE.md created
 - Task 9 (CI): ✅ DONE — lean-ci.yml created
-- Task 4+5 (SageFsError): ✅ DONE this run — 26 theorems, 0 sorry
+- Task 4+5 (BozzettoError): ✅ DONE this run — 26 theorems, 0 sorry
 
 

@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Pipelining — SageFs Edition
+//  🧘  About Pipelining — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutPipelining.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.
@@ -95,13 +95,13 @@ let tests = testList "about pipelining" [
 
 ]
 
-// ── Things to try (SageFs makes this magic) ──────────────────
+// ── Things to try (Bozzetto makes this magic) ──────────────────
 // 1. Alt+Enter `result3` — see [0; 4; 16] instantly inline
 // 2. Add `|> List.sum` at the end — see 20 appear in your editor
 // 3. Build a pipeline that finds the 3 largest even squares in 1..20
 // 4. Compare readability: nested parens vs |> for complex transforms
 //
 // 🔥 Try this: highlight the real-world pipeline above (lines 49-53)
-//    and press Alt+Enter. SageFs evaluates the whole pipeline and shows
+//    and press Alt+Enter. Bozzetto evaluates the whole pipeline and shows
 //    the result inline. No REPL window, no terminal — just results.
 // ============================================================

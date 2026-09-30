@@ -1,0 +1,115 @@
+module Bozzetto.Tests.CliStopExitCodeTests
+
+open System
+open System.IO
+open Expecto
+open Expecto.Flip
+open Bozzetto
+
+// The `boz stop` decision logic is exercised through Program.stopCommand with
+// every daemon interaction injected, so automation can distinguish a successful
+// stop (exit 0) from a no-op: stale-PID and no-daemon cases must exit NON-zero.
+// Nothing here starts, probes, or stops a real daemon.
+
+let private mkDaemonInfo pid =
+  { Pid = pid
+    Port = 47749
+    DashboardPort = 47750
+    StartedAt = DateTime.UtcNow
+    WorkingDirectory = Path.Combine(Path.GetTempPath(), "bozzetto-stop-tests")
+    Version = "test"
+    ApiVersion = None
+    SessionCount = None; ComponentFailures = [] }
+
+let private daemonOnPort = mkDaemonInfo 4242
+
+let private noWedgedPid : int -> int option = fun _ -> None
+
+let private runStopWedged readOnPort wedgedPid requestShutdown killProcess waitForExit =
+  let origOut = Console.Out
+  let origErr = Console.Error
+  use outWriter = new StringWriter()
+  use errWriter = new StringWriter()
+  Console.SetOut(outWriter)
+  Console.SetError(errWriter)
+  try
+    let code = Program.stopCommand readOnPort wedgedPid requestShutdown killProcess waitForExit 47749
+    code, outWriter.ToString(), errWriter.ToString()
+  finally
+    Console.SetOut(origOut)
+    Console.SetError(origErr)
+
+let private runStop readOnPort requestShutdown killProcess waitForExit =
+  runStopWedged readOnPort noWedgedPid requestShutdown killProcess waitForExit
+
+[<Tests>]
+let cliStopExitCodeTests =
+  testSequenced <| testList "Cli.stop exit codes" [
+    test "no daemon running exits non-zero and keeps the message" {
+      let code, stdout, _ =
+        runStop (fun _ -> None) (fun _ -> failtest "no daemon, so requestShutdown must not be called") (fun _ -> failtest "no daemon, so kill must not be called") (fun _ -> failtest "no daemon, so nothing to wait for")
+      Expect.isTrue "no-daemon stop must exit non-zero" (code <> 0)
+      stdout |> Expect.stringContains "stdout keeps the no-daemon message" "No daemon running"
+    }
+
+    test "WHY — Program.stopCommand — a graceful stop is reported once the daemon has exited because printing success while it keeps running misleads scripts" {
+      let code, stdout, _ =
+        runStop (fun _ -> Some daemonOnPort) (fun _ -> true) (fun _ -> failtest "graceful shutdown must not fall back to kill") (fun _ -> Program.StopWait.Exited)
+      Expect.equal "successful graceful stop exits 0" 0 code
+      stdout |> Expect.stringContains "stdout says it stopped" "Daemon stopped (PID 4242)"
+    }
+
+    test "WHY — Program.stopCommand — a daemon that ignores the shutdown request is killed because stop must end it" {
+      let code, stdout, stderr =
+        runStop (fun _ -> Some daemonOnPort) (fun _ -> true) (fun _ -> Program.StopKilled) (fun _ -> Program.StopWait.StillRunning)
+      Expect.equal "the fallback kill still stops it" 0 code
+      stdout |> Expect.stringContains "stdout says it stopped" "Daemon stopped (PID 4242)"
+      stderr |> Expect.stringContains "stderr says why it was killed" "did not exit"
+    }
+
+    test "fallback kill success exits zero" {
+      let code, stdout, _ =
+        runStop (fun _ -> Some daemonOnPort) (fun _ -> false) (fun _ -> Program.StopKilled) (fun _ -> failtest "a refused request has nothing to wait for")
+      Expect.equal "successful fallback kill exits 0" 0 code
+      stdout |> Expect.stringContains "stdout announces the kill" "Daemon stopped (PID 4242)"
+    }
+
+    test "stale PID (process gone at kill time) exits non-zero and keeps the message" {
+      let code, stdout, stderr =
+        runStop (fun _ -> Some daemonOnPort) (fun _ -> false) (fun _ -> Program.StopProcessGone "process 4242 has already exited") (fun _ -> failtest "a refused request has nothing to wait for")
+      Expect.isTrue "stale PID stop must exit non-zero" (code <> 0)
+      stdout |> Expect.stringContains "stdout keeps the stale PID message" "Daemon was not running (stale PID 4242)"
+      stderr |> Expect.stringContains "stderr keeps the error detail" "Stop daemon error for PID 4242"
+    }
+
+    test "no daemon never consults shutdown or kill paths" {
+      let code, _, _ = runStop (fun _ -> None) (fun _ -> true) (fun _ -> Program.StopKilled) (fun _ -> Program.StopWait.Exited)
+      Expect.isTrue "no-daemon stop must exit non-zero" (code <> 0)
+    }
+
+    test "WHY — Program.stopCommand — a wedged daemon (no HTTP answer, live local pid) is killed directly rather than reported as no daemon running" {
+      let code, stdout, stderr =
+        runStopWedged
+          (fun _ -> None)
+          (fun _ -> Some 9001)
+          (fun _ -> failtest "a wedged daemon never answers HTTP, so a graceful shutdown request must not be attempted")
+          (fun pid -> pid |> Expect.equal "kills the recorded pid, not the daemon-info's" 9001; Program.StopKilled)
+          (fun _ -> failtest "a direct kill has nothing to wait for")
+      Expect.equal "the wedged daemon is stopped" 0 code
+      stdout |> Expect.stringContains "stdout says it stopped" "Daemon stopped (PID 9001)"
+      stderr |> Expect.stringContains "stderr explains it was wedged" "wedged"
+    }
+
+    test "WHY — Program.stopCommand — a wedged daemon whose pid is already gone by kill time is reported as a stale PID, not a success" {
+      let code, stdout, stderr =
+        runStopWedged
+          (fun _ -> None)
+          (fun _ -> Some 9001)
+          (fun _ -> failtest "no HTTP answer means no graceful shutdown attempt")
+          (fun _ -> Program.StopProcessGone "process 9001 has already exited")
+          (fun _ -> failtest "a direct kill has nothing to wait for")
+      Expect.isTrue "a stale wedged pid must exit non-zero" (code <> 0)
+      stdout |> Expect.stringContains "stdout keeps the stale PID message" "Daemon was not running (stale PID 9001)"
+      stderr |> Expect.stringContains "stderr keeps the error detail" "Stop daemon error for PID 9001"
+    }
+  ]

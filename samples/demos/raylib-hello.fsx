@@ -1,12 +1,12 @@
 // ============================================================
-//  🎮  Raylib Hello World — SageFs Edition
+//  🎮  Raylib Hello World — Bozzetto Edition
 //  A GPU-rendered window that hot-reloads when you save.
 //  Change the color, the text, the layout — save — it's live.
 //  No restart. The window keeps running.
 // ============================================================
 //
 //  Dependencies: Raylib-cs  (in Directory.Packages.props)
-//  Run via: sagefs gui   (or load in a SageFs session)
+//  Run via: boz gui   (or load in a Bozzetto session)
 
 // #r "nuget: Raylib-cs"
 
@@ -14,7 +14,7 @@ open Raylib_cs
 open System.Numerics
 
 // ── Everything that changes goes here — make it a function ──
-// SageFs hot-patches function bodies at runtime (via Harmony).
+// Bozzetto hot-patches function bodies at runtime (via Harmony).
 // Put your rendering logic in a top-level function and it will
 // update live when you save.
 
@@ -22,7 +22,7 @@ open System.Numerics
 
 let backgroundColor = Color.RayWhite   // try: Color.SkyBlue, Color.DarkGray
 
-let titleText = "Hello from SageFs + Raylib! 🦅"
+let titleText = "Hello from Bozzetto + Raylib! 🦅"
 let subtitleText = "Edit me and save. No restart. Just magic."
 
 let drawFrame (time: float32) =
@@ -60,7 +60,7 @@ let drawFrame (time: float32) =
 let screenWidth  = 800
 let screenHeight = 600
 
-Raylib.InitWindow(screenWidth, screenHeight, "SageFs + Raylib Demo")
+Raylib.InitWindow(screenWidth, screenHeight, "Bozzetto + Raylib Demo")
 Raylib.SetTargetFPS(60)
 
 // ── Game loop ──
@@ -83,9 +83,9 @@ Raylib.CloseWindow()
 // 4. Try Raylib.DrawRectangle, Raylib.DrawTriangle, Raylib.DrawLine
 // 5. Change the animation formula — sin → cos, multiply speed
 
-// ── SageFs hot reload: how it works here ──
+// ── Bozzetto hot reload: how it works here ──
 // • You save the file
-// • SageFs sends it to F# Interactive (~100ms)
+// • Bozzetto sends it to F# Interactive (~100ms)
 // • Harmony patches the `drawFrame` function pointer in-memory
 // • Next frame, the game loop calls the NEW `drawFrame`
 // • No window close. No app restart. Zero interruption.

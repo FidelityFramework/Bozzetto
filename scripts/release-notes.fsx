@@ -100,7 +100,7 @@ let headline =
 let notes = StringBuilder()
 let line (text: string) = notes.AppendLine text |> ignore
 
-line (sprintf "## SageFs v%s" version)
+line (sprintf "## Bozzetto v%s" version)
 line ""
 line headline
 line ""
@@ -112,8 +112,8 @@ for group in groups do
   line ""
 line "### Downloads"
 line ""
-line "- **NuGet**: `dotnet tool install --global SageFs`"
-line (sprintf "- **VS Code extension**: `code --install-extension sagefs-vscode-%s.vsix`" version)
+line "- **NuGet**: `dotnet tool install --global Bozzetto`"
+line (sprintf "- **VS Code extension**: `code --install-extension bozzetto-vscode-%s.vsix`" version)
 line "- **Neovim**: see [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim)"
 
 File.WriteAllText(outputPath, notes.ToString(), UTF8Encoding false)

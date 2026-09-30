@@ -1,12 +1,12 @@
 /-
   PhaseTransition.lean
-  Session phase transition relation for SageFs formal verification.
+  Session phase transition relation for Bozzetto formal verification.
 
   This file defines a `validTransition` inductive relation that captures exactly
   which phase-to-phase transitions the F# session manager can make, and then
   proves key safety invariants about the transition graph.
 
-  ## Valid transitions (from SageFs.Core/AppState.fs)
+  ## Valid transitions (from Bozzetto.Core/AppState.fs)
 
   - Initializing → Initializing  (progress message update during warm-up)
   - Initializing → Active(Idle)  (warm-up succeeds → Ready)
@@ -40,7 +40,7 @@
     as `evalToInit` since after cancel the session goes to Initializing (reset).
 
   No Mathlib. Pure Lean 4 stdlib only (network firewalled in CI).
-  Source: SageFs.Core/AppState.fs
+  Source: Bozzetto.Core/AppState.fs
 -/
 
 import FVSquad.SessionLifecycle
@@ -51,7 +51,7 @@ open SessionLifecycle
 
 -- ── Valid transition relation ────────────────────────────────────────────────
 
-/-- The set of valid phase transitions in the SageFs session lifecycle.
+/-- The set of valid phase transitions in the Bozzetto session lifecycle.
     Mirrors the pattern of `Phase` assignments in `AppState.fs:evalActor`. -/
 inductive validTransition {α : Type} : Phase α → Phase α → Prop where
   /-- Progress message update during warm-up (Initializing → Initializing). -/

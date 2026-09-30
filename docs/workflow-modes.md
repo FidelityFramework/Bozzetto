@@ -1,8 +1,8 @@
-# Understanding SageFs Workflow Modes
+# Understanding Bozzetto Workflow Modes
 
-SageFs has **three workflow modes**, and live testing is *also* an independent feature that works in all of them. That double life is the thing people trip over, so this guide sorts it out.
+Bozzetto has **three workflow modes**, and live testing is *also* an independent feature that works in all of them. That double life is the thing people trip over, so this guide sorts it out.
 
-The set is closed and lives in one place, [`SageFs.Core/WorkflowTypes.fs`](../SageFs.Core/WorkflowTypes.fs):
+The set is closed and lives in one place, [`Bozzetto.Core/WorkflowTypes.fs`](../Bozzetto.Core/WorkflowTypes.fs):
 
 ```fsharp
 type SessionWorkflow =
@@ -11,13 +11,13 @@ type SessionWorkflow =
   | HotReload of BrowserRefreshConfig        // "Hot Reload"
 ```
 
-> **This page used to say there were two.** It claimed live testing "isn't a third mode" and that SageFs "has two workflow modes." `LiveTesting` has been a real workflow case since commit `90d8721a`; `switch_workflow target='livetesting'` has always selected it. The statement was wrong, and the correction is below.
+> **This page used to say there were two.** It claimed live testing "isn't a third mode" and that Bozzetto "has two workflow modes." `LiveTesting` has been a real workflow case since commit `90d8721a`; `switch_workflow target='livetesting'` has always selected it. The statement was wrong, and the correction is below.
 
 ## The 30-Second Version
 
 ```
 +----------------------------------------------------------------------+
-|                        YOUR SAGEFS SESSION                           |
+|                        YOUR BOZZETTO SESSION                           |
 |                                                                      |
 |  Pick ONE workflow:                                                  |
 |  +---------------+   +-----------------+   +---------------------+   |
@@ -41,7 +41,7 @@ type SessionWorkflow =
 +----------------------------------------------------------------------+
 ```
 
-**Live testing is both a workflow and a feature, and that is not a contradiction.** The *feature* is a per-session on/off switch that works in every workflow. The *workflow* is the shortcut: choosing `LiveTesting` makes the daemon arm that switch for you the moment the session reaches Ready ([`SageFs/DaemonMode.fs`](../SageFs/DaemonMode.fs), the `onSessionReadyExtra` hook), and the loop is driven by debounced keystrokes rather than by saves. If you never pick the workflow, you can still turn the feature on by hand and get everything except the automatic arming.
+**Live testing is both a workflow and a feature, and that is not a contradiction.** The *feature* is a per-session on/off switch that works in every workflow. The *workflow* is the shortcut: choosing `LiveTesting` makes the daemon arm that switch for you the moment the session reaches Ready ([`Bozzetto/DaemonMode.fs`](../Bozzetto/DaemonMode.fs), the `onSessionReadyExtra` hook), and the loop is driven by debounced keystrokes rather than by saves. If you never pick the workflow, you can still turn the feature on by hand and get everything except the automatic arming.
 
 ---
 
@@ -72,7 +72,7 @@ type SessionWorkflow =
 **What it feels like:** the same full REPL as above, except the test loop is already running when you arrive. You type; affected tests re-run against the buffer you are typing into.
 
 **What you can do:**
-- Everything REPL mode can do: redefine types freely, full interactive exploration. The workflow adds no FSI flags ([`SessionWorkflow.fsiArgs`](../SageFs.Core/WorkflowTypes.fs) returns `[]` for it, exactly as for `Interactive`), because running tests never patches a running app, so the single-assembly constraint below does not apply.
+- Everything REPL mode can do: redefine types freely, full interactive exploration. The workflow adds no FSI flags ([`SessionWorkflow.fsiArgs`](../Bozzetto.Core/WorkflowTypes.fs) returns `[]` for it, exactly as for `Interactive`), because running tests never patches a running app, so the single-assembly constraint below does not apply.
 - Live testing comes on automatically when the session is ready. You do not call Enable.
 - Reruns are keystroke-driven, not save-driven: editors post the live buffer to `POST /api/sessions/{sid}/buffer-changed`.
 
@@ -92,18 +92,18 @@ type SessionWorkflow =
 
 **What you can do:**
 - Edit **function bodies**; saving re-emits the changed functions, Harmony re-points those methods in the running process, and an SSE refresh reaches the browser. This works even when the route table was captured once at startup, because the captured route still dispatches to the handler's method entry point.
-- SageFs auto-injects dev-reload middleware into your ASP.NET pipeline, no config
+- Bozzetto auto-injects dev-reload middleware into your ASP.NET pipeline, no config
 - The same MCP tool surface as REPL mode (calls are gated by session state, not by workflow; see [MCP Tools](mcp-tools.md))
 
 > **Not everything is patchable.** A change to a function *body* reaches the running
 > process; anything that takes effect at startup (a value binding the route captured, a
 > `let mutable` read compiled to a field load, a changed signature or type) needs a
-> restart, and SageFs restarts the app rather than pretending. [Hot Reload](hot-reload.md)
+> restart, and Bozzetto restarts the app rather than pretending. [Hot Reload](hot-reload.md)
 > is the authority. It carries the full shape matrix, each row pinned by an executable
 > test. This page deliberately does not restate it.
 
 **What you give up:**
-- You **cannot redefine types**. Trying to redefine a `type` in the REPL produces `FS0037: Duplicate definition of type`. This is a CLR constraint, not a SageFs bug (more on this below).
+- You **cannot redefine types**. Trying to redefine a `type` in the REPL produces `FS0037: Duplicate definition of type`. This is a CLR constraint, not a Bozzetto bug (more on this below).
 - You can still change function bodies, add new let bindings, and call functions. You just can't reshape a type definition once it exists in the session.
 
 **Who should use it:**
@@ -149,7 +149,7 @@ Because of a hard constraint in the .NET runtime. (This section is only about Ho
 Hot reload needs Harmony → Harmony needs --multiemit- → --multiemit- blocks type redefinition
 ```
 
-The CLR forces this; SageFs didn't choose it. If FSI changes how it emits assemblies, or Harmony learns to work with multi-emit, the limitation goes away. Until then you pick one per session. Switching between them is cheap (see below).
+The CLR forces this; Bozzetto didn't choose it. If FSI changes how it emits assemblies, or Harmony learns to work with multi-emit, the limitation goes away. Until then you pick one per session. Switching between them is cheap (see below).
 
 ---
 
@@ -158,13 +158,13 @@ The CLR forces this; SageFs didn't choose it. If FSI changes how it emits assemb
 | Client | Command |
 |:---|:---|
 | **Neovim** | `:SageFsWorkflow live` or `:SageFsWorkflow repl` |
-| **VS Code** | Command Palette → `SageFs: Switch Workflow` (picker offers all three workflows and marks which one you're in) |
+| **VS Code** | Command Palette → `Bozzetto: Switch Workflow` (picker offers all three workflows and marks which one you're in) |
 | **Web dashboard** | **No control yet.** The daemon now has a route (`POST /api/sessions/{sid}/workflow`, the same one VS Code uses), but the dashboard UI still only renders the workflow as a read-only badge and has no button that calls it. Use an editor or MCP. |
 | **MCP tool** | `switch_workflow(target='repl' \| 'livetesting' \| 'live')` |
 
 ### Target spellings
 
-One alias table drives every surface (`SessionWorkflow.tryOfString` in [`WorkflowTypes.fs`](../SageFs.Core/WorkflowTypes.fs)), so the CLI, the HTTP API and MCP accept exactly the same spellings. `switch_workflow` calls it directly and **rejects** an unrecognised target; the convenience wrapper `ofString`, used where there is no one to report an error to (env vars, config), falls back to `Interactive` instead.
+One alias table drives every surface (`SessionWorkflow.tryOfString` in [`WorkflowTypes.fs`](../Bozzetto.Core/WorkflowTypes.fs)), so the CLI, the HTTP API and MCP accept exactly the same spellings. `switch_workflow` calls it directly and **rejects** an unrecognised target; the convenience wrapper `ofString`, used where there is no one to report an error to (env vars, config), falls back to `Interactive` instead.
 
 | Workflow | Accepted targets |
 |:---|:---|
@@ -196,14 +196,14 @@ switch_workflow(target='live', dryRun=true)
 
 ### Auto-detection
 
-When SageFs detects web-oriented packages in your project, it suggests the Hot Reload workflow:
+When Bozzetto detects web-oriented packages in your project, it suggests the Hot Reload workflow:
 
 | Package | Suggestion |
 |:---|:---|
 | Falco.Datastar, Starfederation.Datastar | "Datastar project detected — Hot Reload enables SSE-driven DOM morphing" |
 | Falco, Falco.Htmx, Giraffe, Saturn, Microsoft.AspNetCore | "Web project detected — Hot Reload enables browser hot reload" |
 
-The suggestion arrives as text in a tool response. SageFs never auto-switches. You always choose.
+The suggestion arrives as text in a tool response. Bozzetto never auto-switches. You always choose.
 
 ---
 
@@ -219,11 +219,11 @@ So: *"is live testing on?"* and *"which workflow am I in?"* are two different qu
 
 ### What live testing does
 
-When enabled, SageFs watches which functions your tests call (via a dependency graph). When you change a function, it automatically re-runs only the tests that cover that function. Results appear inline in your editor: green gutter marks for passing, red for failing, with failure details shown right next to the code.
+When enabled, Bozzetto watches which functions your tests call (via a dependency graph). When you change a function, it automatically re-runs only the tests that cover that function. Results appear inline in your editor: green gutter marks for passing, red for failing, with failure details shown right next to the code.
 
 ### How to turn the feature on
 
-- **VS Code**: Command Palette → `SageFs: Enable Live Testing`
+- **VS Code**: Command Palette → `Bozzetto: Enable Live Testing`
 - **Neovim**: `:SageFsEnableTesting` (and `:SageFsDisableTesting`)
 - **Web dashboard**: the live-testing control on the session card
 
@@ -231,7 +231,7 @@ All three drive the daemon HTTP API (`POST /api/live-testing/enable`). There is 
 
 ### How to pick the workflow instead
 
-`switch_workflow(target='livetesting')`, `:SageFsWorkflow` in Neovim, or `SageFs: Switch Workflow` in VS Code. This restarts the session. See [What happens when you switch](#what-happens-when-you-switch).
+`switch_workflow(target='livetesting')`, `:SageFsWorkflow` in Neovim, or `Bozzetto: Switch Workflow` in VS Code. This restarts the session. See [What happens when you switch](#what-happens-when-you-switch).
 
 | Feature | REPL | Live Testing | Hot Reload |
 |:---|:---|:---|:---|
@@ -272,7 +272,7 @@ Save the file → Harmony re-points the method → SSE pushes to the browser →
 
 ### Scenario 3: "I started in REPL mode but now I want browser hot reload"
 
-Switch with `:SageFsWorkflow live` in Neovim, **SageFs: Switch Workflow** in VS Code, or `switch_workflow(target='live')` over MCP. The web dashboard cannot do this yet.
+Switch with `:SageFsWorkflow live` in Neovim, **Bozzetto: Switch Workflow** in VS Code, or `switch_workflow(target='live')` over MCP. The web dashboard cannot do this yet.
 
 Your REPL definitions are gone, but your `.fs` files reload automatically. The new Hot Reload session picks up right where your persisted code left off.
 
@@ -283,11 +283,11 @@ You're in **Hot Reload mode** and tried to redefine a type in the REPL. You have
 1. **Switch to REPL or Live Testing** if you need to reshape the type (for example, `:SageFsWorkflow repl` in Neovim). Both keep full type redefinition.
 2. **Edit the `.fs` file instead**: file-level type changes trigger a full reload that handles the redefinition correctly. It's REPL-level redefinition that's blocked.
 
-SageFs appends its own explanation to the FS0037 message when the session's REPL is
-expression-only ([`SageFs.Core/WorkflowErrorContext.fs`](../SageFs.Core/WorkflowErrorContext.fs)):
+Bozzetto appends its own explanation to the FS0037 message when the session's REPL is
+expression-only ([`Bozzetto.Core/WorkflowErrorContext.fs`](../Bozzetto.Core/WorkflowErrorContext.fs)):
 
 > 🔄 Type redefinition is not available in the Hot Reload workflow (single-assembly FSI).
->    Switch to the REPL workflow for full type redefinition: the switch_workflow MCP tool, or 'SageFs: Switch Workflow' in VS Code.
+>    Switch to the REPL workflow for full type redefinition: the switch_workflow MCP tool, or 'Bozzetto: Switch Workflow' in VS Code.
 
 Only the clients that can actually perform the switch are named. The dashboard shows the
 workflow but has no button wired to the switch route yet, so it does not appear in the hint.

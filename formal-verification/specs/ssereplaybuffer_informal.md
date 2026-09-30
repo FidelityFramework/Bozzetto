@@ -1,7 +1,7 @@
 # Informal Specification: SseReplayBuffer
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
-> Source: `SageFs.Core/SseReplayBuffer.fs`
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
+> Source: `Bozzetto.Core/SseReplayBuffer.fs`
 
 ---
 

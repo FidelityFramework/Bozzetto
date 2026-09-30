@@ -1,18 +1,18 @@
-# SageFs Feature Modules Survey
+# Bozzetto Feature Modules Survey
 
-> **Stale — historical snapshot.** `SageFs.Core/Features/` has grown to 80 `.fs` files as of 2026-09-20 (`ls SageFs.Core/Features/*.fs | wc -l`), not the 33 below, and the MCP tool inventory in the Wiring Summary references tools (`load_fsharp_script`, `get_startup_info`) that are no longer registered `[<McpServerTool>]` methods. For the current MCP tool list, see [MCP Tools](mcp-tools.md); for the current module count, check the directory directly. This document is kept for historical context, not as a live reference.
+> **Stale — historical snapshot.** `Bozzetto.Core/Features/` has grown to 80 `.fs` files as of 2026-09-20 (`ls Bozzetto.Core/Features/*.fs | wc -l`), not the 33 below, and the MCP tool inventory in the Wiring Summary references tools (`load_fsharp_script`, `get_startup_info`) that are no longer registered `[<McpServerTool>]` methods. For the current MCP tool list, see [MCP Tools](mcp-tools.md); for the current module count, check the directory directly. This document is kept for historical context, not as a live reference.
 
 ## Summary
 
-Total Feature Modules: **33** in SageFs.Core/Features/ (as of this survey's last update — see stale-data note above)
-Plus **2** root-level SageFs.Core modules with feature characteristics
+Total Feature Modules: **33** in Bozzetto.Core/Features/ (as of this survey's last update — see stale-data note above)
+Plus **2** root-level Bozzetto.Core modules with feature characteristics
 
 ---
 
 ## FEATURES/ DIRECTORY MODULES
 
 ### 1. **AutoCompletion** — Code completion via FuzzySharp ranking.
-- **Module**: SageFs.Features.AutoCompletion
+- **Module**: Bozzetto.Features.AutoCompletion
 - **Types**: CompletionKind (enum), completion ranking
 - **Functions**: label, rankByType, etc.
 - **MCP Tool**: ❌ No direct tool (via explore_type/explore_namespace)
@@ -21,7 +21,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: DARK (pure logic, exposed through other tools)
 
 ### 2. **BindingExplorer** — Tracks FSI bindings, shadowing, references.
-- **Module**: SageFs.Features.BindingExplorer
+- **Module**: Bozzetto.Features.BindingExplorer
 - **Types**: BindingInfo, BindingScopeSnapshot, CellInput
 - **Functions**: parseBinding, buildScopeSnapshot, etc.
 - **MCP Tool**: ❌ No (data pushed via SSE in explore_namespace)
@@ -30,7 +30,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (SSE emission in FeatureHooks)
 
 ### 3. **CellDependencyGraph** — Builds dependency DAG from eval history.
-- **Module**: SageFs.Features.CellDependencyGraph
+- **Module**: Bozzetto.Features.CellDependencyGraph
 - **Types**: CellId, CellInfo, CellGraph
 - **Functions**: analyzeCell, buildGraph, topologicalSort
 - **MCP Tool**: ❌ No (data structure only)
@@ -39,7 +39,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (SSE push in FeatureHooks)
 
 ### 4. **CoverageInstrumenter** — IL-level branch coverage via Mono.Cecil.
-- **Module**: SageFs.Features.LiveTesting.CoverageInstrumenter
+- **Module**: Bozzetto.Features.LiveTesting.CoverageInstrumenter
 - **Types**: Coverage bitmap tracking
 - **Functions**: collectSequencePoints, injectCoverageTracking, etc.
 - **MCP Tool**: ❌ No (internal to test instrumentation)
@@ -48,7 +48,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: DARK (pure IL transformation, no external wiring)
 
 ### 5. **DaemonHealth** — Session health monitoring and aggregation.
-- **Module**: SageFs.Features.DaemonHealth
+- **Module**: Bozzetto.Features.DaemonHealth
 - **Types**: SessionHealthStatus, OverallHealth, HealthSnapshot
 - **Functions**: aggregateHealth, sessionStatusLabel, etc.
 - **MCP Tool**: ❌ No (health query is in get_session_status)
@@ -56,8 +56,8 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Tests**: ✅ DaemonHealthTests.fs
 - **Status**: DARK (pure domain model, no external wiring)
 
-### 6. **DaemonPersistence** — Binaries (.sagetc, .sagefs) I/O orchestration.
-- **Module**: SageFs.Features.DaemonPersistence
+### 6. **DaemonPersistence** — Binaries (.bozzettotc, .bozzetto) I/O orchestration.
+- **Module**: Bozzetto.Features.DaemonPersistence
 - **Types**: ManifestSessionEntry, DaemonManifestData
 - **Functions**: projectHash, saveTestCache, loadTestCache, saveSession, loadSession
 - **MCP Tool**: ❌ No (internal orchestration)
@@ -66,7 +66,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: DARK (pure I/O coordination, no external wiring)
 
 ### 7. **Diagnostician** — Composes failures, ripples, suggestions, perf into report.
-- **Module**: SageFs.Features.Diagnostician
+- **Module**: Bozzetto.Features.Diagnostician
 - **Types**: DiagnosedFailure, DiagnosticReport, DiagnosticSeverity
 - **Functions**: composeReport, rankFailures, suggestFixes
 - **MCP Tool**: ✅ YES - diagnose (composes 6 modules into one report)
@@ -75,7 +75,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (MCP tool + SSE emission)
 
 ### 8. **Diagnostics** — F# compiler diagnostic parsing.
-- **Module**: SageFs.Features.Diagnostics
+- **Module**: Bozzetto.Features.Diagnostics
 - **Types**: Range, DiagnosticSeverity, Diagnostic
 - **Functions**: mkDiagnostic (adapter from FSharpDiagnostic)
 - **MCP Tool**: ❌ No (used internally by check_fsharp_code)
@@ -84,7 +84,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: DARK (pure parsing, used internally)
 
 ### 9. **DomainModelViz** — Extracts state machines from DU + functions.
-- **Module**: SageFs.Features.DomainModelViz
+- **Module**: Bozzetto.Features.DomainModelViz
 - **Types**: DUCaseInfo, StateTransition, StateMachineModel
 - **Functions**: DUExtractor.fromType, renderStateDiagram, etc.
 - **MCP Tool**: ✅ YES - visualize_domain_model
@@ -93,7 +93,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (MCP tool + SSE emission)
 
 ### 10. **EvalDedup** — Hash-based temporal dedup for repeated evals.
-- **Module**: SageFs.Features.EvalDedup
+- **Module**: Bozzetto.Features.EvalDedup
 - **Types**: DedupEntry, DedupCache
 - **Functions**: tryGet, addEntry, isStale
 - **MCP Tool**: ❌ No (internal optimization)
@@ -102,7 +102,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: DARK (pure caching, not exposed)
 
 ### 11. **EvalDiff** — Line-by-line diff of eval outputs.
-- **Module**: SageFs.Features.EvalDiff
+- **Module**: Bozzetto.Features.EvalDiff
 - **Types**: DiffLine, DiffSummary
 - **Functions**: diffLines, summarize
 - **MCP Tool**: ✅ YES - get_eval_diff
@@ -111,7 +111,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (MCP tool + SSE emission)
 
 ### 12. **EvalLens** — Pipeline stage purity classification (Pure/Effectful/Unknown).
-- **Module**: SageFs.Features.EvalLens
+- **Module**: Bozzetto.Features.EvalLens
 - **Types**: LensClassification, PipelineStage, LensResult
 - **Functions**: classifyPipeline, decomposeExpression
 - **MCP Tool**: ✅ YES - decompose_pipeline
@@ -120,7 +120,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (MCP tool, no SSE needed)
 
 ### 13. **EvalProvenance** — Staleness tracking (Fresh/StaleUpstream).
-- **Module**: SageFs.Features.EvalProvenance
+- **Module**: Bozzetto.Features.EvalProvenance
 - **Types**: Staleness, EvalProvenance
 - **Functions**: compute, describe
 - **MCP Tool**: ❌ No (used internally by ripple)
@@ -129,7 +129,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: DARK (pure logic, used internally)
 
 ### 14. **EvalRipple** — Cascade re-evaluation plan via topological sort.
-- **Module**: SageFs.Features.EvalRipple
+- **Module**: Bozzetto.Features.EvalRipple
 - **Types**: RippleStatus, RippleStep, RipplePlan
 - **Functions**: toposort, planRipple
 - **MCP Tool**: ✅ YES - plan_ripple
@@ -138,7 +138,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (MCP tool)
 
 ### 15. **EvalTimeline** — Performance sparkline + percentile stats.
-- **Module**: SageFs.Features.EvalTimeline
+- **Module**: Bozzetto.Features.EvalTimeline
 - **Types**: EvalStatus, TimelineEntry, TimelineState, TimelineStats
 - **Functions**: sparkline, percentiles, record
 - **MCP Tool**: ✅ YES - get_eval_timeline
@@ -147,7 +147,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (MCP tool + SSE emission)
 
 ### 16. **Ghostwriter** — Type-directed suggestions for next cell.
-- **Module**: SageFs.Features.Ghostwriter
+- **Module**: Bozzetto.Features.Ghostwriter
 - **Types**: ScopeBinding, Suggestion
 - **Functions**: suggest, rankSuggestions
 - **MCP Tool**: ✅ YES - suggest_next_cell
@@ -156,7 +156,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (MCP tool)
 
 ### 17. **LiveTestingExecutors** — Attribute-based + custom test executors.
-- **Module**: SageFs.Features.LiveTesting.LiveTestingExecutors
+- **Module**: Bozzetto.Features.LiveTesting.LiveTestingExecutors
 - **Types**: AttributeTestExecutor, CustomTestExecutor, DiscoveryResult, TestExecutor
 - **Functions**: runTest, discoverTests
 - **MCP Tool**: ❌ No (internal executor, exposed via run_tests)
@@ -165,7 +165,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: DARK (pure execution engine, data pumped via McpServer)
 
 ### 18. **LiveTestingInstrumentation** — OTEL activity/meter setup.
-- **Module**: SageFs.Features.LiveTesting.LiveTestingInstrumentation
+- **Module**: Bozzetto.Features.LiveTesting.LiveTestingInstrumentation
 - **Types**: Histograms, Counters (ActivitySource, Meter)
 - **Functions**: (static OTEL setup)
 - **MCP Tool**: ❌ No (observability only)
@@ -174,7 +174,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: DARK (pure observability, no business logic)
 
 ### 19. **LiveTestingTypes** — Domain types for tests, results, coverage, failures.
-- **Module**: SageFs.Features.LiveTesting
+- **Module**: Bozzetto.Features.LiveTesting
 - **Types**: TestCase, TestResult, TestSummary, FailureNarrative, CausalChange, TestId, etc.
 - **Functions**: testStatusLabel, narrateFailure, etc.
 - **MCP Tool**: ❌ No (data structures, exposed via get_live_test_status)
@@ -182,8 +182,8 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Tests**: ✅ LiveTestingTypesTests.fs, LiveTestingCoreTests.fs
 - **Status**: LIT (SSE emission in McpServer.fs)
 
-### 20. **ManifestPersistence** — .sagefm v1 binary format I/O.
-- **Module**: SageFs.Features.ManifestPersistence (ManifestTypes, ManifestWriter, ManifestReader)
+### 20. **ManifestPersistence** — .bozzettofm v1 binary format I/O.
+- **Module**: Bozzetto.Features.ManifestPersistence (ManifestTypes, ManifestWriter, ManifestReader)
 - **Types**: ManifestSessionEntry, DaemonManifestData
 - **Functions**: save, load, read, write
 - **MCP Tool**: ❌ No (internal persistence)
@@ -192,7 +192,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: DARK (pure I/O, no external wiring)
 
 ### 21. **MessageJournal** — Audit log of eval events (Debug/Info/Warn/Error).
-- **Module**: SageFs.Features.MessageJournal
+- **Module**: Bozzetto.Features.MessageJournal
 - **Types**: JournalLevel, JournalEntry, JournalState
 - **Functions**: add, filter, format
 - **MCP Tool**: ✅ YES - get_message_journal
@@ -201,7 +201,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (MCP tool)
 
 ### 22. **NotebookExport** — Cell metadata parsing/formatting for .fsx export.
-- **Module**: SageFs.Features.NotebookExport
+- **Module**: Bozzetto.Features.NotebookExport
 - **Types**: CellMetadata, CellMarker
 - **Functions**: format, parse
 - **MCP Tool**: ✅ YES - export_notebook
@@ -210,7 +210,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (MCP tool)
 
 ### 23. **Replay** — Session state reconstruction from events (pure fold).
-- **Module**: SageFs.Features.Replay
+- **Module**: Bozzetto.Features.Replay
 - **Types**: ReplayStatus, EvalRecord, SessionReplayState
 - **Functions**: fold, recover
 - **MCP Tool**: ❌ No (used internally for state recovery)
@@ -219,7 +219,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: DARK (pure event fold, internal use)
 
 ### 24. **ScratchPad** — Ephemeral snippets that don't pollute history.
-- **Module**: SageFs.Features.ScratchPad
+- **Module**: Bozzetto.Features.ScratchPad
 - **Types**: ScratchSnippet, ScratchPadState
 - **Functions**: create, addSnippet, markResult, export
 - **MCP Tool**: ✅ YES - manage_scratch_pad
@@ -228,7 +228,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (MCP tool)
 
 ### 25. **SessionFilmstrip** — Visual history of evaluations (frame-based).
-- **Module**: SageFs.Features.SessionFilmstrip
+- **Module**: Bozzetto.Features.SessionFilmstrip
 - **Types**: FilmstripEvent, FilmstripFrame
 - **Functions**: buildFilmstrip, filterFrames
 - **MCP Tool**: ✅ YES - get_session_filmstrip
@@ -236,14 +236,14 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Tests**: ✅ SessionFilmstripTests.fs
 - **Status**: LIT (MCP tool)
 
-### 26. **SessionPersistence** — .sagefs v3 per-session binary format (REMOVED).
-- **Status**: REMOVED. The `SageFs.Features.SessionPersistence` module and the
-  `.sagefs` per-session format had no production caller and were deleted. Durable
-  session state now lives in the daemon manifest (`.sagefm` v1, see
+### 26. **SessionPersistence** — .bozzetto v3 per-session binary format (REMOVED).
+- **Status**: REMOVED. The `Bozzetto.Features.SessionPersistence` module and the
+  `.bozzetto` per-session format had no production caller and were deleted. Durable
+  session state now lives in the daemon manifest (`.bozzettofm` v1, see
   `ManifestPersistence`), replayed on startup to rebuild sessions.
 
 ### 27. **SessionScribe** — Topological sort + dedup for script export.
-- **Module**: SageFs.Features.SessionScribe
+- **Module**: Bozzetto.Features.SessionScribe
 - **Types**: ScribeEntry
 - **Functions**: dedup, toposort
 - **MCP Tool**: ✅ YES - export_session_transcript
@@ -251,8 +251,8 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Tests**: ✅ SessionScribeTests.fs
 - **Status**: LIT (MCP tool)
 
-### 28. **TestCachePersistence** — .sagetc v1 binary format I/O.
-- **Module**: SageFs.Features.TestCachePersistence (TestCacheTypes, TestCacheFile, TestCacheMapping)
+### 28. **TestCachePersistence** — .bozzettotc v1 binary format I/O.
+- **Module**: Bozzetto.Features.TestCachePersistence (TestCacheTypes, TestCacheFile, TestCacheMapping)
 - **Types**: Outcome, CoverageEntry, ResultEntry, StcData
 - **Functions**: save, load, toStruct
 - **MCP Tool**: ❌ No (internal persistence)
@@ -261,7 +261,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: DARK (pure I/O codec, no external wiring)
 
 ### 29. **TestNarration** — Human-readable failure narratives.
-- **Module**: SageFs.Features.TestNarration
+- **Module**: Bozzetto.Features.TestNarration
 - **Types**: NarrationDetail
 - **Functions**: statusLabel, narrateFailure, narrateOutcome
 - **MCP Tool**: ❌ No (output via explain_test_failure)
@@ -270,7 +270,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (SSE emission via LiveTesting)
 
 ### 30. **WhatIf** — Preview hypothetical binding overrides.
-- **Module**: SageFs.Features.WhatIf
+- **Module**: Bozzetto.Features.WhatIf
 - **Types**: WhatIfOverride, WhatIfPlan, WhatIfDiffResult
 - **Functions**: createOverride, formatOverride, planWhatIf
 - **MCP Tool**: ✅ YES - preview_what_if
@@ -280,10 +280,10 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 
 ---
 
-## ROOT-LEVEL SageFs.Core FEATURE MODULES
+## ROOT-LEVEL Bozzetto.Core FEATURE MODULES
 
 ### 1. **SessionEvents** — Typed SSE events for session lifecycle.
-- **Module**: SageFs.SessionEvents
+- **Module**: Bozzetto.SessionEvents
 - **Types**: SessionEvent, SessionEventSubtype
 - **Functions**: serializeSessionEvent, formatSessionSseEvent
 - **MCP Tool**: ❌ No (infrastructure, auto-pushed)
@@ -292,7 +292,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 - **Status**: LIT (SSE infrastructure)
 
 ### 2. **TimeTravel** — Ring buffer snapshots for historical debugging.
-- **Module**: SageFs.TimeTravel
+- **Module**: Bozzetto.TimeTravel
 - **Types**: TimeTravelMode, TimeTravelState<'Model>
 - **Functions**: create, record, navigate, view
 - **MCP Tool**: ❌ No (future feature, not exposed yet)
@@ -309,7 +309,7 @@ Plus **2** root-level SageFs.Core modules with feature characteristics
 2. **load_fsharp_script** → EvalPipeline
 3. **get_recent_fsi_events** → Replay
 4. **get_fsi_status** → DaemonHealth + SessionManager
-5. **get_startup_info** → SageFsApp
+5. **get_startup_info** → BozzettoApp
 6. **get_available_projects** → ProjectLoading
 7. **reset_fsi_session** → SessionManager
 8. **hard_reset_fsi_session** → SessionManager

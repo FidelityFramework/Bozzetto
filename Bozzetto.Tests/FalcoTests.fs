@@ -1,0 +1,271 @@
+module Bozzetto.Tests.FalcoTests
+
+open Expecto
+open Expecto.Flip
+open System
+open System.Net.Http
+open System.Threading
+open System.Threading.Tasks
+open Bozzetto.ActorCreation
+open Bozzetto.AppState
+open Bozzetto.Args
+open Falco
+open Falco.Markup
+
+module Integration = Bozzetto.Tests.TestInfrastructure.Integration
+
+let logger =
+  { new Bozzetto.Utils.ILogger with
+      member _.LogDebug msg = printfn "[DEBUG] %s" msg
+      member _.LogInfo msg = printfn "[INFO] %s" msg
+      member _.LogError msg = printfn "[ERROR] %s" msg
+      member _.LogWarning msg = printfn "[WARN] %s" msg
+  }
+
+let getRandomPort () =
+  let listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0)
+  listener.Start()
+  let port = (listener.LocalEndpoint :?> System.Net.IPEndPoint).Port
+  listener.Stop()
+  port
+
+let createTestActor () =
+  task {
+    // Load the test project which has Falco package references.
+    // Try the standard path first (from test bin/Debug/net10.0 output dir),
+    // then fall back to searching upward from the working directory.
+    let basePath =
+      System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "Bozzetto.Tests.fsproj")
+      |> System.IO.Path.GetFullPath
+
+    let fallbackPath =
+      let rec findUp (dir: string) =
+        let candidate = System.IO.Path.Combine(dir, "Bozzetto.Tests", "Bozzetto.Tests.fsproj")
+        if System.IO.File.Exists candidate then Some candidate
+        else
+          let parent = System.IO.Path.GetDirectoryName dir
+          if parent = null || parent = dir then None
+          else findUp parent
+      findUp (System.IO.Directory.GetCurrentDirectory())
+
+    let fullPath =
+      if System.IO.File.Exists basePath then basePath
+      else
+        match fallbackPath with
+        | Some p -> p
+        | None -> failwith (sprintf "Cannot find Bozzetto.Tests.fsproj (tried %s)" basePath)
+
+    printfn "Loading test project from: %s" fullPath
+    let loadConfig : Bozzetto.Args.ProjectLoadConfig = {
+      Targets = [ Bozzetto.SessionProjectTarget.Project fullPath ]
+      WorkingDir = System.IO.Path.GetDirectoryName fullPath
+    }
+    let args = mkCommonActorArgs logger true ignore loadConfig
+    let! result = createActor args
+    return result.Actor
+  }
+
+// Shared actor for all Falco tests
+let sharedActor = lazy(createTestActor() |> Async.AwaitTask |> Async.RunSynchronously)
+
+let evalCode (actor: AppActor) code =
+  task {
+    let request = { Code = code; Args = Map.empty }
+    let! response = actor.PostAndAsyncReply(fun reply -> Eval(request, CancellationToken.None, reply))
+    return response
+  }
+
+let testHttpGet (url: string) =
+  task {
+    use client = new HttpClient()
+    client.Timeout <- TimeSpan.FromSeconds(5.0)
+
+    try
+      let! response = client.GetAsync(url)
+      let! content = response.Content.ReadAsStringAsync()
+      return Ok content
+    with ex ->
+      return Error ex.Message
+  }
+
+let testHttpGetWithRetry (url: string) (maxRetries: int) (delayMs: int) =
+  task {
+    let mutable lastError = ""
+    let mutable result: Result<string, string> = Error "no attempts"
+    for attempt in 1..maxRetries do
+      match result with
+      | Ok _ -> ()
+      | Error _ ->
+          let! r = testHttpGet url
+          match r with
+          | Ok content -> result <- Ok content
+          | Error msg ->
+              lastError <- msg
+              if attempt < maxRetries then
+                do! Task.Delay(delayMs)
+    return result
+  }
+
+[<Tests>]
+let tests =
+  testSequenced <| Integration.hostList "Falco web application tests" [
+
+    testTask "create and start basic Falco web app" {
+        printfn "Starting test: create and start basic Falco web app"
+        let actor = sharedActor.Value
+        let port = getRandomPort ()
+
+        // Create a basic Falco web app
+        let initialCode =
+          $"""
+open Falco
+open Falco.Markup
+open Falco.Markup.Elem
+open Falco.Markup.Attr
+open Falco.Markup.Text
+open Microsoft.AspNetCore.Builder
+open Microsoft.AspNetCore.Hosting
+open Microsoft.Extensions.Hosting
+
+let basicBuilder = WebApplication.CreateBuilder()
+HostingAbstractionsWebHostBuilderExtensions.UseUrls(basicBuilder.WebHost, "http://localhost:{port}") |> ignore
+let basicApp = basicBuilder.Build()
+
+let basicHandler = 
+    Response.ofHtml (
+        _html [] [
+            _head [] [ _title [] [ _text "Test Page" ] ]
+            _body [] [
+                _h1 [ _id_ "title" ] [ _text "Hello from Bozzetto!" ]
+                _p [] [ _text "This is the initial page." ]
+            ]
+        ]
+    )
+
+basicApp.MapGet("/", basicHandler) |> ignore
+let basicStartTask = basicApp.StartAsync()
+printfn "Web app started on port {port}"
+"""
+
+        printfn "Evaluating initial Falco app code on port %d..." port
+        let! response = evalCode actor initialCode
+
+        printfn "Evaluation result: %A" response.EvaluationResult
+        printfn "Diagnostics: %A" response.Diagnostics
+
+        match response.EvaluationResult with
+        | Error ex ->
+          printfn "Error creating app: %s" ex.Message
+          failtestf "Failed to create Falco app: %s\nDiagnostics: %A" ex.Message response.Diagnostics
+        | Ok _ -> printfn "App created successfully"
+
+        // Test the endpoint with retries
+        printfn "Testing HTTP endpoint..."
+        let! result = testHttpGetWithRetry $"http://localhost:{port}/" 10 200
+
+        match result with
+        | Ok (content: string) ->
+          printfn "Response received: %s" (content.Substring(0, min 200 content.Length))
+          content |> Expect.stringContains "Should contain initial greeting" "Hello from Bozzetto!"
+          content |> Expect.stringContains "Should contain initial text" "This is the initial page."
+        | Error msg -> failtestf "Failed to get response: %s" msg
+
+        printfn "Test completed successfully"
+    }
+
+    testTask "hot reload Falco markup" {
+        printfn "Starting test: hot reload Falco markup"
+        let actor = sharedActor.Value
+        let port = getRandomPort ()
+
+        // Create initial app
+        let initialCode =
+          $"""
+open Falco
+open Falco.Markup
+open Falco.Markup.Elem
+open Falco.Markup.Attr
+open Falco.Markup.Text
+open Microsoft.AspNetCore.Builder
+open Microsoft.AspNetCore.Hosting
+open Microsoft.Extensions.Hosting
+
+let mutable hotReloadHandler = 
+    Response.ofHtml (
+        _html [] [
+            _head [] [ _title [] [ _text "Hot Reload Test" ] ]
+            _body [] [
+                _h1 [] [ _text "Original Content" ]
+                _p [ _id_ "content" ] [ _text "This is the original version." ]
+            ]
+        ]
+    )
+
+let hotReloadBuilder = WebApplication.CreateBuilder()
+HostingAbstractionsWebHostBuilderExtensions.UseUrls(hotReloadBuilder.WebHost, "http://localhost:{port}") |> ignore
+let hotReloadApp = hotReloadBuilder.Build()
+hotReloadApp.MapGet("/", fun ctx -> hotReloadHandler ctx) |> ignore
+let hotReloadStartTask = hotReloadApp.StartAsync()
+printfn "Initial app started on port {port}"
+"""
+
+        printfn "Creating initial app on port %d..." port
+        let! response1 = evalCode actor initialCode
+
+        printfn "Diagnostics: %A" response1.Diagnostics
+
+        match response1.EvaluationResult with
+        | Error ex -> failtestf "Failed to create initial app: %s\nDiagnostics: %A" ex.Message response1.Diagnostics
+        | Ok _ -> printfn "Initial app created"
+
+        // Test initial content with retries
+        printfn "Testing initial content..."
+        let! result1 = testHttpGetWithRetry $"http://localhost:{port}/" 10 200
+
+        match result1 with
+        | Ok (content: string) ->
+          printfn "Initial response: %s" (content.Substring(0, min 200 content.Length))
+          content |> Expect.stringContains "Should have original content" "Original Content"
+        | Error msg -> failtestf "Failed initial request: %s" msg
+
+        // Update the markup
+        let updatedCode =
+          """
+hotReloadHandler <- 
+    Response.ofHtml (
+        _html [] [
+            _head [] [ _title [] [ _text "Hot Reload Test" ] ]
+            _body [] [
+                _h1 [] [ _text "Updated Content!" ]
+                _p [ _id_ "content" ] [ _text "This page was hot reloaded successfully!" ]
+                _strong [] [ _text "Bozzetto rocks!" ]
+            ]
+        ]
+    )
+printfn "Handler updated"
+"""
+
+        printfn "Updating markup..."
+        let! response2 = evalCode actor updatedCode
+
+        match response2.EvaluationResult with
+        | Error ex -> failtestf "Failed to update markup: %s" ex.Message
+        | Ok _ -> printfn "Markup updated"
+
+        // Test updated content with retries
+        printfn "Testing updated content..."
+        let! result2 = testHttpGetWithRetry $"http://localhost:{port}/" 10 200
+
+        match result2 with
+        | Ok (content: string) ->
+          printfn "Updated response: %s" (content.Substring(0, min 300 content.Length))
+          content |> Expect.stringContains "Should have updated heading" "Updated Content!"
+          content |> Expect.stringContains "Should have updated text" "hot reloaded successfully"
+          content |> Expect.stringContains "Should have new strong text" "Bozzetto rocks!"
+          (content.Contains "Original Content") |> Expect.isFalse "Should not have original content"
+        | Error msg -> failtestf "Failed updated request: %s" msg
+
+        printfn "Hot reload test completed successfully"
+    }
+  ]
+

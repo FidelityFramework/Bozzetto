@@ -3,7 +3,7 @@
 ## PATTERN 1: Immutable Aggregate + Ring Buffer (MessageJournal.fs)
 
 \\\sharp
-module SageFs.Features.MessageJournal
+module Bozzetto.Features.MessageJournal
 
 [<RequireQualifiedAccess>]
 type JournalLevel = Debug | Info | Warn | Error
@@ -62,9 +62,9 @@ module Journal =
 ## PATTERN 2: Struct Value Type + DU (EvalProvenance.fs)
 
 \\\sharp
-module SageFs.Features.EvalProvenance
+module Bozzetto.Features.EvalProvenance
 
-open SageFs.Features.CellDependencyGraph
+open Bozzetto.Features.CellDependencyGraph
 
 // Struct value type for perf (no GC pressure)
 [<Struct>]
@@ -132,7 +132,7 @@ module EvalProvenance =
 ## PATTERN 3: Feature Hooks Dedup (FeatureHooks.fs) ⭐
 
 \\\sharp
-module SageFs.Features.FeatureHooks
+module Bozzetto.Features.FeatureHooks
 
 // Aggregates ALL feature state in one record
 type FeaturePushState = {
@@ -180,7 +180,7 @@ let recordEval (code: string) (result: string) (durationMs: int64) (state: Featu
 // DEDUP PATTERN: Only push if SSE changed
 let computeEvalDiffPush (opts: JsonSerializerOptions) (sessionId: string option) (currentOutput: string) (state: FeaturePushState) =
   let diff = EvalDiff.diffLines (Some state.LastOutputText) (Some currentOutput)
-  let sseStr = SageFs.SseWriter.formatEvalDiffEvent opts sessionId (EvalDiff.summarize diff)
+  let sseStr = Bozzetto.SseWriter.formatEvalDiffEvent opts sessionId (EvalDiff.summarize diff)
   let updatedState = { state with LastOutputText = currentOutput }
   
   // KEY PATTERN: Compare with last sent
@@ -196,7 +196,7 @@ let computeCellDepsPush opts sessionId state =
   let knownBindings = state.KnownBindings
   let cells = state.EvalHistory |> List.map (...analyzeCell...)
   let graph = CellDependencyGraph.buildGraph cells
-  let sseStr = SageFs.SseWriter.formatCellDependenciesEvent opts sessionId graph
+  let sseStr = Bozzetto.SseWriter.formatCellDependenciesEvent opts sessionId graph
   
   if Some sseStr = state.LastCellDepsSse then
     { state with LastCellDepsSse = Some sseStr }, None
@@ -205,7 +205,7 @@ let computeCellDepsPush opts sessionId state =
 
 let computeBindingScopePush opts sessionId state =
   let snapshot = state.CachedScope |> Option.defaultWith (fun () -> buildScopeFromState state)
-  let sseStr = SageFs.SseWriter.formatBindingScopeMapEvent opts sessionId snapshot
+  let sseStr = Bozzetto.SseWriter.formatBindingScopeMapEvent opts sessionId snapshot
   
   if Some sseStr = state.LastBindingScopeSse then
     { state with LastBindingScopeSse = Some sseStr }, None
@@ -214,7 +214,7 @@ let computeBindingScopePush opts sessionId state =
 
 let computeEvalTimelinePush opts sessionId state =
   let stats = EvalTimeline.timelineStats 20 state.CachedTimeline
-  let sseStr = SageFs.SseWriter.formatEvalTimelineEvent opts sessionId stats
+  let sseStr = Bozzetto.SseWriter.formatEvalTimelineEvent opts sessionId stats
   
   if Some sseStr = state.LastEvalTimelineSse then
     { state with LastEvalTimelineSse = Some sseStr }, None
@@ -236,7 +236,7 @@ let computeEvalTimelinePush opts sessionId state =
 ## PATTERN 4: Pure Computation Layer (CellDependencyGraph.fs)
 
 \\\sharp
-module SageFs.Features.CellDependencyGraph
+module Bozzetto.Features.CellDependencyGraph
 
 type CellId = int
 
@@ -332,7 +332,7 @@ let transitiveStale (graph: CellGraph) (changedCellId: CellId) : CellId list =
 ## PATTERN 5: Event Sourcing (Events.fs)
 
 \\\sharp
-module SageFs.Features.Events
+module Bozzetto.Features.Events
 
 open System
 
@@ -351,7 +351,7 @@ type EventSource =
     | System -> "system"
 
 // Global event DU (26+ cases)
-type SageFsEvent =
+type BozzettoEvent =
   // Session lifecycle
   | SessionStarted of {| Config: Map<string, string>; StartedAt: DateTimeOffset |}
   | SessionWarmUpCompleted of {| Duration: TimeSpan; Errors: string list |}
@@ -384,7 +384,7 @@ type SageFsEvent =
 ## PATTERN 6: Affordance-Driven Availability (Affordances.fs)
 
 \\\sharp
-module SageFs.Affordances
+module Bozzetto.Affordances
 
 open System
 
@@ -427,12 +427,12 @@ let availableTools (state: SessionState) : string list =
       "hard_reset_fsi_session" ]
 
 // Check if tool is available
-let checkToolAvailability (state: SessionState) (toolName: string) : Result<unit, SageFsError> =
+let checkToolAvailability (state: SessionState) (toolName: string) : Result<unit, BozzettoError> =
   let tools = availableTools state
   if tools |> List.contains toolName then
     Ok ()
   else
-    Error (SageFsError.ToolNotAvailable(toolName, state, tools))
+    Error (BozzettoError.ToolNotAvailable(toolName, state, tools))
 \\\
 
 **Key traits:**

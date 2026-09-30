@@ -1,8 +1,8 @@
 /-!
   # Formal Specification: Theme
 
-  🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
-  Source: `SageFs.Core/Theme.fs`
+  🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
+  Source: `Bozzetto.Core/Theme.fs`
 
   This file formalises the `ThemeConfig` record and `withOverrides` combinator.
 
@@ -79,7 +79,7 @@ structure ThemeConfig where
 -- Defaults
 -- ─────────────────────────────────────────────────────────────────────────────
 
-/-- The default SageFs color theme.  Mirrors `Theme.defaults`. -/
+/-- The default Bozzetto color theme.  Mirrors `Theme.defaults`. -/
 def defaults : ThemeConfig := {
   fgDefault      := "#ffffff"
   fgDim          := "#8b8b8b"

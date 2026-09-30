@@ -11,7 +11,7 @@
 
 .REQUIREMENTS
   - ffmpeg in PATH (winget install ffmpeg  /  choco install ffmpeg  /  scoop install ffmpeg)
-  - A running SageFs daemon (start with: sagefs)
+  - A running Bozzetto daemon (start with: bozzetto)
   - Playwright Chromium installed (dotnet tool run playwright install chromium)
 
 .EXAMPLE
@@ -22,13 +22,13 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path $PSScriptRoot -Parent
 
 # ---- Step 1: build the test project ----
-Write-Host "Building SageFs.Tests..." -ForegroundColor Cyan
-dotnet build "$repoRoot\SageFs.Tests\SageFs.Tests.fsproj" -c Debug --nologo -v q
+Write-Host "Building Bozzetto.Tests..." -ForegroundColor Cyan
+dotnet build "$repoRoot\Bozzetto.Tests\Bozzetto.Tests.fsproj" -c Debug --nologo -v q
 if ($LASTEXITCODE -ne 0) { Write-Error "Build failed"; exit 1 }
 
 # ---- Step 2: run only the hot-reload browser test ----
 Write-Host "`nRunning hot-reload browser test (headed Chromium, recording video)..." -ForegroundColor Cyan
-dotnet test "$repoRoot\SageFs.Tests\SageFs.Tests.fsproj" `
+dotnet test "$repoRoot\Bozzetto.Tests\Bozzetto.Tests.fsproj" `
   --filter "FullyQualifiedName~HotReload" `
   --no-build `
   --logger "console;verbosity=minimal" `
@@ -36,18 +36,18 @@ dotnet test "$repoRoot\SageFs.Tests\SageFs.Tests.fsproj" `
 if ($LASTEXITCODE -ne 0) { Write-Error "Test failed"; exit 1 }
 
 # ---- Step 3: find the .webm video ----
-$testOutputDir = Get-ChildItem "$repoRoot\SageFs.Tests\bin\Debug\net10.0\hot-reload-demo" `
+$testOutputDir = Get-ChildItem "$repoRoot\Bozzetto.Tests\bin\Debug\net10.0\hot-reload-demo" `
   -Filter "*.webm" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
 if (-not $testOutputDir) {
   Write-Warning "No .webm recording found. Did the test run correctly?"
-  Write-Host "Screenshots are in: $repoRoot\SageFs.Tests\bin\Debug\net10.0\hot-reload-demo\"
+  Write-Host "Screenshots are in: $repoRoot\Bozzetto.Tests\bin\Debug\net10.0\hot-reload-demo\"
   exit 0
 }
 
 $webm  = $testOutputDir.FullName
 $gif   = Join-Path (Split-Path $webm) "hot-reload-demo.gif"
-$paletteFile = Join-Path $env:TEMP "sagefs-palette.png"
+$paletteFile = Join-Path $env:TEMP "bozzetto-palette.png"
 
 Write-Host "`nConverting $webm → $gif ..." -ForegroundColor Cyan
 

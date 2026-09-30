@@ -19,7 +19,7 @@ under [Where it falls short right now](#where-it-falls-short-right-now).
 ## The pipeline
 
 1. The file watcher detects `.fs`/`.fsx` changes (~500ms debounce).
-2. SageFs diffs the file against the source your loaded assembly was actually
+2. Bozzetto diffs the file against the source your loaded assembly was actually
    built from and emits only the **functions that changed**, against the
    compiled module's own identity. That keeps their parameter types as the
    compiled types.
@@ -35,7 +35,7 @@ delegate was created six minutes ago. It cares where the call ends up.
 
 ## What reloads, and what needs a restart
 
-The rule I'm going for: code changes take effect, state stays, and SageFs
+The rule I'm going for: code changes take effect, state stays, and Bozzetto
 never does either one quietly. Every row below names the test that pins it.
 The "real app" ones start a real host on .NET 10 and on .NET 11, save a real
 file and read what the same process serves afterwards. The planner ones are
@@ -54,8 +54,8 @@ A change reaches the running app when it's a change to a **function body**:
 | a small function with no `[<MethodImpl(NoInlining)>]` | reloads | shape matrix `tiny` |
 | a function that reads or writes a `let mutable private` in its file | reloads, and it uses the app's OWN field, so reads and writes agree with the rest of the app | state tests, rule 1 `let mutable private` |
 
-The shape matrix is `SageFs.Tests/WebAppHotReloadVerificationTests.fs` (it runs
-on .NET 11). The state tests are `SageFs.Tests/HotReloadStateOutcomeTests.fs`
+The shape matrix is `Bozzetto.Tests/WebAppHotReloadVerificationTests.fs` (it runs
+on .NET 11). The state tests are `Bozzetto.Tests/HotReloadStateOutcomeTests.fs`
 and run once per runtime.
 
 ### State
@@ -85,7 +85,7 @@ one. Re-pointing the value's getter is the easy part. The hard part is knowing
 nobody copied the old value, because if something did, "Patched" is a lie.
 
 So the running app tells me. When the session starts, before any of your code
-runs, SageFs reads the IL of every method in your project that reads a module
+runs, Bozzetto reads the IL of every method in your project that reads a module
 value and works out what each read does with it: throws it away (`pop`, or a
 local nothing reads), or lets it go somewhere (a field, a closure, an argument,
 a return). Every method whose read goes somewhere gets a one-shot probe that
@@ -101,7 +101,7 @@ that raced the patch still counts.
 | a `lazy` reads it, and nothing has forced the lazy yet | patched. The first request forces the lazy, and it reads the new value | rule 2, unforced lazy (real app, net10 + net11) |
 | startup copied it into a closure (`let atStartup = banner in fun () -> atStartup`) | restart needed, and the reason says who kept it: `the running app kept a copy of 'banner', and a patch can't reach a copy: <StartupCode$StateFixture>.$StateFixture.State..cctor (IL_0103) put it in a new StateFixture.State+handlers@88-10, while the app started`. The app still serves the old value until you restart, and the page isn't refreshed | rule 2 guard, `banner` (real app, net10 + net11) |
 | a `lazy` read it after startup (a request forced it) | restart needed, naming the lazy's thunk. The Lazy cached what it read, and no patch reaches that | rule 2, forced lazy (real app, net10 + net11) |
-| any code that hands it on (returns it, passes it along, stores it) has already run | restart needed. SageFs can't tell whether whoever got it kept it, so it doesn't guess | `ValueReadsTests`, and every interleaving in `ValueReadSimTests` (DST) |
+| any code that hands it on (returns it, passes it along, stores it) has already run | restart needed. Bozzetto can't tell whether whoever got it kept it, so it doesn't guess | `ValueReadsTests`, and every interleaving in `ValueReadSimTests` (DST) |
 | it isn't public, its annotation changed, or its assembly was built with optimizations | restart needed | planner: `ReloadPlanningTests`; evidence: `ValueReadsTests` |
 
 That fourth row is where this falls short in practice, and it's worth saying
@@ -123,7 +123,7 @@ and it catches every one.
 A value read through reflection (`PropertyInfo.GetValue`, `MethodBase.Invoke`,
 `FieldInfo.GetValue`, a delegate made from its getter) has no read of it in
 anyone's IL, so the probes can't see it. While the app starts, the getter's
-own watch catches it. After that, SageFs watches the reflection entry points
+own watch catches it. After that, Bozzetto watches the reflection entry points
 themselves, and how it watches is a choice you make, because every option
 costs something:
 
@@ -161,7 +161,7 @@ reload already re-pointed (patching it again would undo that), which the entry
 watch keeps covering.
 
 **When a reflective loop gets hot** (1,000 reads of one value inside a second),
-SageFs asks you, once per value, on the dashboard's Hot Reload panel and in
+Bozzetto asks you, once per value, on the dashboard's Hot Reload panel and in
 `set_reflection_read_mode`: which value, which caller, how fast, what the
 current mode is costing you, and each choice with what it does. Pick one and
 the question's answered.
@@ -170,10 +170,10 @@ One thing I found building this that you should know about: on .NET, a patch
 on a runtime method that hasn't been recompiled yet gets thrown away when
 tiered compilation recompiles it, and it doesn't come back. I measured it in
 the REPL: 4,000 of 12,000 calls to `MethodBase.Invoke` still hit the patch,
-and the other 8,000 didn't. SageFs checks for this. A canary read goes through
+and the other 8,000 didn't. Bozzetto checks for this. A canary read goes through
 every entry point at every save, and if the watch ever stops seeing reads,
 every value that session tracks restarts on its next edit until the app
-restarts, and the panel says why. A read SageFs might have missed never gets a
+restarts, and the panel says why. A read Bozzetto might have missed never gets a
 Patched.
 
 So you get a choice, the `hotreload.tieredCompilation` setting. It's in the
@@ -225,7 +225,7 @@ set and checks that a real lapse fails closed.
 ### Restarts
 
 Anything that takes effect at **startup** can't be patched into a process
-that's already started, and SageFs restarts the app instead (or, if SageFs
+that's already started, and Bozzetto restarts the app instead (or, if Bozzetto
 isn't the one running your app, tells you a restart is needed):
 
 | Shape | Why not | Pinned by |
@@ -247,12 +247,12 @@ This trips people up constantly and it's almost always this.
 Hot reload re-points **methods**. The F# compiler's Release optimizer inlines
 small functions into their callers (including into the closures a route
 table captures at startup), so in an optimized build there's often no call
-left to re-point: the patch lands on a method nothing calls anymore. SageFs
+left to re-point: the patch lands on a method nothing calls anymore. Bozzetto
 builds your project with `-p:Optimize=false` for exactly this reason, so a
-session SageFs built is covered. **If you build Release by hand after
+session Bozzetto built is covered. **If you build Release by hand after
 starting the session**, that optimized assembly is what gets loaded and
 edits to inlined functions won't reach the running app. Rebuild through
-SageFs (`hard_reset` with `rebuild: true`, or the dashboard's HARD_RESET).
+Bozzetto (`hard_reset` with `rebuild: true`, or the dashboard's HARD_RESET).
 
 I don't trust a claim in these tables that isn't backed by a test, and for
 anything about what the app actually does I want one that starts a real
@@ -261,7 +261,7 @@ process. It's too easy to convince yourself something works when it doesn't.
 One requirement: the baseline is the source your loaded assembly was
 built from, so build the project before starting the session. A source file
 edited after its last build gets re-evaluated whole instead of patched, and
-SageFs logs that it's doing so.
+Bozzetto logs that it's doing so.
 
 ## Where it falls short right now
 
@@ -269,22 +269,22 @@ I'd rather you hear this from me than find it at 11pm.
 
 - **A redefined value restarts once anything that hands it on has run.**
   Load the page that renders `greeting`, then edit `greeting`, and it's a
-  restart: the handler returned the value to something SageFs can't follow.
+  restart: the handler returned the value to something Bozzetto can't follow.
   It never says Patched when it can't prove it, so you lose a restart, not the
   truth.
 - **Some reads through reflection still aren't seen after startup.** The
-  entry points SageFs watches cover `GetValue`, `Invoke` and delegates made
+  entry points Bozzetto watches cover `GetValue`, `Invoke` and delegates made
   from a getter. A compiled expression tree or a function pointer that calls the
   getter directly isn't one of them, unless you're in `exact-every-read`. See
   [Reflection reads](#reflection-reads).
 - **Code you eval in the REPL that reads a value usually counts as a copy of it**
   (an eval that runs code counts as having read it), so a
   value you've poked at in the REPL restarts on its next edit.
-- **When SageFs isn't the one running your app and a save needs a restart**
-  (a signature or type change, say), SageFs re-evaluates the whole file
+- **When Bozzetto isn't the one running your app and a save needs a restart**
+  (a signature or type change, say), Bozzetto re-evaluates the whole file
   instead, and that re-declares every `let mutable` in it. Your live state in
   that file is reset. The outcome says restart-required, which is true, but it
-  doesn't say your state went with it. Start the app with `run_app` and SageFs
+  doesn't say your state went with it. Start the app with `run_app` and Bozzetto
   restarts it properly instead.
 - **The reset button runs just the initializer.** If the initializer uses
   something private in its file, the save can't check it and you get a restart
@@ -299,10 +299,10 @@ Done already: a redefined immutable value gets its new value when nothing in
 the running app kept a copy (the values table above). The running app says
 where every read of the value went, so a Patched is never a guess.
 
-Also done: an app started by `.SageFs/init.fsx` `#load`ing your sources
+Also done: an app started by `.bozzetto/init.fsx` `#load`ing your sources
 used to restart on an edit (.NET 10) or get patched on the wrong copy while
 still saying "Patched" (.NET 11). The init script's `#load` skipped the
-hot-reload middleware, so SageFs never learned which copy of a function the
+hot-reload middleware, so Bozzetto never learned which copy of a function the
 app was holding. Now it tracks that, patches the copy the app holds, and never
 reports "Patched" when it couldn't find it.
 
@@ -318,16 +318,16 @@ always comes with a notice.
 
 ## Browser auto-refresh (DevReload)
 
-Web apps need no extra configuration. SageFs auto-injects DevReload
+Web apps need no extra configuration. Bozzetto auto-injects DevReload
 middleware into your ASP.NET pipeline via
 [Harmony](https://github.com/pardeike/Harmony), with no code changes on your
-part. Your Falco/ASP.NET app gets browser auto-refresh once SageFs is
+part. Your Falco/ASP.NET app gets browser auto-refresh once Bozzetto is
 running. When a compile fails, an accessible error overlay appears in the
 browser with source context and editor links, and the page reloads
 automatically once the error is fixed. A save that only kept live state doesn't
 refresh the page, since nothing it would fetch changed.
 
-Set `SAGEFS_DEVRELOAD=0` (or `false`) to disable auto-injection.
+Set `BOZZETTO_DEVRELOAD=0` (or `false`) to disable auto-injection.
 
 The VS Code extension gives per-file and per-directory hot reload toggles.
 

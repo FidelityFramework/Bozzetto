@@ -1,7 +1,7 @@
 # Informal Specification: ResultEx
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
-> Source: `SageFs.Core/ResultEx.fs`
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
+> Source: `Bozzetto.Core/ResultEx.fs`
 
 ## Last Updated
 - **Date**: 2026-04-25
@@ -25,8 +25,8 @@ The module's operations fall into four groups:
 
 ## Type context
 
-All functions are generic over `'T`, `'U`, `'E`. The SageFs-specific `describe`
-function specialises the error to `SageFsError`, but the rest are fully generic.
+All functions are generic over `'T`, `'U`, `'E`. The Bozzetto-specific `describe`
+function specialises the error to `BozzettoError`, but the rest are fully generic.
 
 ---
 
@@ -200,5 +200,5 @@ These three laws make `Result<_, 'E>` a monad over the `Ok` case.
 2. **`tap`/`tapError` semantics**: the spec treats these as identity functions
    (ignoring side effects). In a pure Lean model, we verify the return value
    only, not the side effects.
-3. **`describe` function**: specialised to `SageFsError` — should it be
-   verified against the actual `SageFsError.describe` implementation?
+3. **`describe` function**: specialised to `BozzettoError` — should it be
+   verified against the actual `BozzettoError.describe` implementation?

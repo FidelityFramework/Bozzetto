@@ -111,9 +111,9 @@ dict |> Seq.map (fun kv -> kv.Key, kv.Value) |> Seq.toList
 //  .GroupBy(key)      → List.groupBy key
 //  .OrderBy(key)      → List.sortBy key
 
-// ── Hot reload with SageFs: the dotnet watch upgrade ──
+// ── Hot reload with Bozzetto: the dotnet watch upgrade ──
 // dotnet watch: rebuilds the whole project (~5-30s), restarts the process
-// SageFs:       patches method pointers at runtime (~100ms), browser auto-refreshes
+// Bozzetto:       patches method pointers at runtime (~100ms), browser auto-refreshes
 //               your Falco/ASP.NET app is live before your fingers leave the keyboard
 
 // ── Migration cheatsheet ──

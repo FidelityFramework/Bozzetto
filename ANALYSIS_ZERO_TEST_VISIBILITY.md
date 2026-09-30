@@ -1,8 +1,8 @@
-# SageFs Live-Testing Discovery Reliability & Zero-Test Visibility Analysis
+# Bozzetto Live-Testing Discovery Reliability & Zero-Test Visibility Analysis
 
 ## EXECUTIVE SUMMARY
 
-SageFs has **CRITICAL SILENT-FAILURE PATHS** where test discovery can report 0 tests without user-visible warnings:
+Bozzetto has **CRITICAL SILENT-FAILURE PATHS** where test discovery can report 0 tests without user-visible warnings:
 
 **5 Key Problem Areas:**
 1. **Async dispatch race** — nable_live_testing() reads state BEFORE Elm processes the enable message
@@ -26,7 +26,7 @@ let setLiveTesting (ctx: McpContext) (enabled: bool) : Task<string> =
     match ctx.Dispatch with
     | None -> return "Cannot set live testing — Elm loop not started."
     | Some dispatch ->
-      let msg = match enabled with | true -> SageFsMsg.EnableLiveTesting | false -> SageFsMsg.DisableLiveTesting
+      let msg = match enabled with | true -> BozzettoMsg.EnableLiveTesting | false -> BozzettoMsg.DisableLiveTesting
       dispatch msg  // <-- ASYNC, returns immediately
       
       // Lines 1625-1629: Read state BEFORE dispatch is processed
@@ -41,9 +41,9 @@ let setLiveTesting (ctx: McpContext) (enabled: bool) : Task<string> =
 **User Experience**:
 `
 Agent: enable_live_testing()
-SageFs: "Live testing enabled. No tests discovered yet — tests will be discovered after first eval."
+Bozzetto: "Live testing enabled. No tests discovered yet — tests will be discovered after first eval."
 Agent: run_tests()
-SageFs: "No tests discovered — live testing is not enabled. Call enable_live_testing first..."
+Bozzetto: "No tests discovered — live testing is not enabled. Call enable_live_testing first..."
 `
 
 **Root Cause**: The Elm message loop is async. Code reads model **before** EnableLiveTesting message sets Activation = Active.
@@ -78,7 +78,7 @@ IO.Directory.GetFiles(dir, "*.fs", IO.SearchOption.AllDirectories)
 **Call Site** (Line 734): Only dispatches TestLocationsDetected if array is non-empty
 \\\sharp
 match Array.isEmpty locations with
-| false -> dispatch (SageFsMsg.Event (SageFsEvent.TestLocationsDetected (WorkerProtocol.SessionId.value sid, locations)))
+| false -> dispatch (BozzettoMsg.Event (BozzettoEvent.TestLocationsDetected (WorkerProtocol.SessionId.value sid, locations)))
 | true -> ()  // <-- Silent skip if empty
 \\\
 
@@ -101,7 +101,7 @@ match Array.isEmpty locations with
 \\\sharp
 // Line 736-738: Only fire events if non-empty
 match Array.isEmpty tests with
-| false -> dispatch (SageFsMsg.Event (SageFsEvent.TestsDiscovered (WorkerProtocol.SessionId.value sid, tests)))
+| false -> dispatch (BozzettoMsg.Event (BozzettoEvent.TestsDiscovered (WorkerProtocol.SessionId.value sid, tests)))
 | true -> ()  // <-- Could be failure or legitimately 0 tests
 \\\
 
@@ -176,7 +176,7 @@ if ( -eq 0) {
 
 ### Fix 1: Enum-Based Discovery State Distinction
 
-**File**: C:\Code\Repos\SageFs\SageFs.Core\Mcp.fs (Lines 2051–2108)
+**File**: C:\Code\Repos\Bozzetto\Bozzetto.Core\Mcp.fs (Lines 2051–2108)
 
 **Add to RunTestsResult enum**:
 \\\sharp
@@ -201,12 +201,12 @@ type RunTestsResult =
   "Try: (1) ensure code compiles, (2) wait for file change to trigger discovery, (3) check get_test_trace() for warnings."
 \\\
 
-**TDD Test** (new file C:\Code\Repos\SageFs\SageFs.Tests\LiveTestingDiscoveryStateTests.fs):
+**TDD Test** (new file C:\Code\Repos\Bozzetto\Bozzetto.Tests\LiveTestingDiscoveryStateTests.fs):
 \\\sharp
-module SageFs.Tests.LiveTestingDiscoveryStateTests
+module Bozzetto.Tests.LiveTestingDiscoveryStateTests
 
 open Expecto
-open SageFs.Features.LiveTesting
+open Bozzetto.Features.LiveTesting
 
 [<Tests>]
 let discoveryStateTests = testList "Discovery state distinction" [
@@ -232,7 +232,7 @@ let discoveryStateTests = testList "Discovery state distinction" [
 
 ### Fix 2: Surface Tree-Sitter Errors in State
 
-**File**: C:\Code\Repos\SageFs\SageFs.Core\Features\LiveTestingTypes.fs (Line 1096+)
+**File**: C:\Code\Repos\Bozzetto\Bozzetto.Core\Features\LiveTestingTypes.fs (Line 1096+)
 
 **Add to LiveTestState**:
 \\\sharp
@@ -274,14 +274,14 @@ let resp = {|
 **Dispatch in DaemonMode** (Line 728–729):
 \\\sharp
 with ex ->
-  dispatch (SageFsMsg.Event (SageFsEvent.DiscoveryWarningDetected (
+  dispatch (BozzettoMsg.Event (BozzettoEvent.DiscoveryWarningDetected (
     WorkerProtocol.SessionId.value sid, f, "tree-sitter", ex.Message)))
   Array.empty
 \\\
 
-**Handle in SageFsApp** (add new message handler):
+**Handle in BozzettoApp** (add new message handler):
 \\\sharp
-| SageFsEvent.DiscoveryWarningDetected (sessionId, filePath, errorType, msg) ->
+| BozzettoEvent.DiscoveryWarningDetected (sessionId, filePath, errorType, msg) ->
   let lt = recomputeStatuses model.LiveTesting (fun s ->
     { s with 
         DiscoveryWarnings = s.DiscoveryWarnings @ 
@@ -293,7 +293,7 @@ with ex ->
 
 **Test** (new file):
 \\\sharp
-module SageFs.Tests.DiscoveryWarningTests
+module Bozzetto.Tests.DiscoveryWarningTests
 
 [<Tests>]
 let tests = testList "Discovery warnings" [
@@ -317,7 +317,7 @@ let tests = testList "Discovery warnings" [
 
 ### Fix 3: Add Confirmation Step for Activation
 
-**File**: C:\Code\Repos\SageFs\SageFs\McpTools.fs (add new tool)
+**File**: C:\Code\Repos\Bozzetto\Bozzetto\McpTools.fs (add new tool)
 
 **New MCP Function**:
 \\\sharp
@@ -396,7 +396,7 @@ RECOMMENDED WORKFLOW:
 
 **Test** (new file):
 \\\sharp
-module SageFs.Tests.ConfirmLiveTestingTests
+module Bozzetto.Tests.ConfirmLiveTestingTests
 
 [<Tests>]
 let tests = testList "confirm_live_testing_enabled" [
@@ -434,7 +434,7 @@ let tests = testList "confirm_live_testing_enabled" [
 
 ### Fix 4: Update Smoke Test to Fail on 0 Discovered
 
-**File**: C:\Code\Repos\SageFs\scripts\smoke-test.ps1 (Lines 227–228)
+**File**: C:\Code\Repos\Bozzetto\scripts\smoke-test.ps1 (Lines 227–228)
 
 **Before**:
 \\\powershell
@@ -474,7 +474,7 @@ if ( -eq 0) {
 | **Result enum** | Mcp.fs | 2051–2108 | No state distinction | Extend enum, update format() |
 | **Tree-sitter** | DaemonMode.fs | 724–730 | Silent errors | Dispatch DiscoveryWarningDetected event |
 | **Test state** | LiveTestingTypes.fs | 1096–1130 | No warning field | Add DiscoveryWarnings + DiscoveryErrorCount |
-| **Elm handler** | SageFsApp.fs | 614–647 | No warning handling | Add event case for DiscoveryWarningDetected |
+| **Elm handler** | BozzettoApp.fs | 614–647 | No warning handling | Add event case for DiscoveryWarningDetected |
 | **Test trace** | Mcp.fs | 1705–1737 | No error exposure | Include warnings in JSON |
 | **Smoke test** | smoke-test.ps1 | 227–228 | Masks failures | Check project structure, fail if should have tests |
 

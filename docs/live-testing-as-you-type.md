@@ -19,15 +19,15 @@
 
 ## How This Compares to VS Enterprise
 
-VS Enterprise's Live Unit Testing triggers on unsaved edits, same as SageFs. The
+VS Enterprise's Live Unit Testing triggers on unsaved edits, same as Bozzetto. The
 architecture is different: VS Enterprise copies your buffer to a ProjFS workspace, runs
-full MSBuild, instruments IL, then runs the tests, which takes 5-30 seconds. SageFs sends
+full MSBuild, instruments IL, then runs the tests, which takes 5-30 seconds. Bozzetto sends
 the changed function definition straight to FSI, a REPL that redefines bindings on the
 fly, with no build, no file copying, and no IL instrumentation. Feedback arrives in under
 a second, which is the whole point. Tests run as you type and go green before you even
 hit save, and it still feels great every time it works.
 
-| Dimension | VS Enterprise | SageFs |
+| Dimension | VS Enterprise | Bozzetto |
 |-----------|--------------|--------|
 | **Trigger** | Unsaved edits | Unsaved edits |
 | **Speed** | 5-30s (MSBuild + IL instrumentation) | 300-800ms end-to-end (debounce + type-check + FSI eval) |
@@ -46,7 +46,7 @@ tolerance for broken code, editor breadth, framework breadth, and cost.
 
 FSI (F# Interactive) is a REPL: send it a function definition and it redefines that
 binding immediately. There's no need to send a whole file, use `#load`, create temp
-files, or use shadow copies. SageFs already works this way: `sagefs-send_fsharp_code`
+files, or use shadow copies. Bozzetto already works this way: `bozzetto-send_fsharp_code`
 sends arbitrary F# snippets to FSI continuously.
 
 ```fsharp
@@ -58,10 +58,10 @@ let validate x = x + 1;;
 This means the as-you-type pipeline is:
 
 1. Editor extracts the changed function scope (the `let` binding being edited)
-2. Editor POSTs just that scope to SageFs
-3. SageFs type-checks the snippet in project context
-4. If it type-checks: SageFs sends it to FSI, which redefines the binding
-5. SageFs runs affected tests (which now call the redefined function)
+2. Editor POSTs just that scope to Bozzetto
+3. Bozzetto type-checks the snippet in project context
+4. If it type-checks: Bozzetto sends it to FSI, which redefines the binding
+5. Bozzetto runs affected tests (which now call the redefined function)
 6. Results pushed via SSE
 
 No files are written, no `#load`, no shadow copies, and no patching. The REPL just
@@ -162,7 +162,7 @@ whole file, which is another advantage of scope-level evaluation.
 
 ## Dependency Graph Model
 
-SageFs already maintains `TestDependencyGraph`:
+Bozzetto already maintains `TestDependencyGraph`:
 
 ```fsharp
 type TestDependencyGraph = {
@@ -191,7 +191,7 @@ separate mapping.
 | Type signature changed | FSI redefines binding, dependent tests may fail | Tests marked Stale. Save triggers full reload. |
 | Cross-file type change | Only the edited function is redefined | Stale until save triggers broader reload. |
 | Two editors same file | Generation counter orders requests | Most recent edit evaluated. |
-| SageFs daemon not running | POST fails | Editor shows "SageFs not connected". |
+| Bozzetto daemon not running | POST fails | Editor shows "Bozzetto not connected". |
 
 By this design, body changes (90% of edits) get instant feedback, and signature changes
 (10%) fall back to a save-triggered refresh. Both are still faster than VS Enterprise.
@@ -231,6 +231,6 @@ Each editor implements:
 | 300ms debounce default | Adaptive per-editor | Ship consistent, tune per-editor from user feedback later. |
 
 If you're reading this looking for the actual shipped contract, go read
-[buffer-changed in the HTTP API tests](../SageFs.Tests/HttpApiIntegrationTests.fs) instead.
+[buffer-changed in the HTTP API tests](../Bozzetto.Tests/HttpApiIntegrationTests.fs) instead.
 This page is the map of the road not fully taken, kept around because the reasoning in
 it is still good even where the exact endpoint shape changed.

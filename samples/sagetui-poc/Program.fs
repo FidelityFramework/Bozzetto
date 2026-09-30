@@ -108,7 +108,7 @@ let init () : Model * Cmd<Msg> =
     Regions = []
     Session = None
     Connected = false
-    StatusMessage = "Connecting to SageFs daemon..."
+    StatusMessage = "Connecting to Bozzetto daemon..."
     ScrollOffset = 0
     MaxVisible = 20 },
   Cmd.none
@@ -118,7 +118,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
   | ConnectionEstablished ->
     { model with
         Connected = true
-        StatusMessage = "Connected to SageFs daemon" },
+        StatusMessage = "Connected to Bozzetto daemon" },
     Cmd.none
 
   | ConnectionLost ->
@@ -242,7 +242,7 @@ let private outputLines (model: Model) : Element =
     El.column [
       El.empty
       El.text "  Waiting for eval results..." |> El.dim |> El.center
-      El.text "  Submit code in SageFs to see output here" |> El.dim |> El.center
+      El.text "  Submit code in Bozzetto to see output here" |> El.dim |> El.center
       El.empty
     ]
   | results ->
@@ -265,7 +265,7 @@ let view (model: Model) : Element =
   El.column [
     // Title bar
     El.row [
-      El.text " ⚡ SageFs Output " |> El.fg Color.yellow |> El.bold
+      El.text " ⚡ Bozzetto Output " |> El.fg Color.yellow |> El.bold
       El.text " │ " |> El.dim
       connectionIndicator model.Connected
       El.text "" |> El.fill
@@ -315,8 +315,8 @@ let subscribe (_model: Model) : Sub<Msg> list =
   [ keyBindings
 
     Sub.CustomSub("sse-listener", fun dispatch ct -> async {
-      // daemon on 37749, dashboard on 37750
-      let baseUrl = "http://localhost:37750"
+      // daemon on 47749, dashboard on 47750
+      let baseUrl = "http://localhost:47750"
       use handler = new HttpClientHandler()
       use client = new HttpClient(handler)
       client.Timeout <- TimeSpan.FromMinutes(30.0)

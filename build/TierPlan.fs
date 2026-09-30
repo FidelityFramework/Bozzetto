@@ -1,11 +1,11 @@
 /// Pure planning for the pipeline's test tiers: how many run at once, in what
 /// order, and how each one is wrapped so it cannot touch another's files.
 ///
-/// Loaded by ci-pipeline.fsx (`#load`) and compiled into SageFs.Tests, so the
+/// Loaded by ci-pipeline.fsx (`#load`) and compiled into Bozzetto.Tests, so the
 /// rules the pipeline runs on are the rules the tests check.
-module SageFs.Build.TierPlan
+module Bozzetto.Build.TierPlan
 
-/// One invocation of the test assembly (`dotnet SageFs.Tests.dll <Args>`).
+/// One invocation of the test assembly (`dotnet Bozzetto.Tests.dll <Args>`).
 type Tier = { Name: string; Args: string }
 
 /// One slice of a sharded tier: shard `Index` (1-based) of `Count`.
@@ -138,7 +138,7 @@ let makespan (slots: int) (durationOf: Tier -> float) (ordered: Tier list) =
 /// `/proc/sys/net/ipv4/ip_local_port_range`) — so a client connection's own
 /// randomly-assigned outbound port can never collide with a port a tier is
 /// deliberately trying to bind — and nowhere near the user's own live daemon
-/// (37749/37750). Both exclusions fall out of the bound; neither needs its
+/// (47749/47750). Both exclusions fall out of the bound; neither needs its
 /// own case.
 let testPortPoolLow = 20000
 let testPortPoolHigh = 32000
@@ -168,7 +168,7 @@ let portRangeOf (slots: int) (slotIndex: int) : int * int =
 /// to a node from ANOTHER namespace, which saw the ORIGINAL checkout at the
 /// checkout path. It built into the shared tree, and the tier's own compiler
 /// then could not find the output in its clone (FS0078 on
-/// obj/Debug/.../ref/SageFs.Core.dll, first parallel gate, 2026-09-21). A
+/// obj/Debug/.../ref/Bozzetto.Core.dll, first parallel gate, 2026-09-21). A
 /// private /tmp closes that whole class: X locks, NuGet scratch, any
 /// rendezvous socket.
 ///

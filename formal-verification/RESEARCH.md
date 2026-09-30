@@ -1,6 +1,6 @@
-# SageFs — Formal Verification Research
+# Bozzetto — Formal Verification Research
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
 
 ## Last Updated
 - **Date**: 2026-05-11 17:10 UTC
@@ -10,11 +10,11 @@
 
 ## Overview
 
-SageFs is a live F# development environment — a REPL-powered daemon with editor integrations. The primary language is **F#**, targeting `.NET 10`. This document surveys the codebase for formal verification candidates and establishes the overall approach.
+Bozzetto is a live F# development environment — a REPL-powered daemon with editor integrations. The primary language is **F#**, targeting `.NET 10`. This document surveys the codebase for formal verification candidates and establishes the overall approach.
 
 ## FV Tool Choice: Lean 4 + Mathlib
 
-**Rationale**: SageFs is written in F#, not Rust, so Aeneas/Charon (the Rust→Lean extraction pipeline) is not applicable. We use **Lean 4** with **Mathlib** for hand-written formal specifications and proofs. The primary source of truth is the F# source code; Lean models are written by hand, capturing the pure functional core of each target.
+**Rationale**: Bozzetto is written in F#, not Rust, so Aeneas/Charon (the Rust→Lean extraction pipeline) is not applicable. We use **Lean 4** with **Mathlib** for hand-written formal specifications and proofs. The primary source of truth is the F# source code; Lean models are written by hand, capturing the pure functional core of each target.
 
 **Approach**:
 - Write Lean 4 functional models that mirror the pure F# logic
@@ -34,7 +34,7 @@ SageFs is a live F# development environment — a REPL-powered daemon with edito
 
 ## FV Target Survey
 
-### Target 1: `RingBuffer` — `SageFs.Core/RingBuffer.fs`
+### Target 1: `RingBuffer` — `Bozzetto.Core/RingBuffer.fs`
 
 **Description**: A fixed-capacity ring buffer for time-travel model snapshots. Pure functional module (each operation returns a new `RingBuffer<'T>` record). Uses a mutable backing array under the hood, but all operations are written in a functional style.
 
@@ -63,7 +63,7 @@ See `formal-verification/lean/FVSquad/RingBuffer.lean`.
 
 ---
 
-### Target 2: `ResultEx` — `SageFs.Core/ResultEx.fs`
+### Target 2: `ResultEx` — `Bozzetto.Core/ResultEx.fs`
 
 **Description**: Railway-oriented programming combinators for `Result<'T, 'E>`. Provides `map`, `bind`, `mapError`, `apply`, `zip`, `sequence`, `traverse`, `partition`, and utility predicates.
 
@@ -85,7 +85,7 @@ See `formal-verification/lean/FVSquad/RingBuffer.lean`.
 
 **Spec size**: ~100 Lean lines
 **Proof tractability**: Nearly all can be proved by `cases` or `simp` — monad/functor laws on a two-constructor type are essentially trivial in Lean 4. `sequence` requires induction on the list.
-**Approximations**: The Lean proofs work over the abstract `Result` type; the specific `SageFsError` type is not needed for algebraic laws.
+**Approximations**: The Lean proofs work over the abstract `Result` type; the specific `BozzettoError` type is not needed for algebraic laws.
 **Phase**: 3–4 🔄 **In progress** — 15/17 theorems proved, 2 sorry remaining.
 Monad/functor laws fully proved. `resSequence_length` and `resPartition_length` require
 accumulator-based induction and are guarded with `sorry` for future resolution.
@@ -93,7 +93,7 @@ See `formal-verification/lean/FVSquad/ResultEx.lean`.
 
 ---
 
-### Target 3: `RetryPolicy` — `SageFs.Core/RetryPolicy.fs`
+### Target 3: `RetryPolicy` — `Bozzetto.Core/RetryPolicy.fs`
 
 **Description**: Pure decision function for retry/backoff logic. Given a retryability predicate, a config, an attempt number, and an exception, returns either `RetryAfter delay` or `GiveUp ex`.
 
@@ -118,7 +118,7 @@ Jitter abstracted away (deterministic model). See `formal-verification/lean/FVSq
 
 ---
 
-### Target 4: `RestartPolicy` — `SageFs.Core/RestartPolicy.fs`
+### Target 4: `RestartPolicy` — `Bozzetto.Core/RestartPolicy.fs`
 
 **Description**: Pure Erlang-style restart policy with exponential backoff and a reset window. `decide` returns `Restart delay` or `GiveUp` depending on restart count vs. policy limits.
 
@@ -142,7 +142,7 @@ See `formal-verification/lean/FVSquad/RestartPolicy.lean`.
 
 ---
 
-### Target 5: `Affordances.availableTools` — `SageFs.Core/Affordances.fs`
+### Target 5: `Affordances.availableTools` — `Bozzetto.Core/Affordances.fs`
 
 **Description**: Pure state machine function mapping `SessionState` (4 states) to the list of MCP tool names valid in that state. Used to enforce the affordance-driven API.
 
@@ -186,15 +186,15 @@ firewall. Mathlib download is not possible. All Lean files use **pure Lean 4 std
 
 | # | Target | File | Benefit | Tractability | Priority | Phase |
 |---|--------|------|---------|-------------|----------|-------|
-| 1 | RingBuffer | `SageFs.Core/RingBuffer.fs` | Invariant correctness, rich existing tests | High (omega+simp) | **Complete** ✅ | 5 |
-| 2 | ResultEx | `SageFs.Core/ResultEx.fs` | Monad/functor laws, algebraic correctness | Very high (cases/simp) | **Complete** ✅ | 5 |
-| 3 | RetryPolicy | `SageFs.Core/RetryPolicy.fs` | Decision correctness, backoff properties | High (cases/omega) | **Complete** ✅ | 5 |
-| 4 | RestartPolicy | `SageFs.Core/RestartPolicy.fs` | Backoff monotonicity, cap invariant | Medium (linarith) | **Complete** ✅ | 5 |
-| 5 | Affordances | `SageFs.Core/Affordances.fs` | Security-relevant, finite decidable domain | Very high (decide) | **Complete** ✅ | 5 |
-| 6 | EvalPipeline | `SageFs.Core/EvalPipeline.fs` | Trace structure, error propagation | High (simp/cases) | **Complete** ✅ | 5 |
-| 7 | HotReloadState | `SageFs.Core/HotReloadState.fs` | Watch/unwatch/toggle invariants | High (simp/decide) | **Complete** ✅ | 5 |
-| 8 | SessionLifecycle | `SageFs.Core/AppState.fs` | Phase→state projection, unreachable Uninitialized | High (cases/simp) | **Complete** ✅ | 5 |
-| 9 | Theme | `SageFs.Core/Theme.fs` | withOverrides identity/idempotency/isolation | High (decide/simp) | **Complete** ✅ | 5 |
+| 1 | RingBuffer | `Bozzetto.Core/RingBuffer.fs` | Invariant correctness, rich existing tests | High (omega+simp) | **Complete** ✅ | 5 |
+| 2 | ResultEx | `Bozzetto.Core/ResultEx.fs` | Monad/functor laws, algebraic correctness | Very high (cases/simp) | **Complete** ✅ | 5 |
+| 3 | RetryPolicy | `Bozzetto.Core/RetryPolicy.fs` | Decision correctness, backoff properties | High (cases/omega) | **Complete** ✅ | 5 |
+| 4 | RestartPolicy | `Bozzetto.Core/RestartPolicy.fs` | Backoff monotonicity, cap invariant | Medium (linarith) | **Complete** ✅ | 5 |
+| 5 | Affordances | `Bozzetto.Core/Affordances.fs` | Security-relevant, finite decidable domain | Very high (decide) | **Complete** ✅ | 5 |
+| 6 | EvalPipeline | `Bozzetto.Core/EvalPipeline.fs` | Trace structure, error propagation | High (simp/cases) | **Complete** ✅ | 5 |
+| 7 | HotReloadState | `Bozzetto.Core/HotReloadState.fs` | Watch/unwatch/toggle invariants | High (simp/decide) | **Complete** ✅ | 5 |
+| 8 | SessionLifecycle | `Bozzetto.Core/AppState.fs` | Phase→state projection, unreachable Uninitialized | High (cases/simp) | **Complete** ✅ | 5 |
+| 9 | Theme | `Bozzetto.Core/Theme.fs` | withOverrides identity/idempotency/isolation | High (decide/simp) | **Complete** ✅ | 5 |
 | 10 | **Composition** | `FVSquad/Composition.lean` | Cross-module system-level properties | High (simp/decide) | **Complete** ✅ | 5 |
 
 ---
@@ -229,7 +229,7 @@ The CRITIQUE.md (Task 7) identified the following gaps and informed this run's T
 - Key property: `Active Idle` ↔ `Active Evaluating` are the only intra-Active transitions
 - This would subsume a large class of potential state machine bugs
 
-**Source**: `SageFs.Core/SessionManager.fs` (the only place transitions are enacted).
+**Source**: `Bozzetto.Core/SessionManager.fs` (the only place transitions are enacted).
 **Tractability**: `decide` over the finite state space, or inductive `Prop`.
 **Priority**: Medium — high value for correctness, tractable once the transition relation is formalised.
 
@@ -259,7 +259,7 @@ This requires decidable equality on field names (or a tagless encoding), but wou
 
 All 16 previously identified targets are now at Phase 5 (complete) following the TimeTravel integration in run 25661826548. This section identifies the next wave of FV-amenable targets from the remaining 64 unexplored F# source files.
 
-### New Target 17: `BinaryFormat.Crc32` — `SageFs.Core/BinaryFormat.fs`
+### New Target 17: `BinaryFormat.Crc32` — `Bozzetto.Core/BinaryFormat.fs`
 
 **Description**: A pure CRC-32 implementation (ISO 3309 / Ethernet / ZIP polynomial 0xEDB88320) used to validate binary manifest integrity. Two entry points: `compute offset length` and `computeAll` (which calls `compute 0 data.Length`).
 
@@ -291,7 +291,7 @@ All 16 previously identified targets are now at Phase 5 (complete) following the
 
 ---
 
-### New Target 18: `WorkflowTypes.SessionWorkflow` — `SageFs.Core/WorkflowTypes.fs`
+### New Target 18: `WorkflowTypes.SessionWorkflow` — `Bozzetto.Core/WorkflowTypes.fs`
 
 **Description**: A discriminated union encoding the hot-reload / REPL tradeoff at the type level. Two cases: `Interactive` (full REPL, no hot reload) and `WebLive cfg` (restricted REPL, Harmony patching). The key invariant is structural: "hot reload + full REPL" is an illegal state that cannot be constructed.
 
@@ -320,7 +320,7 @@ All 16 previously identified targets are now at Phase 5 (complete) following the
 
 ---
 
-### New Target 19: `ValidTimeout` — `SageFs.Core/Timeouts.fs`
+### New Target 19: `ValidTimeout` — `Bozzetto.Core/Timeouts.fs`
 
 **Description**: A simple validated wrapper type. `ValidTimeout.create` enforces the range [1s, 10min] and returns `Result<ValidTimeout, string>`. `ValidTimeout.value` unwraps it. Used in `Timeouts.setPerTestTimeout` to safely update mutable timeout settings.
 

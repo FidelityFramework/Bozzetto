@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Classes — SageFs Edition
+//  🧘  About Classes — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutClasses.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.
@@ -107,9 +107,9 @@ let tests = testList "about classes" [
 //
 // In practice: reach for record/DU first, class only when needed.
 //
-// 💡 SageFs convention: Immutability by default.
+// 💡 Bozzetto convention: Immutability by default.
 //    Notice `Person2` uses `mutable` and `<-` assignment. This works,
-//    but in idiomatic F# (and all SageFs code), we prefer:
+//    but in idiomatic F# (and all Bozzetto code), we prefer:
 //
 //      type Person = { Name: string }
 //      let rename newName person = { person with Name = newName }

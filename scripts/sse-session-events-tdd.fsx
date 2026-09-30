@@ -8,7 +8,7 @@ open Expecto
 // ═══════════════════════════════════════════════════════════════
 
 type SessionEvent =
-  | WarmupContextSnapshot of sessionId: string * context: SageFs.WarmupContext
+  | WarmupContextSnapshot of sessionId: string * context: Bozzetto.WarmupContext
   | HotReloadSnapshot of sessionId: string * watchedFiles: string list
   | HotReloadFileToggled of sessionId: string * file: string * watched: bool
   | SessionActivated of sessionId: string
@@ -55,19 +55,19 @@ let serializeSessionEvent (opts: JsonSerializerOptions) (evt: SessionEvent) : st
 
 let formatSessionSseEvent (opts: JsonSerializerOptions) (evt: SessionEvent) : string =
   let json = serializeSessionEvent opts evt
-  SageFs.SseWriter.formatSseEvent sessionEventType json
+  Bozzetto.SseWriter.formatSseEvent sessionEventType json
 
 // ═══════════════════════════════════════════════════════════════
 // HotReload → SessionEvent bridge (pure function)
 // ═══════════════════════════════════════════════════════════════
 
 /// Build the snapshot event from current hotreload state
-let hotReloadToSnapshot (sessionId: string) (state: SageFs.HotReloadState.T) : SessionEvent =
+let hotReloadToSnapshot (sessionId: string) (state: Bozzetto.HotReloadState.T) : SessionEvent =
   HotReloadSnapshot (sessionId, state.Watched |> Set.toList |> List.sort)
 
 /// Build toggle event after a hotreload toggle
-let hotReloadToggleEvent (sessionId: string) (file: string) (state: SageFs.HotReloadState.T) : SessionEvent =
-  HotReloadFileToggled (sessionId, file, SageFs.HotReloadState.isWatched file state)
+let hotReloadToggleEvent (sessionId: string) (file: string) (state: Bozzetto.HotReloadState.T) : SessionEvent =
+  HotReloadFileToggled (sessionId, file, Bozzetto.HotReloadState.isWatched file state)
 
 // ═══════════════════════════════════════════════════════════════
 // Tests
@@ -79,7 +79,7 @@ let sessionEventTests = testList "SessionEvent" [
 
   testList "serialization" [
     test "WarmupContextSnapshot JSON" {
-      let ctx : SageFs.WarmupContext = {
+      let ctx : Bozzetto.WarmupContext = {
         SourceFilesScanned = 5; AssembliesLoaded = []; NamespacesOpened = []
         FailedOpens = []; WarmupDurationMs = 1234L
         StartedAt = System.DateTimeOffset(2026, 1, 1, 0, 0, 0, System.TimeSpan.Zero)
@@ -142,9 +142,9 @@ let sessionEventTests = testList "SessionEvent" [
 
   testList "HotReload bridge" [
     test "hotReloadToSnapshot produces sorted file list" {
-      let state = SageFs.HotReloadState.empty
-                  |> SageFs.HotReloadState.watch "z.fs"
-                  |> SageFs.HotReloadState.watch "a.fs"
+      let state = Bozzetto.HotReloadState.empty
+                  |> Bozzetto.HotReloadState.watch "z.fs"
+                  |> Bozzetto.HotReloadState.watch "a.fs"
       match hotReloadToSnapshot "s1" state with
       | HotReloadSnapshot (sid, files) ->
         Expect.equal sid "s1" "sessionId"
@@ -152,14 +152,14 @@ let sessionEventTests = testList "SessionEvent" [
       | _ -> failtest "wrong case"
     }
     test "hotReloadToggleEvent after watch" {
-      let state = SageFs.HotReloadState.empty |> SageFs.HotReloadState.watch "x.fs"
+      let state = Bozzetto.HotReloadState.empty |> Bozzetto.HotReloadState.watch "x.fs"
       match hotReloadToggleEvent "s1" "x.fs" state with
       | HotReloadFileToggled (_, _, watched) ->
         Expect.isTrue watched "should be watched"
       | _ -> failtest "wrong case"
     }
     test "hotReloadToggleEvent after unwatch" {
-      let state = SageFs.HotReloadState.empty
+      let state = Bozzetto.HotReloadState.empty
       match hotReloadToggleEvent "s1" "x.fs" state with
       | HotReloadFileToggled (_, _, watched) ->
         Expect.isFalse watched "should not be watched"

@@ -1,4 +1,4 @@
-# SageFs Persistence Layer — Documentation Index
+# Bozzetto Persistence Layer — Documentation Index
 
 ## 📚 Quick Navigation
 
@@ -23,13 +23,13 @@
 
 ### Q1: What is the current binary persistence format?
 **Answer:** Three independent formats with shared 64-byte header architecture:
-- ✅ .sagefm v1 — Daemon manifest (sessions, active session)
-- ✅ .sagefs v3 — Session persistence (eval history, code, references)
-- ✅ .sagetc v1 — Test cache (coverage bitmaps, test results)
+- ✅ .bozzettofm v1 — Daemon manifest (sessions, active session)
+- ✅ .bozzetto v3 — Session persistence (eval history, code, references)
+- ✅ .bozzettotc v1 — Test cache (coverage bitmaps, test results)
 
 All use CRC-32 integrity checks, length-prefixed UTF-8 strings, and little-endian encoding.
 
-**File:** SageFs.Core/BinaryFormat.fs (lines 1-86 define primitives)
+**File:** Bozzetto.Core/BinaryFormat.fs (lines 1-86 define primitives)
 
 ---
 
@@ -50,10 +50,10 @@ module DaemonPersistence =
 **Key missing piece:** No IPersistence<'T> abstraction for dual-backend support.
 
 **Files:**
-- SageFs.Core/Features/ManifestPersistence.fs (311 lines)
-- SageFs.Core/Features/SessionPersistence.fs (509 lines)
-- SageFs.Core/Features/TestCachePersistence.fs (418 lines)
-- SageFs.Core/Features/DaemonPersistence.fs (79 lines)
+- Bozzetto.Core/Features/ManifestPersistence.fs (311 lines)
+- Bozzetto.Core/Features/SessionPersistence.fs (509 lines)
+- Bozzetto.Core/Features/TestCachePersistence.fs (418 lines)
+- Bozzetto.Core/Features/DaemonPersistence.fs (79 lines)
 
 ---
 
@@ -69,12 +69,12 @@ module DaemonPersistence =
 | **Property-based** | BinaryFormatTests.fs (line 48) | FsCheck, 100 iterations |
 
 **Files:**
-- SageFs.Tests/ManifestPersistenceTests.fs
-- SageFs.Tests/BinaryFormatTests.fs
+- Bozzetto.Tests/ManifestPersistenceTests.fs
+- Bozzetto.Tests/BinaryFormatTests.fs
 
 ---
 
-### Q4: What is .sagefm format? How is data serialized?
+### Q4: What is .bozzettofm format? How is data serialized?
 **Answer:** Daemon manifest — list of sessions with active session reference.
 
 **Structure:**
@@ -91,7 +91,7 @@ module DaemonPersistence =
 - Atomic writes: write to .tmp, then move
 
 **Files:**
-- SageFs.Core/Features/ManifestPersistence.fs (lines 7-111, writer; 113-230, reader)
+- Bozzetto.Core/Features/ManifestPersistence.fs (lines 7-111, writer; 113-230, reader)
 - docs/binary-format-spec.md (section 1.3)
 
 ---
@@ -151,8 +151,8 @@ type TestRunResult = {
 **NOT persisted:** LastDiagnostics, ResetCount, FlakyHistory, StatusEntries (runtime only)
 
 **Files:**
-- SageFs.Core/Features/Replay.fs (lines 1-250)
-- SageFs.Core/Features/LiveTestingTypes.fs (lines 1085-1141)
+- Bozzetto.Core/Features/Replay.fs (lines 1-250)
+- Bozzetto.Core/Features/LiveTestingTypes.fs (lines 1085-1141)
 
 ---
 
@@ -179,13 +179,13 @@ type SqlitePersistence<'T> (dbPath, tableName) : IPersistence<'T>
 `
 
 **Files:**
-- SageFs.Core/Features/DaemonPersistence.fs (79 lines, high-level API without interface)
+- Bozzetto.Core/Features/DaemonPersistence.fs (79 lines, high-level API without interface)
 
 ---
 
 ## 📊 Format Specifications Summary
 
-| Aspect | .sagefm | .sagefs | .sagetc |
+| Aspect | .bozzettofm | .bozzetto | .bozzettotc |
 |--------|---------|---------|---------|
 | **Magic** | "SFM1" | "SFS3" | "STC1" |
 | **Version** | 1 | 3 | 1 |
@@ -232,7 +232,7 @@ type SqlitePersistence<'T> (dbPath, tableName) : IPersistence<'T>
 - [ ] Integrity tests (constraints, rollback)
 
 ### Phase 3: Migration & Integration
-- [ ] Migration tool (bulk convert .sagefs → SQLite)
+- [ ] Migration tool (bulk convert .bozzetto → SQLite)
 - [ ] Performance benchmarks (target: SQLite ≤ 2× binary)
 - [ ] Config option (choose backend: Binary vs SQLite)
 - [ ] Deprecation path (support both, encourage SQLite)
@@ -245,16 +245,16 @@ type SqlitePersistence<'T> (dbPath, tableName) : IPersistence<'T>
 - **Format specification:** docs/binary-format-spec.md (41 KB, definitive)
 - **Performance benchmarks:** docs/binary-format-benchmarks.md
 - **Architecture notes:** IMPROVEMENT_PLAN.md (vision + LARP affordance model)
-- **Existing tests:** SageFs.Tests/{ManifestPersistenceTests.fs, BinaryFormatTests.fs}
+- **Existing tests:** Bozzetto.Tests/{ManifestPersistenceTests.fs, BinaryFormatTests.fs}
 
 ### Key Source Files (1,700+ lines)
 `
-SageFs.Core/
+Bozzetto.Core/
 ├── BinaryFormat.fs (86 lines) — CRC-32, lp-string primitives
 ├── Features/
-│   ├── ManifestPersistence.fs (311 lines) — .sagefm reader/writer
-│   ├── SessionPersistence.fs (509 lines) — .sagefs reader/writer
-│   ├── TestCachePersistence.fs (418 lines) — .sagetc reader/writer
+│   ├── ManifestPersistence.fs (311 lines) — .bozzettofm reader/writer
+│   ├── SessionPersistence.fs (509 lines) — .bozzetto reader/writer
+│   ├── TestCachePersistence.fs (418 lines) — .bozzettotc reader/writer
 │   ├── DaemonPersistence.fs (79 lines) — High-level API (no interface)
 │   ├── Replay.fs (250+ lines) — Domain types (manifest, session)
 │   └── LiveTestingTypes.fs (1,200+ lines) — Domain types (test state)
@@ -267,7 +267,7 @@ SageFs.Core/
 1. **Read the quick reference:** PERSISTENCE_QUICK_REF.md (10 min read)
 2. **Deep dive into analysis:** PERSISTENCE_ANALYSIS.md (30 min read)
 3. **Study the format spec:** docs/binary-format-spec.md (key sections)
-4. **Review existing tests:** SageFs.Tests/ManifestPersistenceTests.fs (patterns)
+4. **Review existing tests:** Bozzetto.Tests/ManifestPersistenceTests.fs (patterns)
 5. **Define IPersistence<'T>** interface
 6. **Create SQL schema** based on domain types
 7. **Implement compliance tests** using established patterns
@@ -275,6 +275,6 @@ SageFs.Core/
 ---
 
 **Last updated:** Analysis completed
-**Scope:** Complete SageFs persistence layer for SQLite migration compliance testing
+**Scope:** Complete Bozzetto persistence layer for SQLite migration compliance testing
 **Documentation:** 25 KB (2 files), 1,700+ lines of code reviewed
 

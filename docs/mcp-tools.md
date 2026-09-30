@@ -1,15 +1,15 @@
 # MCP Tools Reference
 
-SageFs runs a Model Context Protocol server on port 37749. Any MCP client
+Bozzetto runs a Model Context Protocol server on port 47749. Any MCP client
 (GitHub Copilot, Claude Code, Claude Desktop, Cursor, Windsurf, OpenCode)
 can connect and drive an F# session: run code, type-check it, list and verify
 tests, and read live status. This is the surface I actually use every day to
-work on SageFs itself, so if it's clunky, I feel it first.
+work on Bozzetto itself, so if it's clunky, I feel it first.
 
-SageFs gates tools when you call them. `tools/list` always advertises the
-full catalog below, and SageFs doesn't filter what an MCP client sees there.
+Bozzetto gates tools when you call them. `tools/list` always advertises the
+full catalog below, and Bozzetto doesn't filter what an MCP client sees there.
 Calling one is different: a call that doesn't apply to the current session
-state gets rejected with a structured error (`SageFs/Mcp.fs:686`,
+state gets rejected with a structured error (`Bozzetto/Mcp.fs:686`,
 `enforceToolCallGate`), instead of a raw failure. Call `get_daemon_status`
 for daemon health, then `get_session_status` to see which tools currently
 apply. In a warming-up session, for example, it
@@ -25,46 +25,46 @@ HTTP endpoints are not MCP tools.
 
 ## Connect
 
-**stdio (recommended)**: your client spawns `sagefs mcp`, so there's no
+**stdio (recommended)**: your client spawns `boz mcp`, so there's no
 ordering to get wrong — no port to be missing, no cached connection
 failure, no race between your client starting and the daemon starting.
-`sagefs mcp` checks whether the daemon is up, starts it if it isn't, waits
+`boz mcp` checks whether the daemon is up, starts it if it isn't, waits
 for it, then bridges your client's stdin/stdout to it.
 
 ```
-claude mcp add sagefs -- sagefs mcp
+claude mcp add boz -- boz mcp
 ```
 
 For clients that take raw JSON config:
 ```json
-{ "mcpServers": { "sagefs": { "command": "sagefs", "args": [ "mcp" ] } } }
+{ "mcpServers": { "bozzetto": { "command": "bozzetto", "args": [ "mcp" ] } } }
 ```
 
 **Streamable HTTP** (for a client that only speaks HTTP, or that's already
 started before you get to configure it — the daemon has to be running
 first):
 ```json
-{ "mcpServers": { "sagefs": { "type": "streamable-http", "url": "http://localhost:37749/" } } }
+{ "mcpServers": { "bozzetto": { "type": "streamable-http", "url": "http://localhost:47749/" } } }
 ```
 
 **SSE** (for clients that don't support Streamable HTTP yet):
 ```json
-{ "mcpServers": { "sagefs": { "type": "sse", "url": "http://localhost:37749/sse" } } }
+{ "mcpServers": { "bozzetto": { "type": "sse", "url": "http://localhost:47749/sse" } } }
 ```
 
-### No SageFs tools in your client
+### No Bozzetto tools in your client
 
-If your client shows no SageFs tools, or it shows them but every call
+If your client shows no Bozzetto tools, or it shows them but every call
 fails, you almost certainly configured HTTP and started your client before
 the daemon. An HTTP-based MCP client that fails to connect on its first try
 usually caches that failure and never retries, even once the daemon comes
 up seconds later — restarting the client is the only fix, and nothing
 tells you that's what you need to do. Switch to stdio (`claude mcp add
-sagefs -- sagefs mcp`, above) and this stops happening: your client spawns
+boz -- boz mcp`, above) and this stops happening: your client spawns
 the bridge itself, and the bridge makes sure the daemon is there before
 your client ever sees an empty tool list. If you want to stay on HTTP,
-check `sagefs status` — if it says no daemon is running, start one with
-`sagefs` and restart your client.
+check `boz status` — if it says no daemon is running, start one with
+`boz` and restart your client.
 
 ## Execution and status
 
@@ -156,7 +156,7 @@ sounds like a chore anyway.
 | `get_friction_summary` | Compact summary of recorded MCP friction. |
 | `get_friction_report` | Structured JSON report of MCP pain points. |
 | `report_friction` | Record structured feedback about a confusing tool call. |
-| `manage_local_data` | See what SageFs stores under its data dir (rows, bytes, oldest row, retention rules), or clear it. |
+| `manage_local_data` | See what Bozzetto stores under its data dir (rows, bytes, oldest row, retention rules), or clear it. |
 
 ## Cohort and multi-agent coordination
 
@@ -178,61 +178,61 @@ Two connections that pass the same name are still two different members.
 
 ## Per-client config
 
-Prefer stdio (`command`/`args`, spawns `sagefs mcp`) over HTTP (`url`,
+Prefer stdio (`command`/`args`, spawns `boz mcp`) over HTTP (`url`,
 requires the daemon already running) for the reason above.
 
 **Claude Code**:
 ```
-claude mcp add sagefs -- sagefs mcp
+claude mcp add boz -- boz mcp
 ```
 or in `~/.claude/claude_desktop_config.json`:
 ```json
-{ "mcpServers": { "sagefs": { "command": "sagefs", "args": [ "mcp" ] } } }
+{ "mcpServers": { "bozzetto": { "command": "bozzetto", "args": [ "mcp" ] } } }
 ```
 
 **GitHub Copilot (CLI)**, `~/.copilot/github-copilot/mcp.json`:
 ```json
-{ "servers": { "sagefs": { "type": "stdio", "command": "sagefs", "args": [ "mcp" ] } } }
+{ "servers": { "bozzetto": { "type": "stdio", "command": "bozzetto", "args": [ "mcp" ] } } }
 ```
 
 **Cursor / Windsurf**, `.cursor/mcp.json` or the Windsurf MCP settings:
 ```json
-{ "mcpServers": { "sagefs": { "command": "sagefs", "args": [ "mcp" ] } } }
+{ "mcpServers": { "bozzetto": { "command": "bozzetto", "args": [ "mcp" ] } } }
 ```
 
 **OpenCode**, `~/.opencode.json`:
 ```json
-{ "mcp": { "sagefs": { "type": "local", "command": [ "sagefs", "mcp" ], "enabled": true } } }
+{ "mcp": { "bozzetto": { "type": "local", "command": [ "bozzetto", "mcp" ], "enabled": true } } }
 ```
 
 If your client only takes a `url` (HTTP), the daemon has to be running
 first — see the troubleshooting note above. The `url` is
-`http://localhost:37749/` for Streamable HTTP, or `http://localhost:37749/sse`
+`http://localhost:47749/` for Streamable HTTP, or `http://localhost:47749/sse`
 for SSE:
 
 **GitHub Copilot (CLI)** over HTTP:
 ```json
-{ "servers": { "sagefs": { "type": "http", "url": "http://localhost:37749/" } } }
+{ "servers": { "bozzetto": { "type": "http", "url": "http://localhost:47749/" } } }
 ```
 
 **Claude Code / Claude Desktop** over HTTP:
 ```json
-{ "mcpServers": { "sagefs": { "url": "http://localhost:37749/" } } }
+{ "mcpServers": { "bozzetto": { "url": "http://localhost:47749/" } } }
 ```
 
 **Cursor / Windsurf** over HTTP:
 ```json
-{ "mcpServers": { "sagefs": { "url": "http://localhost:37749/" } } }
+{ "mcpServers": { "bozzetto": { "url": "http://localhost:47749/" } } }
 ```
 
 **OpenCode** over SSE:
 ```json
-{ "mcp": { "sagefs": { "type": "remote", "url": "http://localhost:37749/sse", "enabled": true } } }
+{ "mcp": { "bozzetto": { "type": "remote", "url": "http://localhost:47749/sse", "enabled": true } } }
 ```
 
 Works with GitHub Copilot (CLI and VS Code), Claude Code, Claude Desktop,
 OpenCode, Windsurf, Cursor, and any MCP-compatible tool. With live testing
-on, agents can edit files, let SageFs re-run the affected tests, and read the
+on, agents can edit files, let Bozzetto re-run the affected tests, and read the
 result through `list_tests` and `diagnose`, no eval round-trip needed. This
 is the whole point of building an MCP server instead of just a REPL: the
 agent gets the same fast feedback loop I do.

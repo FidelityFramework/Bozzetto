@@ -1,8 +1,8 @@
-# SageFs Persistence Layer Analysis for SQLite Migration (Synthesis 4.2)
+# Bozzetto Persistence Layer Analysis for SQLite Migration (Synthesis 4.2)
 
 ## Executive Summary
 
-The SageFs persistence layer currently uses **three independent binary formats** (.sagefm, .sagefs, .sagetc) with **no abstraction layer**. For SQLite migration, you'll need:
+The Bozzetto persistence layer currently uses **three independent binary formats** (.bozzettofm, .bozzetto, .bozzettotc) with **no abstraction layer**. For SQLite migration, you'll need:
 1. A common IPersistence<'T> interface
 2. Compliance tests that verify binary↔SQLite round-trip equivalence
 3. Migration tooling to convert existing binary files to SQLite
@@ -16,14 +16,14 @@ The SageFs persistence layer currently uses **three independent binary formats**
 
 | Format | Extension | Magic | Version | Purpose | Location |
 |--------|-----------|-------|---------|---------|----------|
-| **Daemon Manifest** | .sagefm | SFM1 | v1 | Session list, active session, timestamps | SageFs.Core/Features/ManifestPersistence.fs |
-| **Session** | .sagefs | SFS3 | v3 | Interactions, outputs, references, code | SageFs.Core/Features/SessionPersistence.fs |
-| **Test Cache** | .sagetc | STC1 | v1 | Coverage bitmaps, test outcomes | SageFs.Core/Features/TestCachePersistence.fs |
+| **Daemon Manifest** | .bozzettofm | SFM1 | v1 | Session list, active session, timestamps | Bozzetto.Core/Features/ManifestPersistence.fs |
+| **Session** | .bozzetto | SFS3 | v3 | Interactions, outputs, references, code | Bozzetto.Core/Features/SessionPersistence.fs |
+| **Test Cache** | .bozzettotc | STC1 | v1 | Coverage bitmaps, test outcomes | Bozzetto.Core/Features/TestCachePersistence.fs |
 
-**File Locations in .sagefs/ directory:**
-- daemon.sagefm — singleton daemon manifest
-- sessions/{sessionId}.sagefs — one file per session
-- cache/{projectHash}.sagetc — one file per project (hash computed from project list)
+**File Locations in .bozzetto/ directory:**
+- daemon.bozzettofm — singleton daemon manifest
+- sessions/{sessionId}.bozzetto — one file per session
+- cache/{projectHash}.bozzettotc — one file per project (hash computed from project list)
 
 ---
 
@@ -109,7 +109,7 @@ type TestResult =
 - **Sections:** Variable-length payloads, each with CRC-32 integrity check
 - **Encoding:** Length-prefixed UTF-8 strings, little-endian integers, no varints
 
-### 3.2 .sagefm v1 (Daemon Manifest)
+### 3.2 .bozzettofm v1 (Daemon Manifest)
 
 **Header fields (64 bytes):**
 - Magic: \SFM1\ (0x53, 0x46, 0x4D, 0x31)
@@ -128,7 +128,7 @@ type TestResult =
   - count: u32
   - For each: SessionId, projects list, working dir, created ms, stopped ms (or -1)
 
-### 3.3 .sagefs v3 (Session Persistence)
+### 3.3 .bozzetto v3 (Session Persistence)
 
 **Header fields (64 bytes):**
 - Magic: \SFS3\ (0x53, 0x46, 0x53, 0x33)
@@ -152,7 +152,7 @@ type TestResult =
 
 **Sections:**
 - **META** (0x4D45) — session metadata
-  - SageFsVersion, FSharpVersion, DotNetVersion, ProjectPath, WorkingDirectory, SessionId
+  - BozzettoVersion, FSharpVersion, DotNetVersion, ProjectPath, WorkingDirectory, SessionId
   - EvalCount, FailedEvalCount
   
 - **INPT** (0x494E) — interactions with string pool
@@ -168,7 +168,7 @@ type TestResult =
 - **PROF** (optional) (0x0004) — profiling timings per interaction
 - **BIND** (optional) (0x0005) — runtime bindings (name, type, value)
 
-### 3.4 .sagetc v1 (Test Cache)
+### 3.4 .bozzettotc v1 (Test Cache)
 
 **Header fields (64 bytes):** Similar to SFS3 but:
 - Magic: \STC1\ (0x53, 0x54, 0x43, 0x31)
@@ -239,9 +239,9 @@ module TestCacheMapping =
 
 | Test File | Location | Coverage |
 |-----------|----------|----------|
-| **ManifestPersistenceTests.fs** | SageFs.Tests/ | ✅ Binary format, CRC, roundtrip, field preservation |
-| **BinaryFormatTests.fs** | SageFs.Tests/ | ✅ Property-based tests (FsCheck), SFS3 + STC1 formats |
-| **ThemePersistenceTests.fs** | SageFs.Tests/ | ✅ Theme serialization (separate concern) |
+| **ManifestPersistenceTests.fs** | Bozzetto.Tests/ | ✅ Binary format, CRC, roundtrip, field preservation |
+| **BinaryFormatTests.fs** | Bozzetto.Tests/ | ✅ Property-based tests (FsCheck), SFS3 + STC1 formats |
+| **ThemePersistenceTests.fs** | Bozzetto.Tests/ | ✅ Theme serialization (separate concern) |
 
 ### 5.2 ManifestPersistenceTests.fs Pattern
 
@@ -272,7 +272,7 @@ let manifestBinaryTests = testList "DaemonManifest binary format" [
 
 ---
 
-## 6. .sagefm Format Details (Daemon Manifest Example)
+## 6. .bozzettofm Format Details (Daemon Manifest Example)
 
 ### 6.1 File Structure
 \\\
@@ -305,20 +305,20 @@ Offset  Size  Content
 
 ### 7.1 What to Persist (Compliance Tests Should Cover)
 
-**Manifest (.sagefm):**
+**Manifest (.bozzettofm):**
 - Session ID, project list, working directory
 - Created/stopped timestamps
 - Active session reference
 - Alive session filtering (7-day cutoff on StoppedAt)
 
-**Session (.sagefs):**
+**Session (.bozzetto):**
 - Eval history: code, result, type signature, duration, timestamp
 - Kind (Interaction, Expression, Directive, ScriptLoad)
 - Flags (Failed, HasSideEffects, HasOutput)
 - References: kind (DllPath, NuGet, IncludePath, LoadedScript), path
-- Metadata: SageFsVersion, FSharpVersion, DotNetVersion, ProjectPath, WorkingDirectory, SessionId
+- Metadata: BozzettoVersion, FSharpVersion, DotNetVersion, ProjectPath, WorkingDirectory, SessionId
 
-**Test Cache (.sagetc):**
+**Test Cache (.bozzettotc):**
 - Test ID → coverage bitmap mapping
 - Test results: TestId, outcome (Pass/Fail/Skip/Error), duration, message
 - Instrumentation map generation (version counter)
@@ -395,13 +395,13 @@ type SqlitePersistence<'T> (dbPath: string, tableName: string) =
 
 | Component | File Path |
 |-----------|-----------|
-| Binary primitives | SageFs.Core/BinaryFormat.fs (lines 1-86) |
-| Daemon manifest | SageFs.Core/Features/ManifestPersistence.fs (lines 7-311) |
-| Session persistence | SageFs.Core/Features/SessionPersistence.fs (lines 1-509) |
-| Test cache persistence | SageFs.Core/Features/TestCachePersistence.fs (lines 1-418) |
-| Daemon-level coordination | SageFs.Core/Features/DaemonPersistence.fs (lines 1-79) |
-| Domain types | SageFs.Core/Features/Replay.fs, LiveTestingTypes.fs |
-| Existing tests | SageFs.Tests/ManifestPersistenceTests.fs, BinaryFormatTests.fs |
+| Binary primitives | Bozzetto.Core/BinaryFormat.fs (lines 1-86) |
+| Daemon manifest | Bozzetto.Core/Features/ManifestPersistence.fs (lines 7-311) |
+| Session persistence | Bozzetto.Core/Features/SessionPersistence.fs (lines 1-509) |
+| Test cache persistence | Bozzetto.Core/Features/TestCachePersistence.fs (lines 1-418) |
+| Daemon-level coordination | Bozzetto.Core/Features/DaemonPersistence.fs (lines 1-79) |
+| Domain types | Bozzetto.Core/Features/Replay.fs, LiveTestingTypes.fs |
+| Existing tests | Bozzetto.Tests/ManifestPersistenceTests.fs, BinaryFormatTests.fs |
 | Format spec | docs/binary-format-spec.md (41 KB, comprehensive) |
 
 ---

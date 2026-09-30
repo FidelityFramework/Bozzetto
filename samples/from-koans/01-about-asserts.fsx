@@ -1,11 +1,11 @@
 // ============================================================
-//  🧘  About Asserts — SageFs Edition
+//  🧘  About Asserts — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutAsserts.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.
 //
 //  The F# Koans taught you with NUnit's AssertEquality.
-//  SageFs uses Expecto — the F# community's testing library.
+//  Bozzetto uses Expecto — the F# community's testing library.
 //  Same idea. Live gutter markers instead of terminal output.
 //
 //  Fill in each __ to turn 🔴 tests 🟢. Save to see results.
@@ -24,13 +24,13 @@ let inline __<'T> : 'T = failwith "Seek wisdom by filling in the __"
 // Old koan style (NUnit):
 //   AssertEquality (1 + 1) __
 //
-// SageFs uses Expecto.Flip — the actual value pipes in last:
+// Bozzetto uses Expecto.Flip — the actual value pipes in last:
 //   actual |> Expect.equal "description" expected
 //
 // Why Flip? It reads like English and works with F# pipelines:
 //   myFunction input |> Expect.equal "should compute" expectedResult
 //
-// SageFs shows ✓/✗ in your gutter as you type.
+// Bozzetto shows ✓/✗ in your gutter as you type.
 // No dotnet run. No terminal scrolling. Just green markers.
 
 // Alt+Enter these to see inline results:
@@ -64,7 +64,7 @@ let tests = testList "about asserts" [
 
 ]
 
-// ── How to read Expecto output in SageFs ─────────────────────
+// ── How to read Expecto output in Bozzetto ─────────────────────
 //
 // When a test FAILS: 🔴 gutter marker next to the test name
 //                    hover to see "Expected: 2, Actual: failwith..."

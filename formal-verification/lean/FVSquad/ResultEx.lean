@@ -1,8 +1,8 @@
 /-!
   # Formal Specification: ResultEx
 
-  🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
-  Source: `SageFs.Core/ResultEx.fs`
+  🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
+  Source: `Bozzetto.Core/ResultEx.fs`
 
   This file formalises the railway-oriented programming combinators in `ResultEx`.
   We work with the standard `Except ε α` type (Lean's built-in equivalent of

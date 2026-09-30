@@ -1,5 +1,5 @@
 ================================================================================
-SAGEFS LIVE TESTING & COVERAGE SYSTEM - IMPLEMENTATION GUIDE
+BOZZETTO LIVE TESTING & COVERAGE SYSTEM - IMPLEMENTATION GUIDE
 ================================================================================
 
 STATUS: Live testing is functional but still being stabilized. Rough edges
@@ -15,7 +15,7 @@ QUICK REFERENCE - KEY FILES & FUNCTIONS
 ================================================================================
 
 1. Test Discovery & Execution:
-   - File: SageFs.Core/Features/LiveTestingExecutors.fs
+   - File: Bozzetto.Core/Features/LiveTestingExecutors.fs
    - Key Functions:
      * AttributeDiscovery.discoverInAssembly: Scan types for test attributes
      * AttributeDiscovery.discoverWithRunner: Discovery + execution closures
@@ -25,10 +25,10 @@ QUICK REFERENCE - KEY FILES & FUNCTIONS
    - Key Type: DiscoveryResult { Tests: TestCase list; RunTest: TestCase → Async<TestResult> }
 
 2. Coverage Instrumentation (IL-Level):
-   - File: SageFs.Core/Features/CoverageInstrumenter.fs
+   - File: Bozzetto.Core/Features/CoverageInstrumenter.fs
    - Key Functions:
      * collectSequencePoints: Extract all non-hidden IL probes
-     * injectTracker: Create __SageFsCoverage class
+     * injectTracker: Create __BozzettoCoverage class
      * insertProbes: Inject Hit() calls before sequence points
      * instrumentAssembly: Full instrumentation pipeline
      * collectCoverageHits: Read coverage data post-test via reflection
@@ -36,7 +36,7 @@ QUICK REFERENCE - KEY FILES & FUNCTIONS
    - Coverage Bitmap: CoverageBitmap { Bits: uint64[]; Count: int } (8x memory vs bool[])
 
 3. Dependency Graph (Symbol → Test Mapping):
-   - File: SageFs.Core/Features/LiveTestingTypes.fs
+   - File: Bozzetto.Core/Features/LiveTestingTypes.fs
    - Key Functions:
      * TestDependencyGraph.buildFromSymbolUses: Build from FCS extracts
      * TestDependencyGraph.findAffected: Get tests for changed symbols
@@ -44,7 +44,7 @@ QUICK REFERENCE - KEY FILES & FUNCTIONS
    - Key Type: TestDependencyGraph { SymbolToTests; TransitiveCoverage; PerFileIndex; SourceVersion }
 
 4. Flaky Test Classification:
-   - File: SageFs.Core/Features/LiveTestingTypes.fs
+   - File: Bozzetto.Core/Features/LiveTestingTypes.fs
    - Key Functions:
      * FlakyDetection.classifyFlakiness: Classify Environmental vs Property
      * FlakyDetection.isFsCheckFailure: Extract shrunk counterexample
@@ -54,7 +54,7 @@ QUICK REFERENCE - KEY FILES & FUNCTIONS
    - Defaults: windowSize=10, flipThreshold=2, minSamples=3
 
 5. Failure Narratives (Causal Analysis):
-   - File: SageFs.Core/Features/LiveTestingTypes.fs
+   - File: Bozzetto.Core/Features/LiveTestingTypes.fs
    - Key Types:
      * FailureNarrative { LastPassedAt; TimeSinceLastPass; CausalChanges; PropertyViolation; Summary }
      * CausalChange = SymbolChanged(string) | FileChanged(string) | Unknown
@@ -62,7 +62,7 @@ QUICK REFERENCE - KEY FILES & FUNCTIONS
    - Algebraic Categories Detected: associativity, commutativity, identity, idempotence, distributivity, inverse, absorption, closure
 
 6. Test Prioritization:
-   - File: SageFs.Core/Features/LiveTestingTypes.fs
+   - File: Bozzetto.Core/Features/LiveTestingTypes.fs
    - Key Functions:
      * TestPrioritization.computeTier: Assign tier (0=failed, 4=notrun)
      * TestPrioritization.buildSortKey: Lexicographic (tier, -coverage, duration)
@@ -70,7 +70,7 @@ QUICK REFERENCE - KEY FILES & FUNCTIONS
    - Environmental flaky failures demoted from tier 0 to tier 2
 
 7. Test Explainer & Verification:
-   - File: SageFs/Mcp.fs
+   - File: Bozzetto/Mcp.fs
    - MCP tools (what agents actually call):
      * explain_test_failure — why a test failed
      * targeted_verify — run and verify specific tests
@@ -88,7 +88,7 @@ QUICK REFERENCE - KEY FILES & FUNCTIONS
      drives, not something an agent should be poking at directly.
 
 8. Per-Line Coverage Data:
-   - File: SageFs.Core/Features/LiveTestingTypes.fs
+   - File: Bozzetto.Core/Features/LiveTestingTypes.fs
    - Key Functions:
      * FileAnnotations.projectWithCoverage: Get per-line coverage
      * FileAnnotations.resolveFilePath: Resolve partial paths
@@ -216,7 +216,7 @@ KEY INVARIANTS & GUARANTEES
 EXTENSION POINTS FOR CUSTOMIZATION
 ================================================================================
 
-To build on top of SageFs live testing:
+To build on top of Bozzetto live testing:
 
 1. Custom Test Frameworks:
    → Implement TestExecutor with custom Discover function

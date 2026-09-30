@@ -1,18 +1,18 @@
 // ============================================================
 //  🌐  Falco.Datastar Live Webapp Demo
 //  A real-time reactive web app — no JavaScript written by hand.
-//  Save the file → SageFs hot-patches the running server → browser updates.
+//  Save the file → Bozzetto hot-patches the running server → browser updates.
 //  No restart. No manual refresh. Under 100ms.
 // ============================================================
 //
 //  To run this demo:
-//    1. Start SageFs:  sagefs
+//    1. Start Bozzetto:  bozzetto
 //    2. Load this script or create a project with these dependencies
 //    3. Visit http://localhost:5000
 //    4. Edit any handler below, save, watch the page change live
 //
 //  Dependencies (central version management in Directory.Packages.props):
-//    Falco, Falco.Markup, Falco.Datastar, SageFs.DevReloadMiddleware
+//    Falco, Falco.Markup, Falco.Datastar, Bozzetto.DevReloadMiddleware
 
 // #r "nuget: Falco"
 // #r "nuget: Falco.Markup"
@@ -33,7 +33,7 @@ type TodoItem = {
 
 // Simple in-memory store (would be a real DB in production)
 let mutable todos: TodoItem list = [
-  { Id = 1; Text = "Try SageFs";        Completed = false }
+  { Id = 1; Text = "Try Bozzetto";        Completed = false }
   { Id = 2; Text = "Edit and save";     Completed = false }
   { Id = 3; Text = "Watch the magic";   Completed = false }
 ]
@@ -69,7 +69,7 @@ let todoListView (items: TodoItem list) =
 let pageLayout (content: XmlNode list) =
   Elem.html [] [
     Elem.head [] [
-      Elem.title [] [ Text.raw "SageFs Todo Demo" ]
+      Elem.title [] [ Text.raw "Bozzetto Todo Demo" ]
       // Datastar CDN — the only JS you'll ever write
       Elem.script [ Attr.type' "module"; Attr.src "https://cdn.jsdelivr.net/npm/@starfederation/datastar" ] []
       Elem.style [] [ Text.raw """
@@ -84,7 +84,7 @@ let pageLayout (content: XmlNode list) =
       """ ]
     ]
     Elem.body [] [
-      Elem.h1 [] [ Text.raw "✅ Todo — powered by SageFs + Falco.Datastar" ]
+      Elem.h1 [] [ Text.raw "✅ Todo — powered by Bozzetto + Falco.Datastar" ]
       Elem.p [] [ Text.raw "Edit this file, save it. The page updates. No refresh." ]
       Elem.form [
         // Datastar: on submit → POST /todo/add, replace the #todo-list fragment
@@ -154,9 +154,9 @@ let routes = [
 [<EntryPoint>]
 let main args =
   webHost args {
-    // SageFs.DevReloadMiddleware: the magic that makes browser hot reload work.
-    // When you save a .fs file, SageFs hot-patches the server and sends SSE to browsers.
-    use_middleware SageFs.DevReloadMiddleware.middleware
+    // Bozzetto.DevReloadMiddleware: the magic that makes browser hot reload work.
+    // When you save a .fs file, Bozzetto hot-patches the server and sends SSE to browsers.
+    use_middleware Bozzetto.DevReloadMiddleware.middleware
     endpoints routes
   }
   0
@@ -164,7 +164,7 @@ let main args =
 // ── What just happened? ──
 // • You have a reactive web app with no JavaScript written by hand.
 // • Datastar handles DOM diffing client-side; your server sends HTML fragments.
-// • SageFs hot-patches the server on save — no restart needed.
+// • Bozzetto hot-patches the server on save — no restart needed.
 // • The browser auto-refreshes via SSE — no manual F5.
 // • The whole app is ~100 lines of F#. No MVC, no ViewModel, no Controller.
 //

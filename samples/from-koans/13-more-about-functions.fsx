@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  More About Functions — SageFs Edition
+//  🧘  More About Functions — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — MoreAboutFunctions.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

@@ -7,7 +7,7 @@
 > design: the dashboard's SSE stream now tracks a per-connection viewing
 > session driven by a Datastar signal (`viewingSessionId`), not a URL query
 > parameter or a shared global. See `createStreamHandler` in
-> `SageFs/Dashboard.fs` if you want to see the real thing instead of the plan
+> `Bozzetto/Dashboard.fs` if you want to see the real thing instead of the plan
 > for it. The clients are editor integrations, dashboard tabs, and MCP
 > connections.
 
@@ -87,7 +87,7 @@ let switchSession ctx sessionId = task {
     ctx.ActiveSessionId.Value <- sessionId      // ← per-connection, good
     notifyElm ctx (SessionSwitched ...)          // ← side-effect on ALL UIs, bad
     ctx.Dispatch |> Option.iter (fun d ->
-      d (SageFsMsg.Editor EditorAction.ListSessions))  // ← forces UI refresh, bad
+      d (BozzettoMsg.Editor EditorAction.ListSessions))  // ← forces UI refresh, bad
     do! EventStore.appendEvents ...              // ← persistence, good
     return sprintf "Switched to session '%s'" sessionId
 }
@@ -261,7 +261,7 @@ let resumeSessions (onSessionResumed: (unit -> unit) option) = task {
 At the call site (after `elmRuntime` exists):
 ```fsharp
 do! resumeSessions (Some (fun () ->
-  elmRuntime.Dispatch(SageFsMsg.Editor EditorAction.ListSessions)))
+  elmRuntime.Dispatch(BozzettoMsg.Editor EditorAction.ListSessions)))
 ```
 
 ## Test Plan
@@ -269,7 +269,7 @@ do! resumeSessions (Some (fun () ->
 This is the plan I wrote before touching the code: tests first, contracts
 defined before implementation, same as everywhere else in this repo.
 
-### Unit Tests (Expecto, in SageFs.Tests)
+### Unit Tests (Expecto, in Bozzetto.Tests)
 
 #### 1. MCP Session Isolation
 
@@ -284,7 +284,7 @@ module McpSessionIsolationTests
 // Test: MCP switchSession does NOT dispatch SessionSwitched to Elm
 // Setup: McpContext with a tracking Dispatch function
 // Act: switchSession ctx "session-B"
-// Assert: Dispatch was NOT called with SessionSwitched (or with any SageFsMsg)
+// Assert: Dispatch was NOT called with SessionSwitched (or with any BozzettoMsg)
 
 // Test: MCP switchSession persists DaemonSessionSwitched event
 // Setup: McpContext with event store
@@ -374,16 +374,16 @@ module SessionResumeTests
 // Test: Browser A switches session, Browser B stays on its session
 // Setup: Two browser tabs open to /dashboard
 // Act: Browser A clicks switch to session "harmony"
-// Assert: Browser A shows harmony session, Browser B still shows sagefs session
+// Assert: Browser A shows harmony session, Browser B still shows boz session
 
 // Test: Server disconnect shows reconnection banner
 // Setup: Browser connected to dashboard
-// Act: Kill sagefs daemon
+// Act: Kill bozzetto daemon
 // Assert: Banner shows "❌ Server disconnected — reconnecting..."
 
 // Test: Server reconnect auto-reloads page
 // Setup: Browser showing disconnect banner
-// Act: Restart sagefs daemon
+// Act: Restart bozzetto daemon
 // Assert: Page reloads, banner disappears, sessions shown
 ```
 
@@ -399,16 +399,16 @@ module SessionResumeTests
 
 | File | What Changes |
 |------|-------------|
-| `SageFs.Core/Mcp.fs:907-924` | `switchSession`: remove Elm dispatch |
-| `SageFs/Dashboard.fs:131-155` | Connection monitor JS: reconnection logic |
-| `SageFs/Dashboard.fs:266` | Banner HTML: remove `Ds.show` |
-| `SageFs/Dashboard.fs:907+` | `createStreamHandler`: per-connection session |
-| `SageFs/Dashboard.fs:1436+` | `createEndpoints`: eval/reset routing |
-| `SageFs/DaemonMode.fs:33` | `activeSessionId` → `defaultSessionId` (semantic rename) |
-| `SageFs/DaemonMode.fs:126` | `resumeSessions`: add callback parameter |
-| `SageFs.Tests/McpSessionIsolationTests.fs` | NEW: MCP isolation tests |
-| `SageFs.Tests/DashboardSessionIsolationTests.fs` | NEW: Dashboard isolation tests |
+| `Bozzetto.Core/Mcp.fs:907-924` | `switchSession`: remove Elm dispatch |
+| `Bozzetto/Dashboard.fs:131-155` | Connection monitor JS: reconnection logic |
+| `Bozzetto/Dashboard.fs:266` | Banner HTML: remove `Ds.show` |
+| `Bozzetto/Dashboard.fs:907+` | `createStreamHandler`: per-connection session |
+| `Bozzetto/Dashboard.fs:1436+` | `createEndpoints`: eval/reset routing |
+| `Bozzetto/DaemonMode.fs:33` | `activeSessionId` → `defaultSessionId` (semantic rename) |
+| `Bozzetto/DaemonMode.fs:126` | `resumeSessions`: add callback parameter |
+| `Bozzetto.Tests/McpSessionIsolationTests.fs` | NEW: MCP isolation tests |
+| `Bozzetto.Tests/DashboardSessionIsolationTests.fs` | NEW: Dashboard isolation tests |
 
 (File paths and line numbers above are as they were when this was designed.
-`Mcp.fs` in particular has since moved to `SageFs/Mcp.fs`. Treat this
+`Mcp.fs` in particular has since moved to `Bozzetto/Mcp.fs`. Treat this
 table as the historical map, not a live index.)

@@ -1,7 +1,7 @@
 # Informal Specification: EvalPipeline
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
-> Source: `SageFs.Core/EvalPipeline.fs`
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
+> Source: `Bozzetto.Core/EvalPipeline.fs`
 
 ## Last Updated
 
@@ -30,10 +30,10 @@ functions `stage`, `stageOk`, `totalMs`, `succeeded`, and `formatRailway`.
 
 | Type | Description |
 |------|-------------|
-| `StageOutcome` | `Succeeded \| Failed of SageFsError` — per-step result |
+| `StageOutcome` | `Succeeded \| Failed of BozzettoError` — per-step result |
 | `CompletedStage` | `{ Name; ElapsedMs; Outcome }` — immutable record of one step |
-| `TrackedResult<'T>` | Intermediate struct: carries `Value : Result<'T,SageFsError>`, `StageName`, `ElapsedMs` |
-| `PipelineTrace<'T>` | Final: `{ Result : Result<'T,SageFsError>; Stages : CompletedStage list }` |
+| `TrackedResult<'T>` | Intermediate struct: carries `Value : Result<'T,BozzettoError>`, `StageName`, `ElapsedMs` |
+| `PipelineTrace<'T>` | Final: `{ Result : Result<'T,BozzettoError>; Stages : CompletedStage list }` |
 | `PipelineBuilder` | The CE class implementing `Bind`, `Return`, `ReturnFrom`, `Zero` |
 
 ---
@@ -158,11 +158,11 @@ For every `CompletedStage cs` in a trace:
 let trace =
   pipeline {
     let! x = stage "Parse" (fun () -> Ok 42)
-    let! y = stage "Eval"  (fun () -> Error (SageFsError.Custom "oops"))
+    let! y = stage "Eval"  (fun () -> Error (BozzettoError.Custom "oops"))
     let! z = stage "Print" (fun () -> Ok ())
     return z
   }
-// trace.Result     = Error (SageFsError.Custom "oops")
+// trace.Result     = Error (BozzettoError.Custom "oops")
 // trace.Stages     = [ { Name="Parse"; Outcome=Succeeded; ... }
 //                      { Name="Eval";  Outcome=Failed ...; ... } ]
 //                      -- "Print" stage never ran
@@ -175,7 +175,7 @@ let trace =
 ## Inferred Intent
 
 The design intention is a **structured concurrency record**: every evaluation in
-SageFs that uses this CE produces an audit trail usable for the dashboard railway
+Bozzetto that uses this CE produces an audit trail usable for the dashboard railway
 visualisation. The railway metaphor (`formatRailway`) — using `✓`/`✗` symbols and
 ` → ` separators — is a deliberate developer-experience feature to show where a
 multi-step evaluation succeeded or failed.

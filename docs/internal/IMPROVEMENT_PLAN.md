@@ -261,11 +261,11 @@ The server is the single source of truth. Commands come in through any door (MCP
 ### Event Sourcing: Marten + PostgreSQL as the Backbone
 
 **Status:**
-- ✅ **Domain event DUs** — `SageFsEvent`, `EventSource`, `DiagnosticEvent`, `EventMetadata` in `SageFs\Features\Events.fs`
+- ✅ **Domain event DUs** — `BozzettoEvent`, `EventSource`, `DiagnosticEvent`, `EventMetadata` in `Bozzetto\Features\Events.fs`
 - ✅ **Marten integration tests** — 4 Testcontainers-based tests (append, multi-event, DU roundtrip, DiagnosticsChecked roundtrip)
-- ✅ **EventStore module** — `configureStore`, `appendEvents`, `fetchStream`, `tryCreateFromEnv` in `SageFs.Server\EventStore.fs`. 5 tests.
+- ✅ **EventStore module** — `configureStore`, `appendEvents`, `fetchStream`, `tryCreateFromEnv` in `Bozzetto.Server\EventStore.fs`. 5 tests.
 - ✅ **Actor event emission** — `onEvent` callback wired into `mkAppStateActor`. Emits SessionStarted, SessionReady, EvalRequested, EvalCompleted/EvalFailed, DiagnosticsChecked, SessionReset, SessionHardReset. 5 tests.
-- ✅ **CLI integration** — `CliEventLoop` creates optional Marten store from `SageFs_CONNECTION_STRING` env var
+- ✅ **CLI integration** — `CliEventLoop` creates optional Marten store from `Bozzetto_CONNECTION_STRING` env var
 - ✅ **compose.yml** — Docker Compose for local PostgreSQL (postgres:17)
 - ❌ **Session replay** — `--session <id>` not yet implemented
 - ❌ **Projections** — SessionProjection, DiagnosticsProjection not yet implemented
@@ -284,7 +284,7 @@ The easy path would be an in-memory event log with optional file persistence. Bu
 - **Multi-actor** — The eval actor and query actor (from the actor split) both append/read from the same event stream. No in-memory coordination needed — Marten handles concurrency.
 - **Session replay** — Restart Bozzetto, tell it a session ID. Marten replays the event stream. Bozzetto re-evaluates each `EvalCompleted` event's code to rebuild FSI state. True session persistence without serializing the CLR runtime.
 - **Cross-session queries** — "Show me all evals across all sessions that produced errors" — a Marten LINQ query. "Which agent defined this value?" — event stream filter. This is impossible with in-memory state.
-- **Lightweight infrastructure** — `docker compose up -d` for local dev, Testcontainers for tests. Connection string via `SageFs_CONNECTION_STRING`. No AppHost, no orchestrator dependency.
+- **Lightweight infrastructure** — `docker compose up -d` for local dev, Testcontainers for tests. Connection string via `Bozzetto_CONNECTION_STRING`. No AppHost, no orchestrator dependency.
 
 #### Domain Events (F# Discriminated Unions)
 
@@ -298,8 +298,8 @@ type EventSource =
   | FileSync of fileName: string
   | System
 
-/// All events that can occur in an SageFs session
-type SageFsEvent =
+/// All events that can occur in an Bozzetto session
+type BozzettoEvent =
   // Session lifecycle
   | SessionStarted of {| Config: StartupConfig; StartedAt: DateTimeOffset |}
   | SessionWarmUpStarted of {| Projects: string list |}
@@ -440,7 +440,7 @@ Currently, the `MailboxProcessor` holds `AppState` in a recursive `loop st` clos
                         │                                  │
                         │  → Neovim plugin (Datastar)      │
                         │  → Browser UI (Datastar)         │
-                        │  → Other SageFs instances          │
+                        │  → Other Bozzetto instances          │
                         └─────────────────────────────────┘
 ```
 
@@ -470,7 +470,7 @@ let! events =
   |> Task.map (fun stream ->
     stream
     |> Seq.filter (fun e -> e.Sequence > 47L)
-    |> Seq.map (fun e -> e.Data :?> SageFsEvent))
+    |> Seq.map (fun e -> e.Data :?> BozzettoEvent))
 ```
 
 The `Sequence` is Marten's built-in monotonic event counter. No custom cursor needed.
@@ -480,7 +480,7 @@ The `Sequence` is Marten's built-in monotonic event counter. No custom cursor ne
 Two Bozzetto instances on different ports, same Postgres:
 
 ```
-SageFs:37749 (Project A)  ──► Postgres ◄── SageFs:37750 (Project B)
+Bozzetto:47749 (Project A)  ──► Postgres ◄── Bozzetto:47750 (Project B)
      │                        │                    │
      │  SessionStarted        │  SessionStarted    │
      │  EvalCompleted         │  EvalCompleted     │
@@ -499,21 +499,21 @@ Bozzetto is a CLI tool, not a multi-service web app. Aspire's orchestration mode
 
 ```yaml
 services:
-  sagefs-db:
+  bozzetto-db:
     image: postgres:17
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: SageFs
+      POSTGRES_DB: Bozzetto
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: SageFs
+      POSTGRES_PASSWORD: Bozzetto
     volumes:
-      - sagefs-pgdata:/var/lib/postgresql/data
+      - bozzetto-pgdata:/var/lib/postgresql/data
 volumes:
-  sagefs-pgdata:
+  bozzetto-pgdata:
 ```
 
-Inner dev loop: `dotnet run --project SageFs.Server -- --project path/to/thing`. Postgres starts automatically on first run. Connection string auto-detected from the Testcontainers-managed container. Override with `SageFs_CONNECTION_STRING` environment variable for explicit Postgres.
+Inner dev loop: `dotnet run --project Bozzetto.Server -- --project path/to/thing`. Postgres starts automatically on first run. Connection string auto-detected from the Testcontainers-managed container. Override with `Bozzetto_CONNECTION_STRING` environment variable for explicit Postgres.
 
 **Tests: Testcontainers with container reuse and schema isolation** (inspired by [Harmony](../Harmony)):
 
@@ -522,9 +522,9 @@ Inner dev loop: `dotnet run --project SageFs.Server -- --project path/to/thing`.
 /// Schema isolation gives each test category its own namespace.
 let getPostgresContainer () =
   PostgreSqlBuilder()
-    .WithDatabase("SageFs")
+    .WithDatabase("Bozzetto")
     .WithUsername("postgres")
-    .WithPassword("SageFs")
+    .WithPassword("Bozzetto")
     .WithImage("postgres:17")
     .WithReuse(true)
     .WithWaitStrategy(
@@ -559,19 +559,19 @@ let projectionStore = lazy (createStoreForSchema "test_projections")
 - No AppHost project, no Aspire dependencies, no dashboard. Just Postgres.
 - CI: Same Testcontainers approach (GitHub Actions has Docker). Or add a `services: postgres:17` block in the workflow.
 
-**Connection string convention:** `SageFs_CONNECTION_STRING` environment variable. Tests ignore it (they use Testcontainers). Dev/prod sets it.
+**Connection string convention:** `Bozzetto_CONNECTION_STRING` environment variable. Tests ignore it (they use Testcontainers). Dev/prod sets it.
 
 #### Data Persistence
 
 | Context | Where data lives | Lifecycle |
 |---------|-----------------|-----------|
-| **Local dev** | Docker named volume `sagefs-pgdata` | Survives `docker compose down`/`up`. Persists across Bozzetto restarts. Inspectable via `docker volume inspect sagefs-pgdata` (shows mount point). `docker volume rm sagefs-pgdata` to wipe. |
+| **Local dev** | Docker named volume `bozzetto-pgdata` | Survives `docker compose down`/`up`. Persists across Bozzetto restarts. Inspectable via `docker volume inspect bozzetto-pgdata` (shows mount point). `docker volume rm bozzetto-pgdata` to wipe. |
 | **Tests** | Testcontainers ephemeral storage | Wiped per test via `store.Advanced.ResetAllData()`. Container itself reused for speed (`.WithReuse(true)`) but data is not preserved between test runs. |
 | **Production/deployed** | Real Postgres instance | Standard database lifecycle — backups, migrations, retention policies. |
 
 Session replay (`--session <id>`) works because events survive in the named volume across Bozzetto process restarts. `docker compose up -d` → run Bozzetto → stop Bozzetto → run Bozzetto with `--session <previous-id>` → Marten replays the event stream → FSI state rebuilt.
 
-To start fresh: `docker compose down && docker volume rm sagefs-pgdata && docker compose up -d`.
+To start fresh: `docker compose down && docker volume rm bozzetto-pgdata && docker compose up -d`.
 
 #### Backup & Export
 
@@ -580,14 +580,14 @@ Two complementary mechanisms — database-level and application-level:
 **1. `pg_dump` — full database backup**
 
 ```bash
-# Manual backup to ~/.SageFs/backups/
-docker exec sagefs-db pg_dump -U postgres SageFs > ~/.SageFs/backups/SageFs-$(date +%Y%m%d).sql
+# Manual backup to ~/.bozzetto/backups/
+docker exec bozzetto-db pg_dump -U postgres Bozzetto > ~/.bozzetto/backups/Bozzetto-$(date +%Y%m%d).sql
 
 # Restore into any Postgres
-psql -U postgres -d SageFs < ~/.SageFs/backups/sagefs-20260212.sql
+psql -U postgres -d Bozzetto < ~/.bozzetto/backups/bozzetto-20260212.sql
 ```
 
-Full-fidelity: captures all events, projections, schemas. Restorable to any Postgres instance. Could be wired as a CLI command (`SageFs backup`) or triggered on graceful shutdown.
+Full-fidelity: captures all events, projections, schemas. Restorable to any Postgres instance. Could be wired as a CLI command (`Bozzetto backup`) or triggered on graceful shutdown.
 
 **2. JSON event stream export — per-session portability**
 
@@ -617,10 +617,10 @@ let importSession (store: IDocumentStore) (path: string) (newSessionId: Guid) =
 
 - Portable: `.jsonl` files are human-readable, version-controllable, don't need Postgres to inspect
 - Granular: export/import individual sessions, not the whole database
-- Shareable: send a session to a colleague — `SageFs import session-2026-02-12.jsonl`
+- Shareable: send a session to a colleague — `Bozzetto import session-2026-02-12.jsonl`
 - MCP tool candidates: `export_session`, `import_session`
 
-**Storage location:** `~/.SageFs/backups/` for `pg_dump`, `~/.SageFs/exports/` for JSON session exports. Both directories created on first use.
+**Storage location:** `~/.bozzetto/backups/` for `pg_dump`, `~/.bozzetto/exports/` for JSON session exports. Both directories created on first use.
 
 #### Operational Concerns
 
@@ -630,19 +630,19 @@ Bozzetto auto-starts its own Postgres container on launch. No manual `docker com
 
 ```fsharp
 /// Auto-start Postgres if no explicit connection string is provided.
-/// .WithReuse(true) means the container survives SageFs process exit
+/// .WithReuse(true) means the container survives Bozzetto process exit
 /// and is reused on next launch (instant restart, no 2s startup).
 let getOrStartPostgres () =
-  match Environment.GetEnvironmentVariable("SageFs_CONNECTION_STRING") with
+  match Environment.GetEnvironmentVariable("Bozzetto_CONNECTION_STRING") with
   | null | "" ->
     let container =
       PostgreSqlBuilder()
-        .WithDatabase("SageFs")
+        .WithDatabase("Bozzetto")
         .WithUsername("postgres")
-        .WithPassword("SageFs")
+        .WithPassword("Bozzetto")
         .WithImage("postgres:17")
         .WithReuse(true)
-        .WithVolumeMount("sagefs-pgdata", "/var/lib/postgresql/data")
+        .WithVolumeMount("bozzetto-pgdata", "/var/lib/postgresql/data")
         .WithWaitStrategy(
           Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable 5432)
         .Build()
@@ -656,16 +656,16 @@ let getOrStartPostgres () =
 
 - **First run:** ~2s to pull/start the container. One-time cost.
 - **Subsequent runs:** Container is already running. Testcontainers detects it via `.WithReuse(true)`, returns instantly.
-- **Data persists** in the Docker named volume `sagefs-pgdata` across Bozzetto restarts and container restarts.
-- **Override:** Set `SageFs_CONNECTION_STRING` for explicit Postgres (CI, prod, shared instance, remote DB).
+- **Data persists** in the Docker named volume `bozzetto-pgdata` across Bozzetto restarts and container restarts.
+- **Override:** Set `Bozzetto_CONNECTION_STRING` for explicit Postgres (CI, prod, shared instance, remote DB).
 - **No Docker installed:** Fail fast with a clear error. Docker is a prerequisite for Bozzetto — same as .NET SDK.
 - **Storage backend note:** The event sourcing *domain model* (events, projections, replay) is naturally decoupled from Marten — pure domain functions (`availableTools`, `assessValidity`, event fold projections) never import Marten; they operate on F# DUs. The `EventStore` module is the adapter. A future SQLite backend is *possible* if Docker-free scenarios become important, but it's not a near-term priority — the current Marten+Testcontainers architecture auto-starts Postgres transparently and serves the actual user base (developers with Docker).
 - **Escape hatch:** The `compose.yml` in the repo documents what Bozzetto auto-starts, and can be used manually by people who prefer explicit control.
-- **No architectural lock-in:** Testcontainers creates a normal Docker container. `docker ps`, `docker stop`, `docker volume inspect` all work. Ripping out the auto-start is 5 lines — just require `SageFs_CONNECTION_STRING` instead.
+- **No architectural lock-in:** Testcontainers creates a normal Docker container. `docker ps`, `docker stop`, `docker volume inspect` all work. Ripping out the auto-start is 5 lines — just require `Bozzetto_CONNECTION_STRING` instead.
 
 **2. Schema migrations — event versioning**
 
-Marten stores events as JSON in Postgres. When the `SageFsEvent` DU evolves:
+Marten stores events as JSON in Postgres. When the `BozzettoEvent` DU evolves:
 
 - **Additive changes are safe** — adding a new DU case (e.g., `| DebuggerAttached of ...`) just means old streams don't contain that case. Deserialization works fine.
 - **Field additions with defaults** — adding an optional field to an existing case (e.g., `Environment: EnvironmentFingerprint option` on `EvalCompleted`) works because `None` is the JSON-absent default.
@@ -691,7 +691,7 @@ If Postgres goes down during a running session:
 Events accumulate forever by design (event sourcing principle: events are immutable facts). But practical limits exist:
 
 - **Short-term:** Not a problem. A power user doing 100 evals/day for a year = ~36,500 events. At ~1KB/event, that's ~36MB. Postgres handles this trivially.
-- **Medium-term:** Add a `SageFs prune --older-than 90d` CLI command that archives old sessions to `.jsonl` exports (backup story above) and then deletes them from Postgres. This is explicit, not automatic.
+- **Medium-term:** Add a `Bozzetto prune --older-than 90d` CLI command that archives old sessions to `.jsonl` exports (backup story above) and then deletes them from Postgres. This is explicit, not automatic.
 - **Long-term:** Marten supports event archiving natively — move old streams to a separate archive table. Projections are unaffected (they're derived views, not source data).
 - **Explicit non-goal:** No automatic TTL or auto-deletion. Event history is valuable. Let the user decide when to prune.
 
@@ -706,16 +706,16 @@ Multiple Neovim instances, browser tabs, and MCP connections can all subscribe t
 
 **6. Security — credentials and access**
 
-- **Local dev:** `compose.yml` credentials (`POSTGRES_PASSWORD: SageFs`) are intentionally simple. This is localhost-only, dev-only. The compose file is in the repo — no secrets.
-- **Production:** Connection string via `SageFs_CONNECTION_STRING` environment variable. Standard secret management applies (Docker secrets, Kubernetes secrets, vault, etc.). Bozzetto doesn't manage secrets — it just reads the connection string.
-- **MCP transport:** The MCP SSE endpoint (`/sse`, `/message`) is currently unauthenticated on `localhost:37749`. This is fine for local dev (same machine). For remote access, add a reverse proxy with auth. Bozzetto itself doesn't need auth — it's a local tool.
+- **Local dev:** `compose.yml` credentials (`POSTGRES_PASSWORD: Bozzetto`) are intentionally simple. This is localhost-only, dev-only. The compose file is in the repo — no secrets.
+- **Production:** Connection string via `Bozzetto_CONNECTION_STRING` environment variable. Standard secret management applies (Docker secrets, Kubernetes secrets, vault, etc.). Bozzetto doesn't manage secrets — it just reads the connection string.
+- **MCP transport:** The MCP SSE endpoint (`/sse`, `/message`) is currently unauthenticated on `localhost:47749`. This is fine for local dev (same machine). For remote access, add a reverse proxy with auth. Bozzetto itself doesn't need auth — it's a local tool.
 - **SSE endpoints:** Same as MCP — localhost-only by default. The `UseUrls("http://localhost:{port}")` binding ensures no external access unless explicitly reconfigured.
 
 #### Dependencies
 
 - **Marten 8.21.0** — latest stable, targets net10.0, includes async daemon subscriptions, inline projections, FSharp.Core dependency (F#-friendly)
 - **Npgsql** — pulled in transitively by Marten
-- **Testcontainers.PostgreSql** — used for both runtime auto-start (SageFs.Server) and test infrastructure (SageFs.Tests). Container reuse across runs, schema isolation for tests.
+- **Testcontainers.PostgreSql** — used for both runtime auto-start (Bozzetto.Server) and test infrastructure (Bozzetto.Tests). Container reuse across runs, schema isolation for tests.
 - Marten already depends on `FSharp.Core ≥ 9.0.100` — it's F#-aware
 
 #### What Replaces What
@@ -865,8 +865,8 @@ Computing `EnvironmentFingerprint` is cheap:
 
 | Feature | Upstream | This Fork |
 |---------|----------|-----------|
-| **VSCode Extension** (sagefs-vscode) | Published on Open VSX. Notebook + REPL modes, inline diagnostics, autocomplete, hot reload toggle per cell, `.SageFsb` file format | Only a settings.json patcher script |
-| **Notebook format** (`.SageFsb`) | Custom notebook serializer, cell-level execution, saveable outputs, metadata per cell | None |
+| **VSCode Extension** (bozzetto-vscode) | Published on Open VSX. Notebook + REPL modes, inline diagnostics, autocomplete, hot reload toggle per cell, `.Bozzettob` file format | Only a settings.json patcher script |
+| **Notebook format** (`.Bozzettob`) | Custom notebook serializer, cell-level execution, saveable outputs, metadata per cell | None |
 | **stdout/stderr capture middleware** | `captureStdioMiddleware` redirects Console.Out/Error per eval, returns in `metadata.stdout`/`metadata.stderr` | TextWriterRecorder captures FSI output but misses arbitrary `printfn` |
 | **"Send to REPL" / "Send to Notebook"** | `Ctrl+\` sends selection from any `.fs` file to Bozzetto REPL | Not available |
 | **Hot reload per-cell toggle** | Each notebook cell can eval with or without hot reload via cell metadata | Hot reload is global |
@@ -878,13 +878,13 @@ Computing `EnvironmentFingerprint` is cheap:
 | **MCP server + 17 AI tools** | SSE/HTTP MCP protocol, ServerInstructions, affordance-driven state machine, structured responses | No AI agent integration |
 | **Daemon-first architecture** | Headless daemon with watchdog, sub-process sessions, Erlang-style supervisor | Single-process only |
 | **Dual-renderer TUI/GUI** | Shared Cell[,] grid → ANSI terminal + Raylib GPU window | No TUI/GUI |
-| **Elm Architecture core** | Custom Elm loop, SageFsMsg/SageFsModel/SageFsUpdate, immediate-mode rendering | No reactive UI |
+| **Elm Architecture core** | Custom Elm loop, BozzettoMsg/BozzettoModel/BozzettoUpdate, immediate-mode rendering | No reactive UI |
 | **Live dashboard** | Falco + Datastar SSE dashboard with real-time session status, eval, diagnostics | No web UI |
 | **Shadow-copy assemblies** | DLL lock prevention for loaded project assemblies | Assemblies locked during use |
 | **Iterative warm-up with retry** | `openWithRetry` resolves cross-dependencies across rounds | No warm-up namespace resolution |
 | **RequireQualifiedAccess tolerance** | `isBenignOpenError` skips gracefully | Would fail on these modules |
 | **File watching & incremental reload** | `#load` reload ~100ms on .fs/.fsx changes | No file watching |
-| **DDD type safety** | SageFsError, SessionMode, CompletionKind, SessionStatus, DiagnosticSeverity DUs | String-based errors |
+| **DDD type safety** | BozzettoError, SessionMode, CompletionKind, SessionStatus, DiagnosticSeverity DUs | String-based errors |
 | **Console echo for MCP submissions** | All agent code visible in terminal with preserved indentation | N/A (no MCP) |
 | **Snapshot-tested output formats** | Verify snapshots lock in formatting | No snapshot tests |
 | **Aspire detection + DCP path config** | Auto-detects Aspire projects | Not available |
@@ -899,14 +899,14 @@ Computing `EnvironmentFingerprint` is cheap:
 
 3. **Cancellation is handled.** The `CancellationToken` is now properly threaded through eval operations.
 
-4. **The notebook format is lightweight and compelling.** `.SageFsb` is just JSON with cells, metadata, and saved outputs. Cell 0 is the init cell (CLI args for the daemon). This is far simpler than Polyglot Notebooks.
+4. **The notebook format is lightweight and compelling.** `.Bozzettob` is just JSON with cells, metadata, and saved outputs. Cell 0 is the init cell (CLI args for the daemon). This is far simpler than Polyglot Notebooks.
 
 5. **stdout/stderr capture per-eval is cleaner upstream.** The daemon's `captureStdioMiddleware` redirects Console.SetOut/SetError per evaluation, putting captured text in response metadata. Our TextWriterRecorder captures FSI output but doesn't capture `printfn`/`Console.WriteLine` from user code.
 
 ### Strategy: Fork the Extension, Port the Daemon Protocol
 
 - **Contribute our unique features upstream** (shadow-copy, warm-up, RequireQualifiedAccess) via PRs
-- **Fork `sagefs-vscode`** and adapt it to work with OUR enhanced daemon (same JSON-RPC protocol but with our robustness features)
+- **Fork `bozzetto-vscode`** and adapt it to work with OUR enhanced daemon (same JSON-RPC protocol but with our robustness features)
 - **Add MCP as a parallel protocol** — same Bozzetto session serves both MCP (AI agents) AND JSON-RPC (IDE) simultaneously
 - **This dual-protocol approach is the ultimate differentiator** — no other F# tool lets you have an AI agent and a VSCode extension both connected to the same live session
 
@@ -926,28 +926,28 @@ Computing `EnvironmentFingerprint` is cheap:
 - ✅ Snapshot-tested output formats (Verify)
 - ✅ MCP error guidance — tool descriptions teach transaction semantics, error messages discourage unnecessary resets
 - ✅ Reset pushback — healthy-session resets include ⚠️ warning, warmup-failure resets do not
-- ✅ Daemon-first architecture — `SageFs` starts daemon by default, `-d` is backward compat alias
+- ✅ Daemon-first architecture — `Bozzetto` starts daemon by default, `-d` is backward compat alias
 - ✅ Sub-process sessions — workers spawned via SessionManager, named pipe IPC, fault isolation
 - ✅ SessionManager — Erlang-style supervisor with exponential backoff restart
 - ✅ SessionMode DU — Embedded/Daemon routing for session management tools
-- ✅ Unified SageFsError DU — all errors consolidated into single typed DU across all layers
+- ✅ Unified BozzettoError DU — all errors consolidated into single typed DU across all layers
 - ✅ DDD type safety — SessionStatus, DiagnosticSeverity, CompletionKind, ToolUnavailable DUs replace strings
 - ✅ Early MCP status — available during WarmingUp, `--bare` flag for quick sessions
 - ✅ Per-tool MCP session routing — optional `sessionId` param on eval/reset/check tools
 - ✅ Watchdog supervisor — `--supervised` flag, exponential backoff restart, pure decision module
-- ✅ Startup profile — `~/.SageFs/init.fsx` and per-project `.SageFsrc` scripts
+- ✅ Startup profile — `~/.bozzetto/init.fsx` and per-project `.Bozzettorc` scripts
 - ✅ File watching with incremental `#load` reload (~100ms per change)
 - ✅ Package/namespace explorer — `explore_namespace`, `explore_type` MCP tools
-- ✅ Elm Architecture core — SageFsMsg, SageFsModel, SageFsUpdate, SageFsRender, SageFsEffectHandler
+- ✅ Elm Architecture core — BozzettoMsg, BozzettoModel, BozzettoUpdate, BozzettoRender, BozzettoEffectHandler
 - ✅ ElmDaemon wiring — Elm loop running in daemon, dispatch available to MCP tools
 - ✅ `get_elm_state` MCP tool — query render regions (editor, output, diagnostics, sessions)
-- ✅ `SageFs connect` — REPL client over HTTP to running daemon (auto-starts daemon if needed)
+- ✅ `Bozzetto connect` — REPL client over HTTP to running daemon (auto-starts daemon if needed)
 - ✅ PrettyPrompt removed — daemon-only architecture, no embedded REPL dependency
 - ✅ Live dashboard (Falco + Datastar SSE) — session status, eval stats, output, diagnostics, browser eval
-- ✅ Per-directory config — `.SageFs/config.fsx` with projects, autoLoad, initScript, defaultArgs
+- ✅ Per-directory config — `.bozzetto/config.fsx` with projects, autoLoad, initScript, defaultArgs
 - ✅ Interactive TUI client — terminal UI with pane layout, ANSI rendering, input handling
-- ✅ SageFs.Core shared rendering layer — Cell, CellGrid, Rect, Layout, Draw, Theme, Screen
-- ✅ SageFs.Gui project — Raylib GUI client (dual-renderer architecture in progress)
+- ✅ Bozzetto.Core shared rendering layer — Cell, CellGrid, Rect, Layout, Draw, Theme, Screen
+- ✅ Bozzetto.Gui project — Raylib GUI client (dual-renderer architecture in progress)
 - ✅ Connection tracking — monitor MCP, terminal, browser connections per session
 - ✅ 442+ tests (unit + integration + snapshot + property-based)
 
@@ -956,8 +956,8 @@ Computing `EnvironmentFingerprint` is cheap:
 - ❌ No VSCode extension — only a settings.json patcher script
 - ❌ No CI/CD pipeline for Bozzetto itself
 - ❌ Custom state bag uses `Map<string, obj>` — unsafe downcasts everywhere
-- ❌ Dual-renderer not yet feature-complete — SageFs.Gui scaffolded but TUI/Raylib parity not achieved
-- ❌ No Neovim plugin (standalone SageFs.nvim) — existing fsi-mcp.lua in dotfiles works but no SSE, no inline results
+- ❌ Dual-renderer not yet feature-complete — Bozzetto.Gui scaffolded but TUI/Raylib parity not achieved
+- ❌ No Neovim plugin (standalone Bozzetto.nvim) — existing fsi-mcp.lua in dotfiles works but no SSE, no inline results
 - ❌ No session auto-resolution — when all sessions are stopped, MCP tools return `"Session '' not found"` with no recovery path
 - ✅ Session auto-resolution — `ensureActiveSession` auto-creates sessions from git root / solution root / config
 
@@ -985,13 +985,13 @@ When any MCP tool is invoked and `activeSessionId` is empty (or points to a dead
 
 #### Resolution Order
 
-1. **Check `.SageFs/config.fsx` at CWD** — if it exists and has `let isRoot = true`, treat CWD as the root. Load projects from the config's `let projects = [...]`. This is the "I know what I'm doing" override for complex repo structures.
+1. **Check `.bozzetto/config.fsx` at CWD** — if it exists and has `let isRoot = true`, treat CWD as the root. Load projects from the config's `let projects = [...]`. This is the "I know what I'm doing" override for complex repo structures.
 
 2. **Detect git root** — walk up from CWD looking for `.git` directory. This is the most reliable root detection for any repo.
 
 3. **Detect solution root** — walk up from CWD looking for `.sln` or `.slnx` files. Already implemented in `WorkerProtocol.SessionInfo.findSolutionRoot`.
 
-4. **Check `.SageFs/config.fsx` at detected root** — if a config file exists at the git/solution root, use its project list and settings.
+4. **Check `.bozzetto/config.fsx` at detected root** — if a config file exists at the git/solution root, use its project list and settings.
 
 5. **Auto-discover projects at detected root** — if no config file exists, enumerate `*.fsproj` files recursively from the root. If a solution file exists, parse it for project references. Already partially implemented in `Dashboard.discoverProjects` and `ProjectLoading.loadSolution`.
 
@@ -999,10 +999,10 @@ When any MCP tool is invoked and `activeSessionId` is empty (or points to a dead
 
 #### Config File Additions
 
-The existing `.SageFs/config.fsx` format (parsed in `DirectoryConfig.fs`) needs two new fields:
+The existing `.bozzetto/config.fsx` format (parsed in `DirectoryConfig.fs`) needs two new fields:
 
 ```fsharp
-// .SageFs/config.fsx
+// .bozzetto/config.fsx
 
 // Existing fields:
 let projects = ["Tests/Tests.fsproj"; "App/App.fsproj"]
@@ -1015,7 +1015,7 @@ let isRoot = true          // Treat this directory as a session root — don't w
 let sessionName = "my-app" // Optional friendly name for the session (shown in dashboard, status)
 ```
 
-- **`isRoot`** — When `true`, this directory is treated as a root even if it's a subdirectory of a larger repo. Use case: monorepos where each subdirectory is an independent project. When Bozzetto detects this, it should log a notice: `"[INFO] Using local root override from .SageFs/config.fsx (not walking up to repo root)"`
+- **`isRoot`** — When `true`, this directory is treated as a root even if it's a subdirectory of a larger repo. Use case: monorepos where each subdirectory is an independent project. When Bozzetto detects this, it should log a notice: `"[INFO] Using local root override from .bozzetto/config.fsx (not walking up to repo root)"`
 - **`sessionName`** — Optional friendly name for the auto-created session. Defaults to the directory name.
 
 #### Implementation Plan
@@ -1037,16 +1037,16 @@ let findGitRoot (startDir: string) : string option =
 - Parse `let isRoot = true/false` and `let sessionName = "..."` in `DirectoryConfig.parse`
 - Add fields to the `DirectoryConfig` record type
 
-**Step 3: Create `SessionResolver` module** (new file in `SageFs.Core`)
+**Step 3: Create `SessionResolver` module** (new file in `Bozzetto.Core`)
 ```fsharp
-module SageFs.SessionResolver
+module Bozzetto.SessionResolver
 
 type ResolvedRoot = {
   RootDirectory: string
   Projects: string list
   SessionName: string option
   Source: RootSource  // Config | GitRoot | SolutionRoot | WorkingDirectory
-  IsLocalOverride: bool  // true when .SageFs/config.fsx has isRoot=true at a subdirectory
+  IsLocalOverride: bool  // true when .bozzetto/config.fsx has isRoot=true at a subdirectory
 }
 
 type RootSource =
@@ -1089,7 +1089,7 @@ let resolve (workingDir: string) : ResolvedRoot = ...
 - `WorkerProtocol.SessionInfo.findSolutionRoot` — already walks up looking for `.sln`/`.slnx`
 - `Dashboard.discoverProjects` — enumerates `.fsproj` files and solution files
 - `ProjectLoading.loadSolution` — auto-discovers solutions, parses project references
-- `DirectoryConfig.load` — loads `.SageFs/config.fsx` from a directory
+- `DirectoryConfig.load` — loads `.bozzetto/config.fsx` from a directory
 - `DirectoryConfig.parse` — parses config file content into `DirectoryConfig` record
 
 ---
@@ -1098,9 +1098,9 @@ let resolve (workingDir: string) : ResolvedRoot = ...
 
 ### 0.1 Testcontainer Persistence Across Runs — ✅ DONE
 
-> Already implemented: `.WithVolumeMount("sagefs-test-pgdata", "/var/lib/postgresql")`, `.WithReuse(true)`, and persistence tests verifying events survive container reuse.
+> Already implemented: `.WithVolumeMount("bozzetto-test-pgdata", "/var/lib/postgresql")`, `.WithReuse(true)`, and persistence tests verifying events survive container reuse.
 
-**Problem:** The Testcontainers `PostgreSqlBuilder()` in `EventStoreTests.fs` creates an ephemeral container with no volume mount. When the test process exits, the container is destroyed and all event data is lost. This defeats the purpose of event sourcing — the whole point is that session history persists and can be replayed. The `compose.yml` has a proper `sagefs-pgdata` volume, but the test infrastructure ignores it.
+**Problem:** The Testcontainers `PostgreSqlBuilder()` in `EventStoreTests.fs` creates an ephemeral container with no volume mount. When the test process exits, the container is destroyed and all event data is lost. This defeats the purpose of event sourcing — the whole point is that session history persists and can be replayed. The `compose.yml` has a proper `bozzetto-pgdata` volume, but the test infrastructure ignores it.
 
 **Fix:** Add a Docker volume mount to the Testcontainers builder so PostgreSQL data survives container restarts:
 
@@ -1108,11 +1108,11 @@ let resolve (workingDir: string) : ResolvedRoot = ...
 let sharedContainer = lazy(
   let container =
     Testcontainers.PostgreSql.PostgreSqlBuilder()
-      .WithDatabase("SageFs_test")
+      .WithDatabase("Bozzetto_test")
       .WithUsername("postgres")
-      .WithPassword("SageFs")
+      .WithPassword("Bozzetto")
       .WithImage("postgres:17")
-      .WithVolumeMount("sagefs-test-pgdata", "/var/lib/postgresql/data")
+      .WithVolumeMount("bozzetto-test-pgdata", "/var/lib/postgresql/data")
       .WithReuse(true)
       .Build()
   container.StartAsync().GetAwaiter().GetResult()
@@ -1125,7 +1125,7 @@ let sharedContainer = lazy(
 - `.WithReuse(true)` — Testcontainers keeps the container alive across test runs instead of destroying it
 - Test schemas still isolate individual test cases (existing `createStore schemaName` pattern)
 - Event history accumulates across runs, enabling replay and audit scenarios
-- The volume name `sagefs-test-pgdata` is distinct from the compose volume `sagefs-pgdata` to avoid cross-contamination
+- The volume name `bozzetto-test-pgdata` is distinct from the compose volume `bozzetto-pgdata` to avoid cross-contamination
 
 **Tests to add:**
 - Verify events written in a previous test run are still readable after container restart
@@ -1208,7 +1208,7 @@ let sharedContainer = lazy(
 
 | Working today | How it works |
 |--------------|--------------|
-| Port discovery | Checks `SageFs_MCP_PORT` env → `vim.g.SageFs_mcp_port` → scans 37749-37759 via `Get-NetTCPConnection` |
+| Port discovery | Checks `Bozzetto_MCP_PORT` env → `vim.g.Bozzetto_mcp_port` → scans 47749-37759 via `Get-NetTCPConnection` |
 | Server lifecycle | `:SageFsStart` (hidden), `:SageFsStartVisible` (terminal split), `:SageFsStop`, `:SageFsRestart`, `:SageFsToggle` |
 | Send code | HTTP POST to `/exec` with JSON `{code: text}`. Auto-appends `;;`. Uses temp files for payloads >7KB |
 | Visual selection | `M.send_selection_to_fsi()` — extracts visual selection marks, sends via HTTP |
@@ -1241,26 +1241,26 @@ let sharedContainer = lazy(
 
 4. **Existing integration surface** — The `fsi-mcp.lua` plugin is already wired into keymaps.lua with Alt-Enter dispatch, `_G.FsiMcp` global, toggleterm.nvim optional dependency. Enhancements slot right in.
 
-**Architecture — enhancing `fsi-mcp.lua` → standalone `SageFs.nvim` repo:**
+**Architecture — enhancing `fsi-mcp.lua` → standalone `Bozzetto.nvim` repo:**
 
 ```
 Current:  ~/.config/nvim/lua/plugins/fsi-mcp.lua  (dotfiles, single file)
-Target:   C:/Code/Repos/SageFs.nvim/                (standalone repo, lazy.nvim dev plugin)
+Target:   C:/Code/Repos/Bozzetto.nvim/                (standalone repo, lazy.nvim dev plugin)
           ├── lua/
-          │   ├── SageFs/
+          │   ├── Bozzetto/
           │   │   ├── init.lua          (core: port discovery, lifecycle, send)
           │   │   ├── virtual-text.lua  (inline result display via extmarks)
           │   │   ├── treesitter.lua    (structural code extraction)
           │   │   ├── diagnostics.lua   (diagnostic namespace for check_fsharp_code)
           │   │   ├── completion.lua    (blink.cmp source for get_completions)
           │   │   └── output.lua        (floating window for large results)
-          │   └── cmp_SageFs/
+          │   └── cmp_Bozzetto/
           │       └── init.lua          (blink.cmp custom source registration)
           └── plugin/
-              └── SageFs.lua              (auto-setup, user commands, _G.FsiMcp compat)
+              └── Bozzetto.lua              (auto-setup, user commands, _G.FsiMcp compat)
 ```
 
-The `lazy.lua` dev path `C:/Code/Repos` means `{ "WillEhrendreich/SageFs.nvim", dev = true }` will load from the local repo during development.
+The `lazy.lua` dev path `C:/Code/Repos` means `{ "WillEhrendreich/Bozzetto.nvim", dev = true }` will load from the local repo during development.
 
 **Enhancement plan (builds on existing code):**
 
@@ -1269,11 +1269,11 @@ The `lazy.lua` dev path `C:/Code/Repos` means `{ "WillEhrendreich/SageFs.nvim", 
 | A | **Inline results** | (automatic after eval) | Subscribe to `GET /eval` SSE stream. On eval-complete event, display result as virtual text below the sent code using `nvim_buf_set_extmark` with `virt_lines` |
 | A | **Floating output** | `<leader>xo` | Large results (>3 lines) from `GET /eval` SSE stream open in a floating window instead of notification. Snacks.nvim floating windows already configured. |
 | A | **Send form** | `<leader>xf` | Tree-sitter query: find enclosing `value_declaration`, `type_definition`, or `module_definition` and send it |
-| B | **Completion source** | (blink.cmp auto) | Register `blink_SageFs` source. POST to `/completions`, results arrive via `GET /completions` SSE stream. Returns `{name, kind, description}` |
-| B | **Diagnostics** | `<leader>xd` or on-save | POST to `/diagnostics` (command). Subscribe to `GET /diagnostics` SSE stream. Set diagnostics in a `SageFs` namespace separate from Ionide's `fsautocomplete` |
+| B | **Completion source** | (blink.cmp auto) | Register `blink_Bozzetto` source. POST to `/completions`, results arrive via `GET /completions` SSE stream. Returns `{name, kind, description}` |
+| B | **Diagnostics** | `<leader>xd` or on-save | POST to `/diagnostics` (command). Subscribe to `GET /diagnostics` SSE stream. Set diagnostics in a `Bozzetto` namespace separate from Ionide's `fsautocomplete` |
 | B | **Send test** | `<leader>xT` | Tree-sitter: find enclosing `testList`/`testCase`/`testProperty` and send it |
 | C | **SSE streaming** | (automatic on connect) | Subscribe to `GET /eval`, `GET /diagnostics`, `GET /status` SSE streams at startup. Parse Datastar morph fragments, maintain materialized views client-side. All UI updates are driven by morph events — the plugin is a pure rendering layer. |
-| C | **Which-key integration** | (automatic) | Register `<leader>x` group as "SageFs" in which-key. LazyVim already uses which-key. |
+| C | **Which-key integration** | (automatic) | Register `<leader>x` group as "Bozzetto" in which-key. LazyVim already uses which-key. |
 
 **What makes this mind-blowing vs. existing options:**
 
@@ -1290,7 +1290,7 @@ The existing `fsi-mcp.lua` does some things that properly belong in Bozzetto its
 
 | Current fsi-mcp.lua behavior | Should live in... | Why |
 |------------------------------|-------------------|-----|
-| Port discovery (scan 37749-37759) | ✅ **Plugin** | Client-side concern — Bozzetto can't tell Neovim what port it's on before Neovim connects |
+| Port discovery (scan 47749-37759) | ✅ **Plugin** | Client-side concern — Bozzetto can't tell Neovim what port it's on before Neovim connects |
 | Server lifecycle (start/stop/restart) | ✅ **Plugin** | Process management is editor-side |
 | `POST /exec` code sending | ✅ **Both** — plugin posts commands, subscribes to `GET /eval` SSE for results | CQRS: POST is command (202), results flow via SSE |
 | Temp file for large payloads | ⚠️ **Should move to Bozzetto** — add streaming request body support | Plugin shouldn't need to work around HTTP payload limits |
@@ -1322,11 +1322,11 @@ The existing `fsi-mcp.lua` does some things that properly belong in Bozzetto its
 
 > See [COMPLETED_IMPROVEMENTS.md](COMPLETED_IMPROVEMENTS.md) for full details. Summary of what shipped:
 >
-> - **Daemon extraction** — `DaemonMode.fs`, `DaemonState.fs`, `ClientMode.fs`, smart CLI routing (`SageFs`, `SageFs -d`, `SageFs stop/status`)
+> - **Daemon extraction** — `DaemonMode.fs`, `DaemonState.fs`, `ClientMode.fs`, smart CLI routing (`Bozzetto`, `Bozzetto -d`, `Bozzetto stop/status`)
 > - **Worker process infrastructure** — `WorkerProtocol.fs` (WorkerMessage/WorkerResponse DUs, SessionProxy abstraction), `NamedPipeTransport.fs` (length-prefixed JSON over named pipes), `WorkerMain.fs`
 > - **SessionManager** — Erlang-style supervisor (spawn/monitor/restart workers), RestartPolicy with exponential backoff, SessionLifecycle exit classification
 > - **SessionOperations** — pure domain routing (`resolveSession` with explicit/default-single/default-most-recent), session formatting
-> - **DDD type safety** — SageFsError unified DU, SessionMode DU, CompletionKind DU, SessionStatus DU, DiagnosticSeverity DU, ToolUnavailable DU
+> - **DDD type safety** — BozzettoError unified DU, SessionMode DU, CompletionKind DU, SessionStatus DU, DiagnosticSeverity DU, ToolUnavailable DU
 > - **SessionMode routing** — MCP session management tools (create/list/stop) dispatch through `SessionMode.Embedded | SessionMode.Daemon`
 > - **DaemonMode wiring** — real SessionManager with SessionManagementOps bridge, graceful shutdown
 > - **Early MCP status** — MCP available during WarmingUp, `--bare` flag
@@ -1346,12 +1346,12 @@ The existing `fsi-mcp.lua` does some things that properly belong in Bozzetto its
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  SageFs daemon (headless, always-on)                      │
+│  Bozzetto daemon (headless, always-on)                      │
 │  • NO PrettyPrompt, NO console dependencies             │
 │  • ASP.NET Core: MCP + HTTP + SSE                       │
 │  • SessionManager: multiple in-process FSI sessions     │
 │  • Watchdog: auto-restart on crash                      │
-│  • State in ~/.SageFs/daemon.json (PID, port)             │
+│  • State in ~/.bozzetto/daemon.json (PID, port)             │
 │                                                         │
 │  ┌────────────────────────────────────────────────────┐  │
 │  │ SessionManager (MailboxProcessor)                  │  │
@@ -1374,21 +1374,21 @@ The existing `fsi-mcp.lua` does some things that properly belong in Bozzetto its
 
 #### CLI Routing (Smart Default)
 
-`SageFs` is always a client — it either connects to an existing daemon or starts one then connects. PrettyPrompt is never in the daemon process.
+`Bozzetto` is always a client — it either connects to an existing daemon or starts one then connects. PrettyPrompt is never in the daemon process.
 
 ```bash
-SageFs                              # Start or connect to the bare daemon
-SageFs -d / --daemon                # Start daemon only (headless, no REPL)
-SageFs stop                         # Graceful shutdown of daemon + all sessions
-SageFs status                       # Show daemon info + session list with metadata
+Bozzetto                              # Start or connect to the bare daemon
+Bozzetto -d / --daemon                # Start daemon only (headless, no REPL)
+Bozzetto stop                         # Graceful shutdown of daemon + all sessions
+Bozzetto status                       # Show daemon info + session list with metadata
 ```
 
-**Smart default (`SageFs` with no flags):**
-1. Check `~/.SageFs/daemon.json` — is a daemon already running?
+**Smart default (`Bozzetto` with no flags):**
+1. Check `~/.bozzetto/daemon.json` — is a daemon already running?
 2. **YES →** connect to it with PrettyPrompt REPL
 3. **NO →** start daemon in background, wait for it to be ready, then connect REPL to it
 
-**`SageFs -d` / `SageFs --daemon`** starts daemon only, no REPL, returns immediately. Useful for CI, services, or MCP-only workflows.
+**`Bozzetto -d` / `Bozzetto --daemon`** starts daemon only, no REPL, returns immediately. Useful for CI, services, or MCP-only workflows.
 
 #### Sub-Process Sessions
 
@@ -1408,7 +1408,7 @@ Each session is identified by a short readable ID (e.g., `session-a1b2c3`). Sess
 - **Created** when a client requests a new session
 - **Active** while any client is connected or the session has pending work
 - **Idle** after all clients disconnect (configurable idle timeout, default: never — sessions persist until explicitly killed)
-- **Destroyed** only on explicit `SageFs stop-session <id>` or daemon shutdown
+- **Destroyed** only on explicit `Bozzetto stop-session <id>` or daemon shutdown
 
 #### Rich Session Metadata
 
@@ -1441,8 +1441,8 @@ type SessionInfo = {
 When listing sessions (MCP, HTTP, or REPL), each shows human-readable context:
 
 ```
-session-a1b2c3  SageFs.Tests  C:\Code\Repos\SageFs  Ready
-  Started: 2026-02-13 11:17  Last active: 2 min ago  Projects: SageFs.Tests.fsproj, SageFs.fsproj
+session-a1b2c3  Bozzetto.Tests  C:\Code\Repos\Bozzetto  Ready
+  Started: 2026-02-13 11:17  Last active: 2 min ago  Projects: Bozzetto.Tests.fsproj, Bozzetto.fsproj
 session-d4e5f6  Harmony     C:\Code\Repos\Harmony  Evaluating
   Started: 2026-02-13 10:45  Last active: just now   Projects: Tests.fsproj, HarmonyServer.fsproj
 ```
@@ -1451,8 +1451,8 @@ Display name is derived from `SolutionRoot` directory name (or `WorkingDirectory
 
 Connected REPL shows metadata on attach:
 ```
-Connected to session-a1b2c3 (SageFs.Tests)
-C:\Code\Repos\SageFs  •  Started 2h ago  •  Last active just now
+Connected to session-a1b2c3 (Bozzetto.Tests)
+C:\Code\Repos\Bozzetto  •  Started 2h ago  •  Last active just now
 ```
 
 #### Session Attachment Logic
@@ -1462,12 +1462,12 @@ When a REPL client connects:
 - Otherwise it attaches to the most recently active compatible session
 - New sessions are created explicitly through the daemon API or client session commands
 
-#### Daemon State File (`~/.SageFs/daemon.json`)
+#### Daemon State File (`~/.bozzetto/daemon.json`)
 
 ```json
 {
   "pid": 12345,
-  "port": 37749,
+  "port": 47749,
   "startedAt": "2026-02-13T03:00:00Z"
 }
 ```
@@ -1475,7 +1475,7 @@ When a REPL client connects:
 Daemon state is minimal — just PID and port for discovery. Session state is queried live from the daemon via HTTP/MCP, not stored in the JSON file.
 
 `DaemonState.fs` handles:
-- `write: DaemonInfo -> unit` — atomically write to `~/.SageFs/daemon.json`
+- `write: DaemonInfo -> unit` — atomically write to `~/.bozzetto/daemon.json`
 - `read: unit -> DaemonInfo option` — read + validate PID is still alive
 - `clear: unit -> unit` — remove stale file
 
@@ -1484,11 +1484,11 @@ Daemon state is minimal — just PID and port for discovery. Session state is qu
 The supervisor spawns the daemon as a child process and monitors it:
 - On unexpected exit: restart with exponential backoff (1s → 2s → 4s → 8s → max 30s)
 - Resets backoff after 60s of stable uptime
-- Logs restarts to `~/.SageFs/logs/supervisor.log`
+- Logs restarts to `~/.bozzetto/logs/supervisor.log`
 - Responds to `SIGTERM`/`SIGINT` by forwarding to child then exiting
 - On Windows: uses `ConsoleCtrlEvent` for clean shutdown
 
-**Implementation approach:** Same binary. `SageFs -d` starts as supervisor, which `Process.Start`s another `SageFs` with an internal `--server` flag. The `--server` flag is not user-facing.
+**Implementation approach:** Same binary. `Bozzetto -d` starts as supervisor, which `Process.Start`s another `Bozzetto` with an internal `--server` flag. The `--server` flag is not user-facing.
 
 #### System Tray Icon (Watchdog-Hosted)
 
@@ -1517,7 +1517,7 @@ The watchdog is the outermost process. The tray icon is its UI surface. The daem
 - **Start Daemon** — manually start the daemon (available when stopped and watchdog is OFF, or when daemon is stopped for any reason)
 - **Stop Daemon** — gracefully stop the daemon without exiting the watchdog
 - **Restart Daemon** — stop + start
-- **Open Logs** — open `~/.SageFs/logs/supervisor.log`
+- **Open Logs** — open `~/.bozzetto/logs/supervisor.log`
 - **Quit** — stop the daemon and exit the watchdog process entirely
 
 **Development workflow:**
@@ -1544,7 +1544,7 @@ MCP tools gain an optional `sessionId` parameter:
 
 #### SessionManager (Core Library)
 
-SessionManager lives in `SageFs\SessionManager.fs` (not `SageFs.Server`) so it can be tested independently:
+SessionManager lives in `Bozzetto\SessionManager.fs` (not `Bozzetto.Server`) so it can be tested independently:
 
 ```fsharp
 type SessionCommand =
@@ -1560,7 +1560,7 @@ MailboxProcessor manages a `Map<SessionId, SessionInfo * ActorResult>`. Each ses
 #### Web UI (Falco + Datastar) — Future
 
 A lightweight browser REPL served by the daemon itself:
-- `http://localhost:37749/ui` → Falco.Markup rendered page
+- `http://localhost:47749/ui` → Falco.Markup rendered page
 - Code editor sends to `POST /exec`
 - Results stream back via Datastar SSE → DOM morphing
 - Session picker in sidebar (create/switch/kill sessions)
@@ -1572,21 +1572,21 @@ This is NOT a full IDE — it's a browser-accessible REPL for quick interactions
 #### Implementation Phases
 
 **Phase 1: Extract the Daemon (headless server)** — the critical unlock
-- `SageFs.Server\DaemonMode.fs` — headless server entry point (no PrettyPrompt, no TTY deps)
-- `SageFs.Server\DaemonState.fs` — daemon.json lifecycle
-- `SageFs.Server\ClientMode.fs` — REPL client that connects to daemon
+- `Bozzetto.Server\DaemonMode.fs` — headless server entry point (no PrettyPrompt, no TTY deps)
+- `Bozzetto.Server\DaemonState.fs` — daemon.json lifecycle
+- `Bozzetto.Server\ClientMode.fs` — REPL client that connects to daemon
 - `Program.fs` — smart default routing
 - Test: start daemon headless, verify MCP tools work, verify no PrettyPrompt crash
 
 **Phase 2: SessionManager (multi-session)** — the multiplier
-- `SageFs\SessionManager.fs` — session registry with rich metadata
+- `Bozzetto\SessionManager.fs` — session registry with rich metadata
 - Session-aware MCP tools (optional `sessionId` param)
 - Session-aware HTTP endpoints (`GET /sessions`, `POST /sessions`, `DELETE /sessions/{id}`)
 - Tests: create two sessions with different projects, eval in each, verify isolation
 
 **Phase 3: Watchdog & Persistence** — reliability
-- `SageFs.Server\Supervisor.fs` — watchdog process with exponential backoff
-- Graceful shutdown (`SageFs stop` → POST /shutdown)
+- `Bozzetto.Server\Supervisor.fs` — watchdog process with exponential backoff
+- Graceful shutdown (`Bozzetto stop` → POST /shutdown)
 - Session resume on restart (read last-known sessions from Marten, offer to recreate)
 
 **Phase 4: Terminal REPL Client Polish** — UX
@@ -1602,35 +1602,35 @@ This is NOT a full IDE — it's a browser-accessible REPL for quick interactions
 
 #### Design Decisions
 
-1. **`SageFs` is always a client** — running `SageFs` either connects to an existing daemon or starts one then connects. PrettyPrompt is never in the daemon process. If the terminal dies, the daemon and all sessions survive.
-2. **`SageFs -d` for daemon-only** — explicit flag to start the daemon headless without attaching a REPL. Useful for CI, services, or MCP-only workflows.
+1. **`Bozzetto` is always a client** — running `Bozzetto` either connects to an existing daemon or starts one then connects. PrettyPrompt is never in the daemon process. If the terminal dies, the daemon and all sessions survive.
+2. **`Bozzetto -d` for daemon-only** — explicit flag to start the daemon headless without attaching a REPL. Useful for CI, services, or MCP-only workflows.
 3. **Sub-process sessions with location transparency** — each session is a separate OS process (worker). The daemon communicates with workers via a transport-agnostic protocol (`WorkerMessage` DU). Default transport: named pipes (fastest local IPC on Windows, no port allocation). True fault isolation: one session crashing doesn't affect others. The `SessionProxy` abstraction means the same interface works whether the worker is local (named pipe), remote (HTTP), or even in-process (for testing).
-4. **SessionManager in Bozzetto core, not SageFs.Server** — so it can be tested independently and reused by other hosts.
+4. **SessionManager in Bozzetto core, not Bozzetto.Server** — so it can be tested independently and reused by other hosts.
 5. **Rich session metadata** — sessions carry WorkingDirectory, SolutionRoot, CreatedAt, LastActivity. Display name derived from solution/directory name. Listing sessions shows human-readable context like GitHub Copilot's chat history.
-6. **daemon.json is the discovery mechanism** — clients find the daemon by reading `~/.SageFs/daemon.json`. Simple, no service registry needed.
+6. **daemon.json is the discovery mechanism** — clients find the daemon by reading `~/.bozzetto/daemon.json`. Simple, no service registry needed.
 7. **Backward compatible MCP** — existing MCP clients that don't send `sessionId` keep working (routed to default session).
 
 #### Files (New + Modified)
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `SageFs\SessionManager.fs` | **NEW** | Session registry, spawns/monitors worker processes |
-| `SageFs\WorkerProtocol.fs` | **NEW** | `WorkerMessage` DU, transport abstraction |
-| `SageFs\Transports\NamedPipeTransport.fs` | **NEW** | Named pipe transport (default) |
-| `SageFs.Server\DaemonState.fs` | **NEW** | daemon.json read/write/validate |
-| `SageFs.Server\DaemonMode.fs` | **NEW** | Headless daemon entry point (no PrettyPrompt) |
-| `SageFs.Server\ClientMode.fs` | **NEW** | REPL client that connects to daemon |
-| `SageFs.Server\WorkerMain.fs` | **NEW** | Session worker process entry point |
-| `SageFs.Server\Supervisor.fs` | **NEW** (Phase 3) | Watchdog process |
-| `SageFs.Server\Program.fs` | **MODIFY** | Smart default: auto-start daemon + connect |
-| `SageFs.Server\CliEventLoop.fs` | **MODIFY** | Becomes a REPL client connecting to daemon |
-| `SageFs.Server\McpServer.fs` | **MODIFY** | Session-aware routing |
-| `SageFs.Server\McpTools.fs` | **MODIFY** | Optional sessionId param |
-| `SageFs\Mcp.fs` | **MODIFY** | McpContext gains SessionManager |
-| `SageFs.Server\SageFs.Server.fsproj` | **MODIFY** | Add new files to compile order |
-| `SageFs\SageFs.fsproj` | **MODIFY** | Add SessionManager.fs |
-| `SageFs.Tests\SessionManagerTests.fs` | **NEW** | Unit + integration tests |
-| `SageFs.Tests\DaemonIntegrationTests.fs` | **NEW** | End-to-end daemon tests |
+| `Bozzetto\SessionManager.fs` | **NEW** | Session registry, spawns/monitors worker processes |
+| `Bozzetto\WorkerProtocol.fs` | **NEW** | `WorkerMessage` DU, transport abstraction |
+| `Bozzetto\Transports\NamedPipeTransport.fs` | **NEW** | Named pipe transport (default) |
+| `Bozzetto.Server\DaemonState.fs` | **NEW** | daemon.json read/write/validate |
+| `Bozzetto.Server\DaemonMode.fs` | **NEW** | Headless daemon entry point (no PrettyPrompt) |
+| `Bozzetto.Server\ClientMode.fs` | **NEW** | REPL client that connects to daemon |
+| `Bozzetto.Server\WorkerMain.fs` | **NEW** | Session worker process entry point |
+| `Bozzetto.Server\Supervisor.fs` | **NEW** (Phase 3) | Watchdog process |
+| `Bozzetto.Server\Program.fs` | **MODIFY** | Smart default: auto-start daemon + connect |
+| `Bozzetto.Server\CliEventLoop.fs` | **MODIFY** | Becomes a REPL client connecting to daemon |
+| `Bozzetto.Server\McpServer.fs` | **MODIFY** | Session-aware routing |
+| `Bozzetto.Server\McpTools.fs` | **MODIFY** | Optional sessionId param |
+| `Bozzetto\Mcp.fs` | **MODIFY** | McpContext gains SessionManager |
+| `Bozzetto.Server\Bozzetto.Server.fsproj` | **MODIFY** | Add new files to compile order |
+| `Bozzetto\Bozzetto.fsproj` | **MODIFY** | Add SessionManager.fs |
+| `Bozzetto.Tests\SessionManagerTests.fs` | **NEW** | Unit + integration tests |
+| `Bozzetto.Tests\DaemonIntegrationTests.fs` | **NEW** | End-to-end daemon tests |
 
 ### ~~3.3 Script Persistence & Replay~~ — Subsumed by 0.0
 
@@ -1679,7 +1679,7 @@ This is NOT a full IDE — it's a browser-accessible REPL for quick interactions
 **Problem:** FSI output is plain text. No charts, tables, HTML, or images.
 
 **Solution:**
-- Detect types with `ISageFsRenderable` interface or specific patterns
+- Detect types with `IBozzettoRenderable` interface or specific patterns
 - Render `list<'T>` as ASCII tables
 - Render `seq<float>` as sparkline charts
 - Support `Html of string` for arbitrary HTML output (displayed in VSCode extension)
@@ -1725,32 +1725,32 @@ This is NOT a full IDE — it's a browser-accessible REPL for quick interactions
 **1.0 is a shippable, useful product.** Everything else is post-1.0. The line is drawn here to prevent [second-system effect](https://en.wikipedia.org/wiki/Second-system_effect).
 
 **In 1.0:** ✅ ALL COMPLETE
-- ✅ Daemon mode: headless server, no PrettyPrompt dependency, `~/.SageFs/daemon.json` discovery
+- ✅ Daemon mode: headless server, no PrettyPrompt dependency, `~/.bozzetto/daemon.json` discovery
 - ✅ Sub-process sessions: each session is an isolated worker process (named pipe IPC)
 - ✅ MCP tools: all current tools (`send_fsharp_code`, `check_fsharp_code`, `get_completions`, `cancel_eval`, etc.) + session management (`create_session`, `list_sessions`, `stop_session`)
 - ✅ Simple HTTP endpoints: `/health`, `/exec` (request-response), `/status` (SSE)
-- ✅ Smart CLI default: `SageFs` auto-starts daemon + connects REPL, `SageFs -d` starts daemon only
+- ✅ Smart CLI default: `Bozzetto` auto-starts daemon + connects REPL, `Bozzetto -d` starts daemon only
 - ✅ Affordance-driven state machine
 - ✅ Event sourcing with Marten
 - ✅ Actor split
-- ✅ DDD type safety: SageFsError, SessionMode, CompletionKind, SessionStatus, DiagnosticSeverity DUs
+- ✅ DDD type safety: BozzettoError, SessionMode, CompletionKind, SessionStatus, DiagnosticSeverity DUs
 - ✅ SessionManager with Erlang-style supervisor (spawn/monitor/restart with exponential backoff)
 
 **Post-1.0:**
 - ✅ Per-tool MCP session routing (optional `sessionId` param on eval/reset/check tools)
 - ✅ Watchdog/supervisor process (`--supervised` flag)
-- ✅ Startup profile (`~/.SageFs/init.fsx`, per-project `.SageFsrc`)
+- ✅ Startup profile (`~/.bozzetto/init.fsx`, per-project `.Bozzettorc`)
 - ✅ Package/namespace explorer (`explore_namespace`, `explore_type` MCP tools)
 - ✅ File watching with incremental `#load` reload
 - ✅ Elm Architecture core + ElmDaemon wiring
 - ✅ Interactive TUI client, live dashboard
-- ✅ SageFs.Core shared rendering layer (Cell, CellGrid, Draw, Theme)
-- ✅ SageFs.Gui Raylib GUI client (scaffolded)
-- ✅ `SageFs connect` REPL client, PrettyPrompt removed
-- ✅ Per-directory config (`.SageFs/config.fsx`)
+- ✅ Bozzetto.Core shared rendering layer (Cell, CellGrid, Draw, Theme)
+- ✅ Bozzetto.Gui Raylib GUI client (scaffolded)
+- ✅ `Bozzetto connect` REPL client, PrettyPrompt removed
+- ✅ Per-directory config (`.bozzetto/config.fsx`)
 - 🔲 Dual-renderer parity (TUI + Raylib feature-complete) — in progress
 - 🔲 System tray icon (watchdog-hosted) — daemon state indicator, watchdog ON/OFF toggle, dev workflow support
-- 🔲 Neovim plugin (standalone SageFs.nvim)
+- 🔲 Neovim plugin (standalone Bozzetto.nvim)
 - 🔲 VSCode extension
 - 🔲 BARE wire encoding
 - 🔲 Epistemic validity / environment fingerprints
@@ -1770,7 +1770,7 @@ This is NOT a full IDE — it's a browser-accessible REPL for quick interactions
 
 | Priority | Item | Impact | Effort | Dependency |
 |----------|------|--------|--------|------------|
-| 🔴 P1 | **Phase 6 TUI/GUI rendering** (in progress) | Very High | High | SageFs.Core ✅ |
+| 🔴 P1 | **Phase 6 TUI/GUI rendering** (in progress) | Very High | High | Bozzetto.Core ✅ |
 | 🟡 P2 | **2.5 Neovim plugin enhancement** | Very High | High | 1.3 ✅, 1.2 ✅, 2.0 ✅ |
 | 🟡 P2 | 0.1 Testcontainer persistence | Medium | Low | 0.0 ✅ |
 | 🟡 P2 | 3.6 BARE wire encoding | High | Medium | 2.5 (Neovim SSE working with JSON first) |
@@ -1792,19 +1792,19 @@ This is NOT a full IDE — it's a browser-accessible REPL for quick interactions
 
 ### Phase 2: Daemon Extraction (Separation of Concerns) — ✅ DONE
 10. ✅ **Daemon mode** (3.2, Phase 1) — headless daemon, `DaemonMode.fs`, `DaemonState.fs`, `ClientMode.fs`, smart CLI routing
-11. ✅ **SessionManager** (3.2, Phase 2) — sub-process sessions, named pipe IPC, session metadata, SessionMode DU routing, DDD type hardening (SageFsError, CompletionKind, SessionStatus, DiagnosticSeverity DUs)
+11. ✅ **SessionManager** (3.2, Phase 2) — sub-process sessions, named pipe IPC, session metadata, SessionMode DU routing, DDD type hardening (BozzettoError, CompletionKind, SessionStatus, DiagnosticSeverity DUs)
 
 ### Phase 3: Neovim Integration & Watchdog
 13. Neovim plugin — MVP (2.5) — SSE subscription driven by Marten async daemon, inline results, diagnostics
 14. ✅ **Watchdog** (3.2, Phase 3) — supervisor process, exponential backoff, graceful shutdown, `--supervised` flag
 14b. 🔲 **System tray icon** (Phase 3) — watchdog-hosted tray icon with daemon state indicator (running/stopped/crashed), watchdog ON/OFF toggle for dev workflows, manual start/stop/restart controls
 15. ✅ Package/namespace explorer (3.4) — `explore_namespace`, `explore_type` MCP tools
-16. ✅ Startup profile (3.5) — `~/.SageFs/init.fsx`, per-project `.SageFsrc`
+16. ✅ Startup profile (3.5) — `~/.bozzetto/init.fsx`, per-project `.Bozzettorc`
 17. BARE wire encoding (3.6) — after SSE works with JSON
 18. Epistemic validity / environment fingerprints (3.7) — `AssembliesChanged` events, `EnvironmentFingerprint` in metadata, `assessValidity` for selective replay
 
 ### Phase 4: Live Development & VSCode
-20. VSCode extension (2.1) — adapted from upstream sagefs-vscode
+20. VSCode extension (2.1) — adapted from upstream bozzetto-vscode
 
 ### Phase 5: Best-in-Class
 21. **REPL client polish** (3.2, Phase 4) — interactive session picker, `:switch`/`:sessions` REPL commands
@@ -1834,7 +1834,7 @@ The Elm model IS the "retained" state. No second retained layer (Widget DU). Fas
 
 ```
 ElmLoop.model
-  → SageFsRender.render → RenderRegion list
+  → BozzettoRender.render → RenderRegion list
     → ImmediateRenderer.draw(regions, grid)  ← writes directly to cells
       → AnsiEmitter.emitFull(grid)            ← full frame, no diff
         → Console.Write                       ← one write per frame
@@ -1882,8 +1882,8 @@ type DrawTarget = { Grid: Cell[,]; Rect: Rect }               // bundles "where 
 | **6.4** | Wire into `TerminalMode.run` + `TuiClient.run`. Delete old code. | Integration: alt-screen, no scroll, crash-safe restore. |
 | **6.5** | `LayoutConfig`, `PaneState`, pane toggle/resize/reorder | Snapshot: alternate layouts. Property: toggle removes pane, redistributes. |
 | **6.6** | Affordances, polish, perf baseline | Frame time <6.9ms (144fps) for 200×60. Real affordance values. |
-| **6.7** | Raylib GUI backend (`SageFs.Gui/`) — `Raylib-cs` 7.0.2, `RaylibEmitter`, `RaylibMode.run`, font metrics, mouse input → same `EditorAction` DU | Snapshot parity: same `RenderRegion list` → same `CellGrid.toText`. Frame time <6.9ms. |
-| **6.8** | Dual-renderer parity — keybindings, theming, layout config, menus, status bars identical across TUI and Raylib. `SageFs --tui`, `--gui`, `--both` flags. | Side-by-side visual parity. Perf comparison in status bar. |
+| **6.7** | Raylib GUI backend (`Bozzetto.Gui/`) — `Raylib-cs` 7.0.2, `RaylibEmitter`, `RaylibMode.run`, font metrics, mouse input → same `EditorAction` DU | Snapshot parity: same `RenderRegion list` → same `CellGrid.toText`. Frame time <6.9ms. |
+| **6.8** | Dual-renderer parity — keybindings, theming, layout config, menus, status bars identical across TUI and Raylib. `Bozzetto --tui`, `--gui`, `--both` flags. | Side-by-side visual parity. Perf comparison in status bar. |
 
 #### Design Principles
 
@@ -1912,7 +1912,7 @@ Bozzetto has **two UI frontends** built simultaneously, sharing one abstract ren
 
 ```
 ElmLoop.model
-  → SageFsRender.render → RenderRegion list
+  → BozzettoRender.render → RenderRegion list
     → Screen.draw(grid, state, regions)       ← shared: writes to Cell[,]
       ├→ AnsiEmitter.emit(grid)  → Console.Write     (TUI backend)
       └→ RaylibEmitter.emit(grid) → DrawRectangle/DrawText  (Raylib backend)
@@ -1924,10 +1924,10 @@ ElmLoop.model
 
 | Project | Purpose | Dependencies |
 |---------|---------|-------------|
-| `SageFs.Core/` | Shared: `Cell`, `CellGrid`, `Rect`, `Layout`, `Draw`, `Theme`, `Screen`, `PaneRenderer`, `Editor`, `RenderPipeline` | None (pure) |
-| `SageFs/` | CLI tool: TUI client, daemon, MCP server, `AnsiEmitter`, `TerminalMode` | `SageFs.Core` |
-| `SageFs.Gui/` | Raylib GUI client: `RaylibEmitter`, `RaylibMode`, font loading, mouse input | `SageFs.Core`, `Raylib-cs` 7.0.2 |
-| `SageFs.Tests/` | Shared tests at `CellGrid.toText()` level — parity guaranteed | `SageFs.Core` |
+| `Bozzetto.Core/` | Shared: `Cell`, `CellGrid`, `Rect`, `Layout`, `Draw`, `Theme`, `Screen`, `PaneRenderer`, `Editor`, `RenderPipeline` | None (pure) |
+| `Bozzetto/` | CLI tool: TUI client, daemon, MCP server, `AnsiEmitter`, `TerminalMode` | `Bozzetto.Core` |
+| `Bozzetto.Gui/` | Raylib GUI client: `RaylibEmitter`, `RaylibMode`, font loading, mouse input | `Bozzetto.Core`, `Raylib-cs` 7.0.2 |
+| `Bozzetto.Tests/` | Shared tests at `CellGrid.toText()` level — parity guaranteed | `Bozzetto.Core` |
 
 **Shared abstractions (never import terminal or Raylib APIs):**
 - `Theme` — abstract color IDs (bytes). TUI maps to 256-color ANSI. Raylib maps to RGB.
@@ -1936,15 +1936,15 @@ ElmLoop.model
 - `LayoutConfig` — pane order, proportions, visibility — identical behavior.
 
 **Launch modes:**
-- `SageFs --tui` — TUI client (default, current behavior)
-- `SageFs --gui` — Raylib GUI client
-- `SageFs --both` — both simultaneously, same daemon SSE subscription
+- `Bozzetto --tui` — TUI client (default, current behavior)
+- `Bozzetto --gui` — Raylib GUI client
+- `Bozzetto --both` — both simultaneously, same daemon SSE subscription
 
 #### Key Principles (carried forward)
 
-- Push-based reactive streaming (SageFsEvent bus → all frontends subscribe)
+- Push-based reactive streaming (BozzettoEvent bus → all frontends subscribe)
 - Affordance-driven: domain decides what's *possible*, adapters decide how to *render*
-- CQRS: `EditorAction` commands in, `SageFsEvent` events out
+- CQRS: `EditorAction` commands in, `BozzettoEvent` events out
 - `FsToolkit.ErrorHandling` for `asyncResult { }` at effect handler edges
 - **144fps target** — 6.9ms frame budget. Full redraw every frame. If you can't hit it, profile and fix. No diffing as a crutch.
 
@@ -1964,7 +1964,7 @@ ElmLoop.model
 
 These are documented in detail in the sections above. This is a quick reference:
 
-1. **MCP IS the daemon** — no separate JSON-RPC process. MCP server on port 37749 is the integration point. Bozzetto runs as a persistent background service (supervisor watchdog) with multi-session support. Terminal REPL, Neovim, VSCode, and web UI are all clients connecting to the same daemon.
+1. **MCP IS the daemon** — no separate JSON-RPC process. MCP server on port 47749 is the integration point. Bozzetto runs as a persistent background service (supervisor watchdog) with multi-session support. Terminal REPL, Neovim, VSCode, and web UI are all clients connecting to the same daemon.
 2. **Marten + PostgreSQL event store** — all state changes as persisted events. Projections for read models. Replaces EventTracker, enables session replay, multi-process, multi-agent.
 3. **Actor split** — eval actor (serializes FSI mutations) + query actor (reads from projections concurrently). Both read/write the same Marten event stream.
 4. **Full CQRS + SSE** — POST = command (202 Accepted), GET = SSE subscription via Datastar. Two consumer patterns: LLMs via MCP (curated text), IDE plugins via Datastar SSE (reactive signals).
@@ -1972,7 +1972,7 @@ These are documented in detail in the sections above. This is a quick reference:
 6. **Epistemic validity** — environment fingerprints on events track which assembly versions were active. `AssembliesChanged` events trigger stale-event counting. Selective replay re-evaluates only stale events.
 7. **BARE wire encoding** (P2) — binary encoding for machine-to-machine paths after JSON SSE is working.
 8. **Sub-process sessions with location-transparent messaging** — each session is a separate worker process spawned and supervised by the daemon. The daemon communicates with workers via a `WorkerMessage` DU (pure F# types, serialization-agnostic). Transport is pluggable:
-   - **Named pipes** (default): fastest local IPC, no port allocation, OS-managed lifecycle. Pipe name: `sagefs-session-{id}`.
+   - **Named pipes** (default): fastest local IPC, no port allocation, OS-managed lifecycle. Pipe name: `bozzetto-session-{id}`.
    - **stdin/stdout JSON-RPC**: fallback, works everywhere, simple process model.
    - **HTTP**: future — enables remote workers (different machine, container, datacenter).
    
@@ -2118,7 +2118,7 @@ The current MCP implementation uses text-based tool responses. As MCP matures, c
 
 #### Low Risk
 - **Documentation** — users confused by daemon vs client
-  - Mitigation: tests serve as documentation. `SageFs status` shows clear state.
+  - Mitigation: tests serve as documentation. `Bozzetto status` shows clear state.
   - CLI help text explains the smart default clearly
 
 ### Success Criteria (Daemon Refactor)
@@ -2129,7 +2129,7 @@ The current MCP implementation uses text-based tool responses. As MCP matures, c
 - Multiple sessions (5+) running simultaneously with full isolation (load test)
 - Code execution latency < 50ms overhead vs current single-session (performance test)
 - Zero data loss when sessions crash (fault injection tests)
-- `SageFs` smart default works: auto-starts daemon, connects REPL, no manual steps
+- `Bozzetto` smart default works: auto-starts daemon, connects REPL, no manual steps
 - PrettyPrompt crash in client does NOT affect daemon or other sessions
 - Every feature has tests BEFORE code is written
 
@@ -2145,7 +2145,7 @@ Nothing materializes until a failing test demands it. Not a type. Not a module. 
 
 3. **Snapshot tests (Verify)** — for "look and feel" outputs: rendered HTML, formatted MCP responses, serialized event shapes. The snapshot captures what the output *looks like* and alerts on any drift.
 
-4. **Integration tests** — for full workflows that cross boundaries (MCP tool → actor → FSI session → response). These use `SharedSageFsFixture` with a real FSI session.
+4. **Integration tests** — for full workflows that cross boundaries (MCP tool → actor → FSI session → response). These use `SharedBozzettoFixture` with a real FSI session.
 
 #### Self-Verification with Bozzetto Diagnostics
 
@@ -2178,8 +2178,8 @@ Before running any test, use Bozzetto's own `check_fsharp_code` MCP tool (or `ge
 #### Expecto Conventions
 
 - Use `Expecto.Flip` — actual value piped in: `actual |> Expect.equal "message" expected`
-- Run tests with `dotnet run --project SageFs.Tests` (NOT `dotnet test`). **Why:** Expecto tests are a console application with its own `[<EntryPoint>]` that provides richer output, filtering (`--filter`), and integration-test lifecycle management (Testcontainers, FSI session setup). `dotnet test` via `Expecto.TestAdapter` works for discovery but loses Expecto's custom CLI args and output formatting. In development, prefer running via Bozzetto's own FSI session (`sagefs-send_fsharp_code`) for fastest feedback.
-- Tests live in `SageFs.Tests/` alongside the code they test, named `{Feature}Tests.fs`
+- Run tests with `dotnet run --project Bozzetto.Tests` (NOT `dotnet test`). **Why:** Expecto tests are a console application with its own `[<EntryPoint>]` that provides richer output, filtering (`--filter`), and integration-test lifecycle management (Testcontainers, FSI session setup). `dotnet test` via `Expecto.TestAdapter` works for discovery but loses Expecto's custom CLI args and output formatting. In development, prefer running via Bozzetto's own FSI session (`bozzetto-send_fsharp_code`) for fastest feedback.
+- Tests live in `Bozzetto.Tests/` alongside the code they test, named `{Feature}Tests.fs`
 
 #### SessionManager Test Stubs (Daemon Refactor)
 
@@ -2224,11 +2224,11 @@ let daemonStateTests = testList "DaemonState" [
     DaemonState.read () |> Expect.isNone "should be None"
 
   testCase "read returns None when PID is stale" <| fun () ->
-    DaemonState.write { Pid = 999999; Port = 37749; StartedAt = DateTime.UtcNow }
+    DaemonState.write { Pid = 999999; Port = 47749; StartedAt = DateTime.UtcNow }
     DaemonState.read () |> Expect.isNone "stale PID should return None"
 
   testCase "write then read round-trips" <| fun () ->
-    let info = { Pid = currentPid; Port = 37749; StartedAt = DateTime.UtcNow }
+    let info = { Pid = currentPid; Port = 47749; StartedAt = DateTime.UtcNow }
     DaemonState.write info
     DaemonState.read () |> Expect.isSome "should find daemon"
 ]
@@ -2238,4 +2238,4 @@ let daemonStateTests = testList "DaemonState" [
 
 1. **Session timeout policy?** — Proposal: no timeout by default (sessions persist until explicitly killed). Configurable via `--idle-timeout` flag.
 2. **Maximum sessions per daemon?** — Proposal: 10 sessions (configurable). Each FSI session consumes ~50-100MB of memory.
-3. **Version mismatch?** — When a client connects to a daemon running a different SageFs version. Proposal: version check on connection, warn if mismatch, refuse if major version differs.
+3. **Version mismatch?** — When a client connects to a daemon running a different Bozzetto version. Proposal: version check on connection, warn if mismatch, refuse if major version differs.

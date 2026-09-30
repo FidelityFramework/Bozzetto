@@ -1,0 +1,46 @@
+namespace Bozzetto
+
+open System
+open Bozzetto.WorkerProtocol
+
+/// Pure, deterministic decision logic for session lifecycle events.
+/// Used by SessionManager to decide what to do when workers exit.
+/// No IO, no side effects — just decisions based on state.
+module SessionLifecycle =
+
+  /// What happened when a worker exited, and what to do about it.
+  [<RequireQualifiedAccess>]
+  type ExitOutcome =
+    /// Worker exited cleanly (code 0). Remove it.
+    | Graceful
+    /// Worker crashed. Restart after delay.
+    | RestartAfter of delay: TimeSpan * newRestartState: RestartPolicy.State
+    /// Worker crashed too many times. Give up.
+    | Abandoned of BozzettoError
+
+  /// Determine the outcome when a worker exits.
+  let onWorkerExited
+    (policy: RestartPolicy.Policy)
+    (restartState: RestartPolicy.State)
+    (exitCode: int)
+    (now: DateTime)
+    : ExitOutcome =
+    match exitCode = 0 with
+    | true ->
+      ExitOutcome.Graceful
+    | false ->
+      let decision, newState = RestartPolicy.decide policy restartState now
+      match decision with
+      | RestartPolicy.Decision.Restart delay ->
+        ExitOutcome.RestartAfter(delay, newState)
+      | RestartPolicy.Decision.GiveUp error ->
+        ExitOutcome.Abandoned error
+
+  /// Determine the new session status from an exit outcome. The exited
+  /// worker's own pid is carried into Restarting only so a late event from
+  /// it can be recognized as stale (see SessionManager's stale-pid guards).
+  let statusAfterExit (exitedWorkerPid: int option) (outcome: ExitOutcome) : SessionLifecycleStatus =
+    match outcome with
+    | ExitOutcome.Graceful -> SessionLifecycleStatus.Stopped
+    | ExitOutcome.RestartAfter _ -> SessionLifecycleStatus.Restarting exitedWorkerPid
+    | ExitOutcome.Abandoned err -> SessionLifecycleStatus.Faulted (Some (BozzettoError.describe err))

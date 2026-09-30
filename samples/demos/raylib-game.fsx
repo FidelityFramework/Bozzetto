@@ -1,11 +1,11 @@
 // ============================================================
-//  🕹️  Raylib Interactive Game Demo — SageFs Edition
+//  🕹️  Raylib Interactive Game Demo — Bozzetto Edition
 //  A playable game where you can tweak rules and physics live.
 //  Catch the falling stars. Edit the speed. Save. It applies immediately.
 // ============================================================
 //
 //  Dependencies: Raylib-cs  (in Directory.Packages.props)
-//  Run via: sagefs gui   (or load in a SageFs session)
+//  Run via: boz gui   (or load in a Bozzetto session)
 
 // #r "nuget: Raylib-cs"
 
@@ -123,7 +123,7 @@ let initState () : GameState = {
 }
 
 // ── Window + game loop ──
-Raylib.InitWindow(screenWidth, screenHeight, "⭐ Star Catcher — SageFs + Raylib")
+Raylib.InitWindow(screenWidth, screenHeight, "⭐ Star Catcher — Bozzetto + Raylib")
 Raylib.SetTargetFPS(60)
 
 let mutable state = initState()
@@ -164,5 +164,5 @@ Raylib.CloseWindow()
 // 5. Edit the `drawGame` function — change colors, add effects — save
 //
 // Every one of these changes applies to the running game without restart.
-// SageFs patches the `drawGame`, `updateStars`, `updatePlayer` functions live.
+// Bozzetto patches the `drawGame`, `updateStars`, `updatePlayer` functions live.
 // This is what "live development" actually means.

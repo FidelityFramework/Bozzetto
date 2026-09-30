@@ -1,9 +1,9 @@
 # Informal Specification: `BinaryFormat.Crc32`
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
 
-**Source file**: `SageFs.Core/BinaryFormat.fs`
-**Module**: `SageFs.Crc32`
+**Source file**: `Bozzetto.Core/BinaryFormat.fs`
+**Module**: `Bozzetto.Crc32`
 **Run**: 25685202317 (2026-05-11)
 
 ---
@@ -11,7 +11,7 @@
 ## Purpose
 
 `Crc32` computes a CRC-32 checksum over a byte array. It is used to validate the
-integrity of `.sagefm` binary manifest files when they are loaded from disk. A CRC
+integrity of `.bozzettofm` binary manifest files when they are loaded from disk. A CRC
 mismatch causes the session to fall back to a cold start, so correctness is
 safety-relevant: a bad CRC value could cause a valid manifest to be rejected (spurious
 cold-start) or, worse, a corrupt manifest to be accepted.
@@ -202,7 +202,7 @@ using a list is closer to the F# implementation.
 reference. Should the Lean spec include this as a `#eval`-verified sanity check, or is it
 sufficient to verify only the algebraic properties (consistency, empty input)?
 
-**Q3**: The `.sagefm` format uses CRC-32 for integrity checking. Is there a higher-level
+**Q3**: The `.bozzettofm` format uses CRC-32 for integrity checking. Is there a higher-level
 property worth verifying — e.g., "if `computeAll payload ≠ expected`, the manifest is
 rejected"? This would require modelling the manifest reader, which is outside scope for
 now.

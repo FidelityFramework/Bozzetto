@@ -1,9 +1,9 @@
 # Informal Specification: `RingBuffer`
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
 
-**Source file**: `SageFs.Core/RingBuffer.fs`
-**Module**: `SageFs.RingBuffer`
+**Source file**: `Bozzetto.Core/RingBuffer.fs`
+**Module**: `Bozzetto.RingBuffer`
 **Phase**: 2 — Informal spec
 
 ---

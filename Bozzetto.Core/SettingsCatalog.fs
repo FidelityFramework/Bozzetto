@@ -1,0 +1,235 @@
+namespace Bozzetto
+
+open System
+
+/// The catalog glue (unified-settings-design.md Phase A4): it ties a
+/// `SettingDescriptor` to the layer store, so one call resolves a setting's
+/// effective value across layers, and one call edits it — parse → persist to
+/// the chosen layer → apply-if-live → re-resolve. The only place a raw string
+/// becomes a typed `SettingValue` is the descriptor's `Parse`, which returns
+/// *why* on failure; everything past it is legal by construction.
+///
+/// This module also holds the Phase-A pilot descriptors: test timeouts
+/// (Live — wires the previously-dead `setTestTimeouts` path), MCP port
+/// (RestartRequired), and bind host (Guarded — the loopback RCE guard is the
+/// type, `LoopbackHost`, not a runtime check). Theme and auto-open are
+/// existing-subsystem migrations and belong to Phase C.
+
+/// Whether a session has a git checkout that can carry a repo-override layer.
+/// "No repo" is a first-class domain case (a bare/scratch session with only the
+/// global layer), modelled as a DU case rather than a null string — absence
+/// here means something specific, so it says so by its name.
+type RepoLayerLocation =
+  | NoRepoCheckout
+  | RepoRootAt of path: string
+
+/// Where the file layers live for a session.
+type ConfigPaths = {
+  GlobalDir: string
+  Repo: RepoLayerLocation
+}
+
+[<RequireQualifiedAccess>]
+module SettingsCatalog =
+
+  /// The raw value present at a file layer for this key, if any.
+  let private rawAt (path: string) (key: string) : string option =
+    SettingsStore.readLayer path |> Map.tryFind key
+
+  /// Resolve one descriptor's effective value + provenance across the file
+  /// layers (global, and repo when the session has a checkout). A parse failure
+  /// at any present layer is surfaced (with why) rather than silently dropped —
+  /// a corrupt persisted value must not resolve to a wrong-but-plausible one.
+  /// (Session-scope overrides are transient and not yet wired; the pure
+  /// SettingsResolver already carries LSession via its layer list for when they
+  /// land.)
+  let resolve
+    (paths: ConfigPaths)
+    (descriptor: SettingDescriptor)
+    : Result<Provenance, ConfigError> =
+    let parseAt (layer: ConfigLayer) (raw: string option) : Result<(ConfigLayer * SettingValue) option, ConfigError> =
+      match raw with
+      | None -> Ok None
+      | Some r ->
+        match descriptor.Parse r with
+        | Ok v -> Ok (Some(layer, v))
+        | Error why -> Error (LayerValueInvalid(descriptor.Key, layer, ConfigError.describe why))
+
+    let globalRaw = rawAt (SettingsStore.globalPath paths.GlobalDir) descriptor.Key
+    let repoRaw =
+      match paths.Repo with
+      | RepoRootAt root -> rawAt (SettingsStore.repoPath root) descriptor.Key
+      | NoRepoCheckout -> None
+
+    match parseAt LGlobal globalRaw, parseAt LRepo repoRaw with
+    | Error why, _ -> Error why
+    | _, Error why -> Error why
+    | Ok g, Ok r ->
+      let set = [ yield! Option.toList g; yield! Option.toList r ]
+      Ok (SettingsResolver.resolve descriptor.Default set)
+
+  /// Edit a setting at a persisted layer: parse the raw input (the sole
+  /// validation), persist the rendered value to that layer's file, apply it
+  /// live when the descriptor is `Live`, and return the freshly re-resolved
+  /// provenance. `LSession`/`LDefault` are not persisted layers — edits target
+  /// `LGlobal` or `LRepo`.
+  let edit
+    (paths: ConfigPaths)
+    (layer: ConfigLayer)
+    (raw: string)
+    (descriptor: SettingDescriptor)
+    : Result<Provenance, ConfigError> =
+    match descriptor.Parse raw with
+    | Error why -> Error why
+    | Ok value ->
+      let persisted =
+        match layer with
+        | LGlobal -> SettingsStore.setKey (SettingsStore.globalPath paths.GlobalDir) descriptor.Key (descriptor.Render value)
+        | LRepo ->
+          match paths.Repo with
+          | RepoRootAt root -> SettingsStore.setKey (SettingsStore.repoPath root) descriptor.Key (descriptor.Render value)
+          | NoRepoCheckout -> Error (LayerUnavailable "this session has no repo checkout, so there is no repo layer to write to")
+        | LDefault | LSession -> Error (LayerUnavailable "edits persist to the global or repo layer, not default/session")
+      match persisted with
+      | Error e -> Error e
+      | Ok () ->
+        match descriptor.Applicability with
+        | Live -> descriptor.Apply value
+        | RestartRequired | Guarded -> ()
+        resolve paths descriptor
+
+  /// Clear a persisted override at a layer so the value falls back to the
+  /// next-lower layer, then re-resolve.
+  let clear
+    (paths: ConfigPaths)
+    (layer: ConfigLayer)
+    (descriptor: SettingDescriptor)
+    : Result<Provenance, ConfigError> =
+    let cleared =
+      match layer with
+      | LGlobal -> SettingsStore.clearKey (SettingsStore.globalPath paths.GlobalDir) descriptor.Key
+      | LRepo ->
+        match paths.Repo with
+        | RepoRootAt root -> SettingsStore.clearKey (SettingsStore.repoPath root) descriptor.Key
+        | NoRepoCheckout -> Ok ()
+      | LDefault | LSession -> Error (LayerUnavailable "only the global or repo layer can be cleared")
+    match cleared with
+    | Error e -> Error e
+    | Ok () -> resolve paths descriptor
+
+  // ---------------------------------------------------------------------------
+  // Phase-A pilot descriptors
+  // ---------------------------------------------------------------------------
+
+  let private secondsToTimeoutValue (raw: string) : Result<SettingValue, ConfigError> =
+    match Double.TryParse raw with
+    | false, _ -> Error (Malformed (sprintf "expected a number of seconds, got '%s'" raw))
+    | true, s ->
+      // ValidTimeout.create predates the config core and still returns a string
+      // error; adapt it to the typed OutOfRange at this boundary.
+      match ValidTimeout.create (TimeSpan.FromSeconds s) with
+      | Ok t -> Ok (VTimeout t)
+      | Error why -> Error (OutOfRange why)
+
+  let private renderTimeout (v: SettingValue) : string =
+    match v with
+    | VTimeout t -> (ValidTimeout.value t).TotalSeconds |> sprintf "%g"
+    | _ -> ""
+
+  /// Default per-test timeout as a legal value (5s is within ValidTimeout's
+  /// 1s-10min range, so this never falls through).
+  let private defaultTimeout (seconds: float) : SettingValue =
+    match ValidTimeout.create (TimeSpan.FromSeconds seconds) with
+    | Ok t -> VTimeout t
+    | Error _ -> VTimeout (match ValidTimeout.create (TimeSpan.FromSeconds 5.0) with Ok t -> t | Error _ -> failwith "5s must be valid")
+
+  /// Live: the per-test timeout. Wires the previously-dead setTestTimeouts path
+  /// — a validated runtime setter that nothing could reach — to a real edit.
+  let perTestTimeout : SettingDescriptor = {
+    Key = "livetest.perTestTimeoutSeconds"
+    Name = "Per-test timeout"
+    Description = "Per-test timeout for live testing (seconds, 1-600)."
+    Category = LiveTesting
+    Scope = RepoOverridable
+    Applicability = Live
+    Default = defaultTimeout 5.0
+    Parse = secondsToTimeoutValue
+    Render = renderTimeout
+    Apply = fun v -> match v with VTimeout t -> Timeouts.setPerTestTimeout (ValidTimeout.value t) | _ -> ()
+  }
+
+  /// Live: the whole-run timeout for a live-test cycle.
+  let globalTestRunTimeout : SettingDescriptor = {
+    Key = "livetest.globalTestRunTimeoutSeconds"
+    Name = "Test-run timeout"
+    Description = "Total timeout for one live-test run (seconds, 1-600)."
+    Category = LiveTesting
+    Scope = RepoOverridable
+    Applicability = Live
+    Default = defaultTimeout 120.0
+    Parse = secondsToTimeoutValue
+    Render = renderTimeout
+    Apply = fun v -> match v with VTimeout t -> Timeouts.setGlobalTestRunTimeout (ValidTimeout.value t) | _ -> ()
+  }
+
+  /// RestartRequired: the MCP server port. Typed as a bounded Port, so an
+  /// out-of-range value cannot be persisted; applied on the next daemon start.
+  let mcpPort : SettingDescriptor = {
+    Key = "daemon.mcpPort"
+    Name = "MCP port"
+    Description = "MCP server port (1024-65535). Applies on the next daemon restart."
+    Category = DaemonSettings
+    Scope = Global
+    Applicability = RestartRequired
+    Default = VPort (match Port.create BozzettoConfig.DefaultMcpPort with Ok p -> p | Error _ -> failwith "default MCP port must be valid")
+    Parse = fun raw ->
+      match Int32.TryParse raw with
+      | false, _ -> Error (Malformed (sprintf "expected a port number, got '%s'" raw))
+      | true, n -> Port.create n |> Result.map VPort
+    Render = fun v -> match v with VPort p -> string (Port.value p) | _ -> ""
+    Apply = ignore
+  }
+
+  /// Guarded: the HTTP bind host. Typed as LoopbackHost, whose parse refuses
+  /// any non-loopback value — so a LAN/all-interfaces bind (remote code
+  /// execution, since Bozzetto evals F# with no auth) is structurally
+  /// unrepresentable, not merely rejected at runtime.
+  let bindHost : SettingDescriptor = {
+    Key = "daemon.bindHost"
+    Name = "Bind host"
+    Description = "Loopback bind address for the HTTP servers (localhost, 127.0.0.1, ::1). Non-loopback is refused."
+    Category = DaemonSettings
+    Scope = Global
+    Applicability = Guarded
+    Default = VBindHost BozzettoConfig.LoopbackHost.Localhost
+    // LoopbackHost.parse predates the config core and returns a string error;
+    // adapt it to the typed NotLoopback at this boundary.
+    Parse = fun raw ->
+      match BozzettoConfig.LoopbackHost.parse raw with
+      | Ok h -> Ok (VBindHost h)
+      | Error why -> Error (NotLoopback why)
+    Render = fun v -> match v with VBindHost h -> BozzettoConfig.LoopbackHost.urlHost h | _ -> ""
+    Apply = ignore
+  }
+
+  /// Live: the directory a new session defaults to. Typed as DirectoryPath, so
+  /// only an absolute path (or the unset empty) can be stored — a relative path
+  /// that would resolve against the daemon's cwd is structurally rejected. Read
+  /// when the New Session form renders and when a session is created; no live
+  /// subsystem to push to, so Apply is a no-op.
+  let sessionDefaultWorkingDir : SettingDescriptor = {
+    Key = "session.defaultWorkingDirectory"
+    Name = "Default working directory"
+    Description = "The directory a new session starts in (absolute path). Leave empty for no default. Pre-fills the New Session form."
+    Category = SessionSettings
+    Scope = RepoOverridable
+    Applicability = Live
+    Default = (match DirectoryPath.create "" with Ok d -> VDir d | Error _ -> failwith "the empty directory must be valid")
+    Parse = fun raw -> DirectoryPath.create raw |> Result.map VDir
+    Render = fun v -> match v with VDir d -> DirectoryPath.value d | _ -> ""
+    Apply = ignore
+  }
+
+  /// The Phase-A pilot catalog.
+  let pilots : SettingDescriptor list =
+    [ sessionDefaultWorkingDir; perTestTimeout; globalTestRunTimeout; mcpPort; bindHost ]

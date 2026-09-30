@@ -18,15 +18,15 @@ REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 if [ $# -gt 0 ]; then
   sha=$(git -C "$REPO" rev-parse "$1^{commit}")
 else
-  if [ -n "$(git -C "$REPO" status --porcelain -- Directory.Build.props sagefs-vscode/package.json)" ]; then
-    echo "ship: Directory.Build.props or sagefs-vscode/package.json has uncommitted changes." >&2
+  if [ -n "$(git -C "$REPO" status --porcelain -- Directory.Build.props bozzetto-vscode/package.json)" ]; then
+    echo "ship: Directory.Build.props or bozzetto-vscode/package.json has uncommitted changes." >&2
     echo "      commit or revert them first, so the bump lands on a clean version." >&2
     exit 1
   fi
   version=$("$REPO/scripts/bump-version")
   git -C "$REPO" commit --quiet --no-verify \
     -m "chore: release v$version" \
-    -- Directory.Build.props sagefs-vscode/package.json
+    -- Directory.Build.props bozzetto-vscode/package.json
   echo "ship: bumped to $version"
   sha=$(git -C "$REPO" rev-parse HEAD)
 fi

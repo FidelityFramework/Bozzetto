@@ -1,7 +1,7 @@
 /-!
 # Formal Specification: FsiRewrite
 
-Models `rewriteInlineUseStatements` from `SageFs.Core/FsiRewrite.fs`.
+Models `rewriteInlineUseStatements` from `Bozzetto.Core/FsiRewrite.fs`.
 
 This function rewrites **indented** `use x = expr` F# bindings to `let x = expr` so
 they can run in F# Interactive (FSI), where `use` is not valid in expression context.
@@ -27,8 +27,8 @@ starts with `"use "` are modified.
 - The `mutable rewritten` flag is abstracted.
 - Error handling, encoding, and I/O are not modelled.
 
-> 🔬 Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.
-> Source: `SageFs.Core/FsiRewrite.fs`
+> 🔬 Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.
+> Source: `Bozzetto.Core/FsiRewrite.fs`
 > No Mathlib. Pure Lean 4 stdlib only (CI firewall blocks lakecache).
 -/
 

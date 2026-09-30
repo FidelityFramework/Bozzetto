@@ -1,0 +1,316 @@
+module Bozzetto.Tests.ArgsCleanupTests
+
+open System.Collections.Generic
+open System.IO
+open Expecto
+open Expecto.Flip
+open Bozzetto
+open Bozzetto.Args
+open Bozzetto.WorkflowTypes
+
+// === Test Group 1: DaemonFlags parsing (pure, no IO) ===
+
+let daemonFlagTests =
+  testList "DaemonFlags parsing" [
+
+    testCase "empty args gives defaults" <| fun () ->
+      let flags = DaemonFlags.parse []
+      flags |> Expect.equal "empty args should equal defaults" DaemonFlags.defaults
+
+    testCase "parses --no-resume" <| fun () ->
+      let flags = DaemonFlags.parse ["--no-resume"]
+      flags.NoResume |> Expect.isTrue "should set no-resume"
+
+    testCase "parses --prune" <| fun () ->
+      let flags = DaemonFlags.parse ["--prune"]
+      flags.Prune |> Expect.isTrue "should set prune"
+
+    testCase "parses --no-watch" <| fun () ->
+      let flags = DaemonFlags.parse ["--no-watch"]
+      flags.NoWatch |> Expect.isTrue "should set no-watch"
+
+    testCase "ignores legacy --proj and --sln startup flags" <| fun () ->
+      let flags = DaemonFlags.parse ["--proj"; "foo.fsproj"; "--sln"; "bar.slnx"]
+      flags |> Expect.equal "legacy startup flags should be ignored" DaemonFlags.defaults
+
+    testCase "ignores unknown flags" <| fun () ->
+      let flags = DaemonFlags.parse ["--garbage"]
+      flags |> Expect.equal "unknown flags should be ignored" DaemonFlags.defaults
+
+    testCase "parses multiple flags" <| fun () ->
+      let flags = DaemonFlags.parse ["--no-resume"; "--no-watch"]
+      flags.NoResume |> Expect.isTrue "should set no-resume"
+      flags.NoWatch |> Expect.isTrue "should set no-watch"
+      flags.Prune |> Expect.isFalse "prune not set"
+  ]
+
+// === Test Group 2: WorkerConfig from env (pure via dependency rejection) ===
+
+/// Fake env reader — a dictionary lookup.
+let fakeEnv (vars: (string * string) list) =
+  let dict = Dictionary<string, string>()
+  for (k, v) in vars do dict.[k] <- v
+  fun (key: string) ->
+    match dict.TryGetValue(key) with
+    | true, v -> v
+    | false, _ -> null
+
+let workerConfigTests =
+  testList "WorkerConfig from environment" [
+
+    testCase "reads projects from BOZZETTO_SESSION_PROJECTS" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.envVar, "A.fsproj;B.fsproj" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.Projects
+      |> Expect.equal "should have two projects" ["A.fsproj"; "B.fsproj"]
+
+    testCase "empty env var gives an explicit bare target with no project paths" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.envVar, ""; WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.Targets |> Expect.equal "bare target" [ SessionProjectTarget.Bare ]
+      config.Projects |> Expect.isEmpty "bare has no project paths"
+      config.IsBare |> Expect.isTrue "bare target is retained"
+
+    testCase "missing project env var with explicit bare gives an empty project list" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.Targets |> Expect.equal "bare target" [ SessionProjectTarget.Bare ]
+      config.Projects |> Expect.isEmpty "bare has no project paths"
+
+    testCase "BOZZETTO_BARE_SESSION=1 sets IsBare" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.IsBare |> Expect.isTrue "should be bare"
+
+    testCase "BOZZETTO_BARE_SESSION=true sets IsBare" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.bareEnvVar, "true" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.IsBare |> Expect.isTrue "should be bare"
+
+    testCase "BOZZETTO_NO_WATCH=1 sets NoWatch" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.noWatchEnvVar, "1"; WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.NoWatch |> Expect.isTrue "should disable watch"
+
+    testCase "missing auto-open env var defaults to enabled" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.AutoOpenNamespaces |> Expect.isTrue "should default to enabled"
+
+    testCase "BOZZETTO_AUTO_OPEN_NAMESPACES=0 disables auto-open" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.bareEnvVar, "1"; WorkerConfig.autoOpenNamespacesEnvVar, "0" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.AutoOpenNamespaces |> Expect.isFalse "should disable auto-open"
+
+    testCase "session id and port pass through" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "abc123" 5050
+      config.SessionId |> Expect.equal "should pass session id" "abc123"
+      config.HttpPort |> Expect.equal "should pass port" 5050
+
+    testCase "BOZZETTO_DAEMON_PID parses to Some" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.daemonPidEnvVar, "4242"; WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.DaemonPid |> Expect.equal "should parse daemon pid" (Some 4242)
+
+    testCase "missing BOZZETTO_DAEMON_PID defaults to None" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.DaemonPid |> Expect.equal "should default to None" None
+
+    testCase "invalid BOZZETTO_DAEMON_PID defaults to None" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.daemonPidEnvVar, "not-a-pid"; WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.DaemonPid |> Expect.equal "should default to None on garbage" None
+  ]
+
+// === Test Group 3: ProjectLoadConfig from WorkerConfig (pure) ===
+
+let projectLoadConfigTests =
+  testList "ProjectLoadConfig from WorkerConfig" [
+
+    testCase "separates .sln/.slnx from .fsproj" <| fun () ->
+      let wc = {
+        SessionId = "x"; HttpPort = 0; NoWatch = false; AutoOpenNamespaces = true
+        WorkingDir = "."
+        Targets = [
+          Bozzetto.SessionProjectTarget.Project "MyApp.fsproj"
+          Bozzetto.SessionProjectTarget.Solution "Solution.sln"
+          Bozzetto.SessionProjectTarget.Solution "Other.slnx"
+          Bozzetto.SessionProjectTarget.Project "Lib.fsproj"
+        ]
+        Workflow = SessionWorkflow.Interactive
+        DaemonPid = None
+        DaemonStartTicks = None
+      }
+      let plc = ProjectLoadConfig.fromWorkerConfig wc
+      plc.Solutions
+      |> Expect.equal "solutions" ["Solution.sln"; "Other.slnx"]
+      plc.Projects
+      |> Expect.equal "projects" ["MyApp.fsproj"; "Lib.fsproj"]
+
+    testCase "bare targets give an empty project and solution config" <| fun () ->
+      let wc = {
+        SessionId = "x"; HttpPort = 0; NoWatch = false; AutoOpenNamespaces = true
+        WorkingDir = "/tmp"
+        Targets = [ Bozzetto.SessionProjectTarget.Bare ]
+        Workflow = SessionWorkflow.Interactive
+        DaemonPid = None
+        DaemonStartTicks = None
+      }
+      let plc = ProjectLoadConfig.fromWorkerConfig wc
+      plc.Targets |> Expect.equal "bare target is retained" [ Bozzetto.SessionProjectTarget.Bare ]
+      plc.Projects |> Expect.isEmpty "no projects"
+      plc.Solutions |> Expect.isEmpty "no solutions"
+      plc.IsBare |> Expect.isTrue "bare is derived from targets"
+      plc.WorkingDir |> Expect.equal "working dir" "/tmp"
+  ]
+
+// === Test Group 4: Worker spawn config (pure) ===
+
+let workerSpawnConfigTests =
+  testList "worker spawn config" [
+
+    testCase "single project sets env var" <| fun () ->
+      let args, envVars = buildWorkerSpawnConfig "sess1" [ Bozzetto.SessionProjectTarget.Project "MyApp.fsproj" ] false true SessionWorkflow.Interactive
+      args |> Expect.stringContains "should have session id" "sess1"
+      (args.Contains "--proj")
+      |> Expect.isFalse "no --proj in args"
+      (args.Contains "--session-id")
+      |> Expect.isFalse "host takes positional args, not --session-id"
+      args |> Expect.stringEnds "host takes positional httpPort (0 = ephemeral)" "0"
+      envVars
+      |> List.tryFind (fun (k, _) -> k = WorkerConfig.envVar)
+      |> Option.map snd
+      |> Expect.equal "projects env" (Some "MyApp.fsproj")
+
+    testCase "WHY — Args.resolveHostLaunch — Windows runs the native Bozzetto.Host.exe because users identify workers by that process name" <| fun () ->
+      let daemonDir = Path.Combine(Path.GetTempPath(), "bozzetto-daemon")
+      let exe = Path.Combine(daemonDir, "host", "Bozzetto.Host.exe")
+      let dll = Path.Combine(daemonDir, "host", "Bozzetto.Host.dll")
+      resolveHostLaunch daemonDir true "dotnet.exe" (fun p -> p = exe || p = dll)
+      |> Expect.equal "native exe" (Ok (HostLaunch.NativeExecutable exe))
+
+    testCase "WHY — Args.resolveHostLaunch — Unix runs the host dll through the daemon's dotnet because the extensionless apphost cannot find a per-user runtime without DOTNET_ROOT" <| fun () ->
+      let daemonDir = Path.Combine(Path.GetTempPath(), "bozzetto-daemon")
+      let dll = Path.Combine(daemonDir, "host", "Bozzetto.Host.dll")
+      let apphost = Path.Combine(daemonDir, "host", "Bozzetto.Host")
+      resolveHostLaunch daemonDir false "/opt/dotnet/dotnet" (fun p -> p = dll || p = apphost)
+      |> Expect.equal "dotnet muxer + host dll" (Ok (HostLaunch.ViaDotnetMuxer ("/opt/dotnet/dotnet", dll)))
+
+    testList "WHY — Args.resolveHostLaunch — every OS and install shape resolves to an existing file or an actionable error because spawning a missing Bozzetto.Host.exe faulted every session on Linux" [
+      for isWindows in [ true; false ] do
+        for hasExe in [ true; false ] do
+          for hasDll in [ true; false ] do
+            testCase (sprintf "windows=%b exe=%b dll=%b" isWindows hasExe hasDll) <| fun () ->
+              let exists (p: string) =
+                (hasExe && p.EndsWith("Bozzetto.Host.exe")) || (hasDll && p.EndsWith("Bozzetto.Host.dll"))
+              match resolveHostLaunch (Path.GetTempPath()) isWindows "dotnet" exists with
+              | Ok (HostLaunch.NativeExecutable exe) -> exists exe |> Expect.isTrue "launches an existing exe"
+              | Ok (HostLaunch.ViaDotnetMuxer (_, dll)) -> exists dll |> Expect.isTrue "launches an existing dll"
+              | Error msg ->
+                (hasDll || (isWindows && hasExe)) |> Expect.isFalse "errors only when nothing launchable exists"
+                msg |> Expect.stringContains "tells the user what to do" "→"
+    ]
+
+    testCase "WHY — Args.muxerFromRuntimeDir — finds dotnet at the runtime root because the host must run on the daemon's own runtime" <| fun () ->
+      let root = Path.Combine(Path.GetTempPath(), "dn")
+      let runtimeDir = Path.Combine(root, "shared", "Microsoft.NETCore.App", "10.0.12") + string Path.DirectorySeparatorChar
+      muxerFromRuntimeDir runtimeDir false |> Expect.equal "unix muxer" (Path.Combine(root, "dotnet"))
+      muxerFromRuntimeDir runtimeDir true |> Expect.equal "windows muxer" (Path.Combine(root, "dotnet.exe"))
+
+    testCase "sets BOZZETTO_DAEMON_PID to the spawning process id" <| fun () ->
+      let _, envVars = buildWorkerSpawnConfig "s" [ Bozzetto.SessionProjectTarget.Bare ] false true SessionWorkflow.Interactive
+      envVars
+      |> List.tryFind (fun (k, _) -> k = WorkerConfig.daemonPidEnvVar)
+      |> Option.map snd
+      |> Expect.equal "daemon pid env" (Some (string System.Environment.ProcessId))
+
+    testCase "multiple projects semicolon-separated" <| fun () ->
+      let _, envVars = buildWorkerSpawnConfig "s" [ Bozzetto.SessionProjectTarget.Project "A.fsproj"; Bozzetto.SessionProjectTarget.Solution "B.sln" ] false true SessionWorkflow.Interactive
+      envVars
+      |> List.tryFind (fun (k, _) -> k = WorkerConfig.envVar)
+      |> Option.map snd
+      |> Expect.equal "projects" (Some "A.fsproj;B.sln")
+
+    testCase "bare session sets BOZZETTO_BARE_SESSION" <| fun () ->
+      let _, envVars = buildWorkerSpawnConfig "s" [ Bozzetto.SessionProjectTarget.Bare ] false true SessionWorkflow.Interactive
+      envVars
+      |> List.exists (fun (k, v) -> k = WorkerConfig.bareEnvVar && v = "1")
+      |> Expect.isTrue "bare env var set"
+
+    testCase "no-watch sets BOZZETTO_NO_WATCH" <| fun () ->
+      let _, envVars = buildWorkerSpawnConfig "s" [ Bozzetto.SessionProjectTarget.Bare ] true true SessionWorkflow.Interactive
+      envVars
+      |> List.exists (fun (k, v) -> k = WorkerConfig.noWatchEnvVar && v = "1")
+      |> Expect.isTrue "no-watch env var set"
+
+    testCase "auto-open disabled sets BOZZETTO_AUTO_OPEN_NAMESPACES" <| fun () ->
+      let _, envVars = buildWorkerSpawnConfig "s" [ Bozzetto.SessionProjectTarget.Bare ] false false SessionWorkflow.Interactive
+      envVars
+      |> List.exists (fun (k, v) -> k = WorkerConfig.autoOpenNamespacesEnvVar && v = "0")
+      |> Expect.isTrue "auto-open env var set"
+
+    testCase "no bare/no-watch omits those env vars" <| fun () ->
+      let _, envVars = buildWorkerSpawnConfig "s" [ Bozzetto.SessionProjectTarget.Project "A.fsproj" ] false true SessionWorkflow.Interactive
+      envVars
+      |> List.exists (fun (k, _) -> k = WorkerConfig.bareEnvVar)
+      |> Expect.isFalse "no bare env var"
+      envVars
+      |> List.exists (fun (k, _) -> k = WorkerConfig.noWatchEnvVar)
+      |> Expect.isFalse "no no-watch env var"
+      envVars
+      |> List.exists (fun (k, _) -> k = WorkerConfig.autoOpenNamespacesEnvVar)
+      |> Expect.isFalse "no auto-open env var"
+  ]
+
+let hotReloadWorkerConfigTests =
+  testList "WorkerConfig hot-reload env var" [
+
+    testCase "BOZZETTO_HOT_RELOAD=1 enables hot-reload" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.hotReloadEnvVar, "1"; WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.HotReloadEnabled |> Expect.isTrue "should enable hot-reload"
+
+    testCase "BOZZETTO_HOT_RELOAD=true enables hot-reload" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.hotReloadEnvVar, "true"; WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.HotReloadEnabled |> Expect.isTrue "should enable hot-reload"
+
+    testCase "missing BOZZETTO_HOT_RELOAD defaults to disabled" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.HotReloadEnabled |> Expect.isFalse "should default to disabled"
+
+    testCase "BOZZETTO_HOT_RELOAD=0 disables hot-reload" <| fun () ->
+      let getEnv = fakeEnv [ WorkerConfig.hotReloadEnvVar, "0"; WorkerConfig.bareEnvVar, "1" ]
+      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
+      config.HotReloadEnabled |> Expect.isFalse "should be disabled"
+  ]
+
+let hotReloadSpawnConfigTests =
+  testList "worker spawn config hot-reload" [
+
+    testCase "HotReload workflow sets BOZZETTO_HOT_RELOAD env var" <| fun () ->
+      let _, envVars = buildWorkerSpawnConfig "s" [ Bozzetto.SessionProjectTarget.Bare ] false true (SessionWorkflow.HotReload BrowserRefreshConfig.defaults)
+      envVars
+      |> List.exists (fun (k, v) -> k = WorkerConfig.hotReloadEnvVar && v = "1")
+      |> Expect.isTrue "hot-reload env var set"
+
+    testCase "Interactive workflow omits BOZZETTO_HOT_RELOAD env var" <| fun () ->
+      let _, envVars = buildWorkerSpawnConfig "s" [ Bozzetto.SessionProjectTarget.Bare ] false true SessionWorkflow.Interactive
+      envVars
+      |> List.exists (fun (k, _) -> k = WorkerConfig.hotReloadEnvVar)
+      |> Expect.isFalse "no hot-reload env var"
+  ]
+
+[<Tests>]
+let allArgsCleanupTests =
+  testList "Args cleanup" [
+    daemonFlagTests
+    workerConfigTests
+    projectLoadConfigTests
+    workerSpawnConfigTests
+    hotReloadWorkerConfigTests
+    hotReloadSpawnConfigTests
+  ]

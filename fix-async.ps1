@@ -1,5 +1,5 @@
 # Script to find all files with Async.RunSynchronously and list them
-$testDir = "C:\Code\Repos\SageFs\SageFs.Tests"
+$testDir = "C:\Code\Repos\Bozzetto\Bozzetto.Tests"
 $files = Get-ChildItem -Path $testDir -Filter "*.fs" -Recurse
 foreach ($file in $files) {
     $content = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue

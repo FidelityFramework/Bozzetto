@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Arrays — SageFs Edition
+//  🧘  About Arrays — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutArrays.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

@@ -1,6 +1,6 @@
 /-
   RetryPolicy.lean
-  Formal specification for SageFs.Core.RetryPolicy.
+  Formal specification for Bozzetto.Core.RetryPolicy.
 
   The F# source implements linear backoff with jitter using System.Random.Shared.Next.
   This model abstracts away the jitter, capturing the deterministic core:

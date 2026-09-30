@@ -1,19 +1,19 @@
-# SageFs Dashboard — Redesign Directions
+# Bozzetto Dashboard — Redesign Directions
 
-Four full redesigns of the SageFs web dashboard. Each is a complete,
+Four full redesigns of the Bozzetto web dashboard. Each is a complete,
 opinionated commitment to a different aesthetic and a different
 relationship between the user and the work. Pick the one whose
 commitment matches your own, and we'll iterate from there.
 
 The screenshots above this document show each direction rendered at
 1600×1000. The HTML files are in this directory; the live server is the
-SageFs daemon itself.
+Bozzetto daemon itself.
 
 ## A note on light vs. dark (Aug 2026)
 
 The first pass rendered all four directions in light palettes (paper,
 bone, warm paper). After review the three light directions were
-rejected: a working REPL lives in the dark, and the rest of SageFs is
+rejected: a working REPL lives in the dark, and the rest of Bozzetto is
 dark, so the dashboard has to read as a dark surface even when the
 aesthetic commitments are editorial or paper-like.
 
@@ -41,7 +41,7 @@ variants. The HTML files in this directory are the dark variants.
 Two things matter for the redesign:
 
 1. The sidebar resize is **slow because of three compounding bugs** in
-   `SageFs/Dashboard.fs:175-184`:
+   `Bozzetto/Dashboard.fs:175-184`:
    - `document.documentElement.style.setProperty('--sidebar-width', w + 'px')`
      on **every** `mousemove` event (no rAF batching).
    - The CSS rule `.sidebar { transition: width 0.2s, padding 0.2s; }` in
@@ -112,7 +112,7 @@ sidebar. The page reads as a midnight notebook, not a paper one.
 
 **Risk**: the serif-on-dark aesthetic for a developer tool. On paper it
 reads as a newspaper; on dark it reads as a midnight notebook. The
-bet is that the people who choose SageFs over a Jupyter notebook
+bet is that the people who choose Bozzetto over a Jupyter notebook
 already value precision over decoration — and precision is what
 editorial typography *is*, even at night.
 
@@ -216,7 +216,7 @@ All four are dark. The question is what kind of dark.
 
 Three things, in order of how much they shape the design:
 
-1. **Which direction feels right for the work you do most in SageFs?**
+1. **Which direction feels right for the work you do most in Bozzetto?**
    Writing a quick function and seeing the result is *Terminal Noir* or
    *Dark Blueprint*. Iterating on a domain over hours is *Dark
    Editorial* or *Dark Studio*.

@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About the Stock Example — SageFs Edition
+//  🧘  About the Stock Example — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutTheStockExample.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

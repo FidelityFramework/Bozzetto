@@ -7,8 +7,8 @@ This file contains:
    `clear`, and `toList`
 3. Stated and proved propositions covering the invariants from the informal spec
 
-> 🔬 Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.
-> Source: `SageFs.Core/RingBuffer.fs`
+> 🔬 Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.
+> Source: `Bozzetto.Core/RingBuffer.fs`
 >
 > **Model abstractions**: The F# `push` mutates the `Items` array in place
 > before returning a new record. This Lean model uses `Array.set` to produce

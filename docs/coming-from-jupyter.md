@@ -2,7 +2,7 @@
 
 I like what notebooks are for: evaluate an expression, see the result right there, one step at a time. I don't like what they cost you to get it. Kernel crashes, "restart and run all," `.ipynb` files that show up as JSON blobs in a diff, no type checking, and no clear path from exploration to code you'd actually ship.
 
-SageFs keeps the good part and drops the rest. Your code lives in a plain `.fsx` file, so `git diff` reads like code instead of base64. Execution order is whatever you evaluated, and you can see it happen. And when you're done exploring, the code you wrote is the code that ships. There's no notebook-to-production translation step to get wrong.
+Bozzetto keeps the good part and drops the rest. Your code lives in a plain `.fsx` file, so `git diff` reads like code instead of base64. Execution order is whatever you evaluated, and you can see it happen. And when you're done exploring, the code you wrote is the code that ships. There's no notebook-to-production translation step to get wrong.
 
 **What you'll notice right away:**
 - Alt+Enter works on any expression, not just at the end of a cell

@@ -1,6 +1,6 @@
 # SSE failure_narratives Integration Guide
 
-## 1. DAEMON SSE FORMAT (C# SageFs.Core/SseWriter.fs)
+## 1. DAEMON SSE FORMAT (C# Bozzetto.Core/SseWriter.fs)
 
 ### Payload Shape (lines 73-87)
 
@@ -53,7 +53,7 @@ All use the same pattern: serialize domain object → injectSessionId → format
 
 ---
 
-## 2. VS CODE EXTENSION (sagefs-vscode/src/)
+## 2. VS CODE EXTENSION (bozzetto-vscode/src/)
 
 ### LiveTestingListener.fs (lines 1-257)
 
@@ -235,14 +235,14 @@ let applyResults (results: VscTestResult array) =
 
 ---
 
-## 3. VISUAL STUDIO EXTENSION (sagefs-vs/)
+## 3. VISUAL STUDIO EXTENSION (bozzetto-vs/)
 
 ### LiveTestingParser.fs (lines 1-277)
 
 **Parsing Helpers**
 
 \\\sharp
-namespace SageFs.VisualStudio.Core
+namespace Bozzetto.VisualStudio.Core
 
 [<RequireQualifiedAccess>]
 module LiveTestingParser =
@@ -462,20 +462,20 @@ internal sealed class FailureNarrativeAdornmentManager : IDisposable
 ### LiveTestingWindow.cs (Tool Window Structure, lines 1-55)
 
 \\\csharp
-namespace SageFs.VisualStudio.ToolWindows;
+namespace Bozzetto.VisualStudio.ToolWindows;
 
 [VisualStudioContribution]
 internal class LiveTestingWindow : ToolWindow
 {
-  private readonly Core.SageFsClient client;
+  private readonly Core.BozzettoClient client;
   private readonly Core.LiveTestingSubscriber subscriber;
   private LiveTestingData? dataContext;
 
-  public LiveTestingWindow(Core.SageFsClient client, Core.LiveTestingSubscriber subscriber)
+  public LiveTestingWindow(Core.BozzettoClient client, Core.LiveTestingSubscriber subscriber)
   {
     this.client = client;
     this.subscriber = subscriber;
-    this.Title = \"SageFs Live Testing\";
+    this.Title = \"Bozzetto Live Testing\";
   }
 
   public override ToolWindowConfiguration ToolWindowConfiguration => new()
@@ -540,7 +540,7 @@ function M.classify_event(event)
     ProvidersDetected = \"providers_detected\",
     TestCycleTimingRecorded = \"test_cycle_timing_recorded\",
     RunTestsRequested = \"run_tests_requested\",
-    -- Testing cycle (snake_case — typed SSE events from SageFs)
+    -- Testing cycle (snake_case — typed SSE events from Bozzetto)
     test_results_batch = \"test_results_batch\",
     test_summary = \"test_summary\",
     test_run_started = \"test_run_started\",
@@ -559,7 +559,7 @@ function M.classify_event(event)
     -- File watching
     HotReloadTriggered = \"hot_reload_triggered\",
     FileChanged = \"file_changed\",
-    -- Session events (typed envelope from SageFs daemon)
+    -- Session events (typed envelope from Bozzetto daemon)
     session = \"session_event\",
     -- CQRS: server-pushed bindings and test trace state
     bindings_snapshot = \"bindings_snapshot\",
@@ -886,7 +886,7 @@ end
 
 ## INTEGRATION CHECKLIST
 
-### Daemon (SageFs.Core/SseWriter.fs)
+### Daemon (Bozzetto.Core/SseWriter.fs)
 - [x] ✓ formatFailureNarrativesEvent exists (lines 73-87)
 - [x] ✓ Payload shape: {TestId, LastPassedAt, TimeSinceLastPass, CausalChanges[], PropertyViolation, Summary}
 - [x] ✓ injectSessionId applied for multi-session support

@@ -1,8 +1,8 @@
 /-!
   # Formal Specification: EvalPipeline
 
-  🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
-  Source: `SageFs.Core/EvalPipeline.fs`
+  🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
+  Source: `Bozzetto.Core/EvalPipeline.fs`
 
   This file formalises the `EvalPipeline` computation expression (CE) builder.
 
@@ -20,7 +20,7 @@
   ## Abstractions / omissions
   - `ElapsedMs` is omitted — timing is a side-effect of `Stopwatch`; we model
     only stage names and outcomes.
-  - `SageFsError` is abstracted as `Unit` (we don't model error payloads).
+  - `BozzettoError` is abstracted as `Unit` (we don't model error payloads).
   - `stage` and `stageOk` are not modelled (they wrap IO); we work directly
     with the CE combinators `epBind` and `epReturn`.
 

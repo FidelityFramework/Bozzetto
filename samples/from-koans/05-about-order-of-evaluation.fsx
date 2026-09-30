@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About the Order of Evaluation — SageFs Edition
+//  🧘  About the Order of Evaluation — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutTheOrderOfEvaluation.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

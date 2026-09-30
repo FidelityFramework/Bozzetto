@@ -1,13 +1,13 @@
-# SageFs Persistence Layer — Quick Reference for SQLite Compliance Tests
+# Bozzetto Persistence Layer — Quick Reference for SQLite Compliance Tests
 
 ## 📋 Overview Table
 
 | Aspect | Detail |
 |--------|--------|
-| **Current Formats** | 3 independent binary formats (.sagefm, .sagefs, .sagetc) |
+| **Current Formats** | 3 independent binary formats (.bozzettofm, .bozzetto, .bozzettotc) |
 | **No Abstraction** | Each format has separate read/write — no IPersistence interface |
 | **Serialization** | Length-prefixed UTF-8, little-endian, CRC-32 per section |
-| **File Locations** | ~/.sagefs/ (daemon.sagefm, sessions/*.sagefs, cache/*.sagetc) |
+| **File Locations** | ~/.bozzetto/ (daemon.bozzettofm, sessions/*.bozzetto, cache/*.bozzettotc) |
 | **Test Coverage** | ManifestPersistenceTests.fs, BinaryFormatTests.fs (property-based) |
 | **Migration Goal** | Dual-backend support (binary + SQLite), with compliance tests |
 
@@ -16,17 +16,17 @@
 ## 🔧 Key Files to Study
 
 \\\
-SageFs.Core/
+Bozzetto.Core/
 ├── BinaryFormat.fs                          ← CRC-32, length-prefixed strings
 ├── Features/
-│   ├── ManifestPersistence.fs (311 lines)   ← .sagefm: daemon sessions
-│   ├── SessionPersistence.fs (509 lines)    ← .sagefs: eval history + refs
-│   ├── TestCachePersistence.fs (418 lines)  ← .sagetc: test results + coverage
+│   ├── ManifestPersistence.fs (311 lines)   ← .bozzettofm: daemon sessions
+│   ├── SessionPersistence.fs (509 lines)    ← .boz: eval history + refs
+│   ├── TestCachePersistence.fs (418 lines)  ← .bozzettotc: test results + coverage
 │   ├── DaemonPersistence.fs (79 lines)      ← High-level API (no interface!)
 │   ├── Replay.fs (250+ lines)               ← Domain types for persistence
 │   └── LiveTestingTypes.fs (1200+ lines)    ← Test state + coverage bitmaps
 
-SageFs.Tests/
+Bozzetto.Tests/
 ├── ManifestPersistenceTests.fs              ← Roundtrip, CRC, fields, version checks
 └── BinaryFormatTests.fs                     ← FsCheck property tests (100 iterations)
 
@@ -38,10 +38,10 @@ docs/
 
 ## 📊 Three Formats at a Glance
 
-### .sagefm (Daemon Manifest) — 64-byte header + 1 section
+### .bozzettofm (Daemon Manifest) — 64-byte header + 1 section
 
 **What:** Session list (which sessions exist, which is active)
-**Where:** ~/.sagefs/daemon.sagefm (singleton)
+**Where:** ~/.bozzetto/daemon.bozzettofm (singleton)
 **Domain Type:** \DaemonReplayState\ = \Map<string, DaemonSessionRecord> + string option\
 
 | Field | Type | Size | Purpose |
@@ -59,10 +59,10 @@ docs/
 
 ---
 
-### .sagefs (Session Persistence) — 64-byte header + 3-5 sections
+### .bozzetto (Session Persistence) — 64-byte header + 3-5 sections
 
 **What:** Eval history, code, outputs, references, metadata
-**Where:** ~/.sagefs/sessions/{sessionId}.sagefs
+**Where:** ~/.bozzetto/sessions/{sessionId}.bozzetto
 **Domain Type:** \SessionReplayState\ → \SfsData\ (binary form)
 
 | Section | Tag | Required | Content |
@@ -82,10 +82,10 @@ docs/
 
 ---
 
-### .sagetc (Test Cache) — 64-byte header + 3 sections
+### .bozzettotc (Test Cache) — 64-byte header + 3 sections
 
 **What:** Test results + coverage bitmaps
-**Where:** ~/.sagefs/cache/{projectHash}.sagetc (one per project)
+**Where:** ~/.bozzetto/cache/{projectHash}.bozzettotc (one per project)
 **Domain Type:** \LiveTestState\ → \StcData\ (binary form)
 
 | Section | Tag | Content |
@@ -295,7 +295,7 @@ let sqliteComplianceTests = testList "SQLite ↔ Binary equivalence" [
     
   // 6. Migration tool
   testCase "migration: binary files → SQLite" <| fun _ ->
-    // Load .sagefs from disk, convert to SQLite, verify equivalence
+    // Load .bozzetto from disk, convert to SQLite, verify equivalence
 ]
 \\\
 
@@ -317,7 +317,7 @@ let sqliteComplianceTests = testList "SQLite ↔ Binary equivalence" [
 ## 📖 References
 
 - **Binary Format Spec:** docs/binary-format-spec.md (41 KB, comprehensive)
-- **Tests:** SageFs.Tests/{ManifestPersistenceTests.fs, BinaryFormatTests.fs}
-- **Domain Types:** SageFs.Core/Features/{Replay.fs, LiveTestingTypes.fs}
-- **Current API:** SageFs.Core/Features/DaemonPersistence.fs (79 lines)
+- **Tests:** Bozzetto.Tests/{ManifestPersistenceTests.fs, BinaryFormatTests.fs}
+- **Domain Types:** Bozzetto.Core/Features/{Replay.fs, LiveTestingTypes.fs}
+- **Current API:** Bozzetto.Core/Features/DaemonPersistence.fs (79 lines)
 

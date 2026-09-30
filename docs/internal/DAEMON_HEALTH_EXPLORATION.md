@@ -1,7 +1,7 @@
-# SAGEFS DAEMON HEALTH PANEL - EXPLORATION SUMMARY
+# BOZZETTO DAEMON HEALTH PANEL - EXPLORATION SUMMARY
 
 ## 1. DaemonHealth.fs - Complete Content
-File: C:\Code\Repos\SageFs\SageFs.Core\Features\DaemonHealth.fs
+File: C:\Code\Repos\Bozzetto\Bozzetto.Core\Features\DaemonHealth.fs
 
 ### Types:
 - SessionHealthStatus (Lines 6-12): Ready, Evaluating, WarmingUp, Faulted, Stopped
@@ -20,7 +20,7 @@ File: C:\Code\Repos\SageFs\SageFs.Core\Features\DaemonHealth.fs
 - formatSummary (96-126): HealthSnapshot → string (multi-line summary)
 
 ## 2. SseWriter.fs - Key Functions
-File: C:\Code\Repos\SageFs\SageFs.Core\SseWriter.fs
+File: C:\Code\Repos\Bozzetto\Bozzetto.Core\SseWriter.fs
 
 CORE FUNCTIONS:
 - formatSseEvent (Lines 15-21): (eventType: string) (data: string) → string
@@ -36,7 +36,7 @@ Creates anon record → JsonSerializer → injectSessionId → formatSseEvent
 Returns: "event: eval_timeline\ndata: {..}\n\n"
 
 ## 3. DashboardFragments.fs - renderEvalStats Pattern
-File: C:\Code\Repos\SageFs\SageFs\DashboardFragments.fs (Lines 131-145)
+File: C:\Code\Repos\Bozzetto\Bozzetto\DashboardFragments.fs (Lines 131-145)
 
 STRUCTURE:
 - Input: EvalStatsView (view model)
@@ -51,7 +51,7 @@ KEY PATTERN:
 4. Text.raw with sprintf for display
 
 ## 4. Dashboard.fs - GetEvalTimeline Integration
-File: C:\Code\Repos\SageFs\SageFs\Dashboard.fs (Lines 225-373)
+File: C:\Code\Repos\Bozzetto\Bozzetto\Dashboard.fs (Lines 225-373)
 
 FLOW IN pushState():
 Line 240-243: Parallelize tasks with Task.WhenAll
@@ -70,7 +70,7 @@ PATTERN FOR ADD GetDaemonHealth:
 4. In renderMainContent, call renderDaemonHealth snap.DaemonHealth
 
 ## 5. DashboardTypes.fs - Types and Records
-File: C:\Code\Repos\SageFs\SageFs\DashboardTypes.fs
+File: C:\Code\Repos\Bozzetto\Bozzetto\DashboardTypes.fs
 
 DashboardQueries (Lines 380-402):
 Contains all query functions - ADD:

@@ -1,4 +1,4 @@
-# F# Koans — SageFs Edition
+# F# Koans — Bozzetto Edition
 
 22 progressive exercises teaching F# from scratch. Adapted from
 [FSharpKoans](https://github.com/ChrisMarinos/FSharpKoans) by Chris Marinos (MIT).
@@ -6,7 +6,7 @@
 ## Quick Start
 
 ```bash
-cd SageFs.Samples.Koans
+cd Bozzetto.Samples.Koans
 dotnet run
 ```
 
@@ -16,13 +16,13 @@ You should see:
 EXPECTO! 162 tests run — 162 passed, 0 failed. Success!
 ```
 
-## Using with SageFs (recommended)
+## Using with Bozzetto (recommended)
 
-For the best learning experience, use SageFs for live feedback:
+For the best learning experience, use Bozzetto for live feedback:
 
 ```bash
-cd SageFs.Samples.Koans
-sagefs watch .
+cd Bozzetto.Samples.Koans
+boz watch .
 ```
 
 Then open any `.fs` file in your editor (VS Code, Neovim, or TUI):
@@ -37,7 +37,7 @@ No terminal. No `dotnet run`. Just instant feedback.
 
 | # | File | Topic |
 |---|------|-------|
-| 01 | `AboutAsserts.fs` | Meet Expecto (SageFs's test runner) |
+| 01 | `AboutAsserts.fs` | Meet Expecto (Bozzetto's test runner) |
 | 02 | `AboutLet.fs` | `let` bindings and type inference |
 | 03 | `AboutFunctions.fs` | Defining and calling functions |
 | 04 | `AboutUnit.fs` | The unit type (F#'s void) |
@@ -77,15 +77,15 @@ as exercises:
    ```fsharp
    let inline __<'T> : 'T = failwith "Seek wisdom by filling in the __"
    ```
-4. Save — SageFs shows 🔴 markers for failing tests
+4. Save — Bozzetto shows 🔴 markers for failing tests
 5. Fill in the blanks to turn them 🟢
 
 Or use the original `.fsx` scripts in this directory — they already have
 the `__` placeholders ready for you.
 
-## Why SageFs Makes This More Fun
+## Why Bozzetto Makes This More Fun
 
-| Original Koans | SageFs Edition |
+| Original Koans | Bozzetto Edition |
 |-----------------|----------------|
 | NUnit `AssertEquality` | Expecto.Flip pipelines |
 | `dotnet run` ~3s/cycle | Save → gutter marker < 200ms |

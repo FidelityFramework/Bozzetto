@@ -2,7 +2,7 @@
 # record-orchestrator.sh — parallel, fully-headless demo-recording harness.
 #
 # Given a list of demo "jobs", this allocates a distinct X display number, a
-# distinct free daemon port, and a distinct temp SAGEFS_DATA_DIR to each job,
+# distinct free daemon port, and a distinct temp BOZZETTO_DATA_DIR to each job,
 # then runs each job through the existing generic recorders:
 #   - record-x11.sh (Xvfb + ffmpeg x11grab -> gif) for "video" jobs
 #   - record-terminal.sh (asciinema + agg -> gif) for "terminal" jobs
@@ -13,10 +13,10 @@
 # live frames — it isn't timing sensitive, so contention there only costs
 # CPU, not correctness.
 #
-# This script does not know anything about SageFs beyond the isolation
-# convention (an mcp port and a SAGEFS_DATA_DIR handed to the job's own
+# This script does not know anything about Bozzetto beyond the isolation
+# convention (an mcp port and a BOZZETTO_DATA_DIR handed to the job's own
 # driver script). Each job's driver (e.g. drive-dashboard.sh) is the part
-# that actually knows how to stand up and drive a SageFs daemon for its
+# that actually knows how to stand up and drive a Bozzetto daemon for its
 # particular demo. This script does NOT edit or replace record-x11.sh /
 # record-terminal.sh — it drives them.
 #
@@ -28,7 +28,7 @@
 #   output=PATH               where to write the final .gif
 #                              (default: <out-dir>/<name>.gif)
 #   args=EXTRA ARGS             extra args appended verbatim to the driver
-#                              invocation (e.g. --sagefs-bin / --chromium)
+#                              invocation (e.g. --bozzetto-bin / --chromium)
 #
 # Every video-job driver is invoked as:
 #   <driver> --mcp-port PORT --data-dir DIR --duration SECONDS <args>
@@ -40,7 +40,7 @@
 #
 # Example (the dashboard proof run):
 #   scripts/demos/record-orchestrator.sh --pool 2 \
-#     --job 'name=dashboard;type=video;driver=scripts/demos/drive-dashboard.sh;duration=6;args=--sagefs-bin /path/to/SageFs --chromium /usr/bin/chromium'
+#     --job 'name=dashboard;type=video;driver=scripts/demos/drive-dashboard.sh;duration=6;args=--bozzetto-bin /path/to/Bozzetto --chromium /usr/bin/chromium'
 
 set -euo pipefail
 
@@ -77,7 +77,7 @@ Options:
                          used by manual/other tooling on this box).
   --base-port N             First daemon port to use; job i gets port
                          N+i*step (default: 46000). Must stay clear of
-                         37749/37750 (the real daemon) and any other
+                         47749/47750 (the real daemon) and any other
                          range in use on this box.
   --port-step N               Port spacing between jobs (default: 10 — a
                          daemon uses its port and port+1 for the dashboard;
@@ -333,7 +333,7 @@ done
 
 # --- sweep: confirm no process this run started is still alive -------------
 # Match ONLY by this run's own markers (its data-dir path appearing in a
-# process's argv) — never by process name, so other SageFs daemons already
+# process's argv) — never by process name, so other Bozzetto daemons already
 # running on this box are left completely alone.
 #
 # The process snapshot is taken ONCE, into a variable, before any per-job

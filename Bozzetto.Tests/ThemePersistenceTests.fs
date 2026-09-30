@@ -1,0 +1,488 @@
+module Bozzetto.Tests.ThemePersistenceTests
+
+open Expecto
+open Expecto.Flip
+open VerifyExpecto
+open VerifyTests
+open Falco.Markup
+open Bozzetto
+open Bozzetto.Server.Dashboard
+open Bozzetto.Server.DashboardTypes
+open Bozzetto.Server.DashboardFragments
+open Bozzetto.DaemonClient
+
+let verifyTheme (name: string) (html: string) =
+  Bozzetto.Tests.TestInfrastructure.Snapshots.verify "ThemePersistenceTests" name "html" html
+
+// ─── Snapshot: renderThemeVars ───────────────────────────────────────────────
+
+let themeVarsSnapshotTests = testList "renderThemeVars snapshots" [
+  testTask "One Dark theme vars" {
+    let html = renderThemeVars "One Dark" |> renderNode
+    do! verifyTheme "theme_vars_oneDark" html
+  }
+
+  testTask "Dracula theme vars" {
+    let html = renderThemeVars "Dracula" |> renderNode
+    do! verifyTheme "theme_vars_dracula" html
+  }
+
+  testTask "Nordic theme vars" {
+    let html = renderThemeVars "Nordic" |> renderNode
+    do! verifyTheme "theme_vars_nordic" html
+  }
+
+  testTask "unknown theme falls back to defaults" {
+    let html = renderThemeVars "NonExistentTheme" |> renderNode
+    let defaultHtml = renderThemeVars "One Dark" |> renderNode
+    html |> Expect.equal "unknown theme should use defaults" defaultHtml
+  }
+
+  testTask "empty theme name falls back to defaults" {
+    let html = renderThemeVars "" |> renderNode
+    let defaultHtml = renderThemeVars "One Dark" |> renderNode
+    html |> Expect.equal "empty name should use defaults" defaultHtml
+  }
+]
+
+// ─── Snapshot: renderThemePicker ─────────────────────────────────────────────
+
+let themePickerSnapshotTests = testList "renderThemePicker snapshots" [
+  testTask "picker with One Dark selected" {
+    let html = renderThemePicker "One Dark" |> renderNode
+    do! verifyTheme "theme_picker_oneDark" html
+  }
+
+  testTask "picker with Dracula selected" {
+    let html = renderThemePicker "Dracula" |> renderNode
+    do! verifyTheme "theme_picker_dracula" html
+  }
+
+  testTask "picker with Nordic selected" {
+    let html = renderThemePicker "Nordic" |> renderNode
+    do! verifyTheme "theme_picker_nordic" html
+  }
+]
+
+// ─── Unit: renderThemeVars content ───────────────────────────────────────────
+
+let themeVarsUnitTests = testList "renderThemeVars content" [
+  test "contains :root selector" {
+    let html = renderThemeVars "One Dark" |> renderNode
+    html |> Expect.stringContains "should contain :root" ":root"
+  }
+
+  test "contains all CSS variable names" {
+    let html = renderThemeVars "One Dark" |> renderNode
+    let expectedVars = [
+      "--fg-default"; "--fg-dim"; "--fg-green"; "--fg-red"
+      "--fg-yellow"; "--fg-cyan"; "--fg-blue"; "--fg-magenta"
+      "--bg-default"; "--bg-panel"; "--bg-editor"
+      "--bg-selection"; "--bg-status"; "--bg-focus"
+      "--border-normal"; "--border-focus"
+      "--syn-keyword"; "--syn-string"; "--syn-comment"; "--syn-number"
+      "--syn-operator"; "--syn-type"; "--syn-function"; "--syn-variable"
+      "--syn-punctuation"; "--syn-constant"; "--syn-module"
+      "--syn-attribute"; "--syn-directive"; "--syn-property"
+    ]
+    for v in expectedVars do
+      html |> Expect.stringContains (sprintf "should contain %s" v) v
+  }
+
+  test "has style element with theme-vars id" {
+    let html = renderThemeVars "One Dark" |> renderNode
+    html |> Expect.stringContains "should have id=theme-vars" """id="theme-vars"""
+  }
+
+  test "Dracula has different colors than One Dark" {
+    let oneDark = renderThemeVars "One Dark" |> renderNode
+    let dracula = renderThemeVars "Dracula" |> renderNode
+    oneDark |> Expect.notEqual "different themes should produce different CSS" dracula
+  }
+
+  test "all presets produce valid CSS" {
+    for (name, _) in ThemePresets.all do
+      let html = renderThemeVars name |> renderNode
+      html |> Expect.stringContains (sprintf "%s should contain :root" name) ":root"
+      html |> Expect.stringContains (sprintf "%s should contain --fg-default" name) "--fg-default"
+  }
+]
+
+// ─── Unit: renderThemePicker content ─────────────────────────────────────────
+
+let themePickerUnitTests = testList "renderThemePicker content" [
+  test "contains select element with theme-picker id" {
+    let html = renderThemePicker "One Dark" |> renderNode
+    html |> Expect.stringContains "should have id=theme-picker" """id="theme-picker"""
+  }
+
+  test "contains all preset names as options" {
+    let html = renderThemePicker "One Dark" |> renderNode
+    for (name, _) in ThemePresets.all do
+      html |> Expect.stringContains (sprintf "should contain option for %s" name) name
+  }
+
+  test "selected theme has selected attribute" {
+    let html = renderThemePicker "Dracula" |> renderNode
+    html |> Expect.stringContains "Dracula should be selected" """value="Dracula" selected"""
+  }
+
+  test "non-selected themes lack selected attribute" {
+    let html = renderThemePicker "Dracula" |> renderNode
+    // One Dark should NOT have selected
+    html.Contains """value="One Dark" selected"""
+    |> Expect.isFalse "One Dark should not be selected when Dracula is"
+  }
+
+  test "each preset name appears exactly once as option value" {
+    let html = renderThemePicker "One Dark" |> renderNode
+    for (name, _) in ThemePresets.all do
+      let pattern = sprintf """value="%s""" name
+      let count =
+        let mutable c = 0
+        let mutable idx = 0
+        while idx >= 0 do
+          idx <- html.IndexOf(pattern, idx)
+          if idx >= 0 then c <- c + 1; idx <- idx + 1
+        c
+      count |> Expect.equal (sprintf "%s should appear exactly once" name) 1
+  }
+]
+
+// ─── Unit: toCssVariables completeness ───────────────────────────────────────
+
+let cssVariablesTests = testList "toCssVariables" [
+  test "produces 30 CSS variable declarations" {
+    let css = Theme.toCssVariables Theme.defaults
+    let count = css.Split("--") |> Array.length
+    // split on "--" gives N+1 pieces for N variables
+    (count, 30) |> Expect.isGreaterThanOrEqual "should have at least 30 CSS variables"
+  }
+
+  test "all hex values start with #" {
+    let css = Theme.toCssVariables Theme.defaults
+    let lines = css.Split(";") |> Array.filter (fun s -> s.Trim().Length > 0)
+    for line in lines do
+      line |> Expect.stringContains (sprintf "CSS line should contain hex color: %s" (line.Trim())) "#"
+  }
+
+  test "different themes produce different CSS" {
+    let oneDark = Theme.toCssVariables Theme.defaults
+    let dracula = Theme.toCssVariables ThemePresets.dracula
+    oneDark |> Expect.notEqual "One Dark and Dracula should differ" dracula
+  }
+
+  test "all preset configs produce non-empty CSS" {
+    for (name, config) in ThemePresets.all do
+      let css = Theme.toCssVariables config
+      (css.Length, 0) |> Expect.isGreaterThan (sprintf "%s should produce non-empty CSS" name)
+  }
+]
+
+// ─── Unit: ThemePresets functions ─────────────────────────────────────────────
+
+let themePresetsTests = testList "ThemePresets" [
+  test "all has 8 presets" {
+    ThemePresets.all.Length |> Expect.equal "should have 8 presets" 8
+  }
+
+  test "all preset names are unique" {
+    let names = ThemePresets.all |> List.map fst
+    let unique = names |> List.distinct
+    names.Length |> Expect.equal "all names should be unique" unique.Length
+  }
+
+  test "tryFind returns Some for exact name" {
+    let result = ThemePresets.tryFind "Dracula"
+    result |> Expect.isSome "should find Dracula"
+  }
+
+  test "tryFind is case-insensitive" {
+    let result = ThemePresets.tryFind "dracula"
+    result |> Expect.isSome "should find dracula (lowercase)"
+    let result2 = ThemePresets.tryFind "DRACULA"
+    result2 |> Expect.isSome "should find DRACULA (uppercase)"
+  }
+
+  test "tryFind returns None for unknown name" {
+    let result = ThemePresets.tryFind "NonExistent"
+    result |> Expect.isNone "should not find NonExistent"
+  }
+
+  test "tryFind returns None for empty string" {
+    let result = ThemePresets.tryFind ""
+    result |> Expect.isNone "should not find empty string"
+  }
+
+  test "cycleNext wraps around from last to first" {
+    let lastName, lastConfig = ThemePresets.all |> List.last
+    let nextName, _ = ThemePresets.cycleNext lastConfig
+    let firstName, _ = ThemePresets.all |> List.head
+    nextName |> Expect.equal "should wrap to first preset" firstName
+  }
+
+  test "cycleNext advances sequentially" {
+    let mutable current = snd ThemePresets.all.[0]
+    for i in 1 .. ThemePresets.all.Length - 1 do
+      let expectedName, _ = ThemePresets.all.[i]
+      let name, next = ThemePresets.cycleNext current
+      name |> Expect.equal (sprintf "step %d should be %s" i expectedName) expectedName
+      current <- next
+  }
+
+  test "cycleNext with unknown config starts from first" {
+    let unknown = { Theme.defaults with FgDefault = "#000001" }
+    let name, _ = ThemePresets.cycleNext unknown
+    let firstName, _ = ThemePresets.all.[0]
+    name |> Expect.equal "unknown config should cycle to first" firstName
+  }
+]
+
+// ─── Unit: parseStateEvent activeWorkingDir ──────────────────────────────────
+
+let parseStateEventThemeTests = testList "parseStateEvent activeWorkingDir" [
+  test "parses activeWorkingDir when present" {
+    let json = """{"sessionId":"s1","sessionState":"Ready","evalCount":0,"activeWorkingDir":"C:\\Code\\MyProj","regions":[]}"""
+    let result = parseStateEvent json
+    result |> Expect.isSome "should parse"
+    result.Value.ActiveWorkingDir |> Expect.equal "activeWorkingDir" @"C:\Code\MyProj"
+  }
+
+  test "activeWorkingDir defaults to empty when missing" {
+    let json = """{"sessionId":"s1","sessionState":"Ready","evalCount":0,"regions":[]}"""
+    let result = parseStateEvent json
+    result |> Expect.isSome "should parse"
+    result.Value.ActiveWorkingDir |> Expect.equal "missing activeWorkingDir defaults to empty" ""
+  }
+
+  test "all StateEvent fields parsed correctly" {
+    let json = """{"sessionId":"abc","sessionState":"WarmingUp","evalCount":7,"avgMs":42.5,"activeWorkingDir":"C:\\test","regions":[{"id":"out","content":"hi"}]}"""
+    let result = parseStateEvent json
+    result |> Expect.isSome "should parse"
+    let e = result.Value
+    e.SessionId |> Expect.equal "sessionId" "abc"
+    e.SessionState |> Expect.equal "sessionState" "WarmingUp"
+    e.EvalCount |> Expect.equal "evalCount" 7
+    e.AvgMs |> Expect.floatClose "avgMs" Accuracy.medium 42.5
+    e.ActiveWorkingDir |> Expect.equal "activeWorkingDir" @"C:\test"
+    e.Regions.Length |> Expect.equal "region count" 1
+  }
+
+  test "activeWorkingDir with forward slashes" {
+    let json = """{"sessionState":"Ready","evalCount":0,"activeWorkingDir":"/home/user/project","regions":[]}"""
+    let result = parseStateEvent json
+    result |> Expect.isSome "should parse"
+    result.Value.ActiveWorkingDir |> Expect.equal "unix-style path" "/home/user/project"
+  }
+
+  test "activeWorkingDir with spaces in path" {
+    let json = """{"sessionState":"Ready","evalCount":0,"activeWorkingDir":"C:\\My Projects\\Cool App","regions":[]}"""
+    let result = parseStateEvent json
+    result |> Expect.isSome "should parse"
+    result.Value.ActiveWorkingDir |> Expect.equal "path with spaces" @"C:\My Projects\Cool App"
+  }
+]
+
+// ─── Unit: resolveThemePush pure logic ───────────────────────────────────────
+
+/// Test helper: build a themes dict with keys in the canonical form that
+/// `saveThemes` (via the set-theme handler) would actually store them in.
+/// `resolveThemePush` canonicalizes its lookup key, so the dict must match.
+let themesWith (entries: (string * string) list) : System.Collections.Generic.IDictionary<string, string> =
+  let d = System.Collections.Generic.Dictionary<string, string>()
+  for k, v in entries do d.[canonicalizeThemeKey k] <- v
+  d :> System.Collections.Generic.IDictionary<_,_>
+
+let resolveThemePushTests = testList "resolveThemePush" [
+  // --- Basic happy paths ---
+  test "pushes stored theme when workingDir changes" {
+    let themes = themesWith [ @"C:\Proj2", "Nordic" ]
+    let result = resolveThemePush themes "s2" @"C:\Proj2" "s1" @"C:\Proj1" "Kanagawa"
+    result |> Expect.equal "should push stored theme for new dir" (Some "Nordic")
+  }
+
+  test "pushes default when workingDir changes to unknown dir" {
+    let themes = themesWith []
+    let result = resolveThemePush themes "s2" @"C:\Unknown" "s1" @"C:\Proj1" "Kanagawa"
+    result |> Expect.equal "should push default for unknown dir" (Some "Kanagawa")
+  }
+
+  test "no push when nothing changes and theme dict matches last pushed" {
+    let themes = themesWith [ @"C:\Proj1", "Kanagawa" ]
+    let result = resolveThemePush themes "s1" @"C:\Proj1" "s1" @"C:\Proj1" "Kanagawa"
+    result |> Expect.isNone "same session, same dir, same theme should not push"
+  }
+
+  // --- Bug 4: set-theme without session switch was invisible to pushState ---
+  /// `set-theme` updates `infra.SessionThemes.[workingDir]` but does NOT
+  /// trigger a session switch. The next `pushState` must detect the theme
+  /// dict change and push it, otherwise the client stays on the old theme.
+  test "pushes new theme after set-theme without session switch" {
+    let themes = themesWith [ @"C:\Proj1", "Dracula" ]
+    // Session and dir unchanged; lastThemeName is the old theme (Gruvbox).
+    // set-theme updated the dict to Dracula — pushState must detect that.
+    let result = resolveThemePush themes "s1" @"C:\Proj1" "s1" @"C:\Proj1" "Gruvbox"
+    result |> Expect.equal "theme dict changed since last push — must push new theme" (Some "Dracula")
+  }
+
+  // --- Bug 1: same workingDir, different session SHOULD push ---
+  test "pushes when session changes but workingDir is same" {
+    let themes = themesWith [ @"C:\Bozzetto", "Nordic" ]
+    let result = resolveThemePush themes "session-B" @"C:\Bozzetto" "session-A" @"C:\Bozzetto" "Kanagawa"
+    result |> Expect.equal "different session same dir should push theme" (Some "Nordic")
+  }
+
+  test "pushes default when session changes, same dir, no stored theme" {
+    let themes = themesWith []
+    let result = resolveThemePush themes "s2" @"C:\Proj" "s1" @"C:\Proj" "Kanagawa"
+    result |> Expect.equal "session change with no stored theme should push default" (Some "Kanagawa")
+  }
+
+  // --- Bug 2: empty workingDir (faulted session) should push default ---
+  test "pushes default when switching to empty workingDir session" {
+    let themes = themesWith [ @"C:\Proj1", "Nordic" ]
+    let result = resolveThemePush themes "faulted-session" "" "s1" @"C:\Proj1" "Nordic"
+    result |> Expect.equal "empty workingDir should push default theme" (Some "Kanagawa")
+  }
+
+  test "pushes default when both previous and current workingDir empty but session changes" {
+    let themes = themesWith []
+    let result = resolveThemePush themes "s2" "" "s1" "" "Kanagawa"
+    result |> Expect.equal "session change with both dirs empty should push default" (Some "Kanagawa")
+  }
+
+  // --- Bug 3: switching back from empty workingDir restores theme ---
+  test "restores stored theme when switching back from empty-dir session" {
+    let themes = themesWith [ @"C:\Proj1", "Gruvbox" ]
+    // Was on Proj1 (Gruvbox), switched to faulted (empty), now switching back
+    let result = resolveThemePush themes "s1" @"C:\Proj1" "faulted" "" "Kanagawa"
+    result |> Expect.equal "should restore Gruvbox when returning from empty-dir session" (Some "Gruvbox")
+  }
+
+  // --- Full round-trip scenario ---
+  test "full round trip: set Nordic, switch away, switch back" {
+    let themes = themesWith [ @"C:\Bozzetto", "Nordic" ]
+
+    // Step 1: initial push for session A
+    let r1 = resolveThemePush themes "sA" @"C:\Bozzetto" "" "" ""
+    r1 |> Expect.isSome "initial session should push"
+    r1.Value |> Expect.equal "should push Nordic" "Nordic"
+
+    // Step 2: switch to session B (different dir, Harmony)
+    let r2 = resolveThemePush themes "sB" @"C:\Harmony" "sA" @"C:\Bozzetto" "Nordic"
+    r2 |> Expect.isSome "switch to Harmony should push"
+    r2.Value |> Expect.equal "Harmony has no stored theme" "Kanagawa"
+
+    // Step 3: switch back to session A (same dir as step 1)
+    let r3 = resolveThemePush themes "sA" @"C:\Bozzetto" "sB" @"C:\Harmony" "Kanagawa"
+    r3 |> Expect.isSome "switch back should push"
+    r3.Value |> Expect.equal "should restore Nordic" "Nordic"
+  }
+
+  test "round trip with shared workingDir sessions" {
+    let themes = themesWith [ @"C:\Bozzetto", "Nordic" ]
+
+    // Session A at C:\Bozzetto
+    let r1 = resolveThemePush themes "sA" @"C:\Bozzetto" "" "" ""
+    r1 |> Expect.equal "session A initial push" (Some "Nordic")
+
+    // Session B also at C:\Bozzetto (different session, same dir)
+    let r2 = resolveThemePush themes "sB" @"C:\Bozzetto" "sA" @"C:\Bozzetto" "Nordic"
+    r2 |> Expect.equal "session B same dir should still push" (Some "Nordic")
+
+    // Session C at C:\Harmony
+    let r3 = resolveThemePush themes "sC" @"C:\Harmony" "sB" @"C:\Bozzetto" "Nordic"
+    r3 |> Expect.equal "Harmony no stored theme" (Some "Kanagawa")
+
+    // Back to session A at C:\Bozzetto
+    let r4 = resolveThemePush themes "sA" @"C:\Bozzetto" "sC" @"C:\Harmony" "Kanagawa"
+    r4 |> Expect.equal "back to Bozzetto should restore Nordic" (Some "Nordic")
+  }
+
+  // --- Edge cases ---
+  test "no push when currentSessionId is empty" {
+    let themes = themesWith []
+    let result = resolveThemePush themes "" @"C:\Proj" "s1" @"C:\Proj" "Kanagawa"
+    result |> Expect.isNone "empty currentSessionId should not push"
+  }
+
+  test "initial push on first connection (both previous empty)" {
+    let themes = themesWith [ @"C:\Proj", "Dracula" ]
+    let result = resolveThemePush themes "s1" @"C:\Proj" "" "" ""
+    result |> Expect.equal "first connection should push stored theme" (Some "Dracula")
+  }
+
+  test "initial push with no stored theme defaults to Kanagawa" {
+    let themes = themesWith []
+    let result = resolveThemePush themes "s1" @"C:\NewProj" "" "" ""
+    result |> Expect.equal "first connection, no stored theme should push default" (Some "Kanagawa")
+  }
+]
+
+let themeDiskPersistenceTests = testList "Theme disk persistence" [
+  testCase "saveThemes writes JSON to disk" <| fun _ ->
+    let tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), sprintf "bozzetto-test-%s" (System.Guid.NewGuid().ToString("N").[..7]))
+    System.IO.Directory.CreateDirectory(tempDir) |> ignore
+    try
+      let themes = System.Collections.Concurrent.ConcurrentDictionary<string, string>()
+      themes.["C:\\Code\\Repo1"] <- "Kanagawa"
+      themes.["C:\\Code\\Repo2"] <- "Gruvbox"
+      saveThemes tempDir themes
+      let path = System.IO.Path.Combine(tempDir, "themes.json")
+      System.IO.File.Exists(path) |> Expect.isTrue "file should exist"
+      let content = System.IO.File.ReadAllText(path)
+      content |> Expect.stringContains "should have Kanagawa" "Kanagawa"
+      content |> Expect.stringContains "should have Gruvbox" "Gruvbox"
+    finally
+      if System.IO.Directory.Exists(tempDir) then System.IO.Directory.Delete(tempDir, true)
+
+  testCase "loadThemes reads JSON from disk" <| fun _ ->
+    let tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), sprintf "bozzetto-test-%s" (System.Guid.NewGuid().ToString("N").[..7]))
+    System.IO.Directory.CreateDirectory(tempDir) |> ignore
+    try
+      let json = """{"C:\\Code\\Repo1":"Kanagawa","C:\\Code\\Repo2":"Gruvbox"}"""
+      System.IO.File.WriteAllText(System.IO.Path.Combine(tempDir, "themes.json"), json)
+      let themes = loadThemes tempDir
+      themes.["C:\\Code\\Repo1"] |> Expect.equal "Repo1 theme" "Kanagawa"
+      themes.["C:\\Code\\Repo2"] |> Expect.equal "Repo2 theme" "Gruvbox"
+    finally
+      if System.IO.Directory.Exists(tempDir) then System.IO.Directory.Delete(tempDir, true)
+
+  testCase "loadThemes returns empty when file missing" <| fun _ ->
+    let tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), sprintf "bozzetto-test-%s" (System.Guid.NewGuid().ToString("N").[..7]))
+    System.IO.Directory.CreateDirectory(tempDir) |> ignore
+    try
+      let themes = loadThemes tempDir
+      themes.Count |> Expect.equal "should be empty" 0
+    finally
+      if System.IO.Directory.Exists(tempDir) then System.IO.Directory.Delete(tempDir, true)
+
+  testCase "save then load round trip" <| fun _ ->
+    let tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), sprintf "bozzetto-test-%s" (System.Guid.NewGuid().ToString("N").[..7]))
+    System.IO.Directory.CreateDirectory(tempDir) |> ignore
+    try
+      let themes = System.Collections.Concurrent.ConcurrentDictionary<string, string>()
+      themes.["C:\\Code\\Bozzetto"] <- "Nordic"
+      themes.["C:\\Code\\Harmony"] <- "Dracula"
+      saveThemes tempDir themes
+      let loaded = loadThemes tempDir
+      loaded.["C:\\Code\\Bozzetto"] |> Expect.equal "Bozzetto theme round-tripped" "Nordic"
+      loaded.["C:\\Code\\Harmony"] |> Expect.equal "Harmony theme round-tripped" "Dracula"
+      loaded.Count |> Expect.equal "should have exactly 2 entries" 2
+    finally
+      if System.IO.Directory.Exists(tempDir) then System.IO.Directory.Delete(tempDir, true)
+]
+
+
+[<Tests>]
+let allThemePersistenceTests = testList "Theme Persistence" [
+  themeVarsSnapshotTests
+  themePickerSnapshotTests
+  themeVarsUnitTests
+  themePickerUnitTests
+  cssVariablesTests
+  themePresetsTests
+  parseStateEventThemeTests
+  resolveThemePushTests
+  themeDiskPersistenceTests
+]

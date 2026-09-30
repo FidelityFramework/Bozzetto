@@ -1,10 +1,10 @@
 /-
   RestartPolicy.lean
-  Formal specification for SageFs.Core.RestartPolicy / RetryPolicy.
+  Formal specification for Bozzetto.Core.RestartPolicy / RetryPolicy.
 
   The F# source implements Erlang-style exponential backoff with a sliding
   time window reset.  This model abstracts TimeSpan/DateTime to plain Nat
-  (milliseconds) and replaces SageFsError with Unit, so all functions are
+  (milliseconds) and replaces BozzettoError with Unit, so all functions are
   pure and termination is structurally obvious.
 
   No Mathlib.  Pure Lean 4 stdlib only (network firewalled on CI).

@@ -9,7 +9,7 @@ on:
 
 # The ENTIRE build/test/integration/pack/release-bundle pipeline lives in
 # ci-pipeline.fsx as one typed F# Fun.Build pipeline. GitHub Actions supplies
-# only the runner, the two checkouts, and the SDK/Node/xvfb install — it encodes
+# only the runner, the checkout, and the SDK/Node/xvfb install — it encodes
 # no build logic of its own. The exact same stages run locally:
 # `dotnet fsi ci-pipeline.fsx -- ci [release]` (see that file's header).
 #
@@ -18,8 +18,7 @@ on:
 # the real-daemon integration-host suites (incl. the VS Code command-proof), and
 # on a master push the VSIX + nupkg + release manifest. This replaces the old
 # build (x2) + integration-host + extensions + benchmarks + release-artifacts
-# jobs, which each started from a clean checkout, re-packed the forked MCP SDK,
-# and rebuilt the whole solution.
+# jobs, which each started from a clean checkout and rebuilt the whole solution.
 #
 # The former windows leg is gone: the integration-host suites and the VS Code
 # command-proof were verified green on Linux (Args.resolveHostLaunch launches the
@@ -35,7 +34,7 @@ jobs:
   # Nothing is rebuilt or re-tested here when the commit already passed
   # scripts/local-gate on this machine. The pre-push hook refuses to push master
   # otherwise, so normally the job only PROMOTES that gate's release bundle, in
-  # seconds. If a commit arrives ungated (SAGEFS_SKIP_GATE, a push from
+  # seconds. If a commit arrives ungated (BOZZETTO_SKIP_GATE, a push from
   # elsewhere), the job runs the same gate first. Either way there is one gate
   # (the whole ci-pipeline.fsx on a clean checkout of exactly this commit) and
   # one definition of "passed".
@@ -48,10 +47,10 @@ jobs:
   # need maintainer approval (repo setting: all_external_contributors).
   local:
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, sagefs-local]
+    runs-on: [self-hosted, bozzetto-local]
     timeout-minutes: 120
     concurrency:
-      group: sagefs-local-${{ github.sha }}
+      group: bozzetto-local-${{ github.sha }}
       cancel-in-progress: false
 
     steps:
@@ -107,12 +106,6 @@ jobs:
     steps:
     - uses: actions/checkout@v5
 
-    - name: Checkout forked MCP SDK
-      uses: actions/checkout@v5
-      with:
-        repository: WillEhrendreich/ModelContextProtocolSdk
-        path: mcp-sdk
-
     - name: Install Dotnet
       uses: actions/setup-dotnet@v5
       with:
@@ -135,7 +128,7 @@ jobs:
   # vscode-journeys (HR-VSC-E2E, LT-VSC-E2E) was removed 2026-09-12: it never
   # passed since being wired in. The real bug it caught (executeCommand typing
   # command ids instead of palette titles) is fixed and covered by a fast
-  # default-suite contract test (SageFsPaletteCommand contract,
+  # default-suite contract test (BozzettoPaletteCommand contract,
   # VscodeExtensionTests.fs), and the extension-to-daemon wiring is proven by the
   # VS Code command-proof suite that now runs on Linux under --integration-host.
   # The remaining CDP-debug-port failure is tracked in issue #133; the dodJourneys

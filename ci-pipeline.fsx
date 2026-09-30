@@ -2,7 +2,7 @@
 // ci-pipeline.fsx
 //
 // THIS SCRIPT IS THE CI PIPELINE. GitHub Actions (.github/workflows/main.yml)
-// supplies only the runner, the two checkouts, and the SDK/Node/xvfb install; it
+// supplies only the runner, the checkout, and the SDK/Node/xvfb install; it
 // encodes no build/test/pack logic of its own. The exact same stages run
 // locally and in CI:
 //
@@ -17,14 +17,14 @@
 // integration-host suites and the VS Code command-proof were verified green on
 // Linux (Args.resolveHostLaunch launches the FSI host via the dotnet muxer on
 // non-Windows; the proof self-provisions a Linux VS Code under xvfb), so the
-// former windows leg is gone. No more re-packing the forked MCP SDK five times,
-// no more building the solution once per job, no separate build/integration/
+// former windows leg is gone. No more building the solution once per job,
+// no separate build/integration/
 // extensions/benchmarks/release jobs each from a clean checkout.
 //
 // Stage selection:
 //   * unconditional — restore, build, format, samples, VS Code extension
 //     compile + test-electron host + client contract tests (npm run
-//     test:golden + every sagefs-vscode/tests/*.fsx), then "test tiers": the
+//     test:golden + every bozzetto-vscode/tests/*.fsx), then "test tiers": the
 //     default suite and the integration-host suites.
 //   * `ci` adds to "test tiers" — the mutation-score gate and every real-browser
 //                            journey (dashboard, hot-reload, live-testing,
@@ -41,7 +41,7 @@
 // under runtimes/ and the fsproj includes them by Condition="Exists(...)", so
 // the single Linux pack produces a complete cross-platform nupkg. (The Windows
 // user gets the FSI host via the dotnet muxer rather than a native
-// SageFs.Host.exe — the Unix-proven launch path; if a native Windows apphost is
+// Bozzetto.Host.exe — the Unix-proven launch path; if a native Windows apphost is
 // ever wanted in the package, cross-publish it with `dotnet publish -r win-x64`,
 // which works from Linux.)
 
@@ -56,26 +56,14 @@ open System.Xml.Linq
 open Fun.Build
 open Fun.Build.Github
 
+#load "build/HarmonyPackage.fs"
+
 let rootDir = __SOURCE_DIRECTORY__
-let mcpSdkDir = Path.Combine(rootDir, "mcp-sdk")
-let mcpNupkgDir = Path.Combine(rootDir, "mcp-sdk-nupkg")
-let harmonyDir = Path.Combine(rootDir, "harmony-fork")
-let harmonyNupkgDir = Path.Combine(rootDir, "harmony-nupkg")
-let harmonyRepoUrl = "https://github.com/WillEhrendreich/LibHarmony.git"
-// Pinned fork commit + the pack's SageFsBuild number; keep in sync with SageFs.Harmony's version in Directory.Packages.props.
-let harmonyCommit = "ffb6e9cabd1b83d4a51ef02fcaa914bf1269e51d"
-let harmonyBuild = "1"
-let harmonyNupkg = Path.Combine(harmonyNupkgDir, $"SageFs.Harmony.2.4.2-sagefs.{harmonyBuild}.nupkg")
-let mcpSdkRepoUrl = "https://github.com/WillEhrendreich/ModelContextProtocolSdk.git"
-let mcpSdkProjectDir name = Path.Combine(mcpSdkDir, "src", name)
-let mcpSdkCoreDir = mcpSdkProjectDir "ModelContextProtocol.Core"
-let mcpSdkClientDir = mcpSdkProjectDir "ModelContextProtocol"
-let mcpSdkAspNetCoreDir = mcpSdkProjectDir "ModelContextProtocol.AspNetCore"
 let releaseDir = Path.Combine(rootDir, "release")
-let vscodeDir = Path.Combine(rootDir, "sagefs-vscode")
+let vscodeDir = Path.Combine(rootDir, "bozzetto-vscode")
 // Every downstream check runs against this ONE Release build (see "build" stage).
-let testBinDir = "SageFs.Tests/bin/Release/net11.0"
-let testDll = $"{testBinDir}/SageFs.Tests.dll"
+let testBinDir = "Bozzetto.Tests/bin/Release/net11.0"
+let testDll = $"{testBinDir}/Bozzetto.Tests.dll"
 
 // ---- release helpers (faithful F# translations of the old pwsh steps) --------
 
@@ -104,13 +92,13 @@ let verifyVersionAlignment () =
   let p, k = propsVersion (), pkgJsonVersion ()
   if p <> k then
     failwithf
-      "Version drift: Directory.Build.props is %s but sagefs-vscode/package.json is %s. Run scripts/bump-version, or set package.json to %s."
+      "Version drift: Directory.Build.props is %s but bozzetto-vscode/package.json is %s. Run scripts/bump-version, or set package.json to %s."
       p k p
   printfn "Versions aligned at %s" p
 
 /// issue #131: a tool packaged for the wrong TFM is uninstallable on net10 SDKs
-/// ("DotnetToolSettings.xml was not found"). SageFs now multi-targets
-/// net10.0;net11.0 (Directory.Build.props' SageFsTargetFrameworks) precisely so
+/// ("DotnetToolSettings.xml was not found"). Bozzetto now multi-targets
+/// net10.0;net11.0 (Directory.Build.props' BozzettoTargetFrameworks) precisely so
 /// this can never recur in either direction: `dotnet pack` on a multi-targeted
 /// PackAsTool project emits one tools/<tfm>/any payload per TFM, and
 /// `dotnet tool install` picks the payload matching the CALLER's own SDK — a
@@ -120,7 +108,7 @@ let verifyVersionAlignment () =
 let requiredToolTfms = [ "net10.0"; "net11.0" ]
 let verifyToolInstallable () =
   // The package for THIS build's version, never whichever nupkg sorts first.
-  let expected = Path.Combine(releaseDir, $"SageFs.{pkgJsonVersion ()}.nupkg")
+  let expected = Path.Combine(releaseDir, $"Bozzetto.{pkgJsonVersion ()}.nupkg")
   match File.Exists expected with
   | false -> failwithf "No %s in release/. Did pack fail?" (Path.GetFileName expected)
   | true ->
@@ -142,7 +130,7 @@ let verifyToolInstallable () =
     | false ->
       failwithf "%s is %d MB. nuget.org rejects packages over 250 MB, and this gate wants 10%% headroom." (Path.GetFileName nupkg) (size / 1048576L)
     | true -> ()
-    // SageFs loads exactly one tree-sitter grammar, its own F# one. Any other
+    // Bozzetto loads exactly one tree-sitter grammar, its own F# one. Any other
     // grammar in the package is dead weight that got copied in from
     // TreeSitter.DotNet (Directory.Build.targets strips them).
     let strayGrammars =
@@ -155,7 +143,7 @@ let verifyToolInstallable () =
       |> Seq.toList
     match strayGrammars with
     | [] -> ()
-    | stray -> failwithf "%s bundles tree-sitter grammars SageFs never loads: %s" (Path.GetFileName nupkg) (String.concat ", " stray)
+    | stray -> failwithf "%s bundles tree-sitter grammars Bozzetto never loads: %s" (Path.GetFileName nupkg) (String.concat ", " stray)
     let missing = requiredToolTfms |> List.filter (fun t -> not (List.contains t tfms))
     let unexpected = tfms |> List.filter (fun t -> not (List.contains t requiredToolTfms))
     match missing, unexpected with
@@ -199,7 +187,7 @@ let writeReleaseManifest () =
 //    that executed nothing;
 //  * tiers ran one after another, so the gate took the SUM of every tier.
 // Now every tier runs regardless of the others, each writes one registered/ran/
-// verdict row to the ledger (SageFs.Tests TestInfrastructure.TrustSignal), and
+// verdict row to the ledger (Bozzetto.Tests TestInfrastructure.TrustSignal), and
 // the "trust report" stage joins those rows with each tier's exit into ONE table
 // and fails the pipeline on any tier that is not Trusted — including a tier whose
 // process died before it could report. Where the filesystem can clone
@@ -210,7 +198,7 @@ let writeReleaseManifest () =
 // bypasses `testTier`.
 
 #load "build/TierPlan.fs"
-open SageFs.Build
+open Bozzetto.Build
 
 let trustLedger = Path.Combine(rootDir, "test-results", "trust-ledger.jsonl")
 Directory.CreateDirectory(Path.GetDirectoryName trustLedger) |> ignore
@@ -221,24 +209,39 @@ let invokedTiers = Collections.Generic.List<string * string * bool>()
 
 let tierNameOf = TierPlan.nameOfArgs
 
-/// Declare a test tier: one `dotnet SageFs.Tests.dll <args>` invocation.
+/// Declare a test tier: one `dotnet Bozzetto.Tests.dll <args>` invocation.
 let testTier (args: string) = TierPlan.tier args
 
 /// Per-tier scratch, OUTSIDE the checkout: inside a tier's mount namespace the
 /// checkout path shows that tier's clone, so anything the parent must read back
-/// (ledger rows, logs) has to live elsewhere.
-let tierWork = Path.Combine(Path.GetDirectoryName rootDir, Path.GetFileName rootDir + ".tiers")
+/// (ledger rows, logs) has to live elsewhere. These are disposable artifacts,
+/// not a sibling project. Key the user cache by checkout path so worktrees and
+/// same-named checkouts do not share scratch.
+let tierWork =
+  let cacheHome =
+    match Environment.GetEnvironmentVariable "XDG_CACHE_HOME" with
+    | path when not (String.IsNullOrWhiteSpace path) && Path.IsPathFullyQualified path -> path
+    | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache")
+  let checkout = Path.TrimEndingDirectorySeparator(Path.GetFullPath rootDir)
+  let key =
+    SHA256.HashData(Text.Encoding.UTF8.GetBytes checkout)
+    |> Convert.ToHexString
+    |> fun hash -> hash.Substring(0, 16).ToLowerInvariant()
+  let path = Path.GetFullPath(Path.Combine(cacheHome, "bozzetto", "tiers", $"{Path.GetFileName checkout}-{key}"))
+  if path = checkout || path.StartsWith(checkout + string Path.DirectorySeparatorChar, StringComparison.Ordinal) then
+    failwith "XDG_CACHE_HOME must place test-tier scratch outside the checkout."
+  path
 
 /// Recorded per-tier durations, for longest-first ordering. The local gate
 /// points this at its persistent state; elsewhere it lives with the results.
 let durationsFile =
-  match Environment.GetEnvironmentVariable "SAGEFS_TIER_HISTORY" with
+  match Environment.GetEnvironmentVariable "BOZZETTO_TIER_HISTORY" with
   | null | "" -> Path.Combine(rootDir, "test-results", "tier-durations.json")
   | path -> path
 
 /// Recorded per-SUITE seconds for the sharded host tier (TierPlan.assign).
 let suiteDurationsFile =
-  match Environment.GetEnvironmentVariable "SAGEFS_SUITE_HISTORY" with
+  match Environment.GetEnvironmentVariable "BOZZETTO_SUITE_HISTORY" with
   | null | "" -> Path.Combine(tierWork, "suite-durations.json")
   | path -> path
 
@@ -309,13 +312,15 @@ let detectIsolation () =
   try
     Directory.CreateDirectory tierWork |> ignore
     let probe = Path.Combine(tierWork, ".reflink-probe")
-    File.WriteAllText(probe, "probe")
-    let reflink = exitOf [ "cp"; "--reflink=always"; probe; probe + ".clone" ] = 0
+    // Probe across the actual source/destination filesystems: a user cache
+    // may be on a different volume where cloning the checkout cannot work.
+    let reflink = exitOf [ "cp"; "--reflink=always"; Path.Combine(rootDir, "ci-pipeline.fsx"); probe ] = 0
     let userns = exitOf [ "unshare"; "--user"; "--map-root-user"; "--mount"; "--"; "true" ] = 0
-    for f in [ probe; probe + ".clone" ] do (try File.Delete f with _ -> ())
-    // A checkout under /tmp would be hidden by the tier's private /tmp mount.
-    let checkoutOutsideTmp = not (rootDir.StartsWith "/tmp/")
-    match reflink && userns && checkoutOutsideTmp with
+    try File.Delete probe with _ -> ()
+    // Either path under /tmp would be hidden by the tier's private /tmp mount.
+    let outsideTmp =
+      [ rootDir; tierWork ] |> List.forall (fun path -> path <> "/tmp" && not (path.StartsWith "/tmp/"))
+    match reflink && userns && outsideTmp with
     | true -> TierPlan.CopyOnWrite
     | false -> TierPlan.Shared
   with _ -> TierPlan.Shared
@@ -347,21 +352,21 @@ let runTier (isolation: TierPlan.Isolation) (slots: int) (slotIndex: int) (t: Ti
     Directory.CreateDirectory tmpDir |> ignore
     let portLo, portHi = TierPlan.portRangeOf slots slotIndex
     let env =
-      [ "SAGEFS_TRUST_LEDGER", ledger
-        "SAGEFS_DATA_DIR", dataDir
+      [ "BOZZETTO_TRUST_LEDGER", ledger
+        "BOZZETTO_DATA_DIR", dataDir
         "TMPDIR", tmpDir
-        "SAGEFS_HOST_CACHE_DIR", sharedHostCache
+        "BOZZETTO_HOST_CACHE_DIR", sharedHostCache
         // A build node that outlives its tier could serve the next tier's build
         // from the wrong filesystem view; the private /tmp already hides it, and
         // this stops tiers leaving nodes behind at all.
         "MSBUILDDISABLENODEREUSE", "1"
-        "SAGEFS_SUITE_DURATIONS", suiteDurationsFile
-        "SAGEFS_SUITE_TIMINGS_OUT", Path.Combine(tierWork, safe + ".suites.json")
+        "BOZZETTO_SUITE_DURATIONS", suiteDurationsFile
+        "BOZZETTO_SUITE_TIMINGS_OUT", Path.Combine(tierWork, safe + ".suites.json")
         // Every harness that spawns a real daemon reserves its ports through
         // TestPorts.reservePair(), which scans ONLY inside this range — see
         // build/TierPlan.fs `portRangeOf` for why disjoint-per-slot ranges
         // make a cross-tier port collision structurally impossible.
-        "SAGEFS_TEST_PORT_RANGE", $"{portLo}-{portHi}" ]
+        "BOZZETTO_TEST_PORT_RANGE", $"{portLo}-{portHi}" ]
     let command = $"dotnet {testDll} {t.Args}"
     let tierTimeout = TierPlan.timeoutOf (readDurations ()) t
     let sw = Diagnostics.Stopwatch.StartNew()
@@ -406,11 +411,11 @@ let runTiers (tiers: TierPlan.Tier list) =
     // no shard pays a cold host build inside its own time.
     Directory.CreateDirectory sharedHostCache |> ignore
     let! prebuilt =
-      execToLog (TimeSpan.FromMinutes 30.0) rootDir [ "SAGEFS_HOST_CACHE_DIR", sharedHostCache ] (Path.Combine(tierWork, "prebuild-host.log"))
+      execToLog (TimeSpan.FromMinutes 30.0) rootDir [ "BOZZETTO_HOST_CACHE_DIR", sharedHostCache ] (Path.Combine(tierWork, "prebuild-host.log"))
         [ "dotnet"; testDll; "--prebuild-host" ]
     printfn "FSI host prebuild: exit %d" prebuilt
     let requested =
-      match Int32.TryParse(Environment.GetEnvironmentVariable "SAGEFS_TIER_PARALLEL") with
+      match Int32.TryParse(Environment.GetEnvironmentVariable "BOZZETTO_TIER_PARALLEL") with
       | true, n -> Some n
       | _ -> None
     let slots = TierPlan.parallelism isolation Environment.ProcessorCount requested
@@ -531,9 +536,9 @@ let rec runSteps (runCommand: string -> Async<Result<unit, string>>) (steps: str
       | Error e -> return Error e
   }
 
-pipeline "sagefs" {
+pipeline "bozzetto" {
   description
-    "SageFs CI as one typed F# pipeline: restore the forked MCP SDK, build once \
+    "Bozzetto CI as one typed F# pipeline: restore pinned packages, build once \
      in Release, then run every check --no-build off that output. Linux leg: \
      format, unit suite, mutation gate, VSIX + nupkg + release manifest. Windows \
      leg: samples + the real-daemon integration-host suites. Identical locally \
@@ -543,43 +548,8 @@ pipeline "sagefs" {
   timeoutForStep 900
   collapseGithubActionLogs
 
-  stage "restore mcp sdk fork" {
-    timeoutForStep 300
-    // CI checks the fork out via actions/checkout before this runs; locally we
-    // clone it once so the script is a genuine one-command bootstrap. (The empty
-    // mcp-sdk-nupkg/ that nuget.config points at is tracked via .gitkeep so the
-    // script's own `#r "nuget:"` restore resolves before this stage packs it.)
-    run (fun ctx ->
-      async {
-        if Directory.Exists mcpSdkDir then return Ok()
-        else return! ctx.RunCommand $"git clone --depth 1 {mcpSdkRepoUrl} \"{mcpSdkDir}\""
-      })
-    run $"dotnet pack \"{mcpSdkCoreDir}\" -o \"{mcpNupkgDir}\" -c Release -p:NuGetAudit=false"
-    run $"dotnet pack \"{mcpSdkClientDir}\" -o \"{mcpNupkgDir}\" -c Release -p:NuGetAudit=false"
-    run $"dotnet pack \"{mcpSdkAspNetCoreDir}\" -o \"{mcpNupkgDir}\" -c Release -p:NuGetAudit=false"
-  }
-
-  stage "restore harmony fork" {
-    timeoutForStep 900
-    // LibHarmony is cloned INSIDE this repo, which is safe because it carries its own
-    // Directory.Packages.props that opts out of this repo's central package management.
-    run (fun ctx ->
-      async {
-        match File.Exists harmonyNupkg with
-        | true -> return Ok()
-        | false ->
-          return!
-            runSteps ctx.RunCommand [
-              if not (Directory.Exists harmonyDir) then $"git clone --no-checkout {harmonyRepoUrl} \"{harmonyDir}\""
-              $"git -C \"{harmonyDir}\" fetch --depth 1 origin {harmonyCommit}"
-              $"git -C \"{harmonyDir}\" checkout --force {harmonyCommit}"
-              $"git -C \"{harmonyDir}\" submodule update --init --recursive --depth 1"
-              // build, THEN pack --no-build: a combined `dotnet pack` skips the ILRepack step that
-              // produces the merged 0Harmony.dll (LibHarmony's own pipeline uses the same two steps).
-              $"dotnet build \"{harmonyDir}/Lib.Harmony/Lib.Harmony.csproj\" -c Release -p:SageFsBuild={harmonyBuild}"
-              $"dotnet pack \"{harmonyDir}/Lib.Harmony/Lib.Harmony.csproj\" -c Release --no-build -o \"{harmonyNupkgDir}\" -p:SageFsBuild={harmonyBuild}"
-            ]
-      })
+  stage "validate owned harmony package" {
+    run (fun _ -> async { return Bozzetto.Build.HarmonyPackage.validate rootDir })
   }
 
   stage "build" {
@@ -587,6 +557,23 @@ pipeline "sagefs" {
     // --no-build against this exact output — the single build that used to be
     // repeated in build/integration-host/extensions/release-artifacts.
     run "dotnet build -c Release"
+  }
+
+  stage "build composer provider" {
+    whenCmdArg "composer"
+    run (fun ctx ->
+      async {
+        let distribution = Environment.GetEnvironmentVariable "BOZZETTO_COMPOSER_DISTRIBUTION"
+        let fixture = Environment.GetEnvironmentVariable "BOZZETTO_COMPOSER_FIXTURE"
+        if String.IsNullOrWhiteSpace distribution || not (Path.IsPathFullyQualified distribution)
+           || not (File.Exists(Path.Combine(distribution, "Composer.dll"))) then
+          return Error "composer requires BOZZETTO_COMPOSER_DISTRIBUTION pointing to built compiler binaries"
+        elif String.IsNullOrWhiteSpace fixture || not (Path.IsPathFullyQualified fixture) || not (File.Exists fixture) then
+          return Error "composer requires BOZZETTO_COMPOSER_FIXTURE pointing to IncrementalScalarRegions.fidproj"
+        else
+          Environment.SetEnvironmentVariable("BOZZETTO_COMPOSER_WORKER", Path.Combine(rootDir, "Bozzetto.Composer/bin/Release/net10.0/Bozzetto.Composer.dll"))
+          return! ctx.RunCommand $"dotnet build Bozzetto.Composer/Bozzetto.Composer.fsproj -c Release -p:ComposerDistribution=\"{distribution}\""
+      })
   }
 
   stage "format" {
@@ -603,9 +590,9 @@ pipeline "sagefs" {
     // McpAppRunOutcomeTests started sessioning on ConsoleTicker without one.
     // `Architecture — every sample an integration suite sessions on is built
     // by CI` now fails the fast local suite instead of waiting for CI.
-    run "dotnet build samples/demos/SageFs.Samples.WebappDatastar/SageFs.Samples.WebappDatastar.fsproj -c Release --nologo"
-    run "dotnet build samples/from-csharp/SageFs.Samples.FromCSharp/SageFs.Samples.FromCSharp.fsproj -c Release --nologo"
-    run "dotnet build samples/demos/SageFs.Samples.ConsoleTicker/SageFs.Samples.ConsoleTicker.fsproj -c Release --nologo"
+    run "dotnet build samples/demos/Bozzetto.Samples.WebappDatastar/Bozzetto.Samples.WebappDatastar.fsproj -c Release --nologo"
+    run "dotnet build samples/from-csharp/Bozzetto.Samples.FromCSharp/Bozzetto.Samples.FromCSharp.fsproj -c Release --nologo"
+    run "dotnet build samples/demos/Bozzetto.Samples.ConsoleTicker/Bozzetto.Samples.ConsoleTicker.fsproj -c Release --nologo"
   }
 
   stage "vscode extension compile" {
@@ -629,7 +616,7 @@ pipeline "sagefs" {
     // B.4): the golden server->client SSE round trip (loads the REAL
     // fable-out/LiveTestingListener.js built by "vscode extension compile"
     // above and feeds it the committed fixtures) plus every standalone
-    // sagefs-vscode/tests/*.fsx contract test. Structural, not an enumerated
+    // bozzetto-vscode/tests/*.fsx contract test. Structural, not an enumerated
     // list, so a new *.fsx contract test is picked up here by construction —
     // the same "join CI by construction" discipline TestInfrastructure.
     // Integration.hostList applies on the .NET side.
@@ -662,9 +649,9 @@ pipeline "sagefs" {
         let ci = fsi.CommandLineArgs |> Array.contains "ci"
         // The host tier is sharded: its suites are sequenced WITHIN a process
         // (shared in-process state), not across processes, so each shard is its
-        // own concurrent tier. SAGEFS_HOST_SHARDS overrides the count.
+        // own concurrent tier. BOZZETTO_HOST_SHARDS overrides the count.
         let hostShards =
-          match Int32.TryParse(Environment.GetEnvironmentVariable "SAGEFS_HOST_SHARDS") with
+          match Int32.TryParse(Environment.GetEnvironmentVariable "BOZZETTO_HOST_SHARDS") with
           | true, n when n >= 1 -> n
           | _ -> 5
         let always =
@@ -694,7 +681,11 @@ pipeline "sagefs" {
             for t in browserTiers do
               lock invokedTiers (fun () -> invokedTiers.Add((t.Name, t.Args, false)))
             always @ [ List.head ciOnly ]
-        do! runTiers runnable
+        let composerTiers =
+          if fsi.CommandLineArgs |> Array.contains "composer" then
+            [ testTier "--integration-composer --summary" ]
+          else []
+        do! runTiers (runnable @ composerTiers)
         return Ok()
       })
   }
@@ -738,7 +729,7 @@ pipeline "sagefs" {
         // all of them.
         if Directory.Exists releaseDir then Directory.Delete(releaseDir, true)
         Directory.CreateDirectory releaseDir |> ignore
-        let vsixOut = Path.Combine(releaseDir, $"sagefs-vscode-{pkgJsonVersion ()}.vsix")
+        let vsixOut = Path.Combine(releaseDir, $"bozzetto-vscode-{pkgJsonVersion ()}.vsix")
         return! ctx.RunCommand $"npx @vscode/vsce package -o \"{vsixOut}\""
       })
   }
@@ -754,7 +745,7 @@ pipeline "sagefs" {
         Directory.CreateDirectory releaseDir |> ignore
         return Ok()
       })
-    run "dotnet pack SageFs -c Release -o release"
+    run "dotnet pack Bozzetto -c Release -o release"
     run (fun _ -> async { verifyToolInstallable (); return Ok() })
     run (fun _ -> async { writeReleaseManifest (); return Ok() })
   }
@@ -770,7 +761,7 @@ pipeline "sagefs" {
     // (uninstallable / unlaunchable tool) that verifyToolInstallable's
     // nupkg-structure check alone cannot catch.
     //
-    // SageFs now multi-targets net10.0;net11.0 (issue #131), so this smoke
+    // Bozzetto now multi-targets net10.0;net11.0 (issue #131), so this smoke
     // test runs TWICE — once per SDK the tool claims to support — each under
     // its own throwaway working dir carrying a global.json PINNED (rollForward
     // "disable") to that exact SDK, so `dotnet` resolution can't accidentally
@@ -793,7 +784,7 @@ pipeline "sagefs" {
             let log = Path.Combine(workDir, "smoke.log")
             let! installExit =
               execToLog (TimeSpan.FromMinutes 10.0) workDir [] log
-                [ "dotnet"; "tool"; "install"; "SageFs"; "--tool-path"; toolPath
+                [ "dotnet"; "tool"; "install"; "Bozzetto"; "--tool-path"; toolPath
                   "--version"; pkgJsonVersion ()
                   "--add-source"; releaseDir; "--no-cache" ]
             match installExit with
@@ -804,13 +795,13 @@ pipeline "sagefs" {
               // `check` here: it probes daemon and port state, whose exit
               // semantics on a clean runner are not pinned, and a smoke stage
               // must never be the flaky one.
-              let exe = Path.Combine(toolPath, "sagefs")
+              let exe = Path.Combine(toolPath, "boz")
               let! versionExit = execToLog (TimeSpan.FromMinutes 2.0) workDir [] log [ exe; "--version" ]
               match versionExit with
               | 0 ->
-                printfn "OK: SageFs installs and runs under .NET SDK %s (%s build)" sdkVersion tfm
+                printfn "OK: Bozzetto installs and runs under .NET SDK %s (%s build)" sdkVersion tfm
                 return Ok()
-              | code -> return Error $"'sagefs --version' under SDK {sdkVersion} (expected {tfm} build) exited {code}; see {log}"
+              | code -> return Error $"'boz --version' under SDK {sdkVersion} (expected {tfm} build) exited {code}; see {log}"
             | code -> return Error $"tool install under SDK {sdkVersion} (expected {tfm} build) exited {code}; see {log}"
           }
         let! results = sdks |> List.map smokeOneSdk |> Async.Sequential

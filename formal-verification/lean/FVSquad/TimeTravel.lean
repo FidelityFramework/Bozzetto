@@ -6,8 +6,8 @@ This file contains:
 2. Pure functional implementation models for navigation operations
 3. Stated and proved propositions covering the informal spec invariants
 
-> 🔬 Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.
-> Source: `SageFs.Core/TimeTravel.fs`
+> 🔬 Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.
+> Source: `Bozzetto.Core/TimeTravel.fs`
 >
 > **Model abstractions**:
 > - The `SnapshotRing` is abstracted as a plain `Nat` (count) plus a capacity `Nat`.

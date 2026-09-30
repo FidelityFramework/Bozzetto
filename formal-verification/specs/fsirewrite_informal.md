@@ -1,7 +1,7 @@
 # Informal Specification: FsiRewrite
 
-> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/SageFs`.*
-> Source: `SageFs.Core/FsiRewrite.fs`
+> 🔬 *Lean Squad — automated formal verification for `WillEhrendreich/Bozzetto`.*
+> Source: `Bozzetto.Core/FsiRewrite.fs`
 
 ## Purpose
 
@@ -76,7 +76,7 @@ Both branches produce the same semantic output.
 ## Inferred Intent
 
 The function exists because FSI evaluates code snippets in expression context, where
-`use` binding syntax is not valid. The rewrite allows SageFs to pass user code (which may
+`use` binding syntax is not valid. The rewrite allows Bozzetto to pass user code (which may
 use idiomatic `use` for IDisposable resources) to FSI without syntax errors.
 
 The identity-return optimisation (`if rewritten then join else code`) avoids creating a

@@ -1,4 +1,4 @@
-name = "sagefs-friction-receiver"
+name = "bozzetto-friction-receiver"
 main = "src/index.ts"
 compatibility_date = "2024-09-01"
 compatibility_flags = ["nodejs_compat"]
@@ -8,14 +8,14 @@ compatibility_flags = ["nodejs_compat"]
 # can browse these by date.
 [[r2_buckets]]
 binding = "FRICTION_BUCKET"
-bucket_name = "sagefs-friction"
-preview_bucket_name = "sagefs-friction-preview"
+bucket_name = "bozzetto-friction"
+preview_bucket_name = "bozzetto-friction-preview"
 
 # Secrets — set with `wrangler secret put DISCORD_WEBHOOK_URL` and
 # `wrangler secret put INGEST_TOKEN`. Both are OPTIONAL.
 # - DISCORD_WEBHOOK_URL: if set, a notification is posted on each submission.
 # - INGEST_TOKEN: if set, submissions must include this token in the
-#   `X-SageFs-Token` header. Prevents random internet noise from filling
+#   `X-Bozzetto-Token` header. Prevents random internet noise from filling
 #   the bucket. The user's daemon stores a copy of the token locally so
 #   the same token works from any machine they configure.
 

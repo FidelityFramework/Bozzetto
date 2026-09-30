@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Filtering — SageFs Edition
+//  🧘  About Filtering — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutFiltering.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

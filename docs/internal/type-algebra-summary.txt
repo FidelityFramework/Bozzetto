@@ -1,6 +1,6 @@
-# SageFs Domain Model Type Algebra - Comprehensive Deep Dive
+# Bozzetto Domain Model Type Algebra - Comprehensive Deep Dive
 
-## 1. DISCRIMINATED UNIONS (DUs) IN SageFs.Core
+## 1. DISCRIMINATED UNIONS (DUs) IN Bozzetto.Core
 
 ### Editor Layer (RenderPipeline.fs)
 **EditorAction** (26 cases) - Every possible user action:
@@ -78,8 +78,8 @@
   • Active of watchedFiles
   • Paused, Disabled
 
-### Event System (SageFsEvent.fs)
-**SageFsEvent** - All state-changing events:
+### Event System (BozzettoEvent.fs)
+**BozzettoEvent** - All state-changing events:
   • EvalStarted of sessionId * code
   • EvalCompleted of sessionId * output * diagnostics
   • EvalFailed of sessionId * error
@@ -125,8 +125,8 @@
   • RunTests of tests * maxParallelism * replyId
   • GetTestDiscovery, GetInstrumentationMaps, Shutdown
 
-### Error System (SageFsError.fs)
-**SageFsError** - Unified error type (47 cases):
+### Error System (BozzettoError.fs)
+**BozzettoError** - Unified error type (47 cases):
   • ToolNotAvailable of toolName * currentState * availableTools
   • SessionNotFound of sessionId
   • NoActiveSessions, AmbiguousSessions of descriptions
@@ -145,12 +145,12 @@
   Module helpers: describe, toLogLevel, toHttpStatus, isClientError, isServerError, isGatewayError, isInfraError
 
 ### Eval Pipeline (EvalPipeline.fs)
-**StageOutcome** - Pipeline stage result: Succeeded | Failed of SageFsError
+**StageOutcome** - Pipeline stage result: Succeeded | Failed of BozzettoError
 
 ### Restart Policy (RestartPolicy.fs)
 **Decision** - Restart supervisor decisions:
   • Restart of delay
-  • GiveUp of SageFsError
+  • GiveUp of BozzettoError
 
 ### Smart Reset (SmartReset.fs)
 **SmartReset.Outcome** - One-button reset escalation:
@@ -258,7 +258,7 @@
 
 ---
 
-## 2. RECORD TYPES IN SageFs.Core
+## 2. RECORD TYPES IN Bozzetto.Core
 
 ### Render Pipeline Records
 **KeyCombo** - { Key: ConsoleKey; Modifiers: ConsoleModifiers; Char: char option }
@@ -348,7 +348,7 @@
     SessionId: string
 }
 
-**SageFsView** - {
+**BozzettoView** - {
     Buffer: ValidatedBuffer
     CompletionMenu: CompletionMenu option
     ActiveSession: SessionSnapshot
@@ -533,13 +533,13 @@
     ↓ (produces)
   EditorEffect list
     ↓ (interpreted as)
-  SageFsEvent
+  BozzettoEvent
     ↓ (triggers state change)
   ElmLoop update
 
 ### Error Flow
-  All operations return: Result<'T, SageFsError>
-  SageFsError has classification:
+  All operations return: Result<'T, BozzettoError>
+  BozzettoError has classification:
     - isClientError (4xx - bad request)
     - isServerError (5xx - internal failure)
     - isGatewayError (502/504 - worker unreachable)
@@ -578,7 +578,7 @@
 
 ## 4. SIGNAL/EVENT TYPES FOR INTER-COMPONENT COMMUNICATION
 
-### Primary Event Bus: SageFsEvent
+### Primary Event Bus: BozzettoEvent
   Driving all Elm loop updates. Routes to:
   - Editor state
   - Session registry
@@ -595,7 +595,7 @@
     - CancelEval, GetStatus, Shutdown
 
 ### Pub/Sub Events (Features/Events.fs)
-  SageFsEvent (serializable for event sourcing):
+  BozzettoEvent (serializable for event sourcing):
     - SessionStarted, SessionWarmUpCompleted, SessionReady, SessionFaulted
     - EvalRequested, EvalCompleted, EvalFailed, EvalTraced
     - DiagnosticsChecked, DiagnosticsCleared
@@ -635,7 +635,7 @@
   RegionFlags: [<Flags>] with composition
 
 ### Result-Based Error Handling
-  All domain functions: Result<'T, SageFsError>
+  All domain functions: Result<'T, BozzettoError>
   Comprehensive error classification via module helpers
 
 ### State Machines
@@ -673,7 +673,7 @@
     WorkerDiagnostic (flattened diagnostic)
     Features.LiveTesting types
 
-### SageFsEvent (Features/Events.fs) - Event Sourcing
+### BozzettoEvent (Features/Events.fs) - Event Sourcing
   Serializable event log format:
     SessionStarted, SessionWarmUpCompleted, EvalCompleted, etc.
     Used for replay, audit, and daemon persistence
@@ -688,19 +688,19 @@
 
 ## Summary: The Type Algebra
 
-SageFs uses a **pure algebraic** type system:
+Bozzetto uses a **pure algebraic** type system:
 
 1. **Actions** (EditorAction, UiAction) → immutable user intent
-2. **Effects** (EditorEffect, SageFsEvent) → side-effect descriptions
+2. **Effects** (EditorEffect, BozzettoEvent) → side-effect descriptions
 3. **State** (EditorState, SessionState, LiveTestState) → immutable snapshots
-4. **Errors** (SageFsError) → unified result type with classification
-5. **Events** (SageFsEvent) → domain events for state transitions
+4. **Errors** (BozzettoError) → unified result type with classification
+5. **Events** (BozzettoEvent) → domain events for state transitions
 
 **Message Flow**:
-  User Input → EditorAction → EditorEffect → SageFsEvent → State Update → Render
+  User Input → EditorAction → EditorEffect → BozzettoEvent → State Update → Render
 
 **Error Flow**:
-  Any operation: Result<'T, SageFsError>
+  Any operation: Result<'T, BozzettoError>
   Classification: isClientError | isServerError | isGatewayError | isInfraError
   HTTP mapping: toHttpStatus
 

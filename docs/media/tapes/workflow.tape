@@ -1,4 +1,4 @@
-Output ../sagefs-workflow.gif
+Output ../bozzetto-workflow.gif
 Set FontSize 20
 Set Width 1200
 Set Height 500
@@ -15,7 +15,7 @@ Type "# Workflow Modes: REPL vs Live"
 Enter
 Sleep 1s
 
-Type "sagefs status"
+Type "boz status"
 Enter
 Sleep 500ms
 Type "Session: a1b2c3d4  [REPL]  Ready"
@@ -26,7 +26,7 @@ Type "  Hot reload: Off"
 Enter
 Sleep 1.5s
 
-Type "sagefs switch-workflow weblive --dry-run"
+Type "boz switch-workflow weblive --dry-run"
 Enter
 Sleep 500ms
 Type "  Transition cost:"
@@ -39,7 +39,7 @@ Type "    Standby ready: Yes (~200ms)"
 Enter
 Sleep 2s
 
-Type "sagefs switch-workflow weblive"
+Type "boz switch-workflow weblive"
 Enter
 Sleep 500ms
 Type "  ⚡ Switched to [Live] mode"

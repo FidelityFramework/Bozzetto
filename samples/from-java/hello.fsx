@@ -116,7 +116,7 @@ let fetchAsync url = async {
 //   @SpringBootApplication, @RestController, @RequestMapping,
 //   @GetMapping, ResponseEntity, a pom.xml, and about 40 seconds to compile.
 //
-// SageFs + Falco HelloWorld:
+// Bozzetto + Falco HelloWorld:
 //   #r "nuget: Falco"
 //   open Falco
 //   webHost [||] {
@@ -128,7 +128,7 @@ let fetchAsync url = async {
 // Maven:  pom.xml (XML), 100-line configs, 10-minute builds
 // Gradle: build.gradle (Groovy or Kotlin), still verbose, still slow
 // F#:     .fsproj (MSBuild, but ~10 lines), `dotnet build` in seconds
-//         SageFs:  no rebuild at all — hot-patches at runtime
+//         Bozzetto:  no rebuild at all — hot-patches at runtime
 
 // ── Migration cheatsheet ──
 // public class Foo { private String x; }     → type Foo = { X: string }

@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Record Types — SageFs Edition
+//  🧘  About Record Types — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutRecordTypes.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.

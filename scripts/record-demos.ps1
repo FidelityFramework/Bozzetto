@@ -71,10 +71,10 @@ foreach ($tape in $tapes) {
 
   if ($exitCode -eq 0) {
     $gifName = $tape.BaseName
-    $gifPath = Join-Path $mediaDir "sagefs-$gifName.gif"
+    $gifPath = Join-Path $mediaDir "bozzetto-$gifName.gif"
     if (Test-Path $gifPath) {
       $size = [math]::Round((Get-Item $gifPath).Length / 1024, 1)
-      Write-Host "    ✓ Generated: sagefs-$gifName.gif (${size} KB)" -ForegroundColor Green
+      Write-Host "    ✓ Generated: bozzetto-$gifName.gif (${size} KB)" -ForegroundColor Green
     } else {
       # Check if the output name matches the tape's Output directive
       $outputLine = ($content -split "`n") | Where-Object { $_ -match '^Output ' } | Select-Object -First 1

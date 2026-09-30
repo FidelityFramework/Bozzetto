@@ -1,0 +1,370 @@
+namespace Bozzetto
+
+open System
+
+open System.Runtime.InteropServices
+
+/// ANSI escape codes for terminal rendering
+module AnsiCodes =
+  let esc = "\x1b["
+  let reset = sprintf "%s0m" esc
+  let bold = sprintf "%s1m" esc
+  let dim = sprintf "%s2m" esc
+  let inverse = sprintf "%s7m" esc
+  let hideCursor = sprintf "%s?25l" esc
+  let showCursor = sprintf "%s?25h" esc
+  let clearScreen = sprintf "%s2J" esc
+  let clearLine = sprintf "%s2K" esc
+  let home = sprintf "%sH" esc
+  let enterAltScreen = sprintf "%s?1049h" esc
+  let leaveAltScreen = sprintf "%s?1049l" esc
+
+  // SGR mouse tracking (cross-platform, works in Windows Terminal/iTerm2/Linux)
+  // ?1000h = any-event (required for wheel events in many terminals)
+  // ?1002h = button-event tracking
+  // ?1006h = SGR extended encoding (large coordinates + wheel)
+  let enableMouse = sprintf "%s?1000h%s?1002h%s?1006h" esc esc esc
+  let disableMouse = sprintf "%s?1006l%s?1002l%s?1000l" esc esc esc
+
+  let moveTo row col = sprintf "%s%d;%dH" esc row col
+  let moveUp n = sprintf "%s%dA" esc n
+  let moveDown n = sprintf "%s%dB" esc n
+
+  let fgHex (hex: string) =
+    let rgb = Theme.hexToRgb hex
+    sprintf "%s38;2;%d;%d;%dm" esc (int (Theme.rgbR rgb)) (int (Theme.rgbG rgb)) (int (Theme.rgbB rgb))
+  let bgHex (hex: string) =
+    let rgb = Theme.hexToRgb hex
+    sprintf "%s48;2;%d;%d;%dm" esc (int (Theme.rgbR rgb)) (int (Theme.rgbG rgb)) (int (Theme.rgbB rgb))
+
+  // Color scheme (from Theme defaults)
+  let green = fgHex Theme.fgGreen
+  let red = fgHex Theme.fgRed
+  let yellow = fgHex Theme.fgYellow
+  let cyan = fgHex Theme.fgCyan
+  let dimWhite = fgHex Theme.fgDim
+  let white = fgHex Theme.fgDefault
+  let bgPanel = bgHex Theme.bgPanel
+  let bgEditor = bgHex Theme.bgEditor
+
+  // Box-drawing characters (Unicode — requires VT100 terminal)
+  let boxH = "\u2500"
+  let boxV = "\u2502"
+  let boxTL = "\u250C"
+  let boxTR = "\u2510"
+  let boxBL = "\u2514"
+  let boxBR = "\u2518"
+  let boxHD = "\u252C" // horizontal + down junction
+  let boxHU = "\u2534" // horizontal + up junction
+  let boxVR = "\u251C" // vertical + right junction
+  let boxVL = "\u2524" // vertical + left junction
+  let boxCross = "\u253C" // cross junction
+
+  let hline width =
+    String.replicate width boxH
+
+  let boxTop title width borderColor =
+    let titleLen = min (String.length title) (width - 4)
+    let t = match titleLen > 0 with | true -> title.Substring(0, titleLen) | false -> ""
+    let lineLen = max 0 (width - titleLen - 5)
+    sprintf "%s%s%s %s%s%s %s%s"
+      borderColor boxTL boxH
+      white t
+      borderColor (hline lineLen) boxTR
+
+  let boxBottom width borderColor =
+    sprintf "%s%s%s%s"
+      borderColor boxBL (hline (width - 2)) boxBR
+
+  /// Delegate types for Windows console P/Invoke (byref can't be used in Func<>)
+  [<UnmanagedFunctionPointer(CallingConvention.StdCall)>]
+  type GetConsoleModeDelegate = delegate of nativeint * byref<uint32> -> bool
+  [<UnmanagedFunctionPointer(CallingConvention.StdCall)>]
+  type SetConsoleModeDelegate = delegate of nativeint * uint32 -> bool
+
+  /// Try to enable Windows VT100 processing for ANSI escape support.
+  /// Returns true if VT100 is available.
+  let enableVT100 () =
+    // Always set UTF-8 first — this must happen regardless of whether
+    // the Windows VT100 P/Invoke succeeds or fails.
+    Console.OutputEncoding <- Text.Encoding.UTF8
+    match RuntimeInformation.IsOSPlatform(OSPlatform.Windows) with
+    | true ->
+      try
+        // P/Invoke kernel32 for VT100 on Windows
+        let STD_OUTPUT_HANDLE = -11
+        let ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004u
+        let handle =
+          NativeLibrary.GetExport(
+            NativeLibrary.Load("kernel32.dll"),
+            "GetStdHandle")
+          |> fun ptr ->
+            let fn = Marshal.GetDelegateForFunctionPointer<Func<int, nativeint>>(ptr)
+            fn.Invoke(STD_OUTPUT_HANDLE)
+        match handle <> nativeint -1 with
+        | true ->
+          let getMode =
+            NativeLibrary.GetExport(
+              NativeLibrary.Load("kernel32.dll"),
+              "GetConsoleMode")
+          let setMode =
+            NativeLibrary.GetExport(
+              NativeLibrary.Load("kernel32.dll"),
+              "SetConsoleMode")
+          let mutable mode = 0u
+          let getModeResult =
+            let fn = Marshal.GetDelegateForFunctionPointer<GetConsoleModeDelegate>(getMode)
+            fn.Invoke(handle, &mode)
+          match getModeResult with
+          | true ->
+            let newMode = mode ||| ENABLE_VIRTUAL_TERMINAL_PROCESSING
+            let fn = Marshal.GetDelegateForFunctionPointer<SetConsoleModeDelegate>(setMode)
+            fn.Invoke(handle, newMode) |> ignore
+          | false -> ()
+        | false -> ()
+        true
+      with _ -> false
+    | false -> true
+
+  let mutable savedInputMode = 0u
+
+  /// Enable VT input on Windows stdin (needed for SGR mouse sequences).
+  /// Also disables line input and echo for raw character-by-character reading.
+  let enableVtInput () =
+    match RuntimeInformation.IsOSPlatform(OSPlatform.Windows) with
+    | true ->
+      try
+        let STD_INPUT_HANDLE = -10
+        let ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200u
+        let ENABLE_LINE_INPUT = 0x0002u
+        let ENABLE_ECHO_INPUT = 0x0004u
+        let ENABLE_PROCESSED_INPUT = 0x0001u
+        let kernel32 = NativeLibrary.Load("kernel32.dll")
+        let handle =
+          NativeLibrary.GetExport(kernel32, "GetStdHandle")
+          |> fun ptr ->
+            let fn = Marshal.GetDelegateForFunctionPointer<Func<int, nativeint>>(ptr)
+            fn.Invoke(STD_INPUT_HANDLE)
+        match handle <> nativeint -1 with
+        | true ->
+          let getMode = NativeLibrary.GetExport(kernel32, "GetConsoleMode")
+          let setMode = NativeLibrary.GetExport(kernel32, "SetConsoleMode")
+          let mutable mode = 0u
+          let fn = Marshal.GetDelegateForFunctionPointer<GetConsoleModeDelegate>(getMode)
+          match fn.Invoke(handle, &mode) with
+          | true ->
+            savedInputMode <- mode
+            let newMode =
+              (mode ||| ENABLE_VIRTUAL_TERMINAL_INPUT)
+              &&& ~~~ENABLE_LINE_INPUT
+              &&& ~~~ENABLE_ECHO_INPUT
+              &&& ~~~ENABLE_PROCESSED_INPUT
+            let setFn = Marshal.GetDelegateForFunctionPointer<SetConsoleModeDelegate>(setMode)
+            setFn.Invoke(handle, newMode) |> ignore
+          | false -> ()
+        | false -> ()
+        true
+      with _ -> false
+    | false -> true
+
+  /// Restore Windows stdin mode to saved state
+  let restoreVtInput () =
+    match RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && savedInputMode <> 0u with
+    | true ->
+      try
+        let kernel32 = NativeLibrary.Load("kernel32.dll")
+        let handle =
+          NativeLibrary.GetExport(kernel32, "GetStdHandle")
+          |> fun ptr ->
+            let fn = Marshal.GetDelegateForFunctionPointer<Func<int, nativeint>>(ptr)
+            fn.Invoke(-10)
+        match handle <> nativeint -1 with
+        | true ->
+          let setMode = NativeLibrary.GetExport(kernel32, "SetConsoleMode")
+          let setFn = Marshal.GetDelegateForFunctionPointer<SetConsoleModeDelegate>(setMode)
+          setFn.Invoke(handle, savedInputMode) |> ignore
+        | false -> ()
+      with _ -> ()
+    | false -> ()
+
+
+/// Mouse button for cross-platform input events
+[<RequireQualifiedAccess>]
+type MouseButton = Left | Middle | Right | NoButton
+
+/// Mouse action type
+[<RequireQualifiedAccess>]
+type MouseAction = Press | Release | Move | WheelUp | WheelDown
+
+/// Cross-platform mouse event (shared by TUI and GUI)
+type MouseEvent = {
+  Button: MouseButton
+  Action: MouseAction
+  Col: int
+  Row: int
+}
+
+/// Cross-platform input event — keyboard or mouse
+type InputEvent =
+  | KeyEvent of key: ConsoleKey * ch: char * modifiers: ConsoleModifiers
+  | MouseEvent of MouseEvent
+
+
+/// Frame diffing — only redraw rows that changed between frames
+module FrameDiff =
+  /// Split a rendered frame into (row, content) pairs based on moveTo commands.
+  /// Appends to existing rows when the same row appears multiple times (e.g.
+  /// cursor repositioning at end of frame).
+  let parsePositionedLines (frame: string) : Map<int, string> =
+    let mutable result = Map.empty<int, Text.StringBuilder>
+    let mutable currentRow = -1
+    let mutable i = 0
+
+    let getSb row =
+      match result |> Map.tryFind row with
+      | Some sb -> sb
+      | None ->
+        let sb = Text.StringBuilder()
+        result <- result |> Map.add row sb
+        sb
+
+    while i < frame.Length do
+      match i + 2 < frame.Length && frame.[i] = '\x1b' && frame.[i+1] = '[' with
+      | true ->
+        let mutable j = i + 2
+        while j < frame.Length
+          && frame.[j] <> 'H' && frame.[j] <> 'A'
+          && frame.[j] <> 'B' && frame.[j] <> 'J'
+          && frame.[j] <> 'K' && frame.[j] <> 'm'
+          && frame.[j] <> 'l' && frame.[j] <> 'h' do
+          j <- j + 1
+        let seqLen = match j < frame.Length with | true -> j - i + 1 | false -> j - i
+        match j < frame.Length && frame.[j] = 'H' with
+        | true ->
+          let coords = frame.Substring(i + 2, j - i - 2)
+          let parts = coords.Split(';')
+          match parts.Length >= 1 with
+          | true ->
+            match Int32.TryParse(parts.[0]) with
+            | true, row -> currentRow <- row
+            | _ -> ()
+          | false -> ()
+          match currentRow >= 0 with
+          | true ->
+            (getSb currentRow).Append(frame.Substring(i, seqLen)) |> ignore
+          | false -> ()
+          i <- i + seqLen
+        | false ->
+          match currentRow >= 0 with
+          | true ->
+            (getSb currentRow).Append(frame.Substring(i, seqLen)) |> ignore
+          | false -> ()
+          i <- i + seqLen
+      | false ->
+        match currentRow >= 0 with
+        | true ->
+          (getSb currentRow).Append(frame.[i]) |> ignore
+        | false -> ()
+        i <- i + 1
+
+    result |> Map.map (fun _ sb -> sb.ToString())
+
+  /// Create a diff frame containing only rows that changed
+  let diff (prevFrame: string) (newFrame: string) : string =
+    let prevLines = parsePositionedLines prevFrame
+    let newLines = parsePositionedLines newFrame
+    let sb = Text.StringBuilder()
+
+    for kv in newLines do
+      match prevLines |> Map.tryFind kv.Key with
+      | Some prev when prev = kv.Value -> ()
+      | _ -> sb.Append(kv.Value) |> ignore
+
+    sb.ToString()
+
+
+/// Terminal-specific commands beyond EditorAction
+[<RequireQualifiedAccess>]
+type TerminalCommand =
+  | Action of EditorAction
+  | CycleFocus
+  | FocusDirection of Direction
+  | ScrollUp
+  | ScrollDown
+  | Redraw
+  | Quit
+  | TogglePane of PaneId
+  | LayoutPreset of string
+  | ResizeH of int
+  | ResizeV of int
+  | ResizeR of int
+  | CycleTheme
+  | HotReloadWatchAll
+  | HotReloadUnwatchAll
+  | EnableLiveTesting
+  | DisableLiveTesting
+  | CycleRunPolicy
+  | ToggleCoverage
+  | TimeTravelBack
+  | TimeTravelForward
+  | TimeTravelGoLive
+  | CycleDensity
+  | NextFailingTest
+  | PrevFailingTest
+  | JumpToTest
+  | MarkAllStale
+
+
+/// Map console key presses to terminal commands
+module TerminalInput =
+  /// Convert ConsoleKeyInfo to a KeyCombo for map lookup
+  let toKeyCombo (key: ConsoleKeyInfo) : KeyCombo =
+    { Key = key.Key; Modifiers = key.Modifiers; Char = None }
+
+  /// Look up action in the keybinding map, then fall back to char insertion
+  let mapKeyWith (keyMap: KeyMap) (key: ConsoleKeyInfo) : TerminalCommand option =
+    let combo = toKeyCombo key
+    match keyMap |> Map.tryFind combo with
+    | Some (UiAction.Quit) -> Some TerminalCommand.Quit
+    | Some (UiAction.CycleFocus) -> Some TerminalCommand.CycleFocus
+    | Some (UiAction.FocusDir d) -> Some (TerminalCommand.FocusDirection d)
+    | Some (UiAction.ScrollUp) -> Some TerminalCommand.ScrollUp
+    | Some (UiAction.ScrollDown) -> Some TerminalCommand.ScrollDown
+    | Some (UiAction.Redraw) -> Some TerminalCommand.Redraw
+    | Some (UiAction.FontSizeUp) -> None // TUI can't change font size
+    | Some (UiAction.FontSizeDown) -> None
+    | Some (UiAction.TogglePane p) -> Some (TerminalCommand.TogglePane p)
+    | Some (UiAction.LayoutPreset p) -> Some (TerminalCommand.LayoutPreset p)
+    | Some (UiAction.ResizeH d) -> Some (TerminalCommand.ResizeH d)
+    | Some (UiAction.ResizeV d) -> Some (TerminalCommand.ResizeV d)
+    | Some (UiAction.ResizeR d) -> Some (TerminalCommand.ResizeR d)
+    | Some (UiAction.CycleTheme) -> Some TerminalCommand.CycleTheme
+    | Some (UiAction.HotReloadWatchAll) -> Some TerminalCommand.HotReloadWatchAll
+    | Some (UiAction.HotReloadUnwatchAll) -> Some TerminalCommand.HotReloadUnwatchAll
+    | Some (UiAction.EnableLiveTesting) -> Some TerminalCommand.EnableLiveTesting
+    | Some (UiAction.DisableLiveTesting) -> Some TerminalCommand.DisableLiveTesting
+    | Some (UiAction.CycleRunPolicy) -> Some TerminalCommand.CycleRunPolicy
+    | Some (UiAction.ToggleCoverage) -> Some TerminalCommand.ToggleCoverage
+    | Some (UiAction.TimeTravelBack) -> Some TerminalCommand.TimeTravelBack
+    | Some (UiAction.TimeTravelForward) -> Some TerminalCommand.TimeTravelForward
+    | Some (UiAction.TimeTravelGoLive) -> Some TerminalCommand.TimeTravelGoLive
+    | Some (UiAction.CycleDensity) -> Some TerminalCommand.CycleDensity
+    | Some (UiAction.NextFailingTest) -> Some TerminalCommand.NextFailingTest
+    | Some (UiAction.PrevFailingTest) -> Some TerminalCommand.PrevFailingTest
+    | Some (UiAction.JumpToTest) -> Some TerminalCommand.JumpToTest
+    | Some (UiAction.MarkAllStale) -> Some TerminalCommand.MarkAllStale
+    | Some (UiAction.Editor action) -> Some (TerminalCommand.Action action)
+    | None ->
+      // Fall through to character insertion for printable chars
+      match key.KeyChar >= ' ' && key.KeyChar <= '~' with
+      | true ->
+        Some (TerminalCommand.Action (EditorAction.InsertChar key.KeyChar))
+      | false ->
+        match key.KeyChar > '\x7f' with
+        | true ->
+          Some (TerminalCommand.Action (EditorAction.InsertChar key.KeyChar))
+        | false -> None
+
+  /// Map using default keybindings (backwards compatibility)
+  let mapKey (key: ConsoleKeyInfo) : TerminalCommand option =
+    mapKeyWith KeyMap.defaults key

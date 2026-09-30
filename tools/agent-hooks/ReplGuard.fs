@@ -1,17 +1,17 @@
-/// The decision behind the sagefs-repl-guard Claude Code hook.
+/// The decision behind the bozzetto-repl-guard Claude Code hook.
 ///
 /// Pure: a Bash command string plus what the hook found out about the world
-/// goes in, Allow or Deny comes out. No IO in here, so SageFs.Tests compiles
-/// this same file and tests it, and sagefs-repl-guard.fsx #loads it and runs it.
+/// goes in, Allow or Deny comes out. No IO in here, so Bozzetto.Tests compiles
+/// this same file and tests it, and bozzetto-repl-guard.fsx #loads it and runs it.
 /// No dependencies past FSharp.Core, because the script has to load fast.
-module SageFs.AgentHooks.ReplGuard
+module Bozzetto.AgentHooks.ReplGuard
 
 /// Whether the hook's working directory has an .fsproj, .slnx or .sln at or above it.
 type ProjectScope =
   | FSharpWorkspace
   | NotFSharpWorkspace
 
-/// Whether a SageFs daemon answered /health on localhost.
+/// Whether a Bozzetto daemon answered /health on localhost.
 type DaemonProbe =
   | DaemonAnswering
   | DaemonNotAnswering
@@ -20,7 +20,7 @@ type DaemonProbe =
 /// FINAL-GATE-declared command. Only asked when the command IS final-gate
 /// declared — a plain (undeclared) slow verb is denied on the "use the
 /// REPL" grounds alone and never needs a lease check. Kept as plain
-/// primitives (no dependency on SageFs.ExpensiveWorkLease's real DU)
+/// primitives (no dependency on Bozzetto.ExpensiveWorkLease's real DU)
 /// because this file has to stay dependency-free past FSharp.Core so the
 /// hook script loads fast.
 type LeaseProbe =
@@ -45,7 +45,7 @@ type Context = { Project: ProjectScope; Daemon: DaemonProbe; Session: SessionPro
 
 /// The minimum a session summary the script fetches from `GET /health`'s
 /// `sessionStates` needs to answer "is there a Ready REPL for this cwd" —
-/// kept as plain primitives (not SageFs.Core's own session/status types) for
+/// kept as plain primitives (not Bozzetto.Core's own session/status types) for
 /// the same dependency-free reason as `LeaseProbe` above.
 type SessionSummary = { WorkingDirectory: string; Status: string }
 
@@ -103,7 +103,7 @@ module SlowVerb =
 type CommandClass =
   /// No slow-loop dotnet verb anywhere in it: pack, tool, --version, git, ls...
   | NoSlowLoop
-  /// A slow-loop verb that said SAGEFS_FINAL_GATE=1 up front.
+  /// A slow-loop verb that said BOZZETTO_FINAL_GATE=1 up front.
   | DeclaredFinalGate of SlowVerb
   /// A slow-loop verb with no final-gate declaration.
   | SlowLoop of SlowVerb
@@ -113,7 +113,7 @@ type Decision =
   | Deny of reason: string
 
 [<Literal>]
-let FinalGateVariable = "SAGEFS_FINAL_GATE"
+let FinalGateVariable = "BOZZETTO_FINAL_GATE"
 
 let private finalGateAssignment = FinalGateVariable + "=1"
 
@@ -210,7 +210,7 @@ let private isFinalGateExport (words: string list) =
   | _ -> false
 
 /// The first slow-loop dotnet call in the command, if any. An earlier
-/// `export SAGEFS_FINAL_GATE=1` segment counts as a declaration for every
+/// `export BOZZETTO_FINAL_GATE=1` segment counts as a declaration for every
 /// segment after it.
 let classify (command: string) : CommandClass =
   let rec go exported segs =
@@ -231,37 +231,37 @@ let classify (command: string) : CommandClass =
 let denyReason (verb: SlowVerb) =
   let v = SlowVerb.toToken verb
   String.concat "\n" [
-    sprintf "SageFs is running, so `dotnet %s` is off the inner loop. Loop: send_fsharp_code for RED then GREEN, persist to the .fs file, hard_reset_fsi_session rebuild=true, re-verify in the session, commit." v
+    sprintf "Bozzetto is running, so `dotnet %s` is off the inner loop. Loop: send_fsharp_code for RED then GREEN, persist to the .fs file, hard_reset_fsi_session rebuild=true, re-verify in the session, commit." v
     "dotnet build/test/run/fsi is for the final gate, run once when you're done, and for the one build before create_session (a worktree gets its own session)."
     sprintf "If this is one of those, rerun it as `%s dotnet %s ...`. If the REPL is fighting you, report the exact error first, then use that escape hatch for that one step only." finalGateAssignment v
   ]
 
 /// The deny reason for a DECLARED final gate that a lease request refused
-/// or asked to wait for: SageFs is BUSY here, not broken, and the message
+/// or asked to wait for: Bozzetto is BUSY here, not broken, and the message
 /// says so explicitly — the whole point is an agent must never read this as
 /// "the REPL is fighting me, fall back to dotnet" (that IS the fallback,
 /// and it is what a busy daemon needs the LEAST). Waiting the named time is
 /// the only correct move; a build/test/run that shells out anyway spends
-/// exactly the memory SageFs is trying to reclaim, outside its own
+/// exactly the memory Bozzetto is trying to reclaim, outside its own
 /// accounting.
 let busyDenyReason (verb: SlowVerb) (leaseProbe: LeaseProbe) =
   let v = SlowVerb.toToken verb
   let whatItSaid =
     match leaseProbe with
     | LeaseGranted -> "" // unreachable from decide's Deny path
-    | LeaseRefused reason -> sprintf "SageFs refused the lease: %s" reason
-    | LeaseMustWait(retryAfterSeconds, reason) -> sprintf "SageFs said wait %.0fs: %s" retryAfterSeconds reason
+    | LeaseRefused reason -> sprintf "Bozzetto refused the lease: %s" reason
+    | LeaseMustWait(retryAfterSeconds, reason) -> sprintf "Bozzetto said wait %.0fs: %s" retryAfterSeconds reason
   String.concat "\n" [
-    sprintf "SageFs is BUSY, not broken — `dotnet %s` (a declared final gate) costs real memory SageFs is trying to manage, even though SageFs itself never ran it." v
+    sprintf "Bozzetto is BUSY, not broken — `dotnet %s` (a declared final gate) costs real memory Bozzetto is trying to manage, even though Bozzetto itself never ran it." v
     whatItSaid
-    "This is a WAIT, not a bug to route around: sleep the named time and rerun the identical command. Shelling out anyway spends the exact memory SageFs is trying to reclaim, invisibly to it — that is how five agents starved one daemon in one night."
+    "This is a WAIT, not a bug to route around: sleep the named time and rerun the identical command. Shelling out anyway spends the exact memory Bozzetto is trying to reclaim, invisibly to it — that is how five agents starved one daemon in one night."
   ]
 
 /// The guard's whole decision.
-///   - An UNDECLARED slow verb, in an F# workspace, with SageFs answering
+///   - An UNDECLARED slow verb, in an F# workspace, with Bozzetto answering
 ///     AND a Ready session whose working directory covers this cwd, is
 ///     denied on "use the REPL" grounds — unrelated to memory pressure.
-///     With SageFs up but no Ready session here, there is no REPL to go
+///     With Bozzetto up but no Ready session here, there is no REPL to go
 ///     back to — that is exactly the one build `create_session` itself
 ///     needs (issue #144), so it passes. A `Session` probe that failed or
 ///     was never asked (`None`) fails OPEN the same way: this hook must

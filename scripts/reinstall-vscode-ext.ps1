@@ -1,9 +1,9 @@
 #!/usr/bin/env pwsh
-# Rebuilds and reinstalls the SageFs VSCode extension, then reloads VSCode.
+# Rebuilds and reinstalls the Bozzetto VSCode extension, then reloads VSCode.
 param([switch]$NoReload)
 
 $ErrorActionPreference = 'Stop'
-Push-Location "$PSScriptRoot\..\sagefs-vscode"
+Push-Location "$PSScriptRoot\..\bozzetto-vscode"
 
 try {
   Write-Host "Compiling extension..." -ForegroundColor Cyan

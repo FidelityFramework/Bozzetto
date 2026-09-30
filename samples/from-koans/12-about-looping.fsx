@@ -1,5 +1,5 @@
 // ============================================================
-//  🧘  About Looping — SageFs Edition
+//  🧘  About Looping — Bozzetto Edition
 //
 //  Original: ChrisMarinos/FSharpKoans — AboutLooping.fs
 //  Adapted from FSharpKoans by Chris Marinos (MIT). See LICENSE-FSharpKoans.
@@ -85,7 +85,7 @@ let tests = testList "about looping" [
 // 3. Try `[1..100] |> List.sum` — answer in <1ms, no loop needed
 // 4. Use `for i in [0..2..10] do` — loop with step size
 //
-// 💡 SageFs convention: Prefer List/Seq/Array functions over loops.
+// 💡 Bozzetto convention: Prefer List/Seq/Array functions over loops.
 //    Loops with mutable accumulators are C# thinking. In F#:
 //      [0..10] |> List.sum                              // instead of for + mutable
 //      [0..10] |> List.fold (fun acc x -> acc + x) 0    // explicit fold

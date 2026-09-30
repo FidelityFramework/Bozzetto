@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net11.0": {
+      "Expecto": {
+        "type": "Direct",
+        "requested": "[11.0.0-alpha8, )",
+        "resolved": "11.0.0-alpha8",
+        "contentHash": "5OEuOPuOxnkqJ/vw2fBEqhlAsT7OXNP1UDdaZt0d8uU8wuWTajZjsF2A2rddtwSwau/HVWAgGm2UGKpqqTKSRQ==",
+        "dependencies": {
+          "FSharp.Core": "7.0.200",
+          "Mono.Cecil": "[0.11.4, 1.0.0)"
+        }
+      },
+      "FSharp.Core": {
+        "type": "Direct",
+        "requested": "[11.0.101-preview7.26359.118, )",
+        "resolved": "11.0.101-preview7.26359.118",
+        "contentHash": "mWjUenBCyLI1qi8ulWFNiRwPDF5XHfL8ininijHysTZc9hiQ1/3byA2mZ2UKlp06h3kvXWdSc6MF7pkHz1OaQA=="
+      },
+      "bozzetto.samples.consoleticker": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[11.0.101-preview7.26359.118, )"
+        }
+      },
+      "Mono.Cecil": {
+        "type": "CentralTransitive",
+        "requested": "[0.11.6, )",
+        "resolved": "0.11.4",
+        "contentHash": "IC1h5g0NeJGHIUgzM1P82ld57knhP0IcQfrYITDPXlNpMYGUrsG5TxuaWTjaeqDNQMBDNZkB8L0rBnwsY6JHuQ=="
+      }
+    }
+  }
+}

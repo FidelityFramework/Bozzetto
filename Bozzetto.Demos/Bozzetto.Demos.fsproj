@@ -1,0 +1,71 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <LangVersion>preview</LangVersion>
+    <!-- Standalone tool: drives the daemon over HTTP + Playwright at
+         runtime, so it must NOT reference Bozzetto.Core/Bozzetto — the same
+         host-closure lesson that keeps the FSI host's dependency surface
+         small (demo-gif-plan.md §4/§8, roast §1). -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" />
+    <PackageReference Include="Microsoft.Playwright" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Bundled demo assets (§8, §9): a crisp, anti-aliased synthetic cursor
+         (28px arrow, hotspot at pixel (2,2)) and click-ripple ring PNG, both
+         generated once via ImageMagick at 4x scale then downscaled for
+         anti-aliasing (drawbox/drawtext cannot draw a smooth diagonal or a
+         circle — see Ffmpeg.fs's module doc). Copied next to the built DLL
+         so Runtime.fs can resolve them via AppContext.BaseDirectory exactly
+         like the rest of the tool's own asset resolution (chromiumDir). -->
+    <None Include="assets\cursor.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="assets\ripple.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Domain.fs" />
+    <Compile Include="Motion.fs" />
+    <Compile Include="Cadence.fs" />
+    <Compile Include="Keymap.fs" />
+    <Compile Include="Layout.fs" />
+    <Compile Include="Schedule.fs" />
+    <Compile Include="Input.fs" />
+    <Compile Include="Ffmpeg.fs" />
+    <Compile Include="Compose.fs" />
+    <Compile Include="Storyboard.fs" />
+    <Compile Include="Fingerprint.fs" />
+    <Compile Include="Wire.fs" />
+    <Compile Include="XTest.fs" />
+    <Compile Include="Sandbox.fs" />
+    <Compile Include="Actors\Actor.fs" />
+    <Compile Include="Actors\Dashboard.fs" />
+    <Compile Include="Actors\VsCode.fs" />
+    <Compile Include="Actors\Neovim.fs" />
+    <Compile Include="Actors\App.fs" />
+    <Compile Include="Actors\Agent.fs" />
+    <Compile Include="Recorder.fs" />
+    <Compile Include="CellAgent.fs" />
+    <Compile Include="Scenarios.fs" />
+    <Compile Include="Scenarios.VsCode.fs" />
+    <Compile Include="Scenarios.Neovim.fs" />
+    <Compile Include="Scenarios.Agent.fs" />
+    <Compile Include="Scenarios.Cohort.fs" />
+    <Compile Include="Scenarios.All.fs" />
+    <Compile Include="Runtime.VsCode.fs" />
+    <Compile Include="Runtime.Neovim.fs" />
+    <Compile Include="Runtime.App.fs" />
+    <Compile Include="Runtime.Agent.fs" />
+    <Compile Include="Runtime.Cohort.fs" />
+    <Compile Include="Runtime.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+</Project>
