@@ -180,7 +180,7 @@ module DaemonHealth =
     |> List.concat
     |> String.concat "\n"
 
-  /// Explain the daemon's current session mix in one line for diagnostics surfaces.
+  /// Explain the inherited F# host's session mix, independently of Composer sessions.
   let diagnosticSummary (snap: HealthSnapshot) : string =
     let breakdown =
       snap.SessionSummaries
@@ -190,7 +190,7 @@ module DaemonHealth =
       |> String.concat ", "
 
     match snap.SessionSummaries with
-    | [] -> "No sessions registered with the daemon."
+    | [] -> "No F# sessions registered with the daemon."
     | sessions ->
       let faultedProjects =
         sessions
@@ -199,10 +199,10 @@ module DaemonHealth =
         |> List.distinct
 
       match faultedProjects with
-      | [] -> sprintf "%d session(s): %s" sessions.Length breakdown
+      | [] -> sprintf "%d F# session(s): %s" sessions.Length breakdown
       | projects ->
         sprintf
-          "Faulted session(s): %s. %d session(s): %s"
+          "Faulted F# session(s): %s. %d F# session(s): %s"
           (String.concat ", " projects)
           sessions.Length
           breakdown

@@ -23,10 +23,26 @@
 
 **You have failed this rule on the very first turn of this session, and on the turn immediately after being told about it, and on multiple turns after that. The next failure is a refusal to do the work, not a sentence of acknowledgment.**
 
-## The inner loop: the Bozzetto REPL, always
+## Choose the provider before the inner loop
+
+Clef/Composer work uses Bozzetto's `composer_*` tools and `/composer` browser
+page on 47749. Open an explicit `.fidproj`, reserve before editing, and execute
+only through `composer_run_current`. F#/.NET development uses the separate
+SageFS MCP service on 37749; do not make a Bozzetto FSI session a prerequisite
+for Composer work. LLVM ORC JIT is a later Composer execution backend.
+
+Start the shared Bozzetto daemon with `scripts/start-shared-daemon` and the
+reviewed installed `boz`. Its working directory is the dedicated external
+`$XDG_DATA_HOME/bozzetto/workspace` (default `~/.local/share/bozzetto/workspace`).
+Do not launch it from home or the repositories parent: the inherited recursive
+watcher would scan that directory. Logs belong under external state storage.
+Preserve an existing daemon and follow the live checkpoint to connect MCP.
+
+### Retained F# implementation work
 
 Load and follow [`skills/bozzetto/SKILL.md`](skills/bozzetto/SKILL.md) before
-touching F#. The short version: the Bozzetto REPL (MCP) is the inner loop, and
+touching F#. The short version: an available F# REPL (normally separate SageFS)
+is the inner loop for F# implementation work, and
 `dotnet build` / `dotnet test` is the final gate only. If you brief a
 sub-agent, put the loop in the brief. Sub-agents don't inherit it.
 

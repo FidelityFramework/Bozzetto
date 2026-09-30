@@ -639,7 +639,7 @@ OUTPUT FORMAT: Each entry shows a timestamp, cell index, duration, whether it su
         getRecentEvents ctx "mcp" eventCount wd |> withEcho ctx "get_recent_fsi_events"
     
     [<McpServerTool>]
-    [<Description("Get daemon-wide status: versions, health, memory pressure, machine memory, daemon/worker RSS and CPU, session counts, health anomalies, and safe lease summaries. Use this before trusting a session or starting expensive work.")>]
+    [<Description("Get daemon-wide status: versions, health, memory pressure, machine memory, daemon/worker RSS and CPU, F# session counts, health anomalies, and safe lease summaries. Composer sessions are listed separately by composer_list_sessions. Use this before trusting a session or starting expensive work.")>]
     member _.get_daemon_status() : Task<string> =
         getDaemonStatus ctx |> withEcho ctx "get_daemon_status"
 

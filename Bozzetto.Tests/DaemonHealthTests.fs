@@ -168,7 +168,7 @@ let healthFormatTests =
         MemoryPressure = Bozzetto.MemoryPressure.Normal
       }
       let text = DaemonHealth.diagnosticSummary snapshot
-      text |> Expect.equal "should explain the missing session state" "No sessions registered with the daemon."
+      text |> Expect.equal "zero is explicitly limited to the F# provider" "No F# sessions registered with the daemon."
 
     testCase "diagnostic summary includes faulted projects and status breakdown" <| fun _ ->
       let snapshot = {
@@ -188,6 +188,7 @@ let healthFormatTests =
         MemoryPressure = Bozzetto.MemoryPressure.Normal
       }
       let text = DaemonHealth.diagnosticSummary snapshot
+      text |> Expect.stringContains "diagnostics label the provider for nonzero counts too" "3 F# session(s)"
       text |> Expect.stringContains "should mention the faulted project" "FaultedProject"
       text |> Expect.stringContains "should include the ready count" "Ready=1"
       text |> Expect.stringContains "should include the faulted count" "Faulted=1"

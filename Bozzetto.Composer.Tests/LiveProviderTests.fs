@@ -78,6 +78,26 @@ let private connect port =
   let transport = new HttpClientTransport(HttpClientTransportOptions(Endpoint = Uri(sprintf "http://127.0.0.1:%d/" port)), null)
   McpClient.CreateAsync(transport, null, null, CancellationToken.None)
 
+let private cliStatus dotnet daemonDll port directory = task {
+  let info = ProcessStartInfo(dotnet, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true)
+  for argument in [ daemonDll; "status"; "--mcp-port"; string port ] do
+    info.ArgumentList.Add argument
+  info.WorkingDirectory <- directory
+  info.Environment["BOZZETTO_DATA_DIR"] <- Path.Combine(directory, "daemon-data")
+  use statusProcess = Process.Start info
+  let stdout = statusProcess.StandardOutput.ReadToEndAsync()
+  let stderr = statusProcess.StandardError.ReadToEndAsync()
+  try
+    do! statusProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+    let! output = stdout.WaitAsync(TimeSpan.FromSeconds 3.)
+    let! errors = stderr.WaitAsync(TimeSpan.FromSeconds 3.)
+    statusProcess.ExitCode |> Expect.equal ("CLI status completed: " + errors) 0
+    return output
+  finally
+    // This owns only the short-lived status command, never the shared daemon.
+    if not statusProcess.HasExited then statusProcess.Kill true
+}
+
 let private readResource (mcp: McpClient) (evidence: Evidence) = task {
   let! resource = mcp.ReadResourceAsync("composer://sessions", (null: RequestOptions), CancellationToken.None)
   let json =
@@ -202,6 +222,29 @@ let tests =
           let current = status |> success |> field "current"
           text "artifactSha256" current |> Expect.equal "MCP status sees HTTP build artifact" (text "artifactSha256" accepted)
           text "sourceVersion" current |> Expect.equal "both interfaces share the checked source receipt" (text "sourceVersion" accepted)
+          // The daemon has zero F# sessions and one accepted Composer session.
+          // Legacy counts must name their provider rather than imply no work exists.
+          let! providerState = readResource mcp evidence
+          (field "sessions" providerState).GetArrayLength() |> Expect.equal "one accepted Composer session remains visible" 1
+          let! healthCode, health = httpJson http evidence "GET" "/health" None
+          healthCode |> Expect.equal "health transport completed" 200
+          (field "sessionCount" health).GetInt32() |> Expect.equal "health retains the F# count" 0
+          text "sessionProvider" health |> Expect.equal "health scopes inherited counts" "fsharp"
+          text "diagnosticSummary" health |> Expect.equal "health does not claim Composer is empty" "No F# sessions registered with the daemon."
+          let! daemonStatus = call mcp evidence "get_daemon_status" [] CancellationToken.None
+          let daemonStatusJson =
+            daemonStatus.Content
+            |> Seq.choose (function :? TextContentBlock as content -> Some content.Text | _ -> None)
+            |> Seq.exactlyOne
+            |> parse
+          let inheritedSessions = field "sessions" daemonStatusJson
+          text "provider" inheritedSessions |> Expect.equal "MCP status scopes inherited counts" "fsharp"
+          (field "total" inheritedSessions).GetInt32() |> Expect.equal "MCP retains the F# count" 0
+          let! cliOutput = cliStatus dotnet daemonDll port cache
+          evidence.Write("cli-status", JsonSerializer.Serialize {| output = cliOutput |})
+          cliOutput |> Expect.stringContains "CLI zero is explicitly F#" "F# sessions: 0 active"
+          cliOutput |> Expect.stringContains "CLI advertises the current MCP endpoint" (sprintf "MCP (Streamable HTTP): http://localhost:%d/" port)
+          cliOutput |> Expect.stringContains "CLI labels SSE compatibility" (sprintf "MCP (SSE, older clients): http://localhost:%d/sse" port)
           let! beforeRun = providerHttp http evidence "run" first [ "arguments", box ([||]: string array) ]
           let result = success beforeRun
           text "standardOutput" result |> Expect.equal "HTTP execution uses accepted native artifact" "stable\nbefore\n"

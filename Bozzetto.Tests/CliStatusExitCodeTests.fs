@@ -58,14 +58,26 @@ let cliStatusExitCodeTests =
       Expect.equal "a running daemon is success" 0 code
       stdout |> Expect.stringContains "reports it is running" "Bozzetto daemon running"
       stdout |> Expect.stringContains "reports the pid" "4242"
-      (stdout.Contains "Sessions:")
+      (stdout.Contains "F# sessions:")
       |> Expect.isFalse "an unfetchable session count is omitted, not reported as zero"
     }
 
     test "a running daemon whose session count IS fetched reports it" {
       let code, stdout = runStatus (fun _ -> Some daemonOnPort) (fun _ -> Some 3)
       Expect.equal "still success" 0 code
-      stdout |> Expect.stringContains "reports the live count" "Sessions:   3 active"
+      stdout |> Expect.stringContains "reports the live F# count" "F# sessions: 3 active"
+    }
+
+    test "zero inherited sessions is labelled F# and current MCP transport comes first" {
+      let code, stdout = runStatus (fun _ -> Some daemonOnPort) (fun _ -> Some 0)
+      code |> Expect.equal "a provider-specific zero is not a daemon failure" 0
+      stdout |> Expect.stringContains "zero does not claim all providers are empty" "F# sessions: 0 active"
+      let current = "MCP (Streamable HTTP): http://localhost:47749/"
+      let compatibility = "MCP (SSE, older clients): http://localhost:47749/sse"
+      stdout |> Expect.stringContains "root endpoint is advertised" current
+      stdout |> Expect.stringContains "SSE is labelled compatibility" compatibility
+      (stdout.IndexOf(current, StringComparison.Ordinal) < stdout.IndexOf(compatibility, StringComparison.Ordinal))
+      |> Expect.isTrue "current transport precedes older-client compatibility"
     }
 
     test "WHY — Program.statusCommand — a wedged daemon (no HTTP answer, live local pid) is reported distinctly from no daemon running, with its pid as the recovery handle" {

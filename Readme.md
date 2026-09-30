@@ -50,32 +50,32 @@ SageFs is the live F# development daemon created by Will Ehrendreich. The daemon
 
 ## Hosting Trajectory
 
-The Fidelity Framework compiler is .NET-hosted today. CCS and Composer are F# programs that run on the .NET runtime and produce native code. Bozzetto is a .NET global tool for the same reason: the people who build the compiler work in F# on .NET, and this is their session tool.
+The Fidelity Framework compiler is .NET-hosted today. CCS and Composer are F# programs that run on the .NET runtime and produce native code. Bozzetto also uses .NET today; removing that runtime requirement is an explicit self-hosting objective.
 
-During the transition to a self-hosted compiler, Bozzetto is designed to serve two kinds of source. One is F#, which covers the compiler's own source and the components that still depend on .NET. The other is Clef. We are designing them as two providers behind one session model, in which each result records the provider that produced it.
+Bozzetto's delivery priority is Clef/Composer development. F#/.NET development can use a separate SageFS daemon and MCP connection on ports `37749`/`37750`, alongside Bozzetto on `47749`/`47750`. The inherited F# engine remains in this checkout, but expanding it is not required for the Clef workflow.
 
-Composer already provides a separate, bounded [incremental project session](https://forge.spkez.dev/FidelityFramework/Composer/src/branch/main/docs/Incremental_Project_Sessions.md) for CPU `.fidproj` compilation. A .NET host reserves a generation before editing, calls `BuildAsync` with that reservation, and may run only an accepted current generation through `RunCurrentAsync`. Every attempt performs fresh Baker checking and the complete current proof checks; eligible scalar functions can retain Alex witnesses and native objects. This is a compiler hosting API, not a Bozzetto session integration. Bozzetto's current project loader accepts `.fsproj`, `.sln`, and `.slnx`; adding `.fidproj` to that list would not supply a Clef evaluator.
+Bozzetto now integrates Composer's bounded [incremental project session](https://forge.spkez.dev/FidelityFramework/Composer/src/branch/main/docs/Incremental_Project_Sessions.md) for CPU `.fidproj` compilation through an isolated compiler worker. Nine `composer_*` MCP tools, the `composer://sessions` resource and the `/composer` browser page use one daemon-owned supervisor. They share project opening, edit reservations, native builds, accepted-artifact evidence, cancellation and gated execution. Clef projects are opened explicitly and never passed to the inherited FSI loader.
 
-Connecting that API requires edit reservations, cancellation and stale-result withdrawal, serialization with other in-process CCS callers, and a compiler epoch that invalidates results when the compiler itself is patched. The existing Composer host launches accepted executables; preserving a native program's live state through ORC remains a separate step. The F# engine's Harmony patches do not provide that native reload contract.
+Each session carries provider, host, session, epoch and revision identity. Reservations withdraw old execution authority before edits; execution goes through Composer's `RunCurrentAsync`. Worker retirement fences every owned session and requires physical process exit before a replacement epoch can serve work. Patching a running compiler worker in place is unsupported. Every build retains Baker checking and the full current proof checks; eligible scalar functions can reuse Alex witnesses and native objects.
 
-The [Clef / Composer development plan](docs/Clef_Composer_Development_Plan.md) covers the provider, shared human/agent sessions and a standalone Composer MCP host. Its first provider milestone follows the [provider handoff](docs/Clef_Composer_Provider_Handoff.md), including its acceptance cases and the coordinating agent's audit boundary. These are planned capabilities.
+The shared MCP/browser journey and native worker cases passed the unfiltered **29/29 Composer integration tier (Trusted)**. The [live checkpoint](docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md) records deployment, exact evidence, the separate default gate and pending independent assessment. The [development plan](docs/Clef_Composer_Development_Plan.md) keeps standalone Composer MCP, editor save/build integration, LLVM ORC JIT and removal of the .NET backend as follow-up work. Today's execution backend launches accepted native binaries; preserving live native state through ORC needs a separate contract and acceptance evidence.
 
-We are designing toward six waypoints:
+The six waypoints distinguish delivered foundations from remaining work:
 
 1. **Independent identity.** This checkout uses package `Bozzetto`, command `boz`, state directory `~/.bozzetto`, MCP port `47749` and dashboard port `47750`. SageFs and Fable.SageFs retain their separate identities and default ports `37749`/`37750`.
 2. **Embedded storage.** SQLite and DuckDB remain the fork's planned storage direction. The updated upstream already removed PostgreSQL in favor of binary session/test manifests and uses SQLite for friction reports; Docker is no longer a runtime prerequisite.
-3. **A Clef provider.** Bozzetto will read the graph revisions that CCS publishes in a binary layout declared with BAREWire. Reader processes will share one copy of each revision.
-4. **One compiler epoch.** An edit to compiler source in a session will mark every impacted Clef result from the earlier compiler as stale.
+3. **A Clef provider.** Explicit Composer sessions now share daemon-owned state through MCP and the browser. Reading CCS graph revisions through a shared BAREWire layout remains planned.
+4. **One compiler epoch.** Worker retirement now withdraws all affected session authority before replacement. Automatically coordinating compiler-source edits with that fence remains planned.
 5. **Clef reload.** CCS will identify the changed regions of the graph. Composer will rebuild those segments, and the running program will be relinked or patched through the LLVM ORC JIT for a near-real-time REPL/HMR (hot module reload) experience.
-6. **Self-hosting.** Each compiler component ported to Clef will move from the F# provider to the Clef provider. The F# provider will retire with the last .NET component's replacement.
+6. **Self-hosting.** Replace the managed compiler worker and daemon dependencies behind the existing session authority contract. A Clef-only installation without .NET is the exit criterion; separate SageFS instances can continue serving F#/Fable projects.
 
 ## Fork Status
 
 - Original fork: SageFs `5b685fb5ce3f5a90db595b457dee6d239634ba33` (23 February 2026).
-- Current upstream baseline: SageFs **v0.6.834**, `c86c3402460543849e771e527aa75b5892770ea0` (25 September 2026), integrated on 27 September 2026. [Update record](docs/UPSTREAM_SYNC.md).
+- Integrated upstream baseline: SageFs **v0.6.834**, `c86c3402460543849e771e527aa75b5892770ea0` (25 September 2026), integrated on 27 September 2026. [Update record](docs/UPSTREAM_SYNC.md).
 - Executables, packages, namespaces, editor commands, state paths and default ports use the Bozzetto identity. [Identity migration checkpoint](docs/Bozzetto_Identity_Migration_Inventory.md) records the exact names, provenance exceptions and validation scope.
 - No Bozzetto package is published. [Installation](#installation) uses this checkout's package; installing `SageFs` from NuGet installs upstream instead. We may use the Fidelity package manager rather than publish a Bozzetto NuGet package.
-- The sections below describe the updated F# engine. CCS/PSG integration, the Clef provider, compiler epochs, Composer/ORC reload, and self-hosting remain the fork's direction.
+- Shared Clef/Composer MCP and browser sessions, native compilation/execution and compiler-worker epoch retirement are delivered; the [live checkpoint](docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md) separates tested acceptance from pending audit. Standalone Composer MCP, shared PSG views, ORC reload and self-hosting remain planned. The feature sections below primarily describe the inherited F# engine.
 - Current clients are VS Code, Neovim, the web dashboard, and MCP. The built-in TUI, Raylib GUI, and Visual Studio extension are deprecated upstream. Raylib application demos remain separate supported examples.
 - Current guides use Bozzetto terminology. Historical records, upstream attribution and real third-party package/plugin names retain their original identities.
 

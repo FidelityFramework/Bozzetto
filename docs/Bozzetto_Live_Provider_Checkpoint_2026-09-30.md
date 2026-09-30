@@ -1,11 +1,15 @@
 # Bozzetto shared provider checkpoint — 2026-09-30
 
-**In progress: final shared-interface acceptance is running.** The earlier
+**Recorded live checkpoint; independent read-only assessment received.**
+See the [auditor assessment](Bozzetto_Live_Provider_Auditor_Assessment_2026-09-30.md)
+and [correction response](Bozzetto_Live_Provider_Audit_Response_2026-09-30.md) for
+subsequent status/launcher corrections and their deployment identity. The earlier
 [provider repair checkpoint](Bozzetto_Provider_Repair_Checkpoint_2026-09-30.md)
 records 24/24 passing native/unit cases against Composer's approved distribution.
 The [Harmony checkpoint](Bozzetto_Harmony_Checkpoint_2026-09-30.md) records the H1/H2
-import corrections. This document will record the final deployed closure and live
-results before handoff; do not infer completion from the presence of this file.
+import corrections. The daemon, MCP and browser are running from the recorded deployment below.
+The auditor independently confirmed evidence and shared MCP visibility; the
+auditor has not repeated the mutating native workflow.
 
 ## Architecture delivered for the live gate
 
@@ -41,6 +45,7 @@ The intended local endpoints are:
 - Dashboard: `http://127.0.0.1:47750/`
 - Shared Composer page: `http://127.0.0.1:47749/composer` (also linked from the dashboard)
 - Streamable HTTP MCP: `http://127.0.0.1:47749/`
+- Health: `http://127.0.0.1:47749/health`
 - Daemon identity: `http://127.0.0.1:47750/api/daemon-info`
 - Shared Composer state: `http://127.0.0.1:47749/api/composer/sessions`
 
@@ -48,6 +53,7 @@ Use bounded probes, for example:
 
 ```sh
 curl --fail --max-time 3 http://127.0.0.1:47750/api/daemon-info
+curl --fail --max-time 3 http://127.0.0.1:47749/health
 curl --fail --max-time 3 http://127.0.0.1:47749/api/composer/sessions
 ```
 
@@ -64,14 +70,31 @@ If the identity probe refuses connection and neither Bozzetto port is occupied,
 start the shared daemon once:
 
 ```sh
-mkdir -p "$HOME/.local/state/bozzetto"
-nohup /home/hhh/.local/bin/boz --no-resume \
-  >"$HOME/.local/state/bozzetto/daemon.log" 2>&1 </dev/null &
-curl --fail --max-time 3 http://127.0.0.1:47750/api/daemon-info
+/home/hhh/repos/Bozzetto/scripts/start-shared-daemon
 ```
 
-Startup is asynchronous; an initial refused probe may precede readiness. Use a
-bounded follow-up probe, not a wait for the daemon to exit. The daemon persists
+The helper preserves existing listeners. That path reports
+`readinessChecked=false`: exit zero means both ports and a parseable identity
+were found, not that health or Composer readiness was checked. Run the separate
+bounded health and session probes above. On a fresh start it uses the installed
+`boz`, launches detached from `$XDG_DATA_HOME/bozzetto/workspace` (default
+`~/.local/share/bozzetto/workspace`), writes logs/PID under external state storage,
+and probes identity, health and Composer configuration within a bounded readiness
+loop (20-second loop deadline, three-second per-request timeouts). Requests
+already in progress may finish after the loop deadline; this is not a strict
+20-second wall-clock cap. Workspace/log/PID
+symlinks are refused, so a redirected child cannot recreate the home scan or
+write artifacts into a repository.
+It never waits for the daemon's lifetime or changes operating-system limits.
+
+The first shared launch (PID 653222) used home as its working directory. The
+inherited recursive watcher exhausted the inotify watch limit while scanning
+home. That operational error is preserved under `home-watcher-finding/` and in
+the original browser evidence. It was corrected by gracefully stopping that
+owned daemon and launching PID **669866** at **2026-09-30T15:05:00Z** from the dedicated
+external workspace. Identity and health probes now report no component failures;
+the browser completed native build/run again on the replacement daemon. Do not
+launch a shared daemon from home or the repositories parent. The daemon persists
 until explicitly stopped. Use the HTTP MCP connection below for shared access;
 starting it independently avoids making its lifetime depend on one client's
 stdio bridge. CLI `--help` still describes the inherited F# command surface;
@@ -95,6 +118,11 @@ url = "http://127.0.0.1:47749/"
 startup_timeout_sec = 30
 tool_timeout_sec = 600
 ```
+
+For F#/.NET work, a separately running SageFS instance may be registered as a
+second MCP source named `sagefs`, with URL `http://127.0.0.1:37749/`. Keep the
+Bozzetto and SageFS server tables and session identities separate. This checkpoint
+does not install or start SageFS, and does not alter the user's global MCP config.
 
 Reconnect/restart the agent client as appropriate and confirm that it actually
 exposes `get_daemon_status`, `composer_list_sessions` and `composer_open_project`.
@@ -151,17 +179,55 @@ does not erase the failed evidence or claim the SDK behavior was changed.
   build/run, human edit invalidation, exact-request MCP cancellation, recovery,
   independent projects, resource/SSE notifications, reconnect, worker retirement
   and a fresh epoch. This is executed evidence, not source-review approval.
-- Default gate: final catalog-corrected rerun pending. Its first run accounted for
-  9,805 cases, with 9,799 passing, four existing ignores and two stale catalog
-  assertions failing. The assertions now include the nine Composer tools while
-  retaining strict equality; both entire affected lists passed (15/15).
+- Final unfiltered default gate: **9,805 accounted, 9,801 passed, four existing
+  ignores, zero failures/errors; Trusted**. The test-only Release rebuild had
+  zero warnings/errors. Both build and test ran under granted MCP work leases,
+  released afterward; all production assembly/dependency hashes were unchanged.
+- Earlier default failures are preserved. The first run exposed two stale MCP
+  catalog assertions; they now include the nine Composer tools with strict
+  equality. The next run exposed a provider-test publication race (corrected
+  with a bounded barrier before recovery) and a pre-existing health-anomaly
+  property failure. The latter reproduces against byte-identical baseline
+  `1bb1e7c` source: noisy inputs can jump directly to `Broken` after the detector's
+  sustain gate, contrary to that property's ordering assumption. No health
+  detector or threshold was changed. Its concrete baseline reproducer remains
+  under `health-anomaly-baseline/`; a passing final run does not repair that
+  existing flaky property.
 - Harmony H1/H2: 12 provenance and four path checks passed. Current vendored
   package validation also passes, with package and manifest bytes unchanged.
+- Real Chromium browser check on the installed replacement daemon: explicit
+  project open, reserve, native build and run passed; output `stable` / `before`,
+  exit zero. Browser and shared API retained identical authority and accepted
+  artifact digest. No page errors; the only console warning was a favicon 404.
+  The accepted external fixture session remains open for inspection:
+  `bdb2233db4244816aa1e5a9080e1804f`, epoch
+  `5cf5024f134b4c4dbe2cb246eb646ac4`, Composer generation 1.
+
+### Health and memory interpretation
+
+The final daemon reports `healthy=true` with no component failures. Its inherited
+health endpoint counts F# sessions; use `/api/composer/sessions` or
+`composer_list_sessions` for Composer session state. A zero legacy session count
+does not mean the accepted Composer session is absent.
+
+Machine memory is sampled from Linux `/proc/meminfo` (`MemAvailable`, including
+reclaimable cache) on the daemon's five-second sweep, and also at F# session
+admission. Work leases read that shared pressure state; it is not frozen at
+startup. The inherited thresholds enter `tight` at 20% available and exit at 30%;
+`critical` enters at 8% and exits at 15%. This hysteresis avoids threshold flapping.
+On this 58.5 GiB machine, about 10 GiB available still means `tight`; returning
+to `normal` requires about 17.5 GiB. The user's freed RAM is included in fresh
+samples. `overall=Degraded` with no component failures can therefore reflect
+memory pressure alone. No threshold, OS setting or admission guard was disabled. The installed Core
+assembly thresholds and repeated kernel/HTTP samples are recorded under
+`memory-live/`; these samples did not cross a recovery threshold, so this is not
+a claim that a forced pressure-transition experiment was run.
 
 All evidence is outside repositories at
 `/home/hhh/.local/state/bozzetto/checkpoints/2026-09-30-live-provider/`.
 The native gate lives under `attempt2/`, the final default gate under
-`default-final/`, and browser validation under `browser/`. The earlier failed
+`default-repaired/`, and final browser validation under `browser-final/`.
+`default-final/` and `browser/` retain the earlier default run and initial browser check. The earlier failed
 attempts remain intact. Native outputs, object receipts, lease evidence, 93 live
 HTTP/MCP records and copies of eight provider artifact trees are retained.
 
@@ -178,17 +244,38 @@ remain in Composer's
 [lease-release response](/home/hhh/repos/Composer/docs/Bozzetto_Lease_Release_Response_2026-09-30.md).
 The worker deployment contains 41 files, including its compiler dependencies.
 
-Each gate has `before/` and `after/` closure manifests. The test-runner closure
-contains 850 files, not just `Bozzetto.Tests.dll`. Each executed runner is also
+Each gate has `before/` and `after/` closure manifests. The native test-runner
+closure contains 850 files; later default-runner closures contain 849 following
+the test-project rebuild. These cover all runner dependencies, not just
+`Bozzetto.Tests.dll`. Each executed runner is also
 preserved as a complete `test-runner-closure/` copy. The native gate's runner
-manifest SHA256 is
+absolute-path manifest `attempt2/before/test-runner.sha256` (identical to its
+`after/` counterpart) has SHA256
 `f4da6c3cbe6e73f745f1e42cf6484dabf7e0a4ae9ee518a1923c5abbf600f021`.
-After native acceptance, only test catalog expectations and whitespace changed;
-the daemon and worker closures stayed byte-identical. The final default runner
+The copied runner's relative-path `attempt2/test-runner-closure.sha256` instead
+hashes to `c67073854bb906d0f4749d2b891f3c7798116b0013968f55c6de77d7c45775f7`;
+the different path spelling does not represent binary drift.
+After native acceptance, test catalog expectations and a provider-test
+synchronization barrier changed; the daemon and worker closures stayed byte-identical.
+The barrier waits for the deliberately failed withdrawal to publish its error
+before the test starts recovery, removing a race in the assertion itself. The final default runner
 has its own identity, so no later test binary is substituted for the native log.
+Its relative closure-manifest SHA256 is
+`33ef0d61a96a8a0297f53ee36b1859b69003aa67a4a13a930c7bfee941787c2d`.
+
+The final default runner was built from user checkpoint commit
+`5e37875ae41aedcdb104aa382985fc52686e39dd`. Subsequent changes in this checkpoint
+are deployment/agent guidance and the detached startup helper, not compiler or
+daemon implementation changes. `source-checkpoint/` retains the HEAD archive,
+working-tree patch, untracked helper, source hashes and change inventory. The
+startup helper's existing-listener behavior and workspace/log/PID symlink
+refusals were checked without disrupting the shared daemon.
 
 Standalone Composer MCP, ORC JIT execution, automatic editor save/build integration
 and compiler-stage progress streaming remain planned. Accepted metadata is always
 revalidated by Composer before execution. Human and agent views share state, but
 status and completed-operation notifications are not a compiler progress stream.
-Independent auditor approval remains outstanding.
+The independent read-only assessment supports the evidence and visibility; an
+auditor-owned mutating workflow repeat remains outstanding. Full host/browser/mutation
+and upstream Harmony suites were not rerun for this checkpoint; the explicit
+Composer/browser journey above is the executed live acceptance scope.

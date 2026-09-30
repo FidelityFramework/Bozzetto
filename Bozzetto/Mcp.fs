@@ -1264,6 +1264,7 @@ module McpTools =
         telemetrySampledAt = telemetry |> Option.map (fun t -> t.SampledAt) |> Option.defaultValue DateTimeOffset.UtcNow
         processes = telemetry |> Option.map (fun t -> t.Processes) |> Option.defaultValue []
         sessions = {|
+          provider = "fsharp"
           total = sessionSummaries |> List.length
           ready = countStatus Bozzetto.Features.SessionHealthStatus.Ready
           evaluating = countStatus Bozzetto.Features.SessionHealthStatus.Evaluating

@@ -2429,6 +2429,9 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
                version = version
                apiVersion = Bozzetto.EndpointContracts.apiVersion
                features = [ "live-testing"; "coverage-intel"; "impact-forecast"; "action-prioritizer"; "mark-all-stale"; "time-travel" ]
+               // These compatibility fields describe the inherited F# host,
+               // not the independent Composer session projection.
+               sessionProvider = "fsharp"
                sessionCount = sessionStates.Length
                sessionStates = sessionStates
                diagnosticSummary = diagnosticSummary

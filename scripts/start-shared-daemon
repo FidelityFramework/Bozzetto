@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Launch the installed shared daemon without watching home or a repositories parent."""
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import subprocess
+import time
+import urllib.error
+import urllib.request
+
+
+def get_json(url):
+  with urllib.request.urlopen(url, timeout=3) as response:
+    return json.load(response)
+
+
+def external_root(variable, fallback):
+  configured = os.environ.get(variable, '')
+  root = Path(configured) if configured and Path(configured).is_absolute() else fallback
+  resolved = (root / 'bozzetto').resolve()
+  repository_parent = Path(__file__).resolve().parents[2]
+  if resolved == repository_parent or repository_parent in resolved.parents:
+    raise SystemExit(f'{variable} must place Bozzetto data outside {repository_parent}')
+  return resolved
+
+
+def reject_symlinks(paths):
+  for path in paths:
+    if path.is_symlink():
+      raise SystemExit(f'Refusing redirected daemon workspace/state path: {path}')
+
+
+def main():
+  identity_url = 'http://127.0.0.1:47750/api/daemon-info'
+  occupied = []
+  for port in (47749, 47750):
+    with socket.socket() as probe:
+      probe.settimeout(0.5)
+      if probe.connect_ex(('127.0.0.1', port)) == 0:
+        occupied.append(port)
+  if occupied:
+    try:
+      identity = get_json(identity_url)
+    except (OSError, ValueError):
+      identity = None
+    print(json.dumps({'action': 'preserved existing listener', 'ports': occupied,
+                      'identity': identity, 'readinessChecked': False,
+                      'nextChecks': ['http://127.0.0.1:47749/health',
+                                     'http://127.0.0.1:47749/api/composer/sessions']}, indent=2))
+    return 0 if occupied == [47749, 47750] and identity is not None else 1
+
+  launcher = os.environ.get('BOZZETTO_BIN') or shutil.which('boz')
+  if not launcher:
+    raise SystemExit('Install the reviewed boz launcher first; see the live checkpoint.')
+  launcher = str(Path(launcher).resolve())
+  workspace = external_root('XDG_DATA_HOME', Path.home() / '.local/share') / 'workspace'
+  state = external_root('XDG_STATE_HOME', Path.home() / '.local/state')
+  log = state / 'daemon.log'
+  pid_file = state / 'daemon.pid'
+  reject_symlinks((workspace, log, pid_file))
+  workspace.mkdir(parents=True, exist_ok=True)
+  state.mkdir(parents=True, exist_ok=True)
+  with log.open('ab', buffering=0) as output:
+    process = subprocess.Popen([launcher, '--no-resume'], cwd=workspace,
+      stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+      start_new_session=True)
+  pid_file.write_text(f'{process.pid}\n')
+  deadline = time.monotonic() + 20
+  while time.monotonic() < deadline:
+    if process.poll() is not None:
+      raise SystemExit(f'Daemon exited {process.returncode}; inspect {log}')
+    try:
+      identity = get_json(identity_url)
+      if identity['pid'] != process.pid:
+        raise SystemExit('Port ownership changed during startup; inspect daemon identity.')
+      health = get_json('http://127.0.0.1:47749/health')
+      composer = get_json('http://127.0.0.1:47749/api/composer/sessions')
+      print(json.dumps({'identity': identity, 'health': health, 'readinessChecked': True,
+                        'composerConfigured': composer['configured'], 'log': str(log)}, indent=2))
+      return 0 if health.get('healthy') and not health.get('componentFailures') and composer['configured'] else 1
+    except (OSError, ValueError):
+      time.sleep(0.2)
+  raise SystemExit(f'No readiness response within 20 seconds; inspect PID {process.pid} and {log}')
+
+
+if __name__ == '__main__':
+  raise SystemExit(main())

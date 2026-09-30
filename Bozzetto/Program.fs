@@ -402,9 +402,10 @@ let statusCommand
     printfn "  Directory:  %s" info.WorkingDirectory
     printfn "  Version:    %s" info.Version
     printfn "  Dashboard:  http://localhost:%d/dashboard" info.DashboardPort
-    printfn "  MCP (SSE):  http://localhost:%d/sse" info.Port
+    printfn "  MCP (Streamable HTTP): http://localhost:%d/" info.Port
+    printfn "  MCP (SSE, older clients): http://localhost:%d/sse" info.Port
     match fetchSessionCount info with
-    | Some count -> printfn "  Sessions:   %d active" count
+    | Some count -> printfn "  F# sessions: %d active" count
     | None -> ()
     // Issue #136: read the daemon's own periodic NuGet check (cached under
     // its data dir — no network call from this one-shot CLI invocation) and

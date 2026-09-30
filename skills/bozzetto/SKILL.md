@@ -6,6 +6,25 @@ license: MIT
 
 # Working in F# with Bozzetto
 
+## Provider scope
+
+For current Clef/Composer development, use Bozzetto's `composer_*` tools and
+shared browser/API on ports 47749/47750. Reserve before writing source and run
+through `composer_run_current`. No FSI session is required. LLVM ORC JIT remains
+the intended future Clef REPL backend.
+
+F#/.NET work normally uses a separate SageFS daemon and MCP source on ports
+37749/37750. The workflow below describes the retained F# implementation when
+working on that backend; it is not a requirement to route Clef through FSI or
+expand Bozzetto's F# product surface. Use the equivalent tools on the explicitly
+chosen F# service, and keep that service's session identity separate.
+
+For the shared Bozzetto deployment, use `scripts/start-shared-daemon`: it launches
+the reviewed installed CLI from an external, dedicated workspace, with logs in
+external state storage. Launching from home or the repositories parent causes
+the inherited recursive watcher to scan too broadly. Connection and deployment
+instructions are in [the live checkpoint](../../docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md).
+
 Bozzetto gives you a live F# REPL that already has the project loaded. An eval
 takes milliseconds. A `dotnet build` takes tens of seconds to minutes, and a
 test run takes longer. If you iterate by rebuilding, you spend almost all your
