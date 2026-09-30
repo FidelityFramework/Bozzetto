@@ -1,6 +1,6 @@
 # Clef / Composer development plan
 
-September 30, 2026. This is the implementation plan for making Bozzetto useful for Clef and Composer development, including a compiler-focused MCP interface. It incorporates the [provider handoff](Clef_Composer_Provider_Handoff.md), which remains the acceptance specification for the first provider milestone. The [initial implementation checkpoint](Bozzetto_Provider_Checkpoint_2026-09-30.md) records the first worker slice; the [live checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md) now records delivered shared MCP/browser integration, deployment, measured results and the pending independent assessment. Standalone MCP, editor integration and ORC remain planned.
+September 30, 2026. This is the implementation plan for making Bozzetto useful for Clef and Composer development, including a compiler-focused MCP interface. It incorporates the [provider handoff](Clef_Composer_Provider_Handoff.md), which remains the acceptance specification for the first provider milestone. The [initial implementation checkpoint](Bozzetto_Provider_Checkpoint_2026-09-30.md) records the first worker slice; the [live checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md) records shared MCP/browser integration and deployment. The [independent incremental assessment](Bozzetto_Incremental_Workflow_Auditor_Assessment_2026-09-30.md) now establishes a bounded native cold/unchanged/edited workflow. The [editor workspace direction](Bozzetto_Editor_Workspace_Direction_2026-09-30.md) makes shared editor/compiler authority the next integration priority. Standalone MCP packaging, editor integration and ORC remain planned.
 
 ## Outcome and ownership
 
@@ -20,6 +20,8 @@ An editor user and an agent attached to the same session must operate on the sam
 | MCP SDK | Protocol types and transport implementation, consumed as a normal package dependency |
 
 MCP stays an integral Bozzetto interface. The planned standalone Composer MCP host will expose the same provider contract and implementation. It does not introduce a second compiler or a second interpretation of artifact validity.
+
+Integration and efficient self-hosting guide the next phase. Ionide is vestigial context; Lattice scaffolding and Atelier's earlier topology are not constraints. Composer should own one authoritative workspace per selected session, sharing checking, proof scheduling, input snapshots and publication across Bozzetto's editor, MCP and browser adapters. Keep LSP as an interoperability surface and contracts independent of .NET/editor frameworks. Shared workspace integration takes priority over standalone packaging or a particular graph renderer.
 
 ## Historical inspection baseline
 
@@ -82,7 +84,7 @@ The full handoff acceptance cases are mandatory: simultaneous independent sessio
 
 ### 2. Integrate explicit provider sessions into Bozzetto
 
-Delivered: nine `composer_*` MCP tools, `composer://sessions`, `/composer` and `/api/composer/*` share one daemon-owned supervisor. The unfiltered Composer integration tier passed **29/29 (Trusted)**, including the real MCP/HTTP journey through native build/run, human edit invalidation, exact-request cancellation, independent sessions, notifications, reconnect and worker replacement. See the [live checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md) for the separate default-gate result and pending auditor assessment; passing this tier is not audit approval. The requirements below define the delivered boundary.
+Delivered: nine `composer_*` MCP tools, `composer://sessions`, `/composer` and `/api/composer/*` share one daemon-owned supervisor. The unfiltered Composer integration tier passed **29/29 (Trusted)**, including the real MCP/HTTP journey through native build/run, human edit invalidation, exact-request cancellation, independent sessions, notifications, reconnect and worker replacement. See the [live checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md) for gate/deployment history and the [independent incremental assessment](Bozzetto_Incremental_Workflow_Auditor_Assessment_2026-09-30.md) for the auditor-owned native journey and its narrower limits. Passing this tier is not audit approval. The requirements below define the delivered boundary.
 
 After the first-slice audit, connect the provider worker to daemon ownership and supervision. Extend session operations and projections deliberately; do not rewrite `FsiSession` as a speculative universal evaluator. Initially require an explicit Clef project open. Keep `.fidproj` out of FSI routes.
 
@@ -90,7 +92,21 @@ Expose compiler operations through Bozzetto MCP using the same application handl
 
 Acceptance must demonstrate both directions: an agent reservation/build changes the state the human client observes, and a human reservation/cancel/replacement invalidates the state and execution authority visible to the agent. Compare session, epoch, generation and source identities, not just rendered messages. Include reconnect/resubscribe behavior so a client cannot revive an old accepted result after missing events.
 
-### 3. Deliver the standalone Composer MCP host
+### 3. Integrate the editor and compiler workspace
+
+Partially delivered: the browser supports explicit open, reservation, build, status/evidence, cancel, run, close and worker retirement. Automatic editor save/build integration and compiler-stage progress streaming remain planned; status and completed-operation notifications are not a progress stream. Lattice currently checks through its own editor session, separately from the Bozzetto worker. Sharing project paths or displaying both outputs does not establish one compiler authority.
+
+Follow the [integrated editor workspace checkpoint](Bozzetto_Editor_Workspace_Direction_2026-09-30.md): consolidate compiler-owned checking, proof scheduling and immutable observations behind the supervised workspace service; attach VS Code and Neovim through thin adapters and let Atelier consume the same contracts when implemented. Add a shared compiler artifact inventory and exact-byte evidence views within this integration. Preserve useful source grammar and freshness handling while replacing inherited Ionide assumptions wherever they obstruct the shared service or native hosting.
+
+Add editor/dashboard actions for explicit Clef project open, reservation before save, build progress, diagnostics, evidence inspection, cancellation and gated run. Present provider and current generation clearly. Automatic rebuilds must preserve reservation, supersession and epoch rules; a filesystem change notification alone cannot authorize execution.
+
+Show source diagnostics, proof outcomes and artifact admission as separate states. Preserve refusals and diagnostic provenance. Use the separate SageFS MCP service for F#/.NET compiler-host investigation. Apply compiler replacement through the provider epoch fence, with an observable withdrawal/restart for every affected session.
+
+Acceptance: one reproducible editor-plus-agent workflow opens the real scalar fixture, builds/runs it, changes `changeable`, observes reuse and updated native output, then demonstrates invalid-edit and compiler-replacement refusals without stale execution being offered by either interface.
+
+Begin with reserve/save/build. Unsaved-buffer checking and execution additionally require compiler-owned overlay transactions that identify the same checked and built inputs; LSP document versions alone cannot supply that guarantee. Measure duplicate work, cold/warm response latency and bounded resource use under rapid edits and multiple clients. Graph/proof/IR views consume compiler-authored snapshots, correspondence and events. Detailed animation, selective proof reuse and ORC remain separate acceptance boundaries, as specified in the editor checkpoint.
+
+### 4. Deliver the standalone Composer MCP host
 
 Planned. The integrated daemon MCP interface is delivered; an independently deployable Composer MCP host is a separate milestone.
 
@@ -103,16 +119,6 @@ Standalone mode owns its explicitly created sessions. Bozzetto mode forwards to 
 Keep the initial reusable implementation together with the provider work; choose the final package/repository ownership with the auditor before packaging the standalone host. Do not copy a second adapter into Composer. Standalone usability must not require a Bozzetto source checkout, dashboard, editor or live Bozzetto daemon.
 
 Acceptance: real MCP clients exercise both deployments against the same operation contract. Check tool/resource schemas, structured refusals, cancellation, disconnect cleanup and clean process shutdown. In integrated mode, both human and MCP clients demonstrably share the same authority. A standalone session makes its distinct ownership explicit.
-
-### 4. Complete the human development loop
-
-Partially delivered: the browser supports explicit open, reservation, build, status/evidence, cancel, run, close and worker retirement. Automatic editor save/build integration and compiler-stage progress streaming remain planned; status and completed-operation notifications are not a progress stream.
-
-Add editor/dashboard actions for explicit Clef project open, reservation before save, build progress, diagnostics, evidence inspection, cancellation and gated run. Present provider and current generation clearly. Automatic rebuilds must preserve reservation, supersession and epoch rules; a filesystem change notification alone cannot authorize execution.
-
-Show source diagnostics, proof outcomes and artifact admission as separate states. Preserve refusals and diagnostic provenance. Use the separate SageFS MCP service for F#/.NET compiler-host investigation. Apply compiler replacement through the provider epoch fence, with an observable withdrawal/restart for every affected session.
-
-Acceptance: one reproducible editor-plus-agent workflow opens the real scalar fixture, builds/runs it, changes `changeable`, observes reuse and updated native output, then demonstrates invalid-edit and compiler-replacement refusals without stale execution being offered by either interface.
 
 ## Acceptance evidence and exclusions
 
@@ -144,7 +150,7 @@ Self-hosting is a near-term design constraint. F#/.NET workflows can remain on t
 
 The current source has not yet achieved these separations: Core directly references FCS and Harmony and the daemon references Core. The new Composer worker already avoids a reference to Bozzetto.Core and serializes explicit data, not CLR type names or opaque compiler objects. Its build currently copies the compiler distribution's full DLL directory; narrow that to a compiler-owned deployment manifest rather than maintaining a guessed allowlist in Bozzetto.
 
-After the first audit, make the reusable worker client/contract assembly-free at the protocol boundary and ensure standalone Composer MCP can launch the compiler without loading the F# host. Then introduce a selectable native worker launcher and run the same native acceptance suite against it. A Clef-only installation with no .NET runtime is the exit criterion; a separate SageFS service may still serve the F#/Fable side of hybrid projects.
+Make the reusable worker boundary language-neutral and introduce a selectable native worker launcher as the compiler becomes ready, alongside shared workspace integration. Native migration does not depend on completing standalone MCP packaging. Both integrated and standalone hosts must launch the compiler without loading the F# host; run the same native acceptance suite against each delivered implementation. A Clef-only installation with no .NET runtime is the exit criterion; a separate SageFS service may still serve the F#/Fable side of hybrid projects.
 
 Historical attribution and actual upstream URLs remain accurate even after runtime dependencies disappear. The formerly inherited `SageFs.Harmony` package is now replaced by the source-built, owned `Bozzetto.Harmony` fork; see the [Harmony checkpoint](Bozzetto_Harmony_Checkpoint_2026-09-30.md). This removes the old package/build identity. Its Harmony/MonoMod functionality still requires .NET until isolated or replaced.
 
@@ -161,7 +167,9 @@ Native live-state hot reload, proof caching, complete language parity and shared
 - Executed shared-interface/native acceptance: **29 registered, 29 passed, Trusted**. The [live checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md) owns the deployment identities, separate default-gate disposition and independent auditor handoff. An earlier checkpoint's passing default gate does not establish the result for the latest runner.
 - Harmony ownership and H1/H2 import corrections are recorded in the [Harmony checkpoint](Bozzetto_Harmony_Checkpoint_2026-09-30.md); managed dependencies remain explicit self-hosting work.
 - Audit follow-up: the [independent read-only assessment](Bozzetto_Live_Provider_Auditor_Assessment_2026-09-30.md) corroborates shared visibility and recorded results. Its three usability findings are addressed in the deployed [correction response](Bozzetto_Live_Provider_Audit_Response_2026-09-30.md), with full gates rerun.
-- Remaining: an independent auditor-owned native workflow repeat, standalone Composer MCP (milestone 3), editor save/build integration and progress streaming (milestone 4), LLVM ORC JIT and the native/.NET-free hosting boundary.
+- Independent native workflow: the [incremental assessment](Bozzetto_Incremental_Workflow_Auditor_Assessment_2026-09-30.md) records cold/unchanged/one-function-edit builds, exact object reuse, human reservation followed by MCP refusal before source mutation, successful updated execution and owned-session cleanup. It does not establish the auditor's independent cancellation/retirement race coverage or newer compiler repairs.
+- Next integration: shared editor/compiler workspace authority, save/build and overlay contracts, measured responsiveness and evidence views in the [editor direction checkpoint](Bozzetto_Editor_Workspace_Direction_2026-09-30.md). Ionide/Lattice inheritance does not determine the architecture.
+- Remaining: independent cancellation/recovery and coordinated retirement follow-up, shared editor workspace and progress streaming (milestone 3), standalone Composer MCP packaging (milestone 4), LLVM ORC JIT and the native/.NET-free hosting boundary. Promote newer compiler distributions only with their own validated identities and acceptance.
 
 ## Product identity and coexistence
 

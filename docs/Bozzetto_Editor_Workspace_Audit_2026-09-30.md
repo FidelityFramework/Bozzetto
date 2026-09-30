@@ -1,0 +1,43 @@
+# Editor workspace audit — 2026-09-30
+
+The [workspace direction](Bozzetto_Editor_Workspace_Direction_2026-09-30.md) and [development plan](Clef_Composer_Development_Plan.md) identify the right next integration: one explicitly selected compiler workspace shared across interfaces. **Bozzetto should own orchestration; Lattice should coordinate language and proof tools for editing environments; Composer/CCS should own compiler state and accepted build evidence.** This is a proposed responsibility split, not a claim that the current editor already shares Bozzetto's workspace.
+
+This assessment reads local source and historical receipts only. No service, session, build, test or native execution was started. Existing dirty files were preserved.
+
+## Responsibilities
+
+| Owner | Proposed responsibility |
+|---|---|
+| Bozzetto | Workspace/session selection, worker lifecycle, routing, work coordination, cancellation authority and supervised execution through Composer contracts. It must not reconstruct semantic scheduling or proof dependencies. |
+| Lattice | Multi-LSP editor integration for Clef, MLIR, LLVM IR and other toolchains; formatting, highlighting, navigation, linked evidence views and language/proof-tool coordination, including cvc5 queries and interactive Rocq development. Standalone proof editing need not belong to a compiled Clef project. |
+| Composer/CCS | Compiler snapshots, semantic invalidation, Baker-authored facts, published PSG revisions, proof dependency authority, selective witnessing/object admission, and build/execution acceptance. A standalone proof-tool result becomes build evidence only through this owner's validation. |
+| Atelier | Another interface to the same selected workspace, with its own interaction and rendering choices. It does not supply a second semantic authority. |
+
+This agrees with Lattice's [workspace responsibilities](../../lattice-vscode/docs/Compiler_Workspace_Vision.md#responsibilities-across-the-workspace). Ionide, .NET, Fable, VSCode and existing UI frameworks are implementation history, not constraints on these responsibilities. Atelier's [README](../../Atelier/README.md) explicitly describes preliminary design; its CAC child-process, CLI and artifact-file channels are design inputs to reconcile with the shared workspace, not delivered integration requirements.
+
+## Confirmed seams and migration debt
+
+**The human and MCP provider surfaces already share supervision.** [McpServer.fs](../Bozzetto/McpServer.fs), lines 3424–3485, passes the same supervisor to tools/resources and HTTP routes. [ComposerAdapter.fs](../Bozzetto.Composer/ComposerAdapter.fs), lines 19–42, delegates to Composer's `ProjectSession`. [ProviderContracts.fs](../Bozzetto.Composer/ProviderContracts.fs), lines 20–27 and 72–85, distinguishes adapter revision from compiler generation and specifies cached status; status is not fresh execution permission.
+
+**The editor still checks independently.** Lattice's active [client](../../lattice-vscode/client/extension.cjs), lines 30–60, launches one Clef stdio client. Composer's [Lattice server](../../Composer/src/Lattice.Server/Server.fs), lines 193–238, creates `EditorSession` and maintains versioned unsaved text. [EditorSession](../../Composer/src/CCS.Editor/Session.fs), lines 212–241, calls `checkProjectWithVolatile`; [ProjectSession](../../Composer/src/Core/CompilationOrchestrator.fs), lines 388–448, captures and checks disk inputs before publication and proof discharge. Unsaved editor diagnostics therefore do not identify the provider's accepted artifact.
+
+Two migration hazards need explicit acceptance. First, `EditorSession`'s `Projection.checkGate` and Composer's `checkerGate` are different locks, although the former documents CCS process-global state. Simply placing both services in one process does not serialize their compiler access. Second, `CCS.Editor/Session.fs`, lines 69–147, reads native closure/startup helpers, applies type substitutions and renders queries from native obligations. Under [Clef's publication requirement](../../clef/AGENTS.md), this is boundary debt: shared editor views must consume compiler-owned immutable evidence with Baker-authored semantic facts, not retain this native-graph reader behind RPC. Refused checks need an explicitly partial diagnostic projection; they must not be advertised as accepted PSG revisions. Publication must remain a copier, not a new inference site.
+
+**Existing scheduling is narrower than shared incremental scheduling.** The Lattice server, lines 121–176 and 296–350, debounces checks, rejects superseded results and shares proof-query work within a generation; one caller abandoning its wait does not cancel another's query. Composer's `ProjectSession` still runs fresh source checking and complete proofs per generation. Neither mechanism establishes shared cross-interface checks or selective proof-result reuse.
+
+**Evidence and native hosting need separate contracts.** The provider's accepted receipt has source/artifact identities and object/witness counters, but no complete IR/certificate inventory. The current proof tree and CodeLens are useful existing UI, not artifact correspondence. Also, [ComposerWorkerClient.fs](../Bozzetto/ComposerWorkerClient.fs), lines 330–340, already accepts a DLL via `dotnet` or a direct executable. The plan should distinguish this existing launch choice from the undelivered native implementation and .NET-free deployment acceptance. The worker project still targets `net10.0` and references the supplied distribution's DLL closure. Standalone MCP packaging is independent work.
+
+## Priority acceptance criteria
+
+1. **Shared saved workspace first.** Attach Lattice, HTTP and MCP to one explicit authority; demonstrate identical source/compiler identities and evidence, one check for a coalesced request, and reserve-before-save withdrawal. Preserve independent sessions and peer ownership. Define observer detachment separately from cancellation of shared work; test reconnect, supersession and worker replacement.
+2. **Atomic overlays next.** Submit an expected base workspace revision plus client/document versions and content identities. Reject conflicting writers and stale completions. Include manifests/dependencies in the snapshot; withdraw prior authority atomically with accepted edits. Define discard/save behavior. A filesystem watcher or `didChange` notification after editing is not a pre-edit reservation. Any temporary materialization must be outside the checkout and retain original source correspondence.
+3. **Language/proof views with attributable evidence.** Keep proof detail chiefly in side views, with light source CodeLens. Add MLIR/LLVM and query/certificate tooling independently by capability. Preserve original bytes, producer/checker identities and hashes; label formatting as a derivative. Source/PSG/IR links require compiler correspondence, not matching SSA spellings. Distinguish pending, refused, proved, retained and stale results. Interactive Rocq success alone is not native artifact admission.
+4. **Measure and migrate independently.** Record queue/check/proof/native/transport/render latency and work counts, including failures; debounce is not a latency result. Promote proof reuse only with complete invalidation authority, including whole-use/absence dependencies. Validate native workers and compiler-owned deployment manifests independently of MCP packaging or ORC; keep the same authority/refusal tests across hosts.
+
+The [prior incremental audit](Bozzetto_Incremental_Workflow_Auditor_Assessment_2026-09-30.md) supports the saved-file starting point: cold/unchanged/edited object counts were 3/0, 1/2 and 2/1. Human reservation preceded an MCP `not_accepted` refusal and then the source write. It establishes neither overlays nor cancellation races, shared editor checks, newer compiler acceptance or proof caching.
+
+## Attribution and open decisions
+
+Inspected heads: Bozzetto `2cd3fc3c`, Composer `f4c48e66`, lattice-vscode `237c4db9`, Atelier `83f79b6f`. Planning documents and parts of the compiler/editor worktrees were uncommitted. Exact inspected-file hashes are external at `/home/hhh/.local/state/bozzetto/audit/2026-09-30-editor-workspace/checked-source.sha256`; historical runtime receipts remain at the location linked by the incremental assessment. No indexed snapshot was substituted for dirty source.
+
+Before implementation, settle the attach/independent-session policy, overlay conflict authority, and ownership of the public observation/partial-diagnostic contract. These are design decisions and unrun acceptance gates, not evidence that the existing pinned native workflow failed.
