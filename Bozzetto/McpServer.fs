@@ -322,20 +322,28 @@ let createServerCaptureFilter (mcpCtx: McpContext) (tracker: McpServerTracker) =
         // Scope the events banner to the session this caller is working in
         // (the "mcp" agent's active session), so one session's events don't
         // surface in another's tool response. Daemon-level events still show.
-        let activeSid =
-          match activeSessionId mcpCtx "mcp" with
-          | "" -> None
-          | s -> Some s
-        let events = tracker.DrainEvents(activeSid)
-        match events.Length > 0 with
-        | true ->
-          let eventText =
-            events
-            |> Array.map (sprintf "  • %s")
-            |> String.concat "\n"
-          let banner = sprintf "\n\n📡 Bozzetto events since last call:\n%s" eventText
-          result.Content.Add(TextContentBlock(Text = banner))
-        | false -> ()
+        let composerCall =
+          match Option.ofObj ctx.Params with
+          | Some parameters when not (String.IsNullOrEmpty parameters.Name) ->
+            parameters.Name.StartsWith("composer_", StringComparison.Ordinal)
+          | _ -> false
+        // Composer has explicit provider authority and its own shared resource.
+        // Do not append or drain the caller's unrelated active FSI session events.
+        if not composerCall then
+          let activeSid =
+            match activeSessionId mcpCtx "mcp" with
+            | "" -> None
+            | s -> Some s
+          let events = tracker.DrainEvents(activeSid)
+          match events.Length > 0 with
+          | true ->
+            let eventText =
+              events
+              |> Array.map (sprintf "  • %s")
+              |> String.concat "\n"
+            let banner = sprintf "\n\n📡 Bozzetto events since last call:\n%s" eventText
+            result.Content.Add(TextContentBlock(Text = banner))
+          | false -> ()
         result
 
       /// WHY — the caller of an MCP tool is usually a language model whose only
@@ -840,6 +848,8 @@ type McpServerConfig = {
   /// `None` when the caller wires no cohort support (most existing tests).
   CohortOwner: Bozzetto.Features.CohortOwner.Handle option
   GetDaemonHealth: unit -> Bozzetto.Features.HealthSnapshot option
+  /// One daemon-owned provider supervisor shared by agent and human adapters.
+  Composer: Bozzetto.ComposerIntegration.ComposerSupervisor option
 }
 
 // Create shared MCP context (private — called only by startMcpServer)
@@ -1849,7 +1859,7 @@ let configureCompression (builder: WebApplicationBuilder) =
     opts.Level <- System.IO.Compression.CompressionLevel.Fastest
   ) |> ignore
 
-let configureMcpProtocol (builder: WebApplicationBuilder) (mcpContext: McpContext) (serverTracker: McpServerTracker) =
+let configureMcpProtocolWithComposer (builder: WebApplicationBuilder) (mcpContext: McpContext) (serverTracker: McpServerTracker) (composer: Bozzetto.ComposerIntegration.ComposerSupervisor) =
   builder.Services.AddSingleton<McpContext>(mcpContext) |> ignore
   builder.Services.AddSingleton<Bozzetto.Server.McpTools.BozzettoTools>(fun serviceProvider ->
     let logger = serviceProvider.GetRequiredService<ILogger<Bozzetto.Server.McpTools.BozzettoTools>>()
@@ -1859,6 +1869,11 @@ let configureMcpProtocol (builder: WebApplicationBuilder) (mcpContext: McpContex
     Bozzetto.Server.McpResources.BozzettoResources(mcpContext)
   ) |> ignore
   builder.Services.AddSingleton<McpServerTracker>(serverTracker) |> ignore
+  builder.Services.AddSingleton<Bozzetto.ComposerIntegration.ComposerSupervisor>(composer) |> ignore
+  builder.Services.AddSingleton<Bozzetto.Server.ComposerTools.ComposerTools>(fun _ ->
+    Bozzetto.Server.ComposerTools.ComposerTools(composer)) |> ignore
+  builder.Services.AddSingleton<Bozzetto.Server.ComposerTools.ComposerResources>(fun _ ->
+    Bozzetto.Server.ComposerTools.ComposerResources(composer)) |> ignore
   builder.Services
     .AddMcpServer(fun options ->
       // The always-on short form of skills/bozzetto/SKILL.md. See AgentGuidance.fs.
@@ -1869,6 +1884,7 @@ let configureMcpProtocol (builder: WebApplicationBuilder) (mcpContext: McpContex
       opts.MaxIdleSessionCount <- 1000
     )
     .WithTools<Bozzetto.Server.McpTools.BozzettoTools>()
+    .WithTools<Bozzetto.Server.ComposerTools.ComposerTools>()
     // back_to_the_repl and bozzetto_loop. Claude Code shows MCP prompts as
     // slash commands (/mcp__bozzetto__back_to_the_repl), so a user can put a
     // drifting agent back on the loop in one line.
@@ -1887,6 +1903,7 @@ let configureMcpProtocol (builder: WebApplicationBuilder) (mcpContext: McpContex
     // `CohortOwner.Events`/model-change signals (`wireCohortEventSubscription`,
     // below), never a new poll or a second stream.
     .WithResources<Bozzetto.Server.McpResources.BozzettoResources>()
+    .WithResources<Bozzetto.Server.ComposerTools.ComposerResources>()
     .WithSubscribeToResourcesHandler(fun (rc: RequestContext<SubscribeRequestParams>) (_ct: CancellationToken) ->
       match Option.ofObj rc.Server.SessionId, Option.ofObj rc.Params with
       | Some sessionId, Some p -> serverTracker.Subscribe(sessionId, p.Uri)
@@ -1901,6 +1918,11 @@ let configureMcpProtocol (builder: WebApplicationBuilder) (mcpContext: McpContex
       filters.AddCallToolFilter(createServerCaptureFilter mcpContext serverTracker) |> ignore
     )
   |> ignore
+
+/// Existing test hosts get the same discoverable tools with an explicit
+/// unconfigured provider, rather than a second compiler lifecycle.
+let configureMcpProtocol builder mcpContext serverTracker =
+  configureMcpProtocolWithComposer builder mcpContext serverTracker (Bozzetto.Server.ComposerTools.disabledSupervisor ())
 
 let wireCoreLogs (app: WebApplication) =
   let coreLogger = app.Services.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>().CreateLogger("Bozzetto.Core")
@@ -3396,7 +3418,11 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
           // get_recent_fsi_events/filmstrip/impact_forecast see them (roast-7 §2/§3).
           (Some (fun code result ms -> featurePushState.Value <- Bozzetto.Features.FeatureHooks.recordEval code result ms featurePushState.Value))
       let serverTracker = McpServerTracker()
-      configureMcpProtocol builder mcpContext serverTracker
+      let composer = cfg.Composer |> Option.defaultWith Bozzetto.Server.ComposerTools.disabledSupervisor
+      configureMcpProtocolWithComposer builder mcpContext serverTracker composer
+      use composerResourceSubscription =
+        composer.Changed.Subscribe(fun () ->
+          serverTracker.NotifyResourceUpdatedAsync(Bozzetto.Server.ComposerTools.ResourceUri) |> ignore)
 
       let app = builder.Build()
       wireCoreLogs app
@@ -3453,6 +3479,7 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       mapSessionRoutes app rctx
       mapLiveTestingRoutes app rctx
       mapAnalysisRoutes app rctx
+      Bozzetto.Server.ComposerRoutes.mapRoutes app composer
 
       let _stateSub =
         cfg.StateChanged |> Option.map (fun evt ->

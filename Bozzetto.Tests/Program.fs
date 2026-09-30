@@ -267,7 +267,9 @@ let main argv =
     let composerArgv = argv |> Array.filter ((<>) "--integration-composer")
     let suite = testList "Composer provider" [
       Bozzetto.Composer.Tests.ProviderSessionTests.tests
+      Bozzetto.Composer.Tests.WorkerCancellationTests.tests
       Bozzetto.Composer.Tests.NativeProviderTests.tests
+      Bozzetto.Composer.Tests.LiveProviderTests.tests
     ]
     let result = Bozzetto.Tests.TestInfrastructure.TrustSignal.run "--integration-composer" composerArgv suite
     Environment.Exit result

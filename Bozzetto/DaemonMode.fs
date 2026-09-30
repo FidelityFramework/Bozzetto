@@ -2033,6 +2033,9 @@ let run
   use manifestOwner = Features.ManifestOwner.start (Log.asILogger ()) DaemonState.BozzettoDir
 
   use cts = infra.Cts
+  let composer = Bozzetto.ComposerIntegration.ComposerSupervisor.fromEnvironment ()
+  let stopComposer () = composer.StopAsync() :> Task
+  use _composerShutdown = cts.Token.Register(fun () -> stopComposer () |> ignore)
 
   // Ownership rule 2 (§3.1): an externally-spawned daemon with --owner-pid
   // exits when that process is gone — fenced on (pid, startTime) when
@@ -2871,6 +2874,7 @@ let run
       BindHost = bindHost
       OwnOrigins = daemonOrigins
       SessionOps = sessionOps
+      Composer = Some composer
       ElmRuntime = Some elmRuntime
       GetWarmupContext = Some (fun (sidStr: string) ->
         match WorkerProtocol.SessionId.validate sidStr with
@@ -3840,6 +3844,7 @@ let run
       |> SessionManager.QuerySnapshot.allSessions
       |> List.choose (fun session -> WorkerProtocol.SessionLifecycleStatus.workerPid session.Status)
       |> SessionManager.killWorkerPids
+      composer.WorkerPid |> Option.toList |> SessionManager.killWorkerPids
       Environment.Exit(1)) |> ignore
     try cts.Cancel() with :? ObjectDisposedException -> ())
 
@@ -3853,7 +3858,8 @@ let run
     readSnapshot()
     |> SessionManager.QuerySnapshot.allSessions
     |> List.choose (fun session -> WorkerProtocol.SessionLifecycleStatus.workerPid session.Status)
-    |> SessionManager.killWorkerPids)
+    |> SessionManager.killWorkerPids
+    composer.WorkerPid |> Option.toList |> SessionManager.killWorkerPids)
 
   // Start MCP and dashboard servers FIRST so ports are listening
   let mcpRunning =
@@ -4056,6 +4062,7 @@ let run
   with ex ->
     log.LogWarning("Could not clean up daemon-info file: {Error}", ex.Message)
   try
+    do! composer.StopAsync()
     do! performGracefulShutdown log readSnapshot elmRuntime.GetModel sessionManager manifestOwner
   with ex ->
     log.LogWarning("Shutdown cleanup error: {Error}", ex.Message)

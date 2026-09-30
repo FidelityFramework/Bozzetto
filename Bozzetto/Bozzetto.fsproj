@@ -55,6 +55,8 @@
         <Compile Include="DaemonState.fs" />
         <Compile Include="UpdateCheckService.fs" />
         <Compile Include="DaemonTelemetry.fs" />
+        <Compile Include="ComposerWorkerClient.fs" />
+        <Compile Include="ComposerSupervisor.fs" />
         <Compile Include="TestingPlatformAdapter.fs" />
         <Compile Include="SseEvent.fs" />
         <!-- The daemon's Elm kernel + render stack (moved out of Bozzetto.Core so the
@@ -112,6 +114,8 @@
         <Compile Include="McpCohortIntegration.fs" />
         <Compile Include="McpTools.fs" />
         <Compile Include="McpResources.fs" />
+        <Compile Include="ComposerTools.fs" />
+        <Compile Include="ComposerRoutes.fs" />
         <Compile Include="AgentGuidance.fs" />
         <Compile Include="McpServer.fs" />
         <Compile Include="WorkerReloadRelay.fs" />

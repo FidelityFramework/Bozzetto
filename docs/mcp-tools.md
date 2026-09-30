@@ -37,7 +37,7 @@ claude mcp add boz -- boz mcp
 
 For clients that take raw JSON config:
 ```json
-{ "mcpServers": { "bozzetto": { "command": "bozzetto", "args": [ "mcp" ] } } }
+{ "mcpServers": { "bozzetto": { "command": "boz", "args": [ "mcp" ] } } }
 ```
 
 **Streamable HTTP** (for a client that only speaks HTTP, or that's already
@@ -178,8 +178,10 @@ Two connections that pass the same name are still two different members.
 
 ## Per-client config
 
-Prefer stdio (`command`/`args`, spawns `boz mcp`) over HTTP (`url`,
-requires the daemon already running) for the reason above.
+For shared Clef/Composer work, start the reviewed daemon independently and attach
+clients over HTTP as described in the [live checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md).
+This keeps its lifetime independent of any one client. Stdio (`boz mcp`) remains
+available for individual client workflows.
 
 **Claude Code**:
 ```
@@ -187,22 +189,22 @@ claude mcp add boz -- boz mcp
 ```
 or in `~/.claude/claude_desktop_config.json`:
 ```json
-{ "mcpServers": { "bozzetto": { "command": "bozzetto", "args": [ "mcp" ] } } }
+{ "mcpServers": { "bozzetto": { "command": "boz", "args": [ "mcp" ] } } }
 ```
 
 **GitHub Copilot (CLI)**, `~/.copilot/github-copilot/mcp.json`:
 ```json
-{ "servers": { "bozzetto": { "type": "stdio", "command": "bozzetto", "args": [ "mcp" ] } } }
+{ "servers": { "bozzetto": { "type": "stdio", "command": "boz", "args": [ "mcp" ] } } }
 ```
 
 **Cursor / Windsurf**, `.cursor/mcp.json` or the Windsurf MCP settings:
 ```json
-{ "mcpServers": { "bozzetto": { "command": "bozzetto", "args": [ "mcp" ] } } }
+{ "mcpServers": { "bozzetto": { "command": "boz", "args": [ "mcp" ] } } }
 ```
 
 **OpenCode**, `~/.opencode.json`:
 ```json
-{ "mcp": { "bozzetto": { "type": "local", "command": [ "bozzetto", "mcp" ], "enabled": true } } }
+{ "mcp": { "bozzetto": { "type": "local", "command": [ "boz", "mcp" ], "enabled": true } } }
 ```
 
 If your client only takes a `url` (HTTP), the daemon has to be running

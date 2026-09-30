@@ -46,7 +46,7 @@ Working on Bozzetto itself has two extra catches:
 
 ## Project Overview
 
-Bozzetto is an F# live development environment with editor integrations for VS Code and Neovim, a web dashboard, and an MCP server for agent and programmatic access. Its daemon architecture hosts persistent, isolated F# Interactive sessions.
+Bozzetto accelerates Clef/Composer development through shared MCP and browser interfaces over incremental compiler sessions. LLVM ORC JIT is the intended future Clef REPL backend. F#/.NET work can use a separate SageFS daemon/MCP connection on ports 37749/37750; Bozzetto uses 47749/47750. The inherited F# host and editor integrations remain implementation/compatibility code, not a priority for new REPL work. Read the current deployment and acceptance instructions in `docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md` before assuming an agent is connected.
 
 The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are deprecated. Do not treat them as current product surfaces or add new product documentation for them. Preserve Raylib application and game demos because they demonstrate Bozzetto support for game projects and are independent of the deprecated GUI frontend.
 

@@ -12,8 +12,12 @@
         <Compile Include="TestInfrastructure.fs" />
         <Compile Include="../Bozzetto.Composer/ProviderContracts.fs" Link="Composer/ProviderContracts.fs" />
         <Compile Include="../Bozzetto.Composer/ProviderSession.fs" Link="Composer/ProviderSession.fs" />
+        <Compile Include="../Bozzetto.Composer/Worker.fs" Link="Composer/Worker.fs" />
+        <Compile Include="../Bozzetto.Composer.Tests/WorkerCancellationTests.fs" Link="Composer/WorkerCancellationTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/ProviderSessionTests.fs" Link="Composer/ProviderSessionTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/NativeProviderTests.fs" Link="Composer/NativeProviderTests.fs" />
+        <Compile Include="../Bozzetto.Composer.Tests/LiveProviderTests.fs" Link="Composer/LiveProviderTests.fs" />
+        <Compile Include="ComposerSupervisorTests.fs" />
         <Compile Include="TestCountBadge.fs" />
         <Compile Include="StableIdentityProbeFixture.fs" />
         <Compile Include="StableIdentityEvalTests.fs" />

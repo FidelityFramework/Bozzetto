@@ -172,6 +172,17 @@ let private gatingDomain : Map<string, ToolGate> =
     "acquire_run_app_lease", ToolGate.AlwaysAvailable
     "release_work_lease", ToolGate.AlwaysAvailable
     "list_sessions", ToolGate.AlwaysAvailable
+    // Composer tools enforce their own explicit provider/session authority;
+    // they never inherit the active FSI session's lifecycle restrictions.
+    "composer_open_project", ToolGate.AlwaysAvailable
+    "composer_list_sessions", ToolGate.AlwaysAvailable
+    "composer_reserve_edit", ToolGate.AlwaysAvailable
+    "composer_build", ToolGate.AlwaysAvailable
+    "composer_session_status", ToolGate.AlwaysAvailable
+    "composer_run_current", ToolGate.AlwaysAvailable
+    "composer_cancel", ToolGate.AlwaysAvailable
+    "composer_close_session", ToolGate.AlwaysAvailable
+    "composer_retire_worker", ToolGate.AlwaysAvailable
     "get_friction_summary", ToolGate.AlwaysAvailable
     // Reads and clears Bozzetto's own files under its data dir. No session involved.
     "manage_local_data", ToolGate.AlwaysAvailable

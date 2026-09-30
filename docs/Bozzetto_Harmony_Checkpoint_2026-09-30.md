@@ -129,3 +129,26 @@ agent, with a handoff in Composer's
 logical retirement, cancellation cleanup, refusal identity and responsive
 supervision. Native acceptance must use the rebuilt compiler supplied by that
 agent, not silently reuse the previously audited DLL.
+
+## Follow-up import-tooling corrections
+
+The [follow-up assessment](Bozzetto_Harmony_Provider_Followup_Assessment_2026-09-30.md)
+identified two bounded tooling issues. Both are corrected:
+
+- **H1:** Reimporting identical package bytes preserves the established manifest
+  byte for byte even if the selected fork advanced or became dirty. A first
+  import requires a clean checkout whose HEAD matches the embedded package source
+  commit. Validation checks that binding. Dirty first imports are refused because
+  this packaging path does not supply a hash-bound dirty-source attestation.
+  Immutable-version and historical package protections remain in force.
+- **H2:** The consumer checkout is canonicalized with `pwd -P` before comparing
+  scratch paths. A checkout symlink cannot bypass the external-cache guard.
+
+Twelve provenance checks and four path checks passed; the reconstructed old
+implementation fails eight provenance cases and reproduces the symlink bypass.
+The path regression refuses before scratch creation or invocation of a harmless
+pack stub; its valid external-cache control also passes. Evidence is retained at
+`/home/hhh/.local/state/bozzetto/checkpoints/2026-09-30-harmony/followup-tooling/`.
+The vendored package and manifest bytes are unchanged. Final whole-build and test
+closure evidence is recorded in the
+[live checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md).

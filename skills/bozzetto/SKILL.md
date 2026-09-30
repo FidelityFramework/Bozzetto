@@ -22,6 +22,13 @@ you" below.
 
 ## The first minute
 
+This hard fork is installed from a reviewed local build, not a presumed public
+NuGet release. For the current daemon, compiler worker and MCP connection, use
+[the live checkpoint](../../docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md).
+A source checkout or installed CLI does not connect an agent to MCP. If tools are
+absent, follow that checkpoint's connection steps before declaring the runtime
+broken. Preserve a running shared daemon and its active sessions.
+
 1. **Is Bozzetto up?** Call `get_daemon_status` (or `list_sessions`). If the
    tools aren't there at all, Bozzetto isn't connected. Tell the user. Don't work
    around it silently.
@@ -39,10 +46,8 @@ you" below.
 
    If it's behind, **tell the user and ask them to restart it**. Don't stop,
    restart or reinstall it yourself. It's theirs, and other agents may be on
-   it. If they ask you how: `dotnet tool update -g Bozzetto`, then restart. If
-   that reports "already installed" while a newer version is on NuGet, pass
-   `--version X.Y.Z` explicitly. `dotnet tool update` resolves through NuGet's
-   search index, which lags the package store by a few minutes.
+   it. Use the reviewed local deployment and restart instructions in the live
+   checkpoint. Do not replace this hard fork with an assumed public NuGet package.
 3. **Do you have a session for where you're working?** Sessions are tied to a
    working directory, and **a git worktree is its own routing boundary**. A
    session for the main checkout is not yours if you're in

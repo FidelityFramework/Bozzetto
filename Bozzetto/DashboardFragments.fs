@@ -2095,6 +2095,7 @@ let renderMainContent (snap: DashboardSnapshot) : XmlNode =
       // Brand tab — left side
       Elem.div [ Attr.class' "tabline-brand"; Attr.style "display:flex;align-items:center;gap:8px;padding:0 16px;height:100%;border-right:1px solid var(--border-normal);" ] [
         Elem.span [ Attr.style "font-weight:700;color:var(--fg-blue);font-size:14px;" ] [ Text.raw "🧙 Bozzetto" ]
+        Elem.a [ Attr.href "/composer"; Attr.style "color:var(--fg-blue);font-size:12px;" ] [ Text.raw "Clef / Composer" ]
       ]
       // Status tabs — center
       Elem.div [ Attr.class' "tabline-menu"; Attr.style "display:flex;align-items:center;height:100%;flex:1;min-width:0;" ] [
@@ -3743,5 +3744,4 @@ let sessionCreateResultInfo (msg: string) =
   Elem.div [ Attr.id DomIds.DiscoveredProjects; Attr.style "margin-top: 0.5rem;" ] [
     Elem.div [ Attr.class' "output-line output-info" ] [ textEnc msg ]
   ]
-
 

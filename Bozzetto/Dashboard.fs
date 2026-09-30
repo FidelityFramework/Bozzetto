@@ -3212,6 +3212,11 @@ let createEndpoints
       (fun sid ->
         let sessionId = WorkerProtocol.SessionId.validate sid |> Result.defaultValue (WorkerProtocol.SessionId.newId ())
         createSessionActionHandler q infra a.StopApp false sessionId)
+    // The Composer page uses the same daemon owner as MCP on its API listener.
+    yield get "/composer" (fun ctx -> task {
+      let target = UriBuilder("http", ctx.Request.Host.Host, infra.McpPort, "/composer")
+      ctx.Response.Redirect(target.Uri.AbsoluteUri)
+    })
     // Daemon info endpoint for client discovery (replaces daemon.json)
     yield get "/api/daemon-info" (fun ctx -> task {
       let startedAt =

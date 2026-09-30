@@ -163,6 +163,14 @@ let private preCanceledFailure runOperation () = task {
     }
   response |> refuses "superseded"
   do! bounded withdrawalEntered.Task
+  // Entering the backend proves mutation began, not that the adapter published
+  // its failure. Recovery advances the revision and would legitimately suppress
+  // a late error from the previous revision, so observe that error first.
+  let failureDeadline = Diagnostics.Stopwatch.StartNew()
+  while (owner.Status() |> success).BackendError.IsNone do
+    if failureDeadline.Elapsed > TimeSpan.FromSeconds 5. then
+      failtest "Physical withdrawal failure was not published before recovery"
+    do! Task.Yield()
   let repaired = owner.ReserveAsync "recovery"
   do! bounded recovery.Entered
   let status = owner.Status() |> success

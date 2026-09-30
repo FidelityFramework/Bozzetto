@@ -15,6 +15,7 @@
     <Reference Include="$(ComposerDistribution)/*.dll" />
     <Compile Include="ProviderContracts.fs" />
     <Compile Include="ProviderSession.fs" />
+    <Compile Include="Worker.fs" />
     <Compile Include="ComposerAdapter.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

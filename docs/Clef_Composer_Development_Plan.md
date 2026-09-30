@@ -4,6 +4,8 @@ September 30, 2026. This is the implementation plan for making Bozzetto useful f
 
 ## Outcome and ownership
 
+The destination is a Clef/Composer REPL backed by LLVM ORC JIT. Incremental compilation and explicit session authority establish the foundation for that experience. F#/.NET development can use the separate SageFS daemon and MCP source on its own ports; expanding Bozzetto’s inherited F# REPL is not a delivery priority.
+
 An editor user and an agent attached to the same session must operate on the same compiler generation and observe the same diagnostics, build results, cancellations and execution refusals. Composer must also be usable through MCP without requiring an editor or Bozzetto's dashboard.
 
 | Owner | Responsibility |
@@ -70,7 +72,7 @@ generations are distinct and must not be compared as if they were one counter.
 Retirement fences every session before attempting any cleanup, aggregates every
 failure, and preserves errors across repeated retirement attempts.
 
-The full handoff acceptance cases are mandatory: simultaneous independent sessions; cold/unchanged/edited scalar compilation and actual retained object hashes; invalid, stale and corrupted inputs/artifacts; barrier-controlled cancellation and supersession; and compiler epoch replacement during work and after acceptance. F# operations must remain available for F# sessions and refuse Clef sessions.
+The full handoff acceptance cases are mandatory: simultaneous independent sessions; cold/unchanged/edited scalar compilation and actual retained object hashes; invalid, stale and corrupted inputs/artifacts; barrier-controlled cancellation and supersession; and compiler epoch replacement during work and after acceptance. Clef identities must never execute through inherited FSI routes. F#/.NET work may use the separate SageFS MCP service.
 
 **Audit boundary:** deliver the bounded worker, contracts, tests and reproducible evidence to the coordinating compiler agent before proceeding with broad daemon/UI integration. Record findings and fixes against the exact patch. An implementation self-check is not the independent audit.
 
@@ -98,7 +100,7 @@ Acceptance: real MCP clients exercise both deployments against the same operatio
 
 Add editor/dashboard actions for explicit Clef project open, reservation before save, build progress, diagnostics, evidence inspection, cancellation and gated run. Present provider and current generation clearly. Automatic rebuilds must preserve reservation, supersession and epoch rules; a filesystem change notification alone cannot authorize execution.
 
-Show source diagnostics, proof outcomes and artifact admission as separate states. Preserve refusals and diagnostic provenance. Keep F# compiler-source development usable alongside Clef application development. Apply compiler replacement through the provider epoch fence, with an observable withdrawal/restart for every affected session.
+Show source diagnostics, proof outcomes and artifact admission as separate states. Preserve refusals and diagnostic provenance. Use the separate SageFS MCP service for F#/.NET compiler-host investigation. Apply compiler replacement through the provider epoch fence, with an observable withdrawal/restart for every affected session.
 
 Acceptance: one reproducible editor-plus-agent workflow opens the real scalar fixture, builds/runs it, changes `changeable`, observes reuse and updated native output, then demonstrates invalid-edit and compiler-replacement refusals without stale execution being offered by either interface.
 
@@ -136,7 +138,9 @@ Historical attribution and actual upstream URLs remain accurate even after runti
 
 ## Later scope
 
-Native live-state hot reload, LLVM ORC integration, proof caching, complete language parity and shared-memory PSG distribution remain later work. The self-hosting migration follows the explicit dependency boundaries above. This plan establishes safe, observable compilation sessions and MCP access first; it makes no claim that those later capabilities already exist.
+LLVM ORC JIT is the intended next execution-backend direction once the incremental session contract is established. Composer should own JIT materialization, publication and retirement, preserving proof/admission gates, revision and epoch fences, and refusal of obsolete execution. That REPL milestone requires its own native acceptance evidence; the current implementation executes accepted native binaries.
+
+Native live-state hot reload, proof caching, complete language parity and shared-memory PSG distribution remain later work. The self-hosting migration follows the explicit dependency boundaries above. This plan establishes safe, observable compilation sessions and MCP access first; it makes no claim that those later capabilities already exist.
 
 ## Status
 

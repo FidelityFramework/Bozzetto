@@ -22,12 +22,14 @@ let private allModelTools =
   |> List.collect availableTools
   |> List.distinct
 
-/// [<McpServerTool>]-attributed public methods on Bozzetto.Server.McpTools.BozzettoTools.
+/// Both registered tool classes participate in the fail-closed gate contract.
 /// Referenced via `typeof` (not a runtime assembly scan) so the type is always
 /// resolved and this contract can never silently skip on assembly load order —
 /// the earlier scan-and-skip let switch_workflow ship registered-but-ungated.
 let private registeredMcpToolNames () =
-  typeof<Bozzetto.Server.McpTools.BozzettoTools>.GetMethods()
+  [| typeof<Bozzetto.Server.McpTools.BozzettoTools>
+     typeof<Bozzetto.Server.ComposerTools.ComposerTools> |]
+  |> Array.collect (fun toolType -> toolType.GetMethods())
   |> Array.filter (fun m ->
     m.GetCustomAttributes(true)
     |> Array.exists (fun attr -> attr.GetType().Name = "McpServerToolAttribute"))

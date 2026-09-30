@@ -56,7 +56,7 @@ let private bulleted (lines: string list) =
 /// The MCP ServerInstructions text.
 let serverInstructions =
   String.concat "\n" [
-    "Bozzetto is a live F# REPL with your project already loaded. An eval takes milliseconds and a dotnet build takes minutes, so the REPL is your inner loop. dotnet build/test/run is the final gate, run once when you're done."
+    "Bozzetto is the Clef/Composer MCP source. Use a separate SageFS MCP connection for F#/.NET work. Clef: composer_open_project; composer_reserve_edit before writes; composer_build; composer_run_current. Retain host/session/epoch; observe composer://sessions or /composer. Retire before compiler replacement. The inherited F# guidance below is for retained host development; dotnet build/test/run is the final gate."
     ""
     "First minute:"
     yield! numbered firstMinute

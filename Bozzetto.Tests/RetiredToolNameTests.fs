@@ -37,9 +37,12 @@ let private repoRoot =
       up dir.Parent
   up (DirectoryInfo(Directory.GetCurrentDirectory()))
 
-/// The registered catalog, from the same reflection the 60-tool contract uses.
+/// Both provider tool classes are registered by McpServer.configureMcpProtocolWithComposer.
+/// Retired names and the gate domain apply to the complete shared catalog.
 let private registeredToolNames : Set<string> =
-  typeof<Bozzetto.Server.McpTools.BozzettoTools>.GetMethods(BindingFlags.Public ||| BindingFlags.Instance)
+  [| typeof<Bozzetto.Server.McpTools.BozzettoTools>
+     typeof<Bozzetto.Server.ComposerTools.ComposerTools> |]
+  |> Array.collect (fun toolType -> toolType.GetMethods(BindingFlags.Public ||| BindingFlags.Instance))
   |> Array.filter (fun m ->
     m.GetCustomAttributes(true)
     |> Array.exists (fun attr -> attr.GetType().Name = "McpServerToolAttribute"))
@@ -50,6 +53,7 @@ let private registeredToolNames : Set<string> =
 let private liveSurfaces : (string * string) list =
   [ "Bozzetto/Mcp.fs", File.ReadAllText(Path.Combine(repoRoot, "Bozzetto", "Mcp.fs"))
     "Bozzetto/McpTools.fs", File.ReadAllText(Path.Combine(repoRoot, "Bozzetto", "McpTools.fs"))
+    "Bozzetto/ComposerTools.fs", File.ReadAllText(Path.Combine(repoRoot, "Bozzetto", "ComposerTools.fs"))
     "Bozzetto/AgentGuidance.fs", File.ReadAllText(Path.Combine(repoRoot, "Bozzetto", "AgentGuidance.fs"))
     "skills/bozzetto/SKILL.md", File.ReadAllText(Path.Combine(repoRoot, "skills", "bozzetto", "SKILL.md"))
     "docs/agents.md", File.ReadAllText(Path.Combine(repoRoot, "docs", "agents.md"))

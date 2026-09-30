@@ -108,6 +108,8 @@ type private Client(directory: string, name: string) =
 
   member _.Host = host
   member _.Epoch = epoch
+  /// Test-only prediction used by a single-threaded self-cancellation probe.
+  member _.NextRequestId = string (Volatile.Read(&sequence) + 1)
   member _.Call(operation: string, session: string, extra: (string * obj) list) =
     let id = string (Interlocked.Increment &sequence)
     let request = Dictionary<string, obj>()
@@ -146,9 +148,9 @@ type private Client(directory: string, name: string) =
         stderr.Dispose()
         workerProcess.Dispose()
 
-type private Fixture = { Project: string; Source: string; Dependency: string; OriginalSource: string }
+type internal Fixture = { Project: string; Source: string; Dependency: string; OriginalSource: string }
 
-let private fixture directory =
+let internal fixture directory =
   let template = required "BOZZETTO_COMPOSER_FIXTURE"
   if not (Path.IsPathFullyQualified template && File.Exists template) then failtest "Fixture must be an existing absolute .fidproj"
   let sourceDirectory = Path.GetDirectoryName template
@@ -244,7 +246,16 @@ let tests =
       let directory = evidenceRoot ()
       let fixture = fixture directory
       use client = new Client(directory, "authority")
-      client.Hello() |> ignore
+      let hello = client.Hello() |> succeeded
+      stringArray "operations" hello |> List.contains "cancel_request" |> Expect.isTrue "private request cancellation is advertised"
+      client.Call("cancel_request", "", []) |> refused "invalid_request"
+      client.Call("cancel_request", "", [ "targetRequestId", box "missing"; "host", box "foreign-host" ]) |> refused "wrong_authority"
+      client.Call("cancel_request", "", [ "targetRequestId", box "missing"; "provider", box "fsharp" ]) |> refused "wrong_provider"
+      let selfTarget = client.NextRequestId
+      let canceled = client.Call("cancel_request", "", [ "targetRequestId", box selfTarget ])
+      expectAuthority client "" 0L canceled
+      (canceled |> succeeded |> field "cancellationRequested").GetBoolean()
+      |> Expect.isTrue "request cancellation is installed before the handler dispatches"
       let first = openProject client fixture.Project
       let second = openProject client fixture.Project
       client.Call("status", first, [ "provider", box "fsharp" ]) |> refused "wrong_provider"
@@ -253,6 +264,9 @@ let tests =
       client.Call("status", first, [ "epoch", box "foreign-epoch" ]) |> refused "wrong_authority"
       client.Call("eval", first, []) |> refused "unsupported_operation"
       let token = reserve client first "first edit"
+      let missing = client.Call("cancel_request", "", [ "targetRequestId", box "no-such-request" ]) |> succeeded
+      (field "cancellationRequested" missing).GetBoolean() |> Expect.isFalse "missing target is an idempotent no-op"
+      client.Call("status", first, []) |> expectAuthority client first 1L
       buildReserved client second token |> refused "invalid_reservation"
       let queries =
         [| Task.Run(fun () -> client.Call("status", first, []))

@@ -1,10 +1,12 @@
 # Bozzetto provider repair checkpoint — 2026-09-30
 
 Bozzetto's R1–R4 repairs are implemented and the full default gate passes.
-**Revised native acceptance and independent sign-off remain pending.** Composer's
-owner has passed its lease-release tests, but its response still marks the
-validated distribution selection pending. Do not use the previous worker DLL or
-the changing shared compiler output as evidence that this repair passes natively.
+**Revised native acceptance passed: 24/24, Trusted. Independent sign-off remains
+pending.** The worker was rebuilt against Composer's explicitly selected,
+immutable distribution after the owner completed the lease-release correction.
+The subsequent shared-interface integration has its own
+[live checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md); the native result
+below does not by itself establish that later workflow.
 
 This follows the [assessment](Bozzetto_Provider_Assessment_2026-09-30.md).
 The original [provider checkpoint](Bozzetto_Provider_Checkpoint_2026-09-30.md) and
@@ -16,9 +18,9 @@ checks are recorded separately in the
 
 | Finding | Implemented behavior | Discriminating coverage |
 |---|---|---|
-| R1: partial retirement | Fence every session before any cleanup; independently attempt all disposals; aggregate errors. Worker retirement also rejects existing run/build/reserve/cancel requests. Retain failed cleanup from an open overtaken by retirement so a later fence cannot forget it. | Pure held-work/cleanup tests pass. Added real two-session wire regression with a failing `current.json` persistence path and an actual exclusive `.session.lock` acquisition; execution awaits the revised compiler distribution. |
+| R1: partial retirement | Fence every session before any cleanup; independently attempt all disposals; aggregate errors. Worker retirement also rejects existing run/build/reserve/cancel requests. Retain failed cleanup from an open overtaken by retirement so a later fence cannot forget it. | Pure held-work/cleanup tests pass. Added real two-session wire regression with a failing `current.json` persistence path and an actual exclusive `.session.lock` acquisition; passed against the revised compiler distribution. |
 | R2: stranded activity | Cancellation registration lives inside the operation's removal `try/finally`. Callbacks revoke logical authority and schedule physical withdrawal; they do not execute fallible compiler reservation inline. | Pre-canceled build/run with reservation failure after backend mutation, recovery, cleared activity and no unintended launch pass. |
-| R3: refusal identity | The worker remembers resolved session authority for validation exceptions. Backend reservation failures carry the revision under which the attempt occurred. | Added malformed-run-arguments and failed-reservation wire assertions for host, session, provider, epoch and revision; native execution pending. |
+| R3: refusal identity | The worker remembers resolved session authority for validation exceptions. Backend reservation failures carry the revision under which the attempt occurred. | Added malformed-run-arguments and failed-reservation wire assertions for host, session, provider, epoch and revision; native execution passed. |
 | R4: blocked supervision | A short authority lock holds cached state only. A separate asynchronous invocation gate orders backend prefixes, reservations and disposal; compiler IO never runs under the authority lock. | Pre-first-await run barriers, publication barriers, blocked disposal, pending reservations and obsolete cancellation withdrawals pass. |
 
 Composer owns the private lease-release correction. Its response at
@@ -71,30 +73,31 @@ Evidence resides outside repositories at
   worker is built separately against its explicit compiler distribution.
 - Full unfiltered default suite: **9,784 accounted; 9,780 passed; four existing
   ignores; zero failures/errors; Trusted**. All 20 provider unit cases ran.
-- Worker sources loaded in FSI and their handshake passed using the previous
-  compiler API for type checking. This does **not** establish revised worker
-  binary or native acceptance. The subsequent retained-open-error change is
-  included in the final source check.
-- The added native case is compiled into the registered dedicated Composer
-  suite. That suite now contains 20 unit and four process/native cases. It has
-  not yet been rerun against a validated revised compiler closure.
-- No daemon/REPL MCP connection was available. Validation used the explicitly
-  reported pinned .NET fallback; no user daemon was replaced or service stopped.
-
-The owner-tested Composer hash is
-`f2b2cedad8f753d279bef5bc6e6d69a9319227d076c27fe9a0108f99ec5f626b`.
-The shared output's CCS hash already differs from the owner's recorded test
-closure, so that directory is deliberately not selected for native acceptance.
-The compiler owner must identify the complete validated distribution, not just
-the Composer DLL. Preserve its closure and source identities when running the
-dedicated suite.
+- Rebuilt optional worker against
+  `/home/hhh/.codex/work/clef-2026-09-30-lazy/verify/composer-distribution`.
+  Full registered `--integration-composer` tier: **24 registered, 24 passed,
+  zero ignored/failed/errored, Trusted**; 20 unit and four real process/native cases.
+- Native evidence is retained under
+  `/home/hhh/.local/state/bozzetto/checkpoints/2026-09-30-provider-repair/native-final/`:
+  `SUMMARY.md`, `tests.log`, `trust-ledger.jsonl`, `commands.txt`,
+  `worker-closure.sha256`, and case-level wire/object/lease records.
+- The worker DLL for that run is SHA256
+  `2c4cf86d6178a5ddec346b946673cf160cec4575ba8379775cc8a01b790c77b1`.
+  The approved Composer DLL is
+  `f2b2cedad8f753d279bef5bc6e6d69a9319227d076c27fe9a0108f99ec5f626b`.
+  Its complete 40-file manifest is
+  `/home/hhh/.codex/work/clef-2026-09-30-lazy/verify/compiler.sha256`,
+  itself SHA256 `2d134bda8b647c2a2c66a3d54f607513ea74bba7beb3b47d3dd65cba25680f7c`.
+- No daemon/REPL MCP connection was available for that run. Validation used the
+  explicitly reported pinned .NET fallback; no user daemon or service was stopped.
+- Later live-interface changes add exact-request cancellation and shared daemon
+  supervision. Their executed test, worker and daemon closures are separate
+  acceptance evidence in the live checkpoint; do not substitute later binaries
+  for the native run identified here.
 
 ## Next audit step
 
-Build the optional worker against that explicit distribution and run the entire
-`--integration-composer` tier. Record its exact worker/closure hashes, wire
-responses, native outputs, retained object hashes and lease evidence here.
-Then request the auditor's reassessment of R1–R4 against the final snapshot.
-Shared daemon/MCP integration and standalone Composer MCP remain the next
-milestones in the [development plan](Clef_Composer_Development_Plan.md); this
-checkpoint does not claim those user journeys are delivered.
+Review the final live checkpoint and its complete executed binary closure,
+including the concurrent-open/retirement regression and shared MCP/browser
+journey. The [development plan](Clef_Composer_Development_Plan.md) keeps standalone
+Composer MCP and editor integration explicit as later milestones.

@@ -73,7 +73,8 @@ let private startTestServer (ops: SessionManagementOps) = task {
       ActivityTracker = Bozzetto.AgentActivityTracker.create ()
       LiveSnapshotSink = None
       CohortOwner = None
-      GetDaemonHealth = fun () -> None }
+      GetDaemonHealth = fun () -> None
+      Composer = None }
 
   let mcpContext : McpContext =
     { FrictionStore = None

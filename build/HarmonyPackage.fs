@@ -53,6 +53,14 @@ let private inspectPackage (bytes: byte[]) (version: string) =
     metadata.Elements() |> Seq.find (fun node -> node.Name.LocalName = name) |> fun node -> node.Value
   require (field "id" = packageId) ("Expected package identity " + packageId)
   require (field "version" = version) ("Expected package version " + version)
+  let repositories = metadata.Elements() |> Seq.filter (fun node -> node.Name.LocalName = "repository") |> Seq.toArray
+  require (repositories.Length = 1) "Harmony package must identify its source repository commit"
+  let attribute name =
+    let value = repositories[0].Attribute(XName.Get name)
+    if isNull value then "" else value.Value
+  let sourceCommit = attribute "commit"
+  require (attribute "type" = "git" && sourceCommit.Length = 40 && (sourceCommit |> Seq.forall Uri.IsHexDigit))
+    "Harmony package must contain a full Git source commit in its nuspec repository metadata"
   require (names |> Array.forall (fun name -> not (name.EndsWith("/0Harmony.dll", StringComparison.OrdinalIgnoreCase)))) "Package still contains upstream 0Harmony.dll"
   for framework in [ "net8.0"; "net10.0" ] do
     let name = "lib/" + framework + "/" + packageId + ".dll"
@@ -69,6 +77,7 @@ let private inspectPackage (bytes: byte[]) (version: string) =
     let definition = metadataReader.GetAssemblyDefinition()
     let identity = metadataReader.GetString definition.Name
     require (identity = packageId) (name + " has wrong CLR assembly identity: " + identity)
+  sourceCommit
 
 let validate repoRoot : Result<unit, string> =
   try
@@ -83,7 +92,14 @@ let validate repoRoot : Result<unit, string> =
     require (text "file" = filename) "Unexpected Harmony package filename in manifest"
     let bytes = File.ReadAllBytes(Path.Combine(directory, filename))
     require (sha256 bytes = text "sha256") "Harmony package SHA256 differs from committed manifest; import the reviewed source build explicitly"
-    inspectPackage bytes version
+    let sourceCommit = inspectPackage bytes version
+    let source = root.GetProperty "source"
+    require (source.GetProperty("commit").GetString() = sourceCommit)
+      "Harmony manifest source commit disagrees with the package's embedded repository commit"
+    require (source.GetProperty("upstreamBase").GetString() = upstreamBase)
+      "Harmony manifest has an unexpected upstream base"
+    require (not (source.GetProperty("dirty").GetBoolean()))
+      "Dirty Harmony source attribution requires a hash-bound build attestation; this package format records only a source commit"
     Ok ()
   with ex -> Error ("Bozzetto.Harmony verification failed: " + ex.Message)
 
@@ -113,19 +129,9 @@ let importPackage (packagePath: string) sourceFork repoRoot : Result<unit, strin
     let root = absoluteDirectory "Repository" repoRoot
     let top = (git source [ "rev-parse"; "--show-toplevel" ]).Trim()
     require (Path.GetFullPath top = source.TrimEnd(Path.DirectorySeparatorChar)) "Source fork must identify its Git checkout root"
-    let head = (git source [ "rev-parse"; "HEAD" ]).Trim()
-    git source [ "merge-base"; "--is-ancestor"; upstreamBase; "HEAD" ] |> ignore
-    let submodules = (git source [ "submodule"; "status"; "--recursive" ]).TrimEnd()
-    let status = git source [ "status"; "--porcelain=v1"; "--untracked-files=all" ]
-    let diff = git source [ "diff"; "HEAD"; "--binary"; "--no-ext-diff" ]
-    let untracked =
-      (git source [ "ls-files"; "--others"; "--exclude-standard"; "-z" ]).Split('\000', StringSplitOptions.RemoveEmptyEntries)
-      |> Array.sort
-      |> Array.map (fun path -> path + "\000" + sha256 (File.ReadAllBytes(Path.Combine(source, path))))
-      |> String.concat "\n"
     let version = expectedVersion root
     let bytes = File.ReadAllBytes packagePath
-    inspectPackage bytes version
+    let sourceCommit = inspectPackage bytes version
     let filename = packageId + "." + version + ".nupkg"
     let hash = sha256 bytes
     let directory = Path.Combine(root, "vendor", packageId)
@@ -134,37 +140,57 @@ let importPackage (packagePath: string) sourceFork repoRoot : Result<unit, strin
     if File.Exists destination then
       require (sha256 (File.ReadAllBytes destination) = hash)
         "Cannot replace a retained Bozzetto.Harmony version with different package bytes: increment BozzettoBuild and the central package version, rebuild, then import. NuGet caches package versions immutably."
-    if File.Exists manifestPath then
-      use existing = JsonDocument.Parse(File.ReadAllText manifestPath)
-      let previous = existing.RootElement
-      if previous.GetProperty("id").GetString() = packageId
-         && previous.GetProperty("version").GetString() = version then
-        require (previous.GetProperty("sha256").GetString() = hash)
-          "Cannot replace an existing Bozzetto.Harmony version with different package bytes: increment BozzettoBuild and the central package version, rebuild, then import. NuGet caches package versions immutably."
-    let manifest =
-      {| schemaVersion = 1
-         id = packageId
-         version = version
-         file = filename
-         sha256 = hash
-         source =
-           {| upstreamRepository = "https://github.com/WillEhrendreich/LibHarmony.git"
-              upstreamBase = upstreamBase
-              commit = head
-              submodules = submodules
-              dirty = not (String.IsNullOrWhiteSpace status)
-              dirtyDiffSha256 = sha256 (Encoding.UTF8.GetBytes(diff + "\000" + untracked)) |} |}
-    Directory.CreateDirectory directory |> ignore
-    let suffix = "." + Guid.NewGuid().ToString("N") + ".tmp"
-    let packageTemp = Path.Combine(directory, filename + suffix)
-    let manifestTemp = Path.Combine(directory, "package.json" + suffix)
-    try
-      File.WriteAllBytes(packageTemp, bytes)
-      File.WriteAllText(manifestTemp, JsonSerializer.Serialize(manifest, JsonSerializerOptions(WriteIndented = true)) + "\n")
-      File.Move(packageTemp, destination, true)
-      File.Move(manifestTemp, Path.Combine(directory, "package.json"), true)
-    finally
-      if File.Exists packageTemp then File.Delete packageTemp
-      if File.Exists manifestTemp then File.Delete manifestTemp
-    validate root
+    let established =
+      if not (File.Exists manifestPath) then false
+      else
+        use existing = JsonDocument.Parse(File.ReadAllText manifestPath)
+        let previous = existing.RootElement
+        let sameVersion =
+          previous.GetProperty("id").GetString() = packageId
+          && previous.GetProperty("version").GetString() = version
+        if sameVersion then
+          require (previous.GetProperty("sha256").GetString() = hash)
+            "Cannot replace an existing Bozzetto.Harmony version with different package bytes: increment BozzettoBuild and the central package version, rebuild, then import. NuGet caches package versions immutably."
+        sameVersion
+    if established then
+      // Identical bytes keep their reviewed origin, even if the selected fork
+      // has since advanced. Never manufacture new build provenance on reimport.
+      validate root
+    else
+      let head = (git source [ "rev-parse"; "HEAD" ]).Trim()
+      require (head = sourceCommit)
+        "Selected Harmony source HEAD disagrees with the package's embedded repository commit; import the matching source build"
+      git source [ "merge-base"; "--is-ancestor"; upstreamBase; "HEAD" ] |> ignore
+      let submodules = (git source [ "submodule"; "status"; "--recursive" ]).TrimEnd()
+      require (submodules.Split('\n') |> Array.forall (fun row -> row = "" || row.StartsWith(" ", StringComparison.Ordinal)))
+        "Harmony submodules must be initialized at their committed revisions before source attribution"
+      let status = git source [ "status"; "--porcelain=v1"; "--untracked-files=all"; "--ignore-submodules=none" ]
+      require (String.IsNullOrWhiteSpace status)
+        "Cannot attribute a new Harmony package to a dirty checkout: commit source/submodule changes and rebuild. The package records a commit, not a hash-bound dirty-tree build attestation."
+      let manifest =
+        {| schemaVersion = 1
+           id = packageId
+           version = version
+           file = filename
+           sha256 = hash
+           source =
+             {| upstreamRepository = "https://github.com/WillEhrendreich/LibHarmony.git"
+                upstreamBase = upstreamBase
+                commit = sourceCommit
+                submodules = submodules
+                dirty = false
+                dirtyDiffSha256 = sha256 (Encoding.UTF8.GetBytes "\000") |} |}
+      Directory.CreateDirectory directory |> ignore
+      let suffix = "." + Guid.NewGuid().ToString("N") + ".tmp"
+      let packageTemp = Path.Combine(directory, filename + suffix)
+      let manifestTemp = Path.Combine(directory, "package.json" + suffix)
+      try
+        File.WriteAllBytes(packageTemp, bytes)
+        File.WriteAllText(manifestTemp, JsonSerializer.Serialize(manifest, JsonSerializerOptions(WriteIndented = true)) + "\n")
+        File.Move(packageTemp, destination, true)
+        File.Move(manifestTemp, Path.Combine(directory, "package.json"), true)
+      finally
+        if File.Exists packageTemp then File.Delete packageTemp
+        if File.Exists manifestTemp then File.Delete manifestTemp
+      validate root
   with ex -> Error ("Bozzetto.Harmony import failed: " + ex.Message)

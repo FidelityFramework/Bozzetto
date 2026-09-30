@@ -1,15 +1,19 @@
 # Bozzetto
 
-**A live F# development server, evolving into the session hub of the Fidelity Framework toolchain.** Supported F# edits can update a running program through the inherited hot reload engine. A Clef provider and native Clef hot reload are planned.
+**Clef/Composer incremental development with one session view for humans and agents.**
 
-Bozzetto is currently a [.NET global tool](https://learn.microsoft.com/en-us/dotnet/core/tools/global-tools) for live F# development. Clef support follows the hosting trajectory below. The inherited engine provides:
+Bozzetto hosts Composer sessions behind shared MCP tools and a browser interface:
+explicit project opening, edit reservations, native builds, artifact evidence,
+cancellation, gated execution and compiler-worker replacement. Use the
+[live checkpoint](docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md) for the
+reviewed local installation, startup, MCP connection and acceptance status.
 
-- project loading
-- hot reload
-- file watching
-- multi-session isolation
-- a web dashboard
-- an MCP server that gives AI agents live access to your running code
+The destination is a Clef REPL backed by LLVM ORC JIT. Today's provider executes
+accepted native binaries; ORC integration remains planned. The host is currently
+.NET-based. F#/.NET work can use a separate SageFS daemon and MCP connection on
+its own ports. The inherited F# engine remains in this fork while the
+[development plan](docs/Clef_Composer_Development_Plan.md) establishes Bozzetto's
+compiler-focused identity and self-hosting boundaries.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com)
@@ -32,7 +36,7 @@ In the Fidelity Framework the Clef Compiler Service (CCS) is the single semantic
 | Atelier | The development environment. Atelier presents the graph, the proofs and the debugging views in panes. |
 | Bozzetto | The session hub. Bozzetto hosts live sessions, reloads changed code and runs tests. Editors, dashboards and AI agents all read one running state. |
 
-Bozzetto runs F# today and is being designed to serve F# and Clef together. We are designing its Clef side to read graph revisions from CCS through the same published contract that Lattice and Atelier use. The [Lattice integration plan](https://github.com/FidelityFramework/Composer/blob/main/docs/Lattice_Integration.md) and the [interactive compiler workbench](https://github.com/FidelityFramework/Composer/blob/main/docs/Interactive_Compiler_Workbench.md) describe the shared service.
+Bozzetto now exposes explicit Clef/Composer sessions; F#/.NET development can remain on the separate SageFS service. We are designing its Clef side to read graph revisions from CCS through the same published contract that Lattice and Atelier use. The [Lattice integration plan](https://github.com/FidelityFramework/Composer/blob/main/docs/Lattice_Integration.md) and the [interactive compiler workbench](https://github.com/FidelityFramework/Composer/blob/main/docs/Interactive_Compiler_Workbench.md) describe the shared service.
 
 ## Hard-Fork Lineage
 
