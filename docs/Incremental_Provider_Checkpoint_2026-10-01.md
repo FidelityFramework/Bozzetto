@@ -9,6 +9,9 @@ contracts remain in the linked sibling documents. This records source integratio
 and separately identified gate results. Deployment identities are recorded
 explicitly; earlier source anchors do not establish installed runtime behavior.
 
+The current [binary PSG transport handback](PSG_Transport_Integration_Auditor_Checkpoint_2026-10-01.md)
+records the still-unintegrated service boundary and the coordinated repair gates.
+
 ## Minimal host and aligned compiler checkpoint
 
 The dedicated [auditor checkpoint](Bozzetto_Minimal_Host_Auditor_Checkpoint_2026-10-01.md)

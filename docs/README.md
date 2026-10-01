@@ -9,6 +9,7 @@ Bozzetto coordinates Fidelity development across compilers, editors, application
 - **[Clef/Composer development plan](Clef_Composer_Development_Plan.md)**: the concrete first-horizon delivery plan, implemented foundations and remaining integration work
 - **[Incremental foundation adoption](Bozzetto_Incremental_Foundation_Adoption.md)**: Fidelity.FSharp.Incremental across Bozzetto and the compiler pipeline, cold work, shared demand and the path from .NET hosting to self-hosting
 - **[Minimal host auditor checkpoint](Bozzetto_Minimal_Host_Auditor_Checkpoint_2026-10-01.md)**: architectural correction, purge scope, exact validation and deployment evidence
+- **[Binary PSG integration auditor handback](PSG_Transport_Integration_Auditor_Checkpoint_2026-10-01.md)**: current source and deployed transport gap, cross-project ownership, repair sequence and acceptance controls
 - **[Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md)**: removal of embedded production FSI hosting, separate SageFS development and the future Clef execution boundary
 
 ## Start here

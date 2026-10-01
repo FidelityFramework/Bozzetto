@@ -15,6 +15,10 @@ and [compiler backlog guidance](Incremental_Compiler_Backlog_Auditor_Guidance_20
 remain unchanged. Their findings and revision scope are evidence, not a permanent
 freeze on the shared library or a blanket acceptance of its consumers.
 
+For the subsequent transport audit, use the [binary PSG integration handback](PSG_Transport_Integration_Auditor_Checkpoint_2026-10-01.md).
+It verifies the remaining JSON worker boundary and separates the committed drafts
+from this checkpoint's deployed, tested closure.
+
 ## Why the scope changed
 
 The earlier implementation work preserved the inherited Harmony integration and

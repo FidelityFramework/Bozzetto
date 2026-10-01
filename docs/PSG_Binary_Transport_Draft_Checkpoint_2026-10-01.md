@@ -5,6 +5,10 @@ The validated runtime-patching purge remains the separate commit **e971e3fa**.
 Its [auditor checkpoint](Bozzetto_Minimal_Host_Auditor_Checkpoint_2026-10-01.md)
 and installed binaries retain their original scope and identities.
 
+The subsequent [integration auditor handback](PSG_Transport_Integration_Auditor_Checkpoint_2026-10-01.md)
+records verified source/runtime state and the required cross-project repair order.
+This draft checkpoint remains evidence of source preservation, not integration.
+
 ## Seven files being preserved
 
 Six files in `Bozzetto.Composer.Protocol/` contain the proposed shared provider
