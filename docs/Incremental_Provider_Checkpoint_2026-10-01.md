@@ -60,6 +60,13 @@ publishing successful producer metadata.
 and their error fields continue to distinguish pending physical work and failure
 from an acknowledged request.
 
+After Composer close joins CCS, the adapter drains retained compiler diagnostics
+to worker stderr with attempt, code and message, including failures from withdrawn
+checks. Reporting cannot replace an original close exception. These checker
+diagnostics are currently stderr-only; the provider status schema does not expose
+them, and they are not reclassified as physical cleanup failures. Keep the worker
+stderr evidence with the validation or deployed worker logs.
+
 ## Evidence and remaining gates
 
 Separate SageFS session `6fd7fa1e` on port 37749 supplied the F# inner loop. A RED
@@ -90,6 +97,40 @@ and explicit acknowledgement/forget protocol for reconnecting clients. A status
 refresh does not prove which lost request committed. No durable actor inbox,
 cross-session producer sharing, persistent actor lifecycle or Fable runtime is
 implemented by this provider change.
+
+## Bounded audit map
+
+Start with the sibling [CCS workspace contract](../../clef/docs/Incremental_Project_Workspace_2026-10-01.md)
+and [Composer adoption contract](../../Composer/docs/incremental-compilation/2026-10-01-workspace-adoption.md).
+The independent [preview.5 observation assessment at deabc97](https://forge.spkez.dev/FidelityFramework/Fidelity.FSharp.Incremental/src/commit/deabc979ccc21c975b47e2e16d8722085b71d82e/docs/Consumer_Observation_Auditor_Assessment_2026-10-01.md)
+accepts library implementation `87c77d9`; its 102 repository tests and three
+additional observation controls do not substitute for consumer acceptance.
+
+These are source locations and discriminating assertions, not new passing-run
+claims. CCS tests use actual checking with controlled barriers; provider unit
+tests inject a backend. Rows marked native execute real processes or artifacts.
+
+| Boundary | Test and location | Evidence to inspect |
+| --- | --- | --- |
+| Shared demand | CCS `Same generation shares a complete check and one withdrawn consumer preserves another` ([ProjectWorkspaceTests.fs:201](../../clef/tests/Clef.Compiler.Service.Tests/ProjectWorkspaceTests.fs)); provider `canceling one client detaches its demand while another keeps the shared producer` ([ProviderSessionTests.fs:273](../Bozzetto.Composer.Tests/ProviderSessionTests.fs)). | One check/build; withdrawing one demand preserves the other. Provider coverage is an injected-backend unit test. |
+| Process-global state serialization | CCS `Two real workspaces share process ownership through complete projection` and `Close joins noninterruptible checking and restores process configuration` ([ProjectWorkspaceTests.fs:63,320](../../clef/tests/Clef.Compiler.Service.Tests/ProjectWorkspaceTests.fs)). | A second evaluator demonstrably waits for the shared CCS gate; projection remains inside ownership; configuration and withdrawn failure diagnostics survive projector failure. This is within one process. |
+| Reservation before deferred launch | Provider `reservation bypasses occupied evaluator slots and prevents a deferred native launch` ([ProviderSessionTests.fs:433](../Bozzetto.Composer.Tests/ProviderSessionTests.fs)); Composer `reservation before deferred run invocation refuses the old artifact before launch validation` ([IncrementalBuildTests.fs:294](../../Composer/tests/Alex.Tests/IncrementalBuildTests.fs)). | Unit barriers prove edit permission bypasses dispatch saturation. The Composer case first builds a real artifact, then proves the obsolete deferred call never reaches launch validation. |
+| Actual launch before reservation | Composer `a real launch that wins reservation remains owned and its old generation is withdrawn` ([IncrementalBuildTests.fs:355](../../Composer/tests/Alex.Tests/IncrementalBuildTests.fs)). | Native `Process.Start` occurs once before the barrier. Later reservation withdraws current authority without pretending the already launched process never ran. |
+| Physical capture and callback joins | CCS `Owned capture shares demand permits reservation and remains joined by close` ([ProjectWorkspaceTests.fs:99](../../clef/tests/Clef.Compiler.Service.Tests/ProjectWorkspaceTests.fs)); provider `close retains ownership after evaluator return until cancellation callback exits` ([ProviderSessionTests.fs:456](../Bozzetto.Composer.Tests/ProviderSessionTests.fs)); Composer `close joins a caller cancellation callback after the operation body has completed` ([IncrementalBuildTests.fs:247](../../Composer/tests/Alex.Tests/IncrementalBuildTests.fs)). | Held capture and callbacks keep close incomplete. Composer also retains the directory lease; provider prevents backend disposal. Callback barriers alone are not native execution evidence. |
+| Actual process and output joins | Composer `canceling a process joins its actual exit and both output streams` and `canceled process collection retains each independently held output cleanup` ([IncrementalBuildTests.fs:185,209](../../Composer/tests/Alex.Tests/IncrementalBuildTests.fs)). | Real child processes exit, stdout and stderr settle independently, and cancellation cannot detach either cleanup. |
+| Stale input/proof refusal | `project receipts reject changed manifests and checker text even after disk restoration` ([ProjectSessionTests.fs:48](../../Composer/tests/Alex.Tests/ProjectSessionTests.fs)); `Result branch authority rebuilds its whole scope and rejects another revisions proof receipt` ([IncrementalBuildTests.fs:518](../../Composer/tests/Alex.Tests/IncrementalBuildTests.fs)). | Actual consumed-text receipts are checked; the native branch case produces fresh proofs/artifacts and explicitly refuses a prior revision's proof. |
+| Same native receipt and retained object | `two wire clients of one reservation share the same native build receipt` and `native builds retain real objects and execution gates reject changed inputs and artifacts` ([NativeProviderTests.fs:379,405](../Bozzetto.Composer.Tests/NativeProviderTests.fs)). | Real worker replies share artifact path/hash and object manifest; replay does not rebuild. Source edits preserve the unaffected object's actual path/hash and change native output. Deterministic overlap is established separately by provider unit barriers. |
+
+Final results for the rebuilt consumer closure remain pending the coordinating
+validation run; attach exact logs/TRX or TrustSignal rows rather than inferring
+success from this map.
+
+| Final gate | Current-closure receipt |
+| --- | --- |
+| Clef unfiltered compiler-service suite and baseline comparison | Pending |
+| Composer native, project/editor and RPC checks | Pending |
+| Bozzetto unfiltered default tier | Pending |
+| Entire `--integration-composer` tier, including owned live daemon | Pending |
 
 ## Validation and promotion recipe
 

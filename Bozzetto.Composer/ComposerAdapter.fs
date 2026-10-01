@@ -39,4 +39,15 @@ module ComposerAdapter =
               ExitCode = value.ExitCode; StandardOutput = value.StandardOutput
               StandardError = value.StandardError })
         }
-        member _.Dispose() = (session :> System.IDisposable).Dispose() }
+        member _.Dispose() =
+          try (session :> System.IDisposable).Dispose()
+          finally
+            // Close has joined CCS, so this final drain includes failures from
+            // withdrawn checks. Reporting must not mask the close exception.
+            let report (message: string) =
+              try System.Console.Error.WriteLine message
+              with _ -> ()
+            try
+              for diagnostic in session.DrainDiagnostics() do
+                report (sprintf "CCS attempt %A: %s: %s" diagnostic.Attempt diagnostic.Failure.Code diagnostic.Failure.Message)
+            with error -> report ("CCS diagnostic drain failed: " + error.Message) }

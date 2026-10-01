@@ -67,6 +67,16 @@
           "Fantomas.FCS": "8.0.0-alpha-002"
         }
       },
+      "Fidelity.FSharp.Incremental.Hosting": {
+        "type": "Direct",
+        "requested": "[0.1.0-preview.5, )",
+        "resolved": "0.1.0-preview.5",
+        "contentHash": "HayfcL1bI5ce0xa/09upv+D0TA1vVXoC3ebnDMV9SkxboW/6t3HqL2VOYp1rFg3CKlpZxOBtdqBmXNrm9hcuzQ==",
+        "dependencies": {
+          "FSharp.Core": "10.1.401",
+          "Fidelity.FSharp.Incremental": "0.1.0-preview.5"
+        }
+      },
       "FsCheck": {
         "type": "Direct",
         "requested": "[3.3.2, )",
@@ -161,6 +171,14 @@
         "contentHash": "CDRwhuKQnb6ThWHLw9nYM3w7hHyZbWhLARKrS2UYrWGkR60PlwAZ3QF8+rfzPh6OJ9ZZg2PpZ2aVDQLqk4LGjg==",
         "dependencies": {
           "FSharp.Core": "9.0.300"
+        }
+      },
+      "Fidelity.FSharp.Incremental": {
+        "type": "Transitive",
+        "resolved": "0.1.0-preview.5",
+        "contentHash": "eUbW6K0LiNfdydzt1c5dzyh0LNTL3taZ56HU1DzuVwFX15rCD2l1fOTyOD1ninuQhVr4O+gO5JYXduxbuUbUyA==",
+        "dependencies": {
+          "FSharp.Core": "10.1.401"
         }
       },
       "Hopac": {
