@@ -37,3 +37,52 @@ Raw requests, responses, headers, input hashes, object manifests and checks rema
 This is one independently executed native incremental journey, not another execution of the peer's full test gate. It does not establish cancellation races, provider retirement/replacement, ORC live-state reload, full browser rendering, arbitrary-project coverage or proof-result reuse. Witness visits and object counts are observed work counters, not a wall-clock benchmark.
 
 The next compiler repairs require a validated distribution promotion and a repeat against its explicit digest. Broader workflow acceptance should add exact-request cancellation/recovery and coordinated retirement checks while preserving peer ownership. The demonstrated pinned-provider loop is already suitable for the bounded scalar edit/build/run workflow recorded here.
+
+## October 1 promoted distribution repeat
+
+The compiler owner completed that promotion and independently repeated the live
+journey. The complete compiler closure and rebuilt worker are installed under
+`~/.local/share/bozzetto/releases/2026-10-01-worker-9bd8e40fe2e8-995047939b5f/`.
+Composer SHA-256 is `995047939b5f228436e7b9a96409510eb661e8743c5225a369e951899b23f491`;
+worker SHA-256 is `9bd8e40fe2e8b9f7a03db5575c8822336fbd030f866b59c2d4c6b1608100b56c`.
+Every worker compiler DLL was compared with the sealed distribution. The source
+vector, full file manifests and build commands are retained in the receipt below.
+PSG schema 11 and worker wire protocol 1 are distinct identities.
+
+Before activation, the new compiler passed native samples 01, 04a, 04d and 04e.
+Lazy samples 14a/14b still refused artifact admission; no sample timed out or was
+skipped. The rebuilt worker passed the complete Composer provider tier:
+**29/29; zero failures, errors or ignores; Trusted**. This tier included isolated
+native and shared-interface tests; the default suite was not rerun for promotion.
+
+The daemon captures its worker path at startup. Successful HTTP retirement first
+withdrew the old Composer epoch and completed cleanup; a graceful shutdown and
+restart then selected the new immutable path. PID **3012680**, started at
+`2026-10-01T10:12:57.4099824Z`, is healthy on the same ports and external workspace.
+The CLI release `2026-10-01-cli-67d11d379c82` and runtime remain selected. Old
+Composer session authority was intentionally retired, including the earlier
+peer demo session. There were no F# sessions. MCP clients need to reconnect.
+
+The fresh live audit used host `5b784f050a67466bbbfbc054c34cdabe`, epoch
+`bea9fa6e83f149e481800f8e986a4ffb`, session `646eb415bdbe44519a3242fe7ba28ab3`.
+Cold/unchanged/edited generations reproduced **3/0 → 1/2 → 2/1 compiled/reused
+objects** and the outputs in the table above. Human HTTP reservation succeeded;
+MCP run then returned `not_accepted`; source hashes were checked unchanged;
+only then was the single source line edited. The stable callable had zero visits
+after the edit and retained identical object/bitcode paths and bytes. Its object
+hash remained `0C1B496BE0C3C51CAFE686F62CFCB89B0B306A40589209C1CBE673C0A01075FD`.
+
+MCP status, its resource and the human HTTP projection agreed. Each generation
+had a distinct proof invocation with **43 source + 43 MLIR** successful solver
+checks and current artifact/Rocq evidence; retained code did not bypass proofs.
+Owned cleanup finished with no pending work/error and no current artifact.
+No peer session existed during this repeat, so it does not add another
+peer-preservation test. The preceding provider tier separately exercised shared
+sessions and retirement controls.
+
+Evidence is external at
+`~/.local/state/bozzetto/checkpoints/2026-10-01-compiler-promotion/`:
+`deployment.json`, `provider-trust.jsonl`, `activation/`, and `live-replay/`.
+Replay, offline verification and lease release each exited 0. These checks
+establish the promoted bounded scalar workflow, not native Lazy/Result transport,
+arbitrary language coverage, selective proof reuse, ORC or a performance gain.
