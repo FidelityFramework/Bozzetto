@@ -1,6 +1,12 @@
 # Bozzetto Documentation
 
-Bozzetto's current workflow is Clef/Composer development through shared MCP and browser sessions. F#/.NET development uses a separate SageFS service; the inherited engine's technical references remain available below.
+Bozzetto coordinates Fidelity development across compilers, editors, application runtimes and target devices. Its delivered workflow today is Clef/Composer development through shared MCP and browser sessions. The broader roadmap separates that foundation from proposed heterogeneous and federated development capabilities.
+
+## Direction and delivery
+
+- **[Development horizons](Bozzetto_Development_Horizons.md)**: first-horizon compiler/workspace and CPU REPL work, later heterogeneous development and federated sites; cross-target evaluation is research gated by demonstrated demand, feasibility and proof cost
+- **[Fidelity component contracts](Bozzetto_Fidelity_Component_Contracts.md)**: proposed interfaces, component ownership and acceptance requirements; these are requests for agreement, not delivered APIs
+- **[Clef/Composer development plan](Clef_Composer_Development_Plan.md)**: the concrete first-horizon delivery plan, implemented foundations and remaining integration work
 
 ## Start here
 
@@ -10,11 +16,11 @@ Bozzetto's current workflow is Clef/Composer development through shared MCP and 
 - **[Live provider checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md)**: deployment, endpoints and recorded acceptance
 - **[Deployment correction](Bozzetto_Live_Provider_Audit_Response_2026-09-30.md)**: corrected launcher/status deployment following the live audit
 - **[Independent incremental workflow assessment](Bozzetto_Incremental_Workflow_Auditor_Assessment_2026-09-30.md)**: cold build, unchanged rebuild, one-function edit and run-authority withdrawal
-- **[Clef/Composer development plan](Clef_Composer_Development_Plan.md)**: delivered foundations and remaining editor, ORC and self-hosting work
+- **[Compiler continuation follow-up](Bozzetto_Compiler_Continuation_Followup_2026-09-30.md)**: compiler promotion history, the October 1 repeat and remaining compiler boundaries
 
 ## Retained F# engine and editor references
 
-These guides describe the inherited F# implementation and compatibility surface. They are not prerequisites for opening a Composer `.fidproj`.
+F#/.NET development uses a separate SageFS service. These guides describe the inherited F# implementation and compatibility surface. They are not prerequisites for opening a Composer `.fidproj`.
 
 - **[Workflow Modes](workflow-modes.md)**: REPL, Live Testing and Hot Reload
 - **[Hot Reload](hot-reload.md)**: file watching, FSI evaluation, Harmony patching and current limits
