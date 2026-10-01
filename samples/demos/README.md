@@ -1,21 +1,20 @@
 # Bozzetto Demo Applications
 
-Working applications demonstrating Bozzetto with different frameworks.
+Standalone F# applications demonstrating graphics, game loops and web frameworks.
 
 ## Projects
 
 ### 🎨 Raylib Hello — Animated Shapes
 
 A simple Raylib window with animated circle and pulsing ring.
-Great for learning how Bozzetto hot-reloads graphics code.
+Use it to explore rendering and animation.
 
 ```bash
 cd Bozzetto.Samples.RaylibHello
 dotnet run
 ```
 
-Change colors, shapes, or animation speeds — Bozzetto patches function
-pointers via Harmony, so your changes appear instantly in the running window.
+Change colors, shapes or animation speeds, then rebuild and restart the application.
 
 ### 🎮 Raylib Game — Star Catcher
 
@@ -39,19 +38,8 @@ dotnet run
 
 Then open `http://localhost:5000` in your browser.
 
-## Using with Bozzetto
-
-For the best development experience:
-
-```bash
-cd Bozzetto.Samples.RaylibHello   # or any demo
-boz watch .
-```
-
-Bozzetto provides:
-- **Hot reload** — edit functions and see changes in the running app
-- **Alt+Enter** — evaluate any expression inline
-- **Gutter markers** — see test results next to your code
+F# implementation experiments can use the separate SageFS service. Composer
+projects use Bozzetto’s explicit compiler sessions and artifact authority.
 
 ## Requirements
 

@@ -74,7 +74,6 @@ let private mkSessionInfo () : SessionInfo =
 let private mkSseContext (getWarmup: string -> Task<WarmupContext option>) (broadcast: Event<string>) : SseContext =
   { GetElmModel = None
     GetWarmupContext = Some getWarmup
-    GetHotReloadState = None
     SseJsonOpts = JsonSerializerOptions()
     TestEventBroadcast = Event<string>()
     SessionEventBroadcast = broadcast
@@ -164,7 +163,7 @@ let wireSessionHealthSubscriptionTests = testList "wireSessionHealthSubscription
 
   testCase "reacts to session-list changes too, not just one hardcoded event case" <| fun _ ->
     // The subscription recomputes on EVERY stateChanged occurrence (any
-    // case can flip a session's usability), so a HotReloadChanged tick must
+    // case can flip a session's usability), so a SessionSwitched tick must
     // trigger the same dedup-gated recompute as a ModelChanged tick.
     let stateChanged = Event<SseEvent>()
     let broadcast = Event<string>()
@@ -175,7 +174,7 @@ let wireSessionHealthSubscriptionTests = testList "wireSessionHealthSubscription
     let ctx = mkSseContext getWarmup broadcast
     use _sub = wireSessionHealthSubscription stateChanged.Publish ctx getAllSessions
 
-    stateChanged.Trigger (SseEvent.HotReloadChanged sessId)
+    stateChanged.Trigger (SseEvent.SessionSwitched sessId)
     received.Count |> Expect.equal "any stateChanged case triggers a recompute" 1
 ]
 

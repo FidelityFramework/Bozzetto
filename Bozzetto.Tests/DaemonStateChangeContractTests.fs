@@ -2,15 +2,9 @@ module Bozzetto.Tests.DaemonStateChangeContractTests
 
 /// Contract tests for SseEvent event payloads.
 ///
-/// Session-isolation blocker (quality-gap plan): HotReloadChanged previously
-/// carried NO session identity, so downstream code fetched hot-reload state
-/// from a global "active session" — an event for session B pushed session A's
-/// state whenever A was the active tab. FileReloaded carried only a path, so a
-/// file reload could not be attributed to the session whose live-test state
-/// changed (two sessions may share one working directory).
-///
-/// These tests pin the new wire contract: both events serialize WITH their
-/// session ID so consumers can filter and reject mismatched snapshots.
+/// File reloads carry their owning session identity, including when two
+/// sessions share one working directory. Consumers can reject mismatched
+/// snapshots without consulting a global active-session pointer.
 
 open Expecto
 open Expecto.Flip
@@ -27,14 +21,6 @@ let private sid (raw: string) =
 let daemonStateChangeContractTests =
   testList "SseEvent event contract" [
 
-    testCase "HotReloadChanged serializes with the affected session ID" <| fun _ ->
-      let s = sid "a1b2c3d4"
-      let json = SseEvent.toJson (SseEvent.HotReloadChanged s)
-      json
-      |> Expect.stringContains "payload should carry the session id" "\"sessionId\":\"a1b2c3d4\""
-      json
-      |> Expect.stringContains "payload should keep the hotReloadChanged marker" "\"hotReloadChanged\":true"
-
     testCase "FileReloaded serializes with the owning session ID and path" <| fun _ ->
       let s = sid "deadbeef"
       let json = SseEvent.toJson (SseEvent.FileReloaded (s, "C:\\proj\\src\\Lib.fs"))
@@ -42,18 +28,6 @@ let daemonStateChangeContractTests =
       |> Expect.stringContains "payload should carry the session id" "\"sessionId\":\"deadbeef\""
       json
       |> Expect.stringContains "payload should carry the file path" "\"fileReloaded\":\"C:\\\\proj\\\\src\\\\Lib.fs\""
-
-    testCase "HotReloadChanged for session B does not match session A's payload" <| fun _ ->
-      // Two sessions toggling hot reload produce distinguishable payloads —
-      // a client viewing session A can reject session B's event by sessionId.
-      let a = SseEvent.toJson (SseEvent.HotReloadChanged (sid "11111111"))
-      let b = SseEvent.toJson (SseEvent.HotReloadChanged (sid "22222222"))
-      a
-      |> Expect.stringContains "A payload should name A" "\"sessionId\":\"11111111\""
-      b
-      |> Expect.stringContains "B payload should name B" "\"sessionId\":\"22222222\""
-      (a.Contains("\"sessionId\":\"22222222\""))
-      |> Expect.isFalse "A's payload must never name session B"
 
     testCase "FileReloaded for shared working dir distinguishes owning sessions" <| fun _ ->
       // Two sessions can share one working dir; the watcher manager attributes

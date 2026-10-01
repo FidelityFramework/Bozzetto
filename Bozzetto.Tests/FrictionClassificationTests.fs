@@ -12,7 +12,7 @@ module Bozzetto.Tests.FrictionClassificationTests
 /// Every test below is deliberately adversarial: the BozzettoError reason
 /// strings say the OPPOSITE of what the correct classification is (e.g. a
 /// SessionNotRoutable reason that mentions "stale" and "Multiple sessions
-/// match", or a HotReloadStateError reason that denies being stale). A
+/// match", or a LoadedStateStale reason that denies being stale). A
 /// substring-based classifier would get these wrong; a type-driven one
 /// cannot, because it never looks at the string at all.
 open System
@@ -88,9 +88,9 @@ let blockerKindOfTests =
       blockerKindOf adversarial
       |> Expect.equal "classification must ignore the description text" BlockerKind.SessionAmbiguous
 
-    testCase "WHY — HotReloadStateError classifies as LoadedStateStale even when the reason text explicitly denies being stale" <| fun _ ->
+    testCase "WHY — LoadedStateStale classifies as LoadedStateStale even when the reason text explicitly denies being stale" <| fun _ ->
       let adversarial =
-        BozzettoError.HotReloadStateError ("sid1", "everything is fine here, definitely not stale")
+        BozzettoError.LoadedStateStale ("sid1", "everything is fine here, definitely not stale")
       blockerKindOf adversarial
       |> Expect.equal "classification must come from the case, not the denial in the text" BlockerKind.LoadedStateStale
 

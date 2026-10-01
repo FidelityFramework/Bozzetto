@@ -33,7 +33,6 @@
     <ItemGroup>
         <EmbeddedResource Include="dashboard.css" />
         <EmbeddedResource Include="datastar.js" />
-        <EmbeddedResource Include="Resources\devreload.js" />
         <!-- JetBrains Mono (SIL OFL 1.1, license text shipped alongside) for the
              dashboard — self-hosted and served by the daemon; see
              Dashboard.dashboardFonts. -->
@@ -109,7 +108,6 @@
         <Compile Include="ComposerRoutes.fs" />
         <Compile Include="AgentGuidance.fs" />
         <Compile Include="McpServer.fs" />
-        <Compile Include="WorkerReloadRelay.fs" />
         <Compile Include="DaemonMode.fs" />
         <Compile Include="WatchdogRunner.fs" />
         <Compile Include="JupyterTransport.fs" />

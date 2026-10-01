@@ -18,12 +18,10 @@ let commonMiddleware: AppState.Middleware list = [
   Directives.viBindMiddleware
   Directives.OpenDirective.openDirectiveMiddleware
   ComputationExpression.compExprMiddleware
-  NonBlockingRun.nonBlockingRunMiddleware
-  HotReloading.hotReloadingMiddleware
+  TestDiscovery.testDiscoveryMiddleware
 ]
 
-/// Hot reload used to seed its registry here, loading every project's assemblies into the WORKER. The session's agent owns
-/// that now, in whichever process the user's code runs, so nothing is loaded on the worker's behalf.
+/// Shared initialization has no process-local method registry.
 let commonInitFunctions : (Solution -> string * obj) list = []
 
 open System
@@ -34,8 +32,7 @@ open System.IO
 /// (FsProjects): when Ionide's WorkspaceLoader returns 0 projects (e.g. an
 /// MSBuild eval failure in-process), loadSolution falls back to a manual
 /// fsproj parse that fills only FsProjects. Without this, ProjectDirectories
-/// is empty, the file watcher is skipped, and hot reload silently never fires
-/// on file saves — the exact P0 hot-reload gap.
+/// is empty, the file watcher cannot observe source saves.
 let projectDirectories (sln: Solution) : string list =
   let dirOf (projectFile: string) =
     let dir = Path.GetDirectoryName(projectFile)
@@ -61,9 +58,6 @@ type ActorArgs = {
   /// are refused before loading; production F# work belongs to separate SageFS.
   FsiKind: SessionKinds.FsiSessionKind
 }
-  with
-    /// Backward-compatible accessor.
-    member this.HotReloadEnabled = WorkflowTypes.SessionWorkflow.isHotReloadActive this.Workflow
 
 type ActorResult = {
   Actor: AppActor
@@ -78,8 +72,6 @@ type ActorResult = {
   /// Scan the session's process for the project's tests (the agent runs where the user's code runs).
   Agent: SessionAgent.SessionAgent
   ProjectDirectories: string list
-  /// Shared hot-reload state — file watcher reads, API writes.
-  HotReloadStateRef: HotReloadState.T ref
   /// IL coverage instrumentation maps from shadow-copy instrumentation.
   InstrumentationMaps: Features.LiveTesting.InstrumentationMap array
   /// Each project file with the assembly path the session actually loads
@@ -153,10 +145,9 @@ let createActorImmediate a =
           { Tracing.NamedMiddleware.Name = name; Middleware = mw })
       Tracing.buildTracedPipeline named "CoreEval" evalFn
   let appActor, diagnosticsChanged, cancelEval, getSessionState, getEvalStats, getWarmupFailures, getWarmupContext, getStartupConfig, getStatusMessage, sessionAgent =
-    mkAppStateActor a.FsiKind a.Logger customData a.OutStream a.UseAsp originalSln shadowDir a.AutoOpenNamespaces a.HotReloadEnabled a.OnEvent tracedBuild sln
+    mkAppStateActor a.FsiKind a.Logger customData a.OutStream a.UseAsp originalSln shadowDir a.AutoOpenNamespaces a.Workflow a.OnEvent tracedBuild sln
   let projDirs = projectDirectories originalSln
-  let hotReloadStateRef = ref HotReloadState.empty
-  { Actor = appActor; DiagnosticsChanged = diagnosticsChanged; CancelEval = cancelEval; GetSessionState = getSessionState; GetEvalStats = getEvalStats; GetWarmupFailures = getWarmupFailures; GetWarmupContext = getWarmupContext; GetStartupConfig = getStartupConfig; GetStatusMessage = getStatusMessage; Agent = sessionAgent; ProjectDirectories = projDirs; HotReloadStateRef = hotReloadStateRef; InstrumentationMaps = instrumentationMaps; ProjectTargets = Bozzetto.ProjectLoading.projectTargetsOf sln; ProjectRoles = Bozzetto.ProjectLoading.classifiedProjectsOf sln }
+  { Actor = appActor; DiagnosticsChanged = diagnosticsChanged; CancelEval = cancelEval; GetSessionState = getSessionState; GetEvalStats = getEvalStats; GetWarmupFailures = getWarmupFailures; GetWarmupContext = getWarmupContext; GetStartupConfig = getStartupConfig; GetStatusMessage = getStatusMessage; Agent = sessionAgent; ProjectDirectories = projDirs; InstrumentationMaps = instrumentationMaps; ProjectTargets = Bozzetto.ProjectLoading.projectTargetsOf sln; ProjectRoles = Bozzetto.ProjectLoading.classifiedProjectsOf sln }
 
 /// Phase 2: Add middleware — blocks until init() completes and the
 /// eval actor is ready to process messages in its main loop.

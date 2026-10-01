@@ -310,8 +310,17 @@ module WorkerProtocol =
     ErrorNumber: int
   }
 
-  /// Conversion from wire-format WorkerDiagnostic to domain Diagnostic.
+  /// Conversion between wire-format WorkerDiagnostic and domain Diagnostic.
   module WorkerDiagnostic =
+    let ofDiagnostic (d: Features.Diagnostics.Diagnostic) : WorkerDiagnostic =
+      { Severity = d.Severity
+        Message = d.Message
+        StartLine = d.Range.StartLine
+        StartColumn = d.Range.StartColumn
+        EndLine = d.Range.EndLine
+        EndColumn = d.Range.EndColumn
+        ErrorNumber = d.ErrorNumber }
+
     /// Convert a WorkerDiagnostic to the rich Features.Diagnostics.Diagnostic type.
     let toDiagnostic (wd: WorkerDiagnostic) : Features.Diagnostics.Diagnostic =
       { Message = wd.Message

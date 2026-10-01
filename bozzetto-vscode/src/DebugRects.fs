@@ -17,7 +17,7 @@ module Bozzetto.Vscode.DebugRects
 // accepted compromise: "return the editor window rect + a coarse caret
 // cell"), but never a fabricated pixel value.
 //
-// Zero Fable dependency (mirrors `AppRunPure.fs`/`DaemonDiscovery.fs`) so
+// Zero Fable dependency (mirrors `DaemonDiscovery.fs`) so
 // `../tests/DebugRectsContractTests.fsx` runs this module's logic in <2s
 // under plain `dotnet fsi` — no VS Code, no Fable, no Node required to
 // prove the math. `Extension.fs`'s activation gathers the live vscode/OS

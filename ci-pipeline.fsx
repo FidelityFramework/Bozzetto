@@ -23,11 +23,11 @@
 //
 // Stage selection:
 //   * unconditional — restore, build, format, samples, VS Code extension
-//     compile + test-electron host + client contract tests (npm run
+//     compile + client contract tests (npm run
 //     test:golden + every bozzetto-vscode/tests/*.fsx), then "test tiers": the
 //     default suite and the integration-host suites.
 //   * `ci` adds to "test tiers" — the mutation-score gate and every real-browser
-//                            journey (dashboard, hot-reload, live-testing,
+//                            journey (dashboard,
 //                            disconnect-indicator) — CI-gated so the fast
 //                            local loop never fetches a browser.
 //   * "test tiers" runs every tier regardless of the others; concurrently, each
@@ -41,7 +41,7 @@
 // under runtimes/ and the fsproj includes them by Condition="Exists(...)", so
 // the single Linux pack produces a complete cross-platform nupkg. (The Windows
 // user gets the FSI host via the dotnet muxer rather than a native
-// Bozzetto.Host.exe — the Unix-proven launch path; if a native Windows apphost is
+// a native worker apphost — the Unix-proven launch path; if a native Windows apphost is
 // ever wanted in the package, cross-publish it with `dotnet publish -r win-x64`,
 // which works from Linux.)
 
@@ -56,7 +56,6 @@ open System.Xml.Linq
 open Fun.Build
 open Fun.Build.Github
 
-#load "build/HarmonyPackage.fs"
 
 let rootDir = __SOURCE_DIRECTORY__
 let releaseDir = Path.Combine(rootDir, "release")
@@ -529,10 +528,6 @@ pipeline "bozzetto" {
   timeoutForStep 900
   collapseGithubActionLogs
 
-  stage "validate owned harmony package" {
-    run (fun _ -> async { return Bozzetto.Build.HarmonyPackage.validate rootDir })
-  }
-
   stage "build" {
     // Build the whole solution ONCE, in Release. Every downstream stage runs
     // --no-build against this exact output — the single build that used to be
@@ -577,19 +572,11 @@ pipeline "bozzetto" {
   }
 
   stage "vscode extension compile" {
-    // Needed by both the VS Code command-proof suite (loads the extension from
-    // source) and the VSIX package step.
+    // Build the extension for client contracts and the VSIX package step.
     workingDir vscodeDir
     run "dotnet tool restore"
     run "npm ci --include=dev"
     run "npm run compile"
-  }
-
-  stage "vscode command-proof host" {
-    // @vscode/test-electron harness for the command-proof suite run under
-    // --integration-host.
-    workingDir vscodeDir
-    run "npm run compile:test-electron"
   }
 
   stage "vscode client contract tests" {

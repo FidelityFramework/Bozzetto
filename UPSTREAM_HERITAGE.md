@@ -17,7 +17,7 @@ We chose the name for the working relationship: try an idea against the project,
 - **License**: MIT
 - **Fork point**: commit `5b685fb5ce3f5a90db595b457dee6d239634ba33`, 23 February 2026
 
-We are grateful to Will for the foundation we build on. The daemon architecture and the hot reload engine in this repository are his work. SageFs credits [FsiX](https://github.com/soweli-p/FsiX) as its own inspiration, and we carry that credit forward.
+We are grateful to Will for the foundation we build on. The inherited daemon architecture and F# development tooling are his work. SageFs credits [FsiX](https://github.com/soweli-p/FsiX) as its own inspiration, and we carry that credit forward.
 
 ## Fable.SageFs
 
@@ -54,7 +54,6 @@ The following credits were retained from the repository README when its focus mo
 - [FsiX](https://github.com/soweli-p/FsiX): the original F# Interactive experience credited by SageFs.
 - [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim): the separate upstream Neovim plugin.
 - [Falco](https://github.com/pimbrouwers/Falco) and [Falco.Datastar](https://github.com/spiraloss/Falco.Datastar): the dashboard framework.
-- [Harmony](https://github.com/pardeike/Harmony): the inherited runtime method-patching foundation. Bozzetto's reviewed package comes from its separately controlled fork; see [repository guidance](AGENTS.md#owned-harmony-dependency).
 - [Ionide.ProjInfo](https://github.com/ionide/proj-info/): project file parsing.
 - [Raylib-cs](https://github.com/ChrisDill/Raylib-cs): graphics and game demos.
 - [Fable](https://fable.io/): F# to JavaScript compilation for the retained VS Code extension.

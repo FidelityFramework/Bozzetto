@@ -15,7 +15,7 @@
 // `src/*.fs` and fails if `suggestedAction` ever appears inside a button array
 // again, which is the only thing that stops this exact defect returning.
 //
-// Runs under plain `dotnet fsi` (no Fable), mirroring AppRunContractTests.fsx.
+// Runs under plain `dotnet fsi` (no Fable), mirroring WorkflowPickContractTests.fsx.
 #r "nuget: Expecto, 11.0.0-alpha8"
 #load "../src/ErrorPresentationPure.fs"
 

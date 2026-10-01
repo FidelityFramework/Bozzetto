@@ -77,14 +77,14 @@ let errorNumberClassificationTests =
         d.ErrorNumber |> Expect.equal "ErrorNumber should survive wd -> Diagnostic" 39
       }
 
-      test "Bozzetto.Host.WorkerMain.toWorkerDiagnostic preserves ErrorNumber" {
+      test "WorkerDiagnostic.ofDiagnostic preserves ErrorNumber" {
         let d : Diagnostic =
           { Message = "This expression was expected to have type 'int'"
             Subcategory = "typecheck"
             Range = { StartLine = 5; StartColumn = 1; EndLine = 5; EndColumn = 9 }
             Severity = DiagnosticSeverity.Blocking
             ErrorNumber = 1 }
-        let wd = Bozzetto.Server.WorkerMain.toWorkerDiagnostic d
+        let wd = WorkerDiagnostic.ofDiagnostic d
         wd.ErrorNumber |> Expect.equal "ErrorNumber should survive Diagnostic -> wd" 1
       }
 
@@ -95,7 +95,7 @@ let errorNumberClassificationTests =
             Range = { StartLine = 1; StartColumn = 0; EndLine = 1; EndColumn = 3 }
             Severity = DiagnosticSeverity.Blocking
             ErrorNumber = 10 }
-        let there = Bozzetto.Server.WorkerMain.toWorkerDiagnostic original
+        let there = WorkerDiagnostic.ofDiagnostic original
         let back = WorkerDiagnostic.toDiagnostic there
         back.ErrorNumber |> Expect.equal "ErrorNumber survives Diagnostic -> WorkerDiagnostic -> Diagnostic" original.ErrorNumber
       }

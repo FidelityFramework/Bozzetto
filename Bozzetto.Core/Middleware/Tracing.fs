@@ -96,8 +96,7 @@ let namedCommonMiddleware: NamedMiddleware list = [
   { Name = "ViBind"; Middleware = Directives.viBindMiddleware }
   { Name = "OpenDirective"; Middleware = Directives.OpenDirective.openDirectiveMiddleware }
   { Name = "CompExpr"; Middleware = ComputationExpression.compExprMiddleware }
-  { Name = "NonBlockingRun"; Middleware = NonBlockingRun.nonBlockingRunMiddleware }
-  { Name = "HotReload"; Middleware = HotReloading.hotReloadingMiddleware }
+  { Name = "TestDiscovery"; Middleware = TestDiscovery.testDiscoveryMiddleware }
 ]
 
 /// Build the full traced pipeline including the error wrapper middleware.

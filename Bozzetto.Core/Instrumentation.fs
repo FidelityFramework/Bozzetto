@@ -176,11 +176,7 @@ module Instrumentation =
   let evalCategoryCount =
     mcpMeter.CreateCounter<int64>(
       "bozzetto.evalactor.eval_by_category_total",
-      description = "Eval requests by category (repl/test/hotreload/warmup/check/completion)")
-
-  // P2: DevReload connected clients
-  let devReloadConnectedClients =
-    mcpMeter.CreateUpDownCounter<int64>("bozzetto.devreload.connected_clients", description = "Currently connected SSE reload clients")
+      description = "Eval requests by category (repl/test/warmup/check/completion)")
 
   // Binary cache persistence
   let cacheSaveCount =
@@ -504,11 +500,11 @@ module Instrumentation =
     }
 
   /// Category of eval request for queue diagnostics.
-  type EvalCategory = Repl | Test | HotReload | Warmup | Check | Completion
+  type EvalCategory = Repl | Test | Warmup | Check | Completion
 
   module EvalCategory =
     let label = function
-      | Repl -> "repl" | Test -> "test" | HotReload -> "hotreload"
+      | Repl -> "repl" | Test -> "test"
       | Warmup -> "warmup" | Check -> "check" | Completion -> "completion"
 
   /// Wrap an actor.PostAndAsyncReply call with queue-wait measurement.

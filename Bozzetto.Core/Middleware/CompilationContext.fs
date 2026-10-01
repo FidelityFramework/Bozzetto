@@ -191,61 +191,6 @@ let parseFileStructureCached
 }
 
 // ─────────────────────────────────────────────────────────────────
-// NoInlining targets (hot reload)
-// ─────────────────────────────────────────────────────────────────
-
-/// Where a hot-reload eval may carry [<MethodImpl(NoInlining)>]: only on
-/// module-level function bindings and static member methods. An attribute on a
-/// local function inside an expression is a parse error, so the targets come
-/// from the syntax tree, not from line text.
-type NoInliningTargets =
-  | SyntaxTargets of zeroBasedLines: Set<int>
-  | UnparsedFragment
-
-let private keywordLine (binding: SynBinding) =
-  let (SynBinding(trivia = trivia)) = binding
-  trivia.LeadingKeyword.Range.StartLine - 1
-
-let rec private noInliningLines (decls: SynModuleDecl list) : int list =
-  decls
-  |> List.collect (fun decl ->
-    match decl with
-    | SynModuleDecl.Let(bindings = bindings) ->
-      bindings
-      |> List.filter (fun (SynBinding(headPat = pat; trivia = trivia)) ->
-        Bozzetto.Features.ReloadPlanning.isFunctionHead pat && not trivia.LeadingKeyword.IsAnd)
-      |> List.map keywordLine
-    | SynModuleDecl.NestedModule(decls = inner) -> noInliningLines inner
-    | SynModuleDecl.Types(typeDefns = defns) ->
-      defns
-      |> List.collect (fun (SynTypeDefn(typeRepr = repr; members = members)) ->
-        let reprMembers =
-          match repr with
-          | SynTypeDefnRepr.ObjectModel(members = ms) -> ms
-          | _ -> []
-        reprMembers @ members
-        |> List.choose (fun m ->
-          match m with
-          | SynMemberDefn.Member(memberDefn = SynBinding(headPat = pat; trivia = trivia) as b)
-              when trivia.LeadingKeyword.IsStaticMember && Bozzetto.Features.ReloadPlanning.isFunctionHead pat -> Some (keywordLine b)
-          | _ -> None))
-    | _ -> [])
-
-let noInliningTargets (code: string) : NoInliningTargets =
-  try
-    let input, diagnostics = Fantomas.FCS.Parse.parseFile false (Fantomas.FCS.Text.SourceText.ofString code) []
-    let hasErrors =
-      diagnostics |> List.exists (fun d -> d.Severity.IsError)
-    match hasErrors, input with
-    | false, ParsedInput.ImplFile(ParsedImplFileInput(contents = contents)) ->
-      contents
-      |> List.collect (fun (SynModuleOrNamespace(decls = decls)) -> noInliningLines decls)
-      |> Set.ofList
-      |> SyntaxTargets
-    | _ -> UnparsedFragment
-  with _ -> UnparsedFragment
-
-// ─────────────────────────────────────────────────────────────────
 // Block location resolution
 // ─────────────────────────────────────────────────────────────────
 
@@ -381,17 +326,8 @@ let transformWholeFile (fs: FileStructure) (code: string) : PreprocessResult =
         l.Trim().StartsWith("namespace "))
     match nsLineIdx with
     | Some idx ->
-      // Chesterton's fence: a `namespace X` file must NOT be reduced to its
-      // bare body. The hot-reload pipeline re-evals the file on every save and
-      // relies on Harmony detour name-matching between the startup-captured
-      // methods and the re-eval'd ones. If the namespace is stripped, FSI puts
-      // the re-eval'd modules at the top level (module Greeting =) while the
-      // compiled app's methods live under the namespace
-      // (FSI_0043.WebAppFixture.Greeting). The FullName suffix no longer
-      // matches, no detour fires, and the running app keeps serving the old
-      // closure — the exact P0 hot-reload gap. Instead, convert the namespace
-      // to nested modules so re-eval'd module identity matches the compiled
-      // app: `namespace A.B.C` → `module A = module B = module C =`.
+      // FSI submissions do not admit namespace declarations. Preserve the
+      // explicit qualification through nested modules for this F# adapter.
       let nsName =
         let t = lines.[idx].Trim()
         t.Substring("namespace".Length).Trim()
@@ -588,116 +524,3 @@ let mapDiagnosticLine (lineOffset: int) (line: int) = line - lineOffset
 
 /// Adjust a diagnostic column by the preprocessing offset.
 let mapDiagnosticColumn (columnOffset: int) (col: int) = max 0 (col - columnOffset)
-
-// ─────────────────────────────────────────────────────────────────
-// Stable-identity reload (Run App)
-// ─────────────────────────────────────────────────────────────────
-
-/// Writes the patch text: the file's module path, then per container its opens,
-/// `open global.<compiled module>`, the stand-ins for carried state, and the
-/// re-emitted declarations. `standIns` pairs a carried declaration with its
-/// already-rendered stand-in lines.
-let private renderPatch
-    (filePath: string)
-    (decls: Bozzetto.Features.ReloadPlanning.FileDecls)
-    (functions: Bozzetto.Features.ReloadPlanning.SourceDecl list)
-    (standIns: (Bozzetto.Features.ReloadPlanning.SourceDecl * string list) list)
-    : PreprocessResult =
-  let path = decls.ModulePath
-  let pad depth = String.replicate depth "  "
-  let directiveFile = filePath.Replace("\\", "\\\\").Replace("\"", "\\\"")
-
-  let emitDecl (indent: string) (f: Bozzetto.Features.ReloadPlanning.SourceDecl) =
-    let text =
-      splitLines f.Text
-      |> Array.map (fun l ->
-        match l.Trim() with
-        | "" -> ""
-        | _ -> indent + l)
-      |> Array.toList
-    sprintf "# %d \"%s\"" f.StartLine directiveFile :: text
-
-  /// One thing to write inside a container. Stand-ins go first, so the
-  /// functions after them resolve the carried name to the stand-in.
-  let emitItem (indent: string) (item: Choice<string list, Bozzetto.Features.ReloadPlanning.SourceDecl>) =
-    match item with
-    | Choice1Of2 standInLines -> standInLines
-    | Choice2Of2 f -> emitDecl indent f
-
-  // A function declared inside `namespace X` + `module Y =` must be re-emitted
-  // inside `Y`, not flattened into `X`: the compiled method it has to pair with
-  // is `X.Y.f`, and `open global.X.Y` is what makes the types it mentions the
-  // COMPILED ones rather than freshly re-declared FSI copies. Emitting the
-  // whole file's containers as one nested tree (rather than one block per
-  // container) is what keeps `module X =` from being declared twice in a single
-  // submission when two nested modules both changed.
-  let rec emitTree
-      (depth: int)
-      (qualified: string list)
-      (items: (string list * Choice<string list, Bozzetto.Features.ReloadPlanning.SourceDecl>) list) =
-    let indent = pad depth
-    let here = items |> List.filter (fst >> List.isEmpty) |> List.map snd
-    let nested =
-      items
-      |> List.filter (fst >> List.isEmpty >> not)
-      |> List.groupBy (fun (container, _) -> List.head container)
-      |> List.map (fun (name, xs) -> name, xs |> List.map (fun (container, d) -> List.tail container, d))
-    let hereLines =
-      match here with
-      | [] -> []
-      | _ ->
-        let opens = decls.Opens |> List.map (fun o -> sprintf "%sopen %s" indent o)
-        let compiledModule =
-          match qualified with
-          | [] -> []
-          | _ -> [ sprintf "%sopen global.%s" indent (String.concat "." qualified) ]
-        opens @ compiledModule @ (here |> List.collect (emitItem indent))
-    let nestedLines =
-      nested
-      |> List.collect (fun (name, xs) ->
-        sprintf "%smodule %s =" indent name :: emitTree (depth + 1) (qualified @ [ name ]) xs)
-    hereLines @ nestedLines
-
-  let headers = path |> List.mapi (fun depth part -> sprintf "%smodule %s =" (pad depth) part)
-  let items =
-    (standIns |> List.map (fun (d, lines) -> d.Container, Choice1Of2 lines))
-    @ (functions |> List.map (fun f -> f.Container, Choice2Of2 f))
-  let body = emitTree path.Length path items
-  { Code = headers @ body |> String.concat "\n"
-    LineOffset = 0
-    ColumnOffset = 2 * path.Length
-    OriginalFilePath = Some filePath }
-
-/// Re-emits only the given functions inside the file's module path, opened onto
-/// the COMPILED module (`open global.…`) so they bind to the running app's own
-/// types and state; `#` line directives keep diagnostics on the source lines.
-let emitStableIdentity
-    (filePath: string)
-    (decls: Bozzetto.Features.ReloadPlanning.FileDecls)
-    (functions: Bozzetto.Features.ReloadPlanning.SourceDecl list)
-    : PreprocessResult =
-  renderPatch filePath decls functions []
-
-/// The same patch for functions that use unedited non-public `let mutable`s
-/// (`carried`). Each one gets a same-named stand-in bound to the app's own
-/// storage (`LiveStateEmit.carriedStandIn`) ahead of the functions in its
-/// module, so the patch compiles without re-declaring the binding and throwing
-/// away its live value. `Error` when a stand-in can't be written; the caller
-/// then restarts rather than patching with something that doesn't compile.
-let emitPatchCarrying
-    (filePath: string)
-    (decls: Bozzetto.Features.ReloadPlanning.FileDecls)
-    (functions: Bozzetto.Features.ReloadPlanning.SourceDecl list)
-    (carried: Bozzetto.Features.ReloadPlanning.SourceDecl list)
-    : Result<PreprocessResult, Bozzetto.Features.ReloadPlanning.SourceDecl * Bozzetto.Features.LiveStateEmit.LiveStateError> =
-  let pad depth = String.replicate depth "  "
-  carried
-  |> List.fold
-       (fun acc d ->
-         acc
-         |> Result.bind (fun done' ->
-           Bozzetto.Features.LiveStateEmit.carriedStandIn (pad (decls.ModulePath.Length + d.Container.Length)) (decls.ModulePath @ d.Container) d
-           |> Result.map (fun lines -> done' @ [ d, lines ])
-           |> Result.mapError (fun reason -> d, reason)))
-       (Ok [])
-  |> Result.map (renderPatch filePath decls functions)

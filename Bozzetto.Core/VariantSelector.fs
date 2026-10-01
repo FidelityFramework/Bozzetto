@@ -2,8 +2,7 @@ namespace Bozzetto
 
 /// Version-variant selection for API-coupled host libraries.
 ///
-/// The host's closure contains API-coupled libraries (Fantomas, Cecil,
-/// Harmony) whose public APIs the host's own code calls directly. A project
+/// The host's closure contains API-coupled libraries (Fantomas and Cecil) whose public APIs the host's own code calls directly. A project
 /// pinning a DIFFERENT version of one of these cannot share the host's copy —
 /// loading the project's version would throw MissingMethodException the moment
 /// host code touches it.
@@ -36,7 +35,6 @@ module VariantSelector =
     ("Fantomas", "6", "Fantomas6")
     ("Fantomas", "8", "Fantomas8")
     ("Mono.Cecil", "0.11", "Cecil0.11")
-    ("HarmonyLib", "2.3", "Harmony2.3")
   ]
 
   /// The real lookup: match the library name + version major against the

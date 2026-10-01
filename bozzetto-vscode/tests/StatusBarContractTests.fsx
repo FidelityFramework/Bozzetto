@@ -5,7 +5,7 @@
 // pin both: the project name comes through untouched, and every view this
 // module builds has a codicon-free tooltip.
 //
-// Runs under plain `dotnet fsi` (no Fable), mirroring AppRunContractTests.fsx.
+// Runs under plain `dotnet fsi` (no Fable), mirroring WorkflowPickContractTests.fsx.
 #r "nuget: Expecto, 11.0.0-alpha8"
 #load "../src/SessionsTreePure.fs"
 #load "../src/StatusBarPure.fs"

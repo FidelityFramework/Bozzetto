@@ -18,7 +18,7 @@ let endpointContractTests = testList "EndpointContracts" [
     test "Neovim contract has expected count" {
       neovimContract
       |> List.length
-      |> Expect.equal "should have 19 endpoints" 19
+      |> Expect.equal "should have 15 endpoints" 15
     }
 
     test "Neovim contract includes SSE events endpoint" {
@@ -63,7 +63,7 @@ let endpointContractTests = testList "EndpointContracts" [
     test "VS Code contract has expected count" {
       vscodeContract
       |> List.length
-      |> Expect.equal "should have 15 endpoints" 15
+      |> Expect.equal "should have 13 endpoints" 13
     }
   ]
 
@@ -76,7 +76,7 @@ let endpointContractTests = testList "EndpointContracts" [
     test "apiVersion matches current contract shape" {
       // Pin the version so any contract change forces a conscious version bump
       apiVersion
-      |> Expect.equal "apiVersion should be 3 for current contract" 3
+      |> Expect.equal "apiVersion should be 4 for current contract" 4
     }
 
     test "VS Code extension expectedApiVersion matches daemon apiVersion" {
@@ -155,14 +155,14 @@ let endpointContractTests = testList "EndpointContracts" [
       |> List.length
       |> Expect.equal
         "endpoint count changed — update contracts and bump this number"
-        38
+        32
     }
   ]
 
   testList "Contract validation" [
     test "normalizePath replaces all placeholders" {
-      normalizePath "/api/sessions/{sid}/hotreload"
-      |> Expect.equal "should normalize" "/api/sessions/{id}/hotreload"
+      normalizePath "/api/sessions/{sid}/warmup-context"
+      |> Expect.equal "should normalize" "/api/sessions/{id}/warmup-context"
     }
 
     test "normalizePath handles multiple placeholders" {

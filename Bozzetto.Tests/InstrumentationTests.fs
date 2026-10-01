@@ -454,11 +454,6 @@ let instrumentationTests = testSequenced (testList "Instrumentation" [
     Instrumentation.liveTestingBufferedApplyMs |> Expect.isNotNull "liveTestingBufferedApplyMs"
   }
 
-  // === Tier 3 P2: DevReload connected clients ===
-  test "devReloadConnectedClients updown counter exists" {
-    Instrumentation.devReloadConnectedClients |> Expect.isNotNull "devReloadConnectedClients"
-  }
-
   // === tracedTask helper ===
   test "tracedTask returns correct value" {
     Instrumentation.tracedTask

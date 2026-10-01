@@ -128,7 +128,7 @@ let cohortPanelTests =
           AlarmPanel = Elem.div [] []; DaemonHealth = Elem.div [] []
           FailureNarrativesPanel = Elem.div [] []; DiagnosticsPanel = Elem.div [] []
           FilmstripPanel = Elem.div [] []; ThemeName = "default"; ConnectionLabel = None
-          HotReloadPanel = Elem.div [] []; LiveTestingPanel = Elem.div [] []
+          LiveTestingPanel = Elem.div [] []
           SessionContextPanel = Elem.div [] []; OutputPanel = Elem.div [] []
           SessionsPanel = Elem.div [] []; SessionPicker = Elem.div [] []
           ThemePicker = Elem.div [] []; ThemeVars = Elem.div [] []

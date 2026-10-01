@@ -67,10 +67,3 @@ let private fetchJson (url: string) : JS.Promise<LiveTestingStatusResponse> = js
 let getLiveTestingState (mcpPort: string) : JS.Promise<LiveTestingState> =
   fetchJson (sprintf "http://localhost:%s/api/live-testing/status" mcpPort)
   |> Promise.map ofResponse
-
-[<Emit("fetch($0).then(r => r.json())")>]
-let private fetchHotReloadJson (url: string) : JS.Promise<HotReloadStatusResponse> = jsNative
-
-let getHotReloadWatchState (mcpPort: string) (sessionId: string) : JS.Promise<HotReloadWatchState> =
-  fetchHotReloadJson (sprintf "http://localhost:%s/api/sessions/%s/hotreload" mcpPort sessionId)
-  |> Promise.map ofHotReloadResponse

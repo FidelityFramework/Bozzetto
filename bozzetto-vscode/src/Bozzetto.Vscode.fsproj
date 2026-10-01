@@ -18,7 +18,6 @@
     <Compile Include="FileAnnotationCoverage.fs" />
     <Compile Include="FileAnnotationsListener.fs" />
     <Compile Include="LiveTestingListener.fs" />
-    <Compile Include="AppRunPure.fs" />
     <Compile Include="SessionsTreePure.fs" />
     <Compile Include="ProjectPickPure.fs" />
     <Compile Include="WorkflowPickPure.fs" />
@@ -29,7 +28,6 @@
     <Compile Include="CodeBlocks.fs" />
     <Compile Include="CodeLensProvider.fs" />
     <Compile Include="CompletionProvider.fs" />
-    <Compile Include="HotReloadTreeProvider.fs" />
     <Compile Include="SessionContextTreeProvider.fs" />
     <Compile Include="SessionsTreeProvider.fs" />
     <Compile Include="TypeExplorerProvider.fs" />

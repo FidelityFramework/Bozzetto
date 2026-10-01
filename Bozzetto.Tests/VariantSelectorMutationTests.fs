@@ -41,10 +41,6 @@ let variantSelectorMutationTests = testList "VariantSelector mutations" [
     | Error _ -> ()
     | Ok v -> failwithf "Mono.Cecil 0.12.0 must not match the 0.11 variant, got %A" v
 
-  testCase "WHY — harmony_matches_two_component_version_prefix — HarmonyLib 2.3.x must select Harmony2.3" <| fun () ->
-    VariantSelector.selectVariantFromAssemblyIdentity "HarmonyLib" "2.3.1"
-    |> Expect.equal "HarmonyLib 2.3.1 must select Variant \"Harmony2.3\"" (Ok (VariantSelector.Variant "Harmony2.3"))
-
   testCase "WHY — unknown_library_errors — a library with no known variants must fail closed" <| fun () ->
     match VariantSelector.selectVariantFromAssemblyIdentity "SomeOtherLib" "1.0.0" with
     | Error _ -> ()

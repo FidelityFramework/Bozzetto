@@ -8,6 +8,7 @@ Bozzetto coordinates Fidelity development across compilers, editors, application
 - **[Fidelity component contracts](Bozzetto_Fidelity_Component_Contracts.md)**: proposed interfaces, component ownership and acceptance requirements; these are requests for agreement, not delivered APIs
 - **[Clef/Composer development plan](Clef_Composer_Development_Plan.md)**: the concrete first-horizon delivery plan, implemented foundations and remaining integration work
 - **[Incremental foundation adoption](Bozzetto_Incremental_Foundation_Adoption.md)**: Fidelity.FSharp.Incremental across Bozzetto and the compiler pipeline, cold work, shared demand and the path from .NET hosting to self-hosting
+- **[Minimal host auditor checkpoint](Bozzetto_Minimal_Host_Auditor_Checkpoint_2026-10-01.md)**: architectural correction, purge scope, exact validation and deployment evidence
 - **[Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md)**: removal of embedded production FSI hosting, separate SageFS development and the future Clef execution boundary
 
 ## Start here
@@ -24,8 +25,8 @@ Bozzetto coordinates Fidelity development across compilers, editors, application
 
 F#/.NET development uses a separate SageFS service. These guides preserve the inherited F# implementation and its historical behavior. The [Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md) retires embedded production FSI hosting in the checkout; these references do not promise F# execution through current Bozzetto source. They are not prerequisites for opening a Composer `.fidproj`.
 
-- **[Workflow Modes](workflow-modes.md)**: REPL, Live Testing and Hot Reload
-- **[Hot Reload](hot-reload.md)**: file watching, FSI evaluation, Harmony patching and current limits
+- **[Workflow Modes](workflow-modes.md)**: retained F# REPL and Live Testing contracts
+- **[Hot Reload](hot-reload.md)**: change admission and compiler-owned execution
 - **[Live Testing As You Type](live-testing-as-you-type.md)**: the feedback pipeline
 - **[Multi-Session](multi-session.md)** and **[Session Isolation](session-isolation.md)**: F# workers and session boundaries
 - **[Feature Matrix](FEATURE_MATRIX.md)**: inherited capabilities across VS Code, Neovim, the dashboard and MCP
@@ -35,6 +36,8 @@ F#/.NET development uses a separate SageFS service. These guides preserve the in
 - **[Why F#?](why-fsharp.md)** and **[samples](../samples/README.md)**: language background and examples, including the retained Raylib application demos
 
 ## Implementation reference
+
+- **[Minimal hosting architecture](Minimal_Hosting_Architecture.md)**: compiler ownership, justified host facilities and the self-hosting boundary
 
 - **[System Architecture](architecture.md)**: daemon, F# workers, dashboard and inherited MCP surface
 - **[Binary Format Spec](binary-format-spec.md)** and **[benchmarks](binary-format-benchmarks.md)**: session/test persistence

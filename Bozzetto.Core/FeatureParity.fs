@@ -69,7 +69,6 @@ module FeatureParity =
     let typeExplorer = { name = "type-explorer"; category = "Exploration"; description = "Browse .NET types interactively" }
     let namespaceExplorer = { name = "namespace-explorer"; category = "Exploration"; description = "Browse .NET namespaces" }
     let historyBrowser = { name = "history-browser"; category = "Exploration"; description = "Browse eval history" }
-    let hotReload = { name = "hot-reload"; category = "Workflow"; description = "File-save triggers re-eval" }
     let dashboard = { name = "dashboard"; category = "Workflow"; description = "Web dashboard for session overview" }
 
     let all = [
@@ -79,7 +78,7 @@ module FeatureParity =
       sessionCreate; sessionSwitch; sessionStop; sessionReset; sessionHardReset
       liveTesting; testGutters; coverageGutters; testPanel; testPolicy; testTrace
       typeExplorer; namespaceExplorer; historyBrowser
-      hotReload; dashboard
+      dashboard
     ]
 
   /// The canonical parity matrix. Update this when features are added to any editor.
@@ -238,12 +237,6 @@ module FeatureParity =
     { feature = Feature.historyBrowser; editor = McpAgent; status = NotApplicable }
 
     // === Workflow ===
-    { feature = Feature.hotReload; editor = VsCode; status = Supported }
-    { feature = Feature.hotReload; editor = Neovim; status = Supported }
-    { feature = Feature.hotReload; editor = VisualStudio; status = Supported }
-    { feature = Feature.hotReload; editor = Tui; status = Supported }
-    { feature = Feature.hotReload; editor = RaylibGui; status = Supported }
-    { feature = Feature.hotReload; editor = McpAgent; status = NotApplicable }
 
     { feature = Feature.dashboard; editor = VsCode; status = Supported }
     { feature = Feature.dashboard; editor = Neovim; status = NotSupported }

@@ -2,7 +2,6 @@ module Bozzetto.Vscode.BozzettoClient
 
 open Fable.Core
 open Fable.Core.JsInterop
-open Bozzetto.Vscode.AppRunPure
 open Bozzetto.Vscode.BufferBridge
 open Bozzetto.Vscode.DaemonDiscovery
 open Bozzetto.Vscode.JsHelpers
@@ -59,14 +58,6 @@ type SystemStatus =
     apiVersion: int
     mcpPort: int option
     dashboardPort: int option }
-
-type HotReloadFile =
-  { path: string
-    watched: bool }
-
-type HotReloadState =
-  { files: HotReloadFile array
-    watchedCount: int }
 
 type SessionInfo =
   { id: string
@@ -383,9 +374,7 @@ let createSessionWithWorkflow (target: SessionsTreePure.SessionTarget) (workingD
 /// spawn-first into the target workflow, so there is never a window where two
 /// sessions exist for one working directory — which is the
 /// "Multiple sessions match workingDirectory" routing ambiguity VS Code's old
-/// create-a-second-session-and-never-stop-the-first "switch" reproduced. This
-/// is the same path `AppRunOrchestration` uses to auto-switch into HotReload
-/// for `run_app`.
+/// create-a-second-session-and-never-stop-the-first "switch" reproduced.
 ///
 /// `workflow` is a `SessionWorkflow.tryOfString` alias; an unknown one is a
 /// 400 carrying the daemon's own "did you mean" text, which `postCommand`
@@ -428,44 +417,6 @@ let postBufferChanged (request: BufferChangedRequest) (c: Client) =
     (bufferChangedPath request.SessionId)
     (jsonStringify {| filePath = request.FilePath; content = request.Content |})
     15000
-
-/// Run/stop a session's app: either the daemon's AppStateView (200), or the
-/// BozzettoError case/message/suggestedAction it returned (any other status —
-/// see Bozzetto/McpServer.fs's run-app/stop-app routes for the exact contract).
-type AppRunOutcome =
-  | AppState of AppStateView
-  | AppRunError of HealthError
-
-let private parseAppStateView (parsed: obj) : AppStateView =
-  { State = fieldString "State" parsed |> Option.defaultValue "Unknown"
-    Message = fieldString "Message" parsed |> Option.defaultValue ""
-    Urls = fieldStringArray "Urls" parsed |> Option.map Array.toList |> Option.defaultValue []
-    EntryPoint = fieldString "EntryPoint" parsed |> Option.defaultValue ""
-    RunId = fieldString "RunId" parsed |> Option.defaultValue "" }
-
-let private parseAppRunError (parsed: obj) : HealthError =
-  { case = fieldString "case" parsed |> Option.defaultValue "Unknown"
-    message = fieldString "message" parsed |> Option.defaultValue "Unknown error"
-    suggestedAction = fieldString "suggestedAction" parsed |> Option.defaultValue "" }
-
-let private postAppRun (path: string) (body: string) (timeout: int) (c: Client) : JS.Promise<AppRunOutcome> =
-  promise {
-    try
-      let! resp = httpPost c path body timeout
-      let parsed = jsonParse resp.body
-      match resp.statusCode with
-      | 200 -> return AppState (parseAppStateView parsed)
-      | _ -> return AppRunError (parseAppRunError parsed)
-    with err ->
-      return AppRunError { case = "NetworkError"; message = string err; suggestedAction = "" }
-  }
-
-/// project = None (or blank) asks the daemon to pick its default runnable target.
-let runApp (sessionId: string) (project: string option) (c: Client) : JS.Promise<AppRunOutcome> =
-  postAppRun (sprintf "/api/sessions/%s/run-app" sessionId) (requestBodyForRunApp project) 120000 c
-
-let stopApp (sessionId: string) (c: Client) : JS.Promise<AppRunOutcome> =
-  postAppRun (sprintf "/api/sessions/%s/stop-app" sessionId) "{}" 30000 c
 
 let parseSystemStatus (parsed: obj) =
   { supervised = fieldBool "supervised" parsed |> Option.defaultValue false
@@ -546,12 +497,12 @@ let discoverDaemon (candidateMcpPorts: int list) (c: Client) =
 
   loop candidateMcpPorts
 
-let [<Literal>] expectedApiVersion = 3
+let [<Literal>] expectedApiVersion = 4
 
 let checkVersion (status: SystemStatus) : Result<unit, string> =
   match status.apiVersion with
   | v when v = expectedApiVersion -> Ok ()
-  | v -> Error $"Bozzetto daemon apiVersion={v} is incompatible with this extension (requires apiVersion={expectedApiVersion}). Run 'dotnet tool update --global Bozzetto' then reload VS Code."
+  | v -> Error $"Bozzetto daemon apiVersion={v} is incompatible with this extension (requires apiVersion={expectedApiVersion}). Install matching reviewed daemon and extension builds, then reload VS Code."
 
 let getSystemStatus (c: Client) =
   promise {
@@ -559,38 +510,6 @@ let getSystemStatus (c: Client) =
     result |> Option.iter (fun status -> syncDiscoveredPorts status c)
     return result
   }
-
-let parseHotReloadState (parsed: obj) =
-  let files =
-    fieldArray "files" parsed
-    |> Option.map (fun rawFiles ->
-      rawFiles
-      |> Array.choose (fun f ->
-        fieldString "path" f
-        |> Option.map (fun p ->
-          { path = p
-            watched = fieldBool "watched" f |> Option.defaultValue false })))
-    |> Option.defaultValue [||]
-  let wc = fieldInt "watchedCount" parsed |> Option.defaultValue 0
-  { files = files; watchedCount = wc }
-
-let getHotReloadState (sessionId: string) (c: Client) =
-  dashGetJson "getHotReloadState" (sprintf "/api/sessions/%s/hotreload" sessionId) 5000 parseHotReloadState c
-
-let toggleHotReload (sessionId: string) (path: string) (c: Client) =
-  dashPostOutcome "toggleHotReload" (sprintf "/api/sessions/%s/hotreload/toggle" sessionId) (jsonStringify {| path = path |}) 5000 c
-
-let watchAllHotReload (sessionId: string) (c: Client) =
-  dashPostOutcome "watchAllHotReload" (sprintf "/api/sessions/%s/hotreload/watch-all" sessionId) "{}" 5000 c
-
-let unwatchAllHotReload (sessionId: string) (c: Client) =
-  dashPostOutcome "unwatchAllHotReload" (sprintf "/api/sessions/%s/hotreload/unwatch-all" sessionId) "{}" 5000 c
-
-let watchDirectoryHotReload (sessionId: string) (directory: string) (c: Client) =
-  dashPostOutcome "watchDirectoryHotReload" (sprintf "/api/sessions/%s/hotreload/watch-directory" sessionId) (jsonStringify {| directory = directory |}) 5000 c
-
-let unwatchDirectoryHotReload (sessionId: string) (directory: string) (c: Client) =
-  dashPostOutcome "unwatchDirectoryHotReload" (sprintf "/api/sessions/%s/hotreload/unwatch-directory" sessionId) (jsonStringify {| directory = directory |}) 5000 c
 
 let parseWarmupContext (parsed: obj) =
   let assemblies =

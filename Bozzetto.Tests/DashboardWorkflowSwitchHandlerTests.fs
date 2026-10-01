@@ -51,7 +51,7 @@ let invalidInputTests =
   testList "createWorkflowSwitchHandler — invalid input never reaches the switch function" [
     testTask "WHY — a missing viewingSessionId signal is a clean error, and switchWorkflow is never invoked" {
       let switchFn, called = neverCalled ()
-      let ctx = contextWithBody """{"workflowTarget":"hotreload"}"""
+      let ctx = contextWithBody """{"workflowTarget":"livetesting"}"""
       do! createWorkflowSwitchHandler (fun _ -> "REPL") switchFn ctx
       called.Value |> Expect.isFalse "switchWorkflow must not be called without a session id"
       responseText ctx |> Expect.stringContains "the error names the missing signal" "viewingSessionId"
@@ -70,12 +70,12 @@ let invalidInputTests =
 let successPathTests =
   testList "createWorkflowSwitchHandler — success path" [
     testTask "WHY — a successful switch shows the optimistic pending control BEFORE the final result, so the user sees feedback immediately, not just at the end" {
-      let switchFn = fun (_: WorkerProtocol.SessionId) (_: WorkflowTypes.SessionWorkflow) -> Task.FromResult(Ok "Switching to Hot Reload")
-      let ctx = contextWithBody (sprintf """{"viewingSessionId":"%s","workflowTarget":"hotreload"}""" (WorkerProtocol.SessionId.value sid))
+      let switchFn = fun (_: WorkerProtocol.SessionId) (_: WorkflowTypes.SessionWorkflow) -> Task.FromResult(Ok "Switching to Live Testing")
+      let ctx = contextWithBody (sprintf """{"viewingSessionId":"%s","workflowTarget":"livetesting"}""" (WorkerProtocol.SessionId.value sid))
       do! createWorkflowSwitchHandler (fun _ -> "REPL") switchFn ctx
       let out = responseText ctx
-      let pendingIdx = out.IndexOf("Hot Reload…", StringComparison.Ordinal)
-      let finalIdx = out.LastIndexOf("Switching to Hot Reload", StringComparison.Ordinal)
+      let pendingIdx = out.IndexOf("Live Testing…", StringComparison.Ordinal)
+      let finalIdx = out.LastIndexOf("Switching to Live Testing", StringComparison.Ordinal)
       (pendingIdx, 0) |> Expect.isGreaterThanOrEqual "the optimistic '…' control was pushed"
       (pendingIdx, finalIdx) |> Expect.isLessThan "the pending control precedes the final success message"
     }
@@ -97,13 +97,13 @@ let failurePathTests =
   testList "createWorkflowSwitchHandler — failure path" [
     testTask "WHY — a failed switch reverts the control to the ORIGINAL workflow, never leaving it stuck on the failed target" {
       let switchFn = fun (_: WorkerProtocol.SessionId) (_: WorkflowTypes.SessionWorkflow) -> Task.FromResult(Error "worker failed to spawn")
-      let ctx = contextWithBody (sprintf """{"viewingSessionId":"%s","workflowTarget":"hotreload"}""" (WorkerProtocol.SessionId.value sid))
+      let ctx = contextWithBody (sprintf """{"viewingSessionId":"%s","workflowTarget":"livetesting"}""" (WorkerProtocol.SessionId.value sid))
       do! createWorkflowSwitchHandler (fun _ -> "REPL") switchFn ctx
       let out = responseText ctx
       let selectedBlock =
         System.Text.RegularExpressions.Regex.Match(out, "<option[^>]*selected[^>]*>([^<]*)</option>")
       selectedBlock.Success |> Expect.isTrue "the reverted switcher should be present"
-      selectedBlock.Groups.[1].Value |> Expect.equal "the ORIGINAL workflow (REPL) is selected again, not Hot Reload" "REPL"
+      selectedBlock.Groups.[1].Value |> Expect.equal "the ORIGINAL workflow (REPL) is selected again, not Live Testing" "REPL"
       out |> Expect.stringContains "the failure reason is shown" "worker failed to spawn"
     }
   ]

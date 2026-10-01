@@ -253,7 +253,6 @@ type StateEventAction =
   | StateWarmupProgress of step: int * total: int
   | StateSessionReady of sessionId: string
   | StateSessionSwitched of sessionId: string
-  | StateHotReloadChanged of sessionId: string
   | StateSystemAlarm of phase: string * message: string
   | StateModelChanged of outputCount: int * diagCount: int
   | StateHeartbeat
@@ -283,9 +282,6 @@ let classifyStateEvent (data: obj) : StateEventAction =
   match fieldString "sessionSwitched" data with
   | Some sid -> StateSessionSwitched sid
   | None ->
-  match fieldBool "hotReloadChanged" data with
-  | Some true -> StateHotReloadChanged (fieldString "sessionId" data |> Option.defaultValue "")
-  | _ ->
   match fieldBool "systemAlarm" data with
   | Some true ->
     StateSystemAlarm (
@@ -419,13 +415,12 @@ let start (port: int) (callbacks: LiveTestingCallbacks) (onReconnect: (unit -> u
         match classifyStateEvent data with
         | StateSessionFaulted error -> callbacks.OnSessionFaulted error
         | StateFileReloaded path -> callbacks.OnFileReloaded path
-        // Progress/ready/switch/hotreload/alarm/model changes all just mean
+        // Progress/ready/switch/alarm/model changes all just mean
         // "something moved — re-poll the daemon for fresh status". The detailed
         // warmup UI is driven by the still-distinct "warmup_progress" frame.
         | StateWarmupProgress _
         | StateSessionReady _
         | StateSessionSwitched _
-        | StateHotReloadChanged _
         | StateSystemAlarm _
         | StateModelChanged _
         | StateUnknown -> callbacks.OnStatusRefresh ()
@@ -444,8 +439,8 @@ let start (port: int) (callbacks: LiveTestingCallbacks) (onReconnect: (unit -> u
           | Some sid when sid <> "" ->
             sessionFilter <- Some sid
           | _ -> ()
-        | "hotreload_snapshot" | "hotreload_file_toggled" | "workflow_switching" ->
-          // Hot-reload watch set changed, or a workflow switch began — re-poll so
+        | "workflow_switching" ->
+          // A workflow switch began — re-poll so
           // the tree/status views reflect the new state.
           callbacks.OnStatusRefresh ()
         | "workflow_switched" ->

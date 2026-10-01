@@ -250,9 +250,6 @@ type BozzettoMsg =
   | FcsTypeCheckCompleted of string option * Features.LiveTesting.AnalysisIdentity option * Features.LiveTesting.FcsTypeCheckResult
   | RestoreTestCache of Features.LiveTesting.LiveTestState
   | MarkAllTestsStale
-  | WorkflowSuggestionReceived of WorkflowTypes.WorkflowSuggestion
-  | WorkflowSuggestionDismissed
-  | WorkflowSuggestionAccepted
   | RebuildCompleted of string option * int64 * Result<unit, string>
 
 /// Side effects the Elm loop can request.
@@ -261,7 +258,6 @@ type BozzettoMsg =
 type BozzettoEffect =
   | Editor of EditorEffect
   | TestCycle of Features.LiveTesting.TestCycleEffect
-  | SwitchWorkflow of WorkflowTypes.SessionWorkflow
 
 /// The complete application state managed by the Elm loop.
 type BozzettoModel = {
@@ -279,8 +275,6 @@ type BozzettoModel = {
   PendingRunSummary: PendingRunSummary
   /// Latest resolved test source locations — populated after each discovery pass.
   ResolvedSourceLocations: Features.LiveTesting.TestSourceLocation list
-  /// Pending workflow suggestion from project detection — cleared on dismiss or accept.
-  PendingSuggestion: WorkflowTypes.WorkflowSuggestion option
   /// Per-session live test cycle state for non-active sessions.
   /// The active session's state lives in LiveTesting; background sessions are tracked here.
   PerSessionLiveTesting: Map<string, Features.LiveTesting.LiveTestCycleState>
@@ -324,7 +318,6 @@ module BozzettoModel =
     LiveTesting = Features.LiveTesting.LiveTestCycleState.empty
     PendingRunSummary = PendingRunSummary.empty
     ResolvedSourceLocations = []
-    PendingSuggestion = None
     PerSessionLiveTesting = Map.empty
     QuarantinedTests = Map.empty
     EvalsFinished = EvalTally.empty
@@ -2035,19 +2028,6 @@ module BozzettoUpdate =
             LastGeneration = cachedState.LastGeneration })
       { model with LiveTesting = lt }, []
 
-    | BozzettoMsg.WorkflowSuggestionReceived suggestion ->
-      { model with PendingSuggestion = Some suggestion }, []
-
-    | BozzettoMsg.WorkflowSuggestionDismissed ->
-      { model with PendingSuggestion = None }, []
-
-    | BozzettoMsg.WorkflowSuggestionAccepted ->
-      let effects =
-        match model.PendingSuggestion with
-        | Some s -> [ BozzettoEffect.SwitchWorkflow s.SuggestedWorkflow ]
-        | None -> []
-      { model with PendingSuggestion = None }, effects
-
     | BozzettoMsg.RebuildCompleted (targetSession, generation, result) ->
       let model', maybeEffects =
         tryUpdateLiveTestingState targetSession (fun cycle ->
@@ -3086,8 +3066,3 @@ module BozzettoEffectHandler =
                 Instrumentation.testExecutionActiveCount.Add(-1L)
             }, ct)
       }
-
-    | BozzettoEffect.SwitchWorkflow _targetWorkflow ->
-      // Phase 4 will implement the actual switch logic (create new session, migrate)
-      // For now, this is a placeholder that satisfies exhaustive pattern matching
-      async { () }

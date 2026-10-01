@@ -58,9 +58,7 @@ let mcpToolRegistrationTests = testList "MCP tool registration" [
       "create_solution_session"
       "decompose_pipeline"
       "diagnose"
-      "disable_hot_reload"
       "discover_features"
-      "enable_hot_reload"
       "explain_test_failure"
       "export_notebook"
       "export_session_transcript"
@@ -80,7 +78,6 @@ let mcpToolRegistrationTests = testList "MCP tool registration" [
       "impact_forecast"
       "join_cohort"
       "leave_cohort"
-      "list_runnable_projects"
       "list_sessions"
       "list_tests"
       "manage_local_data"
@@ -93,12 +90,8 @@ let mcpToolRegistrationTests = testList "MCP tool registration" [
       "request_landing"
       "release_work_lease"
       "reset_fsi_session"
-      "reset_hot_reload_state"
-      "run_app"
       "send_fsharp_code"
       "set_integration_ref"
-      "set_reflection_read_mode"
-      "stop_app"
       "stop_session"
       "suggest_next_action"
       "suggest_next_cell"
@@ -183,23 +176,7 @@ let sessionEventSerializationTests = testList "SessionEvent serialization" [
     fails.[0].GetProperty("name").GetString() |> Expect.equal "fail name" "Bad"
   }
 
-  test "HotReloadSnapshot serializes watched files" {
-    let json = SseEvent.toJson (HotReloadSnapshot("s1", ["a.fs"; "b.fs"]))
-    expectJsonField json "type" "hotreload_snapshot"
-    let doc = JsonDocument.Parse(json)
-    let files = doc.RootElement.GetProperty("watchedFiles")
-    files.GetArrayLength() |> Expect.equal "2 files" 2
-    files.[0].GetString() |> Expect.equal "first file" "a.fs"
-  }
 
-  test "HotReloadFileToggled serializes toggle state" {
-    let json = SseEvent.toJson (HotReloadFileToggled("s1", "x.fs", false))
-    expectJsonField json "type" "hotreload_file_toggled"
-    expectJsonField json "file" "x.fs"
-    let doc = JsonDocument.Parse(json)
-    doc.RootElement.GetProperty("watched").GetBoolean()
-    |> Expect.isFalse "not watched"
-  }
 
   test "SessionActivated has type and sessionId" {
     let json = SseEvent.toJson (SessionActivated "abc")
@@ -225,8 +202,6 @@ let sessionEventSerializationTests = testList "SessionEvent serialization" [
   test "every SessionEvent variant produces valid JSON with type field" {
     let events = [
       WarmupContextSnapshot("s", minimalWarmup)
-      HotReloadSnapshot("s", [])
-      HotReloadFileToggled("s", "f", true)
       SessionActivated "s"
       SessionCreated("s", [])
       SessionStopped "s"

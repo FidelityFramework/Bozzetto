@@ -24,7 +24,7 @@
 module Bozzetto.Vscode.ErrorPresentationPure
 
 /// The server's structured error shape, mirroring `BozzettoClient.HealthError`
-/// (`/health`'s `error` object and the run-app/stop-app non-200 body) without
+/// (`/health`'s `error` object and session command failures) without
 /// the Fable interop.
 type StructuredError = {
   Case: string

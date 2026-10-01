@@ -1,89 +1,92 @@
-#!/usr/bin/env python3
-"""Launch the installed shared daemon without watching home or a repositories parent."""
-import json
-import os
-from pathlib import Path
-import shutil
-import socket
-import subprocess
-import time
-import urllib.error
-import urllib.request
+#!/usr/bin/env bash
+# Launch the reviewed daemon from dedicated external workspace/state directories.
+set -euo pipefail
+set +m
 
+fail() { printf '%s\n' "$*" >&2; exit 1; }
+for command in curl jq realpath dirname timeout setsid; do
+  command -v "$command" >/dev/null || fail "Required launcher command is unavailable: $command"
+done
 
-def get_json(url):
-  with urllib.request.urlopen(url, timeout=3) as response:
-    return json.load(response)
+identity_url=http://127.0.0.1:47750/api/daemon-info
+health_url=http://127.0.0.1:47749/health
+composer_url=http://127.0.0.1:47749/api/composer/sessions
 
+get_json() {
+  curl --silent --fail --connect-timeout 0.5 --max-time 3 "$1" | jq -ce .
+}
 
-def external_root(variable, fallback):
-  configured = os.environ.get(variable, '')
-  root = Path(configured) if configured and Path(configured).is_absolute() else fallback
-  resolved = (root / 'bozzetto').resolve()
-  repository_parent = Path(__file__).resolve().parents[2]
-  if resolved == repository_parent or repository_parent in resolved.parents:
-    raise SystemExit(f'{variable} must place Bozzetto data outside {repository_parent}')
-  return resolved
+occupied=()
+for port in 47749 47750; do
+  if timeout 0.5 bash -c 'exec 3<>"/dev/tcp/127.0.0.1/$1"' _ "$port" 2>/dev/null; then
+    occupied+=("$port")
+  fi
+done
+if (( ${#occupied[@]} > 0 )); then
+  identity=null
+  if answer=$(get_json "$identity_url"); then identity=$answer; fi
+  ports=$(printf '%s\n' "${occupied[@]}" | jq -s .)
+  jq -n --argjson ports "$ports" --argjson identity "$identity" \
+    --arg health "$health_url" --arg composer "$composer_url" \
+    '{action:"preserved existing listener",ports:$ports,identity:$identity,
+      readinessChecked:false,nextChecks:[$health,$composer]}'
+  [[ ${#occupied[@]} == 2 && $identity != null ]]
+  exit
+fi
 
+script_path=$(realpath -- "${BASH_SOURCE[0]}")
+repository_parent=$(dirname -- "$(dirname -- "$(dirname -- "$script_path")")")
+external_root() {
+  local variable=$1 default_root=$2 configured resolved
+  configured=${!variable-}
+  if [[ -z $configured ]]; then configured=$default_root; fi
+  [[ $configured == /* ]] || fail "$variable must be an absolute path: $configured"
+  resolved=$(realpath -m -- "$configured/bozzetto")
+  case "$resolved" in
+    "$repository_parent"|"$repository_parent"/*)
+      fail "$variable must place Bozzetto data outside $repository_parent" ;;
+  esac
+  printf '%s\n' "$resolved"
+}
 
-def reject_symlinks(paths):
-  for path in paths:
-    if path.is_symlink():
-      raise SystemExit(f'Refusing redirected daemon workspace/state path: {path}')
-
-
-def main():
-  identity_url = 'http://127.0.0.1:47750/api/daemon-info'
-  occupied = []
-  for port in (47749, 47750):
-    with socket.socket() as probe:
-      probe.settimeout(0.5)
-      if probe.connect_ex(('127.0.0.1', port)) == 0:
-        occupied.append(port)
-  if occupied:
-    try:
-      identity = get_json(identity_url)
-    except (OSError, ValueError):
-      identity = None
-    print(json.dumps({'action': 'preserved existing listener', 'ports': occupied,
-                      'identity': identity, 'readinessChecked': False,
-                      'nextChecks': ['http://127.0.0.1:47749/health',
-                                     'http://127.0.0.1:47749/api/composer/sessions']}, indent=2))
-    return 0 if occupied == [47749, 47750] and identity is not None else 1
-
-  launcher = os.environ.get('BOZZETTO_BIN') or shutil.which('boz')
-  if not launcher:
-    raise SystemExit('Install the reviewed boz launcher first; see the live checkpoint.')
-  launcher = str(Path(launcher).resolve())
-  workspace = external_root('XDG_DATA_HOME', Path.home() / '.local/share') / 'workspace'
-  state = external_root('XDG_STATE_HOME', Path.home() / '.local/state')
-  log = state / 'daemon.log'
-  pid_file = state / 'daemon.pid'
-  reject_symlinks((workspace, log, pid_file))
-  workspace.mkdir(parents=True, exist_ok=True)
-  state.mkdir(parents=True, exist_ok=True)
-  with log.open('ab', buffering=0) as output:
-    process = subprocess.Popen([launcher, '--no-resume'], cwd=workspace,
-      stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
-      start_new_session=True)
-  pid_file.write_text(f'{process.pid}\n')
-  deadline = time.monotonic() + 20
-  while time.monotonic() < deadline:
-    if process.poll() is not None:
-      raise SystemExit(f'Daemon exited {process.returncode}; inspect {log}')
-    try:
-      identity = get_json(identity_url)
-      if identity['pid'] != process.pid:
-        raise SystemExit('Port ownership changed during startup; inspect daemon identity.')
-      health = get_json('http://127.0.0.1:47749/health')
-      composer = get_json('http://127.0.0.1:47749/api/composer/sessions')
-      print(json.dumps({'identity': identity, 'health': health, 'readinessChecked': True,
-                        'composerConfigured': composer['configured'], 'log': str(log)}, indent=2))
-      return 0 if health.get('healthy') and not health.get('componentFailures') and composer['configured'] else 1
-    except (OSError, ValueError):
-      time.sleep(0.2)
-  raise SystemExit(f'No readiness response within 20 seconds; inspect PID {process.pid} and {log}')
-
-
-if __name__ == '__main__':
-  raise SystemExit(main())
+launcher=${BOZZETTO_BIN:-}
+if [[ -z $launcher ]]; then launcher=$(command -v boz || true); fi
+[[ -n $launcher ]] || fail 'Install the reviewed boz launcher first; see the live checkpoint.'
+launcher=$(realpath -e -- "$launcher") || fail "Reviewed boz launcher does not exist: $launcher"
+[[ -x $launcher && -f $launcher ]] || fail "Reviewed boz launcher is not executable: $launcher"
+workspace=$(external_root XDG_DATA_HOME "$HOME/.local/share")/workspace
+state=$(external_root XDG_STATE_HOME "$HOME/.local/state")
+log=$state/daemon.log
+pid_file=$state/daemon.pid
+for path in "$workspace" "$log" "$pid_file"; do
+  [[ ! -L $path ]] || fail "Refusing redirected daemon workspace/state path: $path"
+done
+mkdir -p -- "$workspace" "$state"
+# Job control stays off: setsid execs in this child's PID, which identity must report.
+(cd -- "$workspace" && exec setsid -- "$launcher" --no-resume) </dev/null >>"$log" 2>&1 &
+daemon_pid=$!
+printf '%s\n' "$daemon_pid" > "$pid_file"
+deadline=$((SECONDS + 20))
+while (( SECONDS < deadline )); do
+  if ! kill -0 "$daemon_pid" 2>/dev/null; then
+    status=0
+    wait "$daemon_pid" || status=$?
+    fail "Daemon exited $status; inspect $log"
+  fi
+  if identity=$(get_json "$identity_url"); then
+    jq -e --argjson pid "$daemon_pid" '.pid == $pid' <<<"$identity" >/dev/null \
+      || fail 'Port ownership changed during startup; inspect daemon identity.'
+    if health=$(get_json "$health_url") && composer=$(get_json "$composer_url"); then
+      jq -n --argjson identity "$identity" --argjson health "$health" \
+        --argjson composer "$composer" --arg log "$log" \
+        '{identity:$identity,health:$health,readinessChecked:true,
+          composerConfigured:$composer.configured,log:$log}'
+      jq -e --argjson composer "$composer" \
+        '.healthy == true and ((.componentFailures // []) | length == 0) and $composer.configured == true' \
+        <<<"$health" >/dev/null
+      exit
+    fi
+  fi
+  sleep 0.2
+done
+fail "No readiness response within 20 seconds; inspect PID $daemon_pid and $log"

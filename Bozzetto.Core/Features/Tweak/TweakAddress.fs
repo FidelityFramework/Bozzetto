@@ -5,7 +5,7 @@
 /// the target. Only editing the expression itself moves it, and that shows
 /// up as a hash change, not a missing address.
 ///
-/// Parses with the same Fantomas.FCS parser ReloadPlanning already uses
+/// Parses with the Fantomas.FCS parser
 /// (Fantomas vendors the real FCS syntax tree for its own formatter, so this
 /// is the same untyped AST FCS itself would hand back). No typed info here on
 /// purpose: an address only needs to know where things sit in the tree, not

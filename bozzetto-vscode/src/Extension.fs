@@ -7,12 +7,10 @@ open Bozzetto.Vscode.JsHelpers
 open Bozzetto.Vscode.SafeInterop
 
 module Client = Bozzetto.Vscode.BozzettoClient
-module AppRunPure = Bozzetto.Vscode.AppRunPure
 module ErrorPresentationPure = Bozzetto.Vscode.ErrorPresentationPure
 module Diag = Bozzetto.Vscode.DiagnosticsListener
 module Lens = Bozzetto.Vscode.CodeLensProvider
 module Completion = Bozzetto.Vscode.CompletionProvider
-module HotReload = Bozzetto.Vscode.HotReloadTreeProvider
 module SessionCtx = Bozzetto.Vscode.SessionContextTreeProvider
 module Sessions = Bozzetto.Vscode.SessionsTreeProvider
 module LiveTest = Bozzetto.Vscode.LiveTestingListener
@@ -61,7 +59,6 @@ let mutable outputChannel: OutputChannel option = None
 let mutable statusBarItem: StatusBarItem option = None
 let mutable testStatusBarItem: StatusBarItem option = None
 let mutable evalPerfStatusBar: StatusBarItem option = None
-let mutable appStatusBarItem: StatusBarItem option = None
 let mutable diagnosticsDisposable: Disposable option = None
 let mutable sseDisposable: Disposable option = None
 let mutable diagnosticCollection: DiagnosticCollection option = None
@@ -682,7 +679,7 @@ let openGettingStarted () =
       + "// alive — previous definitions stay available.\n"
       + "//\n"
       + "// Next steps:\n"
-      + "//   • Save an .fs file to trigger hot reload + live test updates\n"
+      + "//   • Save an .fs file to trigger live test updates\n"
       + "//   • Check the Bozzetto sidebar for test results and sessions\n"
       + "//   • Try 'Bozzetto: Show Call Graph' from the command palette\n"
       + "//   • Explore samples/ in the Bozzetto repo for more examples\n"
@@ -715,8 +712,8 @@ let updateTestStatusBar (summary: VscTestSummary) =
     sb.tooltip <- Some view.Tooltip
     // The command was set ONCE at activation to `bozzetto.enableLiveTesting` and
     // never touched again, so clicking the live-testing status bar WHILE LIVE
-    // TESTING WAS ON re-issued enable. `AppRunPure.statusBarText`'s app bar is
-    // the model: a state-reflecting control flips its own command.
+    // TESTING WAS ON re-issued enable. A state-reflecting control flips
+    // its own command.
     sb.command <-
       match ContextKeysPure.liveTestingEnabledFromDiscoveryState summary.DiscoveryState with
       | true -> Some "bozzetto.disableLiveTesting"
@@ -777,7 +774,6 @@ let refreshStatus () =
         activeSessionWorkingDirectory <- None
         knownSessions <- [||]
         liveTestListener |> Option.iter (fun l -> l.SetSessionFilter None)
-        HotReload.setSession c None
         SessionCtx.setSession c None
         Sessions.setSession c None
         setContext "bozzetto:daemonRunning" false
@@ -848,7 +844,6 @@ let refreshStatus () =
             sb?accessibilityInformation <- createObj [ "label" ==> view.Tooltip ]
           sb.backgroundColor <- None
           let activeId = activeSessionId
-          HotReload.setSession c activeId
           SessionCtx.setSession c activeId
           Sessions.setSession c activeId
           TypeExpl.setClient (Some c)
@@ -1476,83 +1471,6 @@ let evalAllBlocks () =
 
 let hardResetCmd () =
   simpleCommand "Bozzetto: hard reset (rebuilding)…" "Hard reset complete" (Client.hardReset true)
-
-/// Reflects the session's app state on the status bar: the play glyph with
-/// the URL while running, a hidden item when nothing is running, and the
-/// daemon's own wording (never a bare "failed") for anything else — see
-/// AppRunPure.statusBarText for the exact per-state mapping.
-let updateAppStatusBar (outcome: Client.AppRunOutcome) =
-  match appStatusBarItem with
-  | None -> ()
-  | Some sb ->
-    match outcome with
-    | Client.AppState view ->
-      match AppRunPure.statusBarText view with
-      | Some text ->
-        sb.text <- text
-        sb.tooltip <- Some view.Message
-        sb.command <- Some (if view.State = "NotRunning" then "bozzetto.runApp" else "bozzetto.stopApp")
-        sb.show ()
-      | None ->
-        sb.hide ()
-    | Client.AppRunError err ->
-      sb.text <- sprintf "⚠ %s" err.message
-      // The remedy belongs in the DIALOG (see runAppCmd/stopAppCmd below); it
-      // stays on the tooltip too, but it is no longer the only place it lives.
-      sb.tooltip <- Some (describeSessionErrorInline err)
-      sb.command <- Some "bozzetto.runApp"
-      sb.show ()
-
-/// Run a session's app. Prompts for an optional project name — blank means
-/// let the daemon pick its default runnable target.
-let runAppCmd () =
-  withClient (fun c ->
-    promise {
-      match activeSessionId with
-      | None ->
-        Window.showWarningMessage "No active Bozzetto session. Create or switch to one first." [||] |> ignore
-      | Some sid ->
-        let! projOpt = Window.showInputBox "Project to run (leave blank for the default target)"
-        let project =
-          match projOpt with
-          | Some p when p.Trim().Length > 0 -> Some (p.Trim())
-          | _ -> None
-        // Starting an app is a multi-second operation that used to await in
-        // silence (roast §8).
-        let! outcomeOpt =
-          withProgressResult ProgressLocation.Notification "Bozzetto: starting app…" (fun () -> Client.runApp sid project c)
-        let outcome = outcomeOpt |> Option.defaultValue (Client.AppRunError { case = "Cancelled"; message = "The run-app request did not complete."; suggestedAction = "Try again, or check the output channel." })
-        updateAppStatusBar outcome
-        match outcome with
-        // The dialog used to show err.message with NO buttons while
-        // err.suggestedAction went to a status-bar tooltip — the actionable
-        // half on a hover, the dead end in the modal. Both now land here.
-        | Client.AppRunError err ->
-          Window.showErrorMessage (describeSessionError err) [| "Show Output" |]
-          |> Promise.map (function Some "Show Output" -> showOutputPanel () | _ -> ())
-          |> promiseIgnoreLog (fun m -> (getOutput()).appendLine m)
-        | Client.AppState _ -> ()
-    })
-
-let stopAppCmd () =
-  withClient (fun c ->
-    promise {
-      match activeSessionId with
-      | None ->
-        Window.showWarningMessage "No active Bozzetto session." [||] |> ignore
-      | Some sid ->
-        let! outcome = Client.stopApp sid c
-        updateAppStatusBar outcome
-        match outcome with
-        // The dialog used to show err.message with NO buttons while
-        // err.suggestedAction went to a status-bar tooltip — the actionable
-        // half on a hover, the dead end in the modal. Both now land here.
-        | Client.AppRunError err ->
-          Window.showErrorMessage (describeSessionError err) [| "Show Output" |]
-          |> Promise.map (function Some "Show Output" -> showOutputPanel () | _ -> ())
-          |> promiseIgnoreLog (fun m -> (getOutput()).appendLine m)
-        | Client.AppState _ -> ()
-    })
 
 let createSessionCmd () =
   withClient (fun c ->
@@ -2373,11 +2291,6 @@ let activate (context: ExtensionContext) =
   evalPerfStatusBar <- Some esb
   context.subscriptions.Add (esb :> obj :?> Disposable)
 
-  let asb = Window.createStatusBarItem StatusBarAlignment.Left 47.
-  asb.command <- Some "bozzetto.runApp"
-  appStatusBarItem <- Some asb
-  context.subscriptions.Add (asb :> obj :?> Disposable)
-
   let dc = Languages.createDiagnosticCollection "bozzetto"
   diagnosticCollection <- Some dc
   context.subscriptions.Add (dc :> obj :?> Disposable)
@@ -2435,9 +2348,6 @@ let activate (context: ExtensionContext) =
     ) 300))
   context.subscriptions.Add docChangeSub
 
-  // Hot Reload TreeView
-  HotReload.register context
-  HotReload.setSession c None
 
   // Session Context TreeView
   SessionCtx.register context
@@ -2543,8 +2453,6 @@ let activate (context: ExtensionContext) =
   reg "bozzetto.switchSession" (fun _ -> switchSessionCmd () |> promiseIgnoreLog logToOutput)
   reg "bozzetto.stopSession" (fun _ -> stopSessionCmd () |> promiseIgnoreLog logToOutput)
   reg "bozzetto.switchWorkflow" (fun _ -> switchWorkflowCmd () |> promiseIgnoreLog logToOutput)
-  reg "bozzetto.runApp" (fun _ -> runAppCmd () |> promiseIgnoreLog logToOutput)
-  reg "bozzetto.stopApp" (fun _ -> stopAppCmd () |> promiseIgnoreLog logToOutput)
 
   // Tree view inline actions for Sessions panel
   reg "bozzetto.switchToSession" (fun args ->
@@ -3323,6 +3231,5 @@ let deactivate () =
   typeExplorer <- None
   dashboardPanel |> Option.iter (fun p -> p.dispose () |> ignore)
   dashboardPanel <- None
-  HotReload.stopAutoRefresh ()
   SessionCtx.stopAutoRefresh ()
   InlineDeco.clearAllDecorations ()

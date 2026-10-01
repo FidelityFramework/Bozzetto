@@ -797,8 +797,8 @@ module McpTools =
       | _ -> WorkflowTypes.SessionWorkflow.Interactive
     | None -> WorkflowTypes.SessionWorkflow.Interactive
 
-  /// Format a WorkerResponse.EvalResult for display, with workflow-aware error enhancement.
-  let formatWorkerEvalResult (workflow: WorkflowTypes.SessionWorkflow) (response: WorkerProtocol.WorkerResponse) : string =
+  /// Format original worker diagnostics without retired patch-mode rewriting.
+  let formatWorkerEvalResult (_workflow: WorkflowTypes.SessionWorkflow) (response: WorkerProtocol.WorkerResponse) : string =
     match response with
     | WorkerProtocol.WorkerResponse.EvalResult(_, result, diags, _) ->
       let diagStr =
@@ -828,10 +828,9 @@ module McpTools =
       | Error err ->
         let errText = BozzettoError.describeForAgent err
         let suggestion = errText |> ErrorMessages.categorize |> ErrorMessages.getSuggestion
-        let enhanced = WorkflowErrorContext.enhance workflow errText suggestion
-        match String.IsNullOrEmpty enhanced with
+        match String.IsNullOrEmpty suggestion with
         | true -> sprintf "Error: %s%s" errText diagStr
-        | false -> sprintf "Error: %s\n%s%s" errText enhanced diagStr
+        | false -> sprintf "Error: %s\n%s%s" errText suggestion diagStr
     | WorkerProtocol.WorkerResponse.WorkerError err ->
       sprintf "Error: %s" (BozzettoError.describeForAgent err)
     | other ->
@@ -2151,26 +2150,6 @@ module McpTools =
 
   // ── Session Management Operations ──────────────────────────────
 
-  /// Pure helper: given package references and the current workflow, format
-  /// a non-blocking hint suggesting the user switch to HotReload if detection
-  /// finds web packages. Returns None when no suggestion applies.
-  /// Decoupled from .fsproj reading for testability — callers provide the list.
-  let formatDetectionHint (packageRefs: string list) (currentWorkflow: WorkflowTypes.SessionWorkflow) : string option =
-    match currentWorkflow with
-    // Interactive and LiveTesting are both non-hot-reload, so a detected web
-    // project is worth a hot-reload nudge in either.
-    | WorkflowTypes.SessionWorkflow.Interactive
-    | WorkflowTypes.SessionWorkflow.LiveTesting ->
-      match WorkflowTypes.WorkflowDetection.suggest packageRefs with
-      | Some suggestion ->
-        let pkgs = suggestion.DetectedPackages |> String.concat ", "
-        Some (
-          sprintf
-            "💡 Detected web packages (%s). Consider switching to Live workflow for hot reload: use switch_workflow tool with target='live'"
-            pkgs)
-      | None -> None
-    | WorkflowTypes.SessionWorkflow.HotReload _ -> None
-
   /// Read classification markers from a .fsproj: its PackageReference Include
   /// values, PLUS the SDK attribute and FrameworkReference includes that
   /// `WorkflowTypes.ProjectFileMarkers` extracts.
@@ -2179,7 +2158,7 @@ module McpTools =
   /// Minimal API / Oxpecker project at all — those reach ASP.NET through
   /// `Sdk="Microsoft.NET.Sdk.Web"` and a FrameworkReference and have no web
   /// PackageReference, so a package-only read reported them as non-web and the
-  /// user was never offered the hot-reload workflow.
+  /// package-only inspection could miss the project type.
   ///
   /// Returns [] on any IO or parse error (non-blocking best-effort).
   let private readFsprojPackageRefs (path: string) : string list =
@@ -2237,10 +2216,7 @@ module McpTools =
             | SessionProjectTarget.Project path -> Some(path, readFsprojPackageRefs path)
             | SessionProjectTarget.Solution _
             | SessionProjectTarget.Bare -> None)
-        let packageRefs = perProject |> List.map snd |> WorkflowTypes.WorkflowDetection.extractPackageNames
-        let lines =
-          Option.toList (formatDetectionHint packageRefs workflow)
-          @ ProjectCompatibility.formatToolchainAdvisories perProject
+        let lines = ProjectCompatibility.formatToolchainAdvisories perProject
         let hint = match lines with [] -> None | ls -> Some(String.concat "\n\n" ls)
         return CreateSessionUx.formatCreateSessionReply sid targets hint
       | Result.Error err -> return BozzettoError.describeForAgent err
@@ -2326,7 +2302,7 @@ module McpTools =
 
   // ── Workflow Switching ──────────────────────────────────────────
 
-  /// Switch the workflow mode of a session (Interactive ↔ HotReload).
+  /// Switch between retained Interactive and LiveTesting workflows.
   /// Creates a new session with the target workflow and stops the old one.
   let switchWorkflow
     (ctx: McpContext)
@@ -3203,7 +3179,7 @@ module McpTools =
         let blocker =
           match loadedState with
           | Features.Verification.LoadedDefinitionState.ConfirmedStale (path, lastLoaded) ->
-            Some (BozzettoError.HotReloadStateError (sid, sprintf "loaded definition of '%s' is stale (last loaded %s)" path lastLoaded))
+            Some (BozzettoError.LoadedStateStale (sid, sprintf "loaded definition of '%s' is stale (last loaded %s)" path lastLoaded))
           | _ -> None
         return summary, blocker
       | other ->
@@ -4041,54 +4017,6 @@ module McpTools =
                  Suggestion    = suggestion |}
             return JsonSerializer.Serialize(jsonData, liveTestJsonOpts)
     }
-
-  // ─── Run App / Stop App / List Runnable Projects ──────────────────────
-
-  let private appStateJson (state: AppRun.AppRunState) = AppRun.toView state
-
-  let runApp (ctx: McpContext) (project: string) : Task<string> =
-    withSessionWd ctx "mcp" None (fun sid -> task {
-      let request =
-        match String.IsNullOrWhiteSpace project with
-        | true -> AppRun.RunRequest.DefaultTarget
-        | false -> AppRun.RunRequest.Named project
-      let! result =
-        AppRunOrchestration.runApp ctx.SessionOps (fun () -> DateTime.UtcNow) Timeouts.warmupReadyPollMax (toSessionId sid) request
-      return
-        match result with
-        | Ok state -> JsonSerializer.Serialize(appStateJson state, liveTestJsonOpts)
-        | Error e -> BozzettoError.describeForAgent e
-    })
-
-  let stopApp (ctx: McpContext) : Task<string> =
-    withSessionWd ctx "mcp" None (fun sid -> task {
-      let! result = AppRunOrchestration.stopApp ctx.SessionOps (toSessionId sid)
-      return
-        match result with
-        | Ok state -> JsonSerializer.Serialize(appStateJson state, liveTestJsonOpts)
-        | Error e -> BozzettoError.describeForAgent e
-    })
-
-  let listRunnableProjects (ctx: McpContext) : Task<string> =
-    withSessionWd ctx "mcp" None (fun sid -> task {
-      let! infoOpt = ctx.SessionOps.GetSessionInfo (toSessionId sid)
-      match infoOpt with
-      | None -> return sprintf "Session %s not found." sid
-      | Some info ->
-        let projects =
-          info.ProjectRoles
-          |> List.map (fun cp ->
-            {| Path = cp.Path
-               Role = string cp.Role
-               PackageRefs = cp.PackageRefs |})
-        let jsonData =
-          {| TotalProjects = projects.Length
-             ExecutableCount = projects |> List.filter (fun p -> p.Role = "Executable") |> List.length
-             ActiveProject = info.ActiveProject |> Option.defaultValue ""
-             App = AppRun.describeState info.App
-             Projects = projects |}
-        return JsonSerializer.Serialize(jsonData, liveTestJsonOpts)
-    })
 
   // ── Cohort tools (cohort-integration-plan.md Slice 2, item 9) ────────────
   //

@@ -10,7 +10,7 @@ open Bozzetto.FsiSession
 open Bozzetto.HostAgent
 open Bozzetto.Tests.TestInfrastructure
 
-// --multiemit- is what a hot-reload session runs with: every eval lands in ONE assembly, so redefinitions can be paired.
+// --multiemit- preserves the genuine F# cross-submission type and module contract.
 let private fsiArgs = [ "fsi"; "--noninteractive"; "--nologo"; "--readline-"; "--multiemit-" ]
 
 /// A fresh in-process session behind the port.
@@ -26,7 +26,7 @@ let private newInProcess () : Async<IFsiSession> =
         TextWriter.Null,
         collectible = true
       )
-    return new InProcessFsiSession(session, { Projects = []; ResolveFrom = []; ValueReads = Bozzetto.Middleware.ValueReadTracking.ValueReadWatch.IgnoreValueReads }) :> IFsiSession
+    return new InProcessFsiSession(session, { Projects = []; ResolveFrom = [] }) :> IFsiSession
   }
 
 /// The things an IFsiSession can do that the contract specifies. Each contract case is tagged with one, so an
@@ -40,7 +40,6 @@ type Capability =
   | Completions
   | TypeChecking
   | Disposal
-  | HotReload
   | LiveTesting
   | LoadedAssemblies
   | Coverage
@@ -78,8 +77,8 @@ let private expectoPath = typeof<Expecto.TestCode>.Assembly.Location
 /// A top-level (so FSI compiles it public) [<Tests>] value with one passing and one failing case.
 let private probeTests = "open Expecto\n[<Tests>]\nlet probeTests = testList \"probe\" [ testCase \"passes\" (fun () -> ()); testCase \"fails\" (fun () -> failwith \"boom\") ]"
 
-let private afterEval (session: IFsiSession) (code: string) (detours: DetourPolicy) (discovery: DiscoveryPolicy) : AfterEvalReport =
-  match session.AfterEval { EvaluatedCode = code; Detours = detours; Discovery = discovery; IsFileSave = false } with
+let private afterEval (session: IFsiSession) (discovery: DiscoveryPolicy) : AfterEvalReport =
+  match session.AfterEval { Discovery = discovery } with
   | AgentAnswered report -> report
   | AgentUnavailable reason -> failtestf "the agent was unavailable: %s" reason
 
@@ -173,7 +172,7 @@ let contract (label: string) (create: unit -> Async<IFsiSession>) (notYet: Capab
       async {
         mustSucceed session (sprintf "#r @\"%s\"" expectoPath)
         mustSucceed session probeTests
-        let report = afterEval session probeTests DetourPolicy.RegisterOnly DiscoveryPolicy.Forced
+        let report = afterEval session DiscoveryPolicy.Forced
         let named (fragment: string) =
           match report.LiveTest.DiscoveredTests |> Array.tryFind (fun t -> t.FullName.EndsWith fragment) with
           | Some test -> test
@@ -204,21 +203,10 @@ let contract (label: string) (create: unit -> Async<IFsiSession>) (notYet: Capab
       async {
         mustSucceed session (sprintf "#r @\"%s\"" expectoPath)
         mustSucceed session probeTests
-        afterEval session probeTests DetourPolicy.RegisterOnly DiscoveryPolicy.Forced |> ignore
+        afterEval session DiscoveryPolicy.Forced |> ignore
         mustSucceed session "let three = 1 + 2"
-        let quiet = afterEval session "let three = 1 + 2" DetourPolicy.RegisterOnly DiscoveryPolicy.WhenChanged
+        let quiet = afterEval session DiscoveryPolicy.WhenChanged
         Expect.isEmpty "nothing redefined, so no tests are reported" quiet.LiveTest.DiscoveredTests
-      })
-
-    caseAsync HotReload "redefining a function reports it as an updated method" (fun session ->
-      async {
-        // Detours pair methods by their dotted path, so the function lives in a named module, as a reloaded file's does.
-        let version (delta: int) = sprintf "module Reload =\n  let addOne (x: int) = x + %d" delta
-        mustSucceed session (version 1)
-        afterEval session (version 1) DetourPolicy.ApplyDetours DiscoveryPolicy.WhenChanged |> ignore
-        mustSucceed session (version 100)
-        let report = afterEval session (version 100) DetourPolicy.ApplyDetours DiscoveryPolicy.WhenChanged
-        Expect.isTrue "addOne is among the updated methods" (report.UpdatedMethods |> List.exists (fun name -> name.EndsWith "addOne"))
       })
 
     case Disposal "a disposed session can be disposed again" (fun session ->

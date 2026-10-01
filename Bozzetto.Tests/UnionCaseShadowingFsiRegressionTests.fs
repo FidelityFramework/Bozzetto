@@ -19,7 +19,7 @@ open Bozzetto.HostAgent
 // union case does not take arguments", pointing at the wrong problem.
 // ---------------------------------------------------------------------------
 
-// --multiemit- matches what a hot-reload session runs with (Bozzetto.Tests/FsiSessionContractTests.fs).
+// --multiemit- preserves the genuine F# cross-submission type and module contract.
 let private fsiArgs = [ "fsi"; "--noninteractive"; "--nologo"; "--readline-"; "--multiemit-" ]
 
 let private newInProcess () : IFsiSession =
@@ -33,7 +33,7 @@ let private newInProcess () : IFsiSession =
       TextWriter.Null,
       collectible = true
     )
-  new InProcessFsiSession(session, { Projects = []; ResolveFrom = []; ValueReads = Bozzetto.Middleware.ValueReadTracking.ValueReadWatch.IgnoreValueReads }) :> IFsiSession
+  new InProcessFsiSession(session, { Projects = []; ResolveFrom = [] }) :> IFsiSession
 
 let private coreDllPath = typeof<Bozzetto.WorkerProtocol.SessionId>.Assembly.Location
 

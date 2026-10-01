@@ -552,7 +552,6 @@ let workerProtocolTests =
 
       testCase "WHY — WorkerResponse.AppRunResult — every app state round-trips because the dashboard renders each one" <| fun _ ->
         [ AppRun.AppRunState.NotRunning
-          AppRun.AppRunState.Starting (project, AppRun.StartPhase.RestartingIntoWebLive, at)
           AppRun.AppRunState.Starting (project, AppRun.StartPhase.LaunchingEntryPoint, at)
           AppRun.AppRunState.Running running
           AppRun.AppRunState.Running { running with Endpoint = AppRun.AppEndpoint.NoServer }

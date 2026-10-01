@@ -4,8 +4,6 @@ open Expecto
 open Expecto.Flip
 open FsCheck
 open FSharp.Compiler.EditorServices
-open Bozzetto.Middleware.HotReloading
-open Bozzetto.Middleware.HotReloadCore
 open Bozzetto.Features.AutoCompletion
 open Bozzetto.AppState
 open Bozzetto.FileWatcher
@@ -22,104 +20,6 @@ open System
 open System.Text.Json
 
 // ═══════════════════════════════════════════════════════════
-// HotReloading — isTopLevelFunctionBinding
-// ═══════════════════════════════════════════════════════════
-
-let isTopLevelFunctionBindingTests = testList "isTopLevelFunctionBinding" [
-  test "simple function with parameter" {
-    isTopLevelFunctionBinding "let f x = x + 1"
-    |> Expect.isTrue "let with param is function"
-  }
-  test "function with multiple params" {
-    isTopLevelFunctionBinding "let add x y = x + y"
-    |> Expect.isTrue "multiple params is function"
-  }
-  test "function with unit param" {
-    isTopLevelFunctionBinding "let f () = 42"
-    |> Expect.isTrue "unit param is function"
-  }
-  test "function with typed param" {
-    isTopLevelFunctionBinding "let f (x: int) = x"
-    |> Expect.isTrue "typed param is function"
-  }
-  test "value binding is not function" {
-    isTopLevelFunctionBinding "let x = 42"
-    |> Expect.isFalse "simple value is not function"
-  }
-  test "typed value binding is not function" {
-    isTopLevelFunctionBinding "let x : int = 42"
-    |> Expect.isFalse "typed value is not function"
-  }
-  test "indented module-member function IS detourable" {
-    // Chesterton's fence: hot-reload transforms module-declared files by
-    // indenting the module body, so the detour target (e.g. `greeting` inside
-    // `module Greeting =`) is indented. Requiring column-0 meant module-nested
-    // functions never got NoInlining, the JIT inlined them, and Harmony had
-    // nothing to detour — the P0 hot-reload gap.
-    isTopLevelFunctionBinding "  let f x = x"
-    |> Expect.isTrue "indented module-member function must be recognized"
-  }
-  test "let! is not a binding" {
-    isTopLevelFunctionBinding "let! x = async { return 1 }"
-    |> Expect.isFalse "let! is computation expression"
-  }
-  test "private function" {
-    isTopLevelFunctionBinding "let private f x = x"
-    |> Expect.isTrue "private function is still function"
-  }
-  test "inline function" {
-    isTopLevelFunctionBinding "let inline f x = x"
-    |> Expect.isTrue "inline function is still function"
-  }
-  test "rec function" {
-    isTopLevelFunctionBinding "let rec f x = f x"
-    |> Expect.isTrue "recursive function is still function"
-  }
-  test "no equals sign" {
-    isTopLevelFunctionBinding "let f x"
-    |> Expect.isFalse "no equals means not a complete binding"
-  }
-]
-
-// ═══════════════════════════════════════════════════════════
-// HotReloading — isStaticMemberFunction
-// ═══════════════════════════════════════════════════════════
-
-let isStaticMemberFunctionTests = testList "isStaticMemberFunction" [
-  test "static member with parens" {
-    isStaticMemberFunction "  static member Create(x) = x"
-    |> Expect.isTrue "static member with parens is function"
-  }
-  test "static member with named param" {
-    isStaticMemberFunction "  static member Add x y = x + y"
-    |> Expect.isTrue "static member with params is function"
-  }
-  test "static member property" {
-    isStaticMemberFunction "  static member Value = 42"
-    |> Expect.isFalse "static member without params is property"
-  }
-  test "static member with type annotation" {
-    isStaticMemberFunction "  static member Default: int = 0"
-    |> Expect.isFalse "type-annotated value is not function"
-  }
-  test "non-static member is not matched" {
-    isStaticMemberFunction "  member this.Foo(x) = x"
-    |> Expect.isFalse "instance member is not static"
-  }
-  test "regular let binding" {
-    isStaticMemberFunction "let f x = x"
-    |> Expect.isFalse "let binding is not static member"
-  }
-  test "no equals sign" {
-    isStaticMemberFunction "  static member Foo"
-    |> Expect.isFalse "no equals, not a complete definition"
-  }
-]
-
-// ═══════════════════════════════════════════════════════════
-// AutoCompletion — CompletionKind.ofGlyph
-// ═══════════════════════════════════════════════════════════
-
 let completionKindOfGlyphTests = testList "CompletionKind.ofGlyph" [
   test "Class maps to Class" {
     CompletionKind.ofGlyph FSharpGlyph.Class
@@ -274,83 +174,6 @@ let cleanStdoutNoAnsi =
     <| fun (s: NonEmptyString) ->
       let cleaned = cleanStdout s.Get
       not (Text.RegularExpressions.Regex.IsMatch(cleaned, @"\x1b\[[0-9;]*[a-zA-Z]"))
-
-// --- isTopLevelFunctionBinding: hot-reload patch safety ---
-
-/// Hot reload needs NoInlining on module-member FUNCTIONS (which the
-/// hot-reload transform indents inside `module X =` wrappers) so Harmony can
-/// detour them. Indentation no longer disqualifies a function binding — but a
-/// function binding must still have parameters (not be a value). This property
-/// asserts indented FUNCTION bindings are accepted while indented VALUE
-/// bindings are still rejected.
-let topLevelAcceptsIndentedFunctions =
-  testPropertyWithConfig cfg
-    "isTopLevelFunctionBinding: indented function bindings are detourable"
-    <| fun (NonNegativeInt indent) (name: NonEmptyString) ->
-      let spaces = String(' ', indent)
-      let safeName = Text.RegularExpressions.Regex.Replace(name.Get, @"[^a-zA-Z_]", "a")
-      let fnLine = sprintf "%slet %s x = x" spaces safeName
-      let valueLine = sprintf "%slet %s = 42" spaces safeName
-      isTopLevelFunctionBinding fnLine = true
-      && isTopLevelFunctionBinding valueLine = false
-
-/// Users mark functions `private`/`inline`/`rec` for their own reasons.
-/// The hot-reload detector must classify function-vs-value regardless
-/// of modifiers. If modifiers confused it, private functions would
-/// silently escape hot-reload — a nasty latent bug.
-let modifiersDontAffectClassification =
-  let modifiers = ["private "; "internal "; "public "; "inline "; "rec "]
-  testList "isTopLevelFunctionBinding: modifiers preserve function-vs-value" [
-    for m in modifiers do
-      test (sprintf "'let %sf x = x' is still a function" m) {
-        isTopLevelFunctionBinding (sprintf "let %sf x = x" m)
-        |> Expect.isTrue (sprintf "%s preserves function" m)
-      }
-      test (sprintf "'let %sx = 42' is still a value" m) {
-        isTopLevelFunctionBinding (sprintf "let %sx = 42" m)
-        |> Expect.isFalse (sprintf "%s preserves value" m)
-      }
-  ]
-
-// --- injectNoInlining: transform correctness ---
-
-/// The transform must ONLY add attributes — never modify comments,
-/// blank lines, type definitions, or other non-function code. If it
-/// accidentally mutates a non-function line, it introduces compile
-/// errors or changes the semantics of the user's code.
-let injectPreservesNonFunctionLines = testList "injectNoInlining: non-function lines preserved" [
-  test "type definition passes through" {
-    injectNoInlining "type X = { A: int }" |> Expect.equal "type def unchanged" "type X = { A: int }"
-  }
-  test "comments pass through" {
-    injectNoInlining "// this is a comment\n(* block comment *)"
-    |> Expect.equal "comments unchanged" "// this is a comment\n(* block comment *)"
-  }
-  test "open declarations pass through" {
-    injectNoInlining "open System\nopen System.IO"
-    |> Expect.equal "opens unchanged" "open System\nopen System.IO"
-  }
-  test "empty string passes through" {
-    injectNoInlining "" |> Expect.equal "empty unchanged" ""
-  }
-]
-
-/// Each function needs exactly one [<MethodImpl(NoInlining)>] to
-/// prevent JIT inlining. Zero = Harmony patch invisible. This
-/// structural property ensures the transform is precise.
-let injectAttributeCountMatchesFunctionCount =
-  test "injectNoInlining: attribute count equals function count" {
-    let code = "let f x = x\nlet x = 42\nlet g (y: int) = y * 2\n  static member Create(z) = z"
-    let result = injectNoInlining code
-    let lines = result.Split('\n')
-    let attrCount =
-      lines |> Array.filter (fun l -> l.TrimStart().StartsWith("[<MethodImpl")) |> Array.length
-    let funcCount =
-      code.Split('\n')
-      |> Array.filter (fun l -> isTopLevelFunctionBinding l || isStaticMemberFunction l)
-      |> Array.length
-    attrCount |> Expect.equal "one attribute per function" funcCount
-  }
 
 // --- shouldExcludeFile: glob matching contracts ---
 
@@ -1606,7 +1429,6 @@ let uiActionParseTests = testList "UiAction.tryParse" [
     let simpleActions = [
       "Quit"; "CycleFocus"; "ScrollUp"; "ScrollDown"; "Redraw"
       "FontSizeUp"; "FontSizeDown"; "CycleTheme"
-      "HotReloadWatchAll"; "HotReloadUnwatchAll"
       "EnableLiveTesting"; "DisableLiveTesting"; "CycleRunPolicy"; "ToggleCoverage"
       "TimeTravelBack"; "TimeTravelForward"; "TimeTravelGoLive"
     ]
@@ -2357,10 +2179,6 @@ let sseWriterFormatTests = testList "SseWriter format" [
 
 [<Tests>]
 let allPureModulesTests = testList "Pure modules comprehensive" [
-  testList "HotReloading" [
-    isTopLevelFunctionBindingTests
-    isStaticMemberFunctionTests
-  ]
   testList "AutoCompletion" [
     completionKindOfGlyphTests
   ]
@@ -2378,14 +2196,6 @@ let allPureModulesTests = testList "Pure modules comprehensive" [
     testList "cleanStdout" [
       cleanStdoutIdempotent
       cleanStdoutNoAnsi
-    ]
-    testList "isTopLevelFunctionBinding" [
-      topLevelAcceptsIndentedFunctions
-      modifiersDontAffectClassification
-    ]
-    testList "injectNoInlining" [
-      injectPreservesNonFunctionLines
-      injectAttributeCountMatchesFunctionCount
     ]
     testList "shouldExcludeFile" [
       emptyPatternsExcludeNothing

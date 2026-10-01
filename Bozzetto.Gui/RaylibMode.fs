@@ -60,8 +60,6 @@ module RaylibMode =
     | ResizeR of int
     | CycleTheme
     | CopySelection
-    | HotReloadWatchAll
-    | HotReloadUnwatchAll
     | EnableLiveTesting
     | DisableLiveTesting
     | CycleRunPolicy
@@ -132,8 +130,6 @@ module RaylibMode =
         | Some (UiAction.ResizeV d) -> Some (ResizeV d)
         | Some (UiAction.ResizeR d) -> Some (ResizeR d)
         | Some (UiAction.CycleTheme) -> Some CycleTheme
-        | Some (UiAction.HotReloadWatchAll) -> Some HotReloadWatchAll
-        | Some (UiAction.HotReloadUnwatchAll) -> Some HotReloadUnwatchAll
         | Some (UiAction.EnableLiveTesting) -> Some EnableLiveTesting
         | Some (UiAction.DisableLiveTesting) -> Some DisableLiveTesting
         | Some (UiAction.CycleRunPolicy) -> Some CycleRunPolicy
@@ -434,12 +430,6 @@ module RaylibMode =
             selEnd <- None
             selecting <- false
           | _ -> ()
-        | HotReloadWatchAll ->
-          if lastSessionId.Length > 0 then
-            client.PostAsync(sprintf "%s/api/sessions/%s/hotreload/watch-all" baseUrl lastSessionId, new System.Net.Http.StringContent("{}", System.Text.Encoding.UTF8, "application/json")) |> ignore
-        | HotReloadUnwatchAll ->
-          if lastSessionId.Length > 0 then
-            client.PostAsync(sprintf "%s/api/sessions/%s/hotreload/unwatch-all" baseUrl lastSessionId, new System.Net.Http.StringContent("{}", System.Text.Encoding.UTF8, "application/json")) |> ignore
         | EnableLiveTesting ->
           DaemonClient.dispatchAction client baseUrl "enableLiveTesting" None |> ignore
         | DisableLiveTesting ->

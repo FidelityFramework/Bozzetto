@@ -46,9 +46,7 @@ module EvaluableSubmission =
 
   /// Classify one eval submission — the raw code an editor or MCP call sends
   /// for a single eval, with no FSI `;;` in it (that is appended later on
-  /// the eval path; see AppState.fs). Decided by PARSING with FCS (the same
-  /// `Fantomas.FCS.Parse.parseFile` entry point `noInliningTargets` already
-  /// uses just above this module, in CompilationContext.fs) rather than
+  /// the eval path; see AppState.fs). Decided by parsing with FCS rather than
   /// scanning source text, so a string literal or comment that merely
   /// mentions "module" can never be misread as a real header.
   ///
@@ -114,7 +112,7 @@ module EvaluableSubmission =
 /// Runs FIRST in commonMiddleware (see ActorCreation.fs): it never rewrites
 /// code, it only ever short-circuits, so putting it ahead of every
 /// code-rewriting middleware (FsiCompatibility, ViBind, OpenDirective,
-/// ComputationExpression, NonBlockingRun, HotReloading) means an Executable
+/// ComputationExpression, TestDiscovery) means an Executable
 /// submission passes through completely untouched — `next` is called with
 /// the request unmodified — and a NothingToEvaluate submission skips all of
 /// that work instead of being rewritten and still failing at FSI.

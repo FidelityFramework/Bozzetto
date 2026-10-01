@@ -1004,7 +1004,7 @@ let describeMissingDlls (missing: MissingDll list) : string =
     (missing |> List.map describe |> String.concat "\n")
     notBuiltHint
 
-let solutionToFsiArgs (logger: ILogger) (_useAsp: bool) (hotReload: bool) sln =
+let solutionToFsiArgs (logger: ILogger) (_useAsp: bool) sln =
   let orderedProjects = topoSortByProjectReferences sln.Projects
   let projectDlls = orderedProjects |> Seq.map _.TargetPath
 

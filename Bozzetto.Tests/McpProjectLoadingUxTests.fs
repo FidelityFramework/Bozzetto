@@ -62,12 +62,12 @@ module FormatUnknownWorkflowErrorTests =
   [<Tests>]
   let tests =
     testList "CreateSessionUx.formatUnknownWorkflowError" [
-      testCase "WHY — names the offending value and lists all three valid aliases, matching switch_workflow's own wording" <| fun _ ->
+      testCase "WHY — names the offending value and lists both supported workflows, matching switch_workflow's own wording" <| fun _ ->
         let msg = CreateSessionUx.formatUnknownWorkflowError "typo123"
         msg |> Expect.stringContains "should echo the bad value" "typo123"
         msg |> Expect.stringContains "should mention interactive" "interactive"
         msg |> Expect.stringContains "should mention livetesting" "livetesting"
-        msg |> Expect.stringContains "should mention hotreload" "hotreload"
+        msg.Contains("hotreload") |> Expect.isFalse "retired workflow is not advertised"
     ]
 
 module IsExactDuplicateSessionTests =

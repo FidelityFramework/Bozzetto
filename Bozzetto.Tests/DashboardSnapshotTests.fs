@@ -186,7 +186,6 @@ let liveTestingVisibilityTests = testList "live testing visibility" [
       GetElmRegionsForSession = fun _ -> None
       GetPreviousSessions = fun () -> System.Threading.Tasks.Task.FromResult([])
       GetAllSessions = fun () -> System.Threading.Tasks.Task.FromResult([])
-      GetHotReloadState = fun _ -> System.Threading.Tasks.Task.FromResult None
       GetWarmupContext = fun _ -> System.Threading.Tasks.Task.FromResult None
       GetWarmupProgress = fun _ -> ""
       GetSessionTestSummary = fun _ -> None
@@ -309,41 +308,34 @@ let liveTestingVisibilityTests = testList "live testing visibility" [
     html |> Expect.stringContains "failed count must use red color" "--fg-red"
   }
 
-  // ─── Item 4: the worker-data cache must skip the three expensive fetches ──
-  testTask "cached worker data skips eval-stats/hot-reload/warmup fetches" {
+  // ─── Item 4: the worker-data cache must skip the two expensive fetches ──
+  testTask "cached worker data skips eval-stats/warmup fetches" {
     let sid = WorkerProtocol.SessionId.validate "session-1" |> Result.defaultValue (WorkerProtocol.SessionId.newId ())
     let mutable evalFetches = 0
-    let mutable hrFetches = 0
     let mutable wCtxFetches = 0
     let queries =
       { mkQueries (Bozzetto.Features.LiveTestActivity.LiveTestActivity.Settled (tally 0 0)) with
           GetEvalStats = fun _ ->
             evalFetches <- evalFetches + 1
             System.Threading.Tasks.Task.FromResult Bozzetto.Affordances.EvalStats.empty
-          GetHotReloadState = fun _ ->
-            hrFetches <- hrFetches + 1
-            System.Threading.Tasks.Task.FromResult None
           GetWarmupContext = fun _ ->
             wCtxFetches <- wCtxFetches + 1
             System.Threading.Tasks.Task.FromResult None }
     let cache : DashboardWorkerCache = {
       SessionId = sid
       EvalStats = Bozzetto.Affordances.EvalStats.empty
-      HotReloadState = None
       WarmupContext = None
       FrictionPanel = None
     }
-    // Uncached: all three fetches run.
+    // Uncached: all remaining fetches run.
     let! _, _, _, _ =
       buildDashboardSnapshot queries (mkInfra ()) sid (WorkerProtocol.SessionId.newId ()) "" "default" None
     evalFetches |> Expect.equal "uncached push fetches eval stats" 1
-    hrFetches |> Expect.equal "uncached push fetches hot-reload state" 1
     wCtxFetches |> Expect.equal "uncached push fetches warmup context" 1
-    // Cached (same session): all three fetches are skipped.
+    // Cached (same session): all remaining fetches are skipped.
     let! _, _, _, _ =
       buildDashboardSnapshot queries (mkInfra ()) sid (WorkerProtocol.SessionId.newId ()) "" "default" (Some cache)
     evalFetches |> Expect.equal "cached push must not re-fetch eval stats" 1
-    hrFetches |> Expect.equal "cached push must not re-fetch hot-reload state" 1
     wCtxFetches |> Expect.equal "cached push must not re-fetch warmup context" 1
   }
 ]
@@ -582,7 +574,7 @@ let shellStructureTests = testList "shell structure (replaces browser existence 
     SessionState = "ready"; SessionId = "test-id"; WorkingDir = @"C:\Code"
     WarmupProgress = ""; WorkflowLabel = "REPL"; EvalStats = { Count = 0; AvgMs = 0.0; MinMs = 0.0; MaxMs = 0.0; Sparkline = ""; P50Ms = None; P95Ms = None }
     ThemeName = "default"; ConnectionLabel = None; ConnectionState = DashboardConnectionState.Connected
-    HotReloadPanel = Elem.div [] []; SessionContextPanel = Elem.div [] []
+    SessionContextPanel = Elem.div [] []
     OutputPanel = Elem.div [] []
     SessionsPanel = Elem.div [] []; SessionPicker = Elem.div [] []
     ThemePicker = Elem.div [] []; ThemeVars = Elem.div [] []
@@ -1156,7 +1148,7 @@ let datastarComplianceTests = testList "Datastar compliance (synthesis 5.4)" [
       SessionState = "ready"; SessionId = "test-id"; WorkingDir = @"C:\Code"
       WarmupProgress = ""; WorkflowLabel = "REPL"; EvalStats = { Count = 0; AvgMs = 0.0; MinMs = 0.0; MaxMs = 0.0; Sparkline = ""; P50Ms = None; P95Ms = None }
       ThemeName = "default"; ConnectionLabel = None; ConnectionState = DashboardConnectionState.Connected
-      HotReloadPanel = Elem.div [] []; SessionContextPanel = Elem.div [] []
+      SessionContextPanel = Elem.div [] []
       OutputPanel = Elem.div [] []
       SessionsPanel = Elem.div [] []; SessionPicker = Elem.div [] []
       ThemePicker = Elem.div [] []; ThemeVars = Elem.div [] []
@@ -1199,7 +1191,7 @@ let datastarComplianceTests = testList "Datastar compliance (synthesis 5.4)" [
       SessionState = "ready"; SessionId = "t"; WorkingDir = "C:\\"
       WarmupProgress = ""; WorkflowLabel = "REPL"; EvalStats = { Count = 0; AvgMs = 0.0; MinMs = 0.0; MaxMs = 0.0; Sparkline = ""; P50Ms = None; P95Ms = None }
       ThemeName = "default"; ConnectionLabel = None; ConnectionState = DashboardConnectionState.Connected
-      HotReloadPanel = Elem.div [] []; SessionContextPanel = Elem.div [] []
+      SessionContextPanel = Elem.div [] []
       OutputPanel = Elem.div [] []
       SessionsPanel = Elem.div [] []; SessionPicker = Elem.div [] []
       ThemePicker = Elem.div [] []; ThemeVars = Elem.div [] []
@@ -1221,7 +1213,7 @@ let snapshotCompletenessTests = testList "Snapshot field completeness (synthesis
       SessionState = state; SessionId = sessionId; WorkingDir = workingDir
       WarmupProgress = ""; WorkflowLabel = "REPL"; EvalStats = { Count = 7; AvgMs = 42.0; MinMs = 1.0; MaxMs = 100.0; Sparkline = ""; P50Ms = None; P95Ms = None }
       ThemeName = "monokai"; ConnectionLabel = Some "🌐 2 🤖 1"; ConnectionState = DashboardConnectionState.Connected
-      HotReloadPanel = Elem.div [] []; SessionContextPanel = Elem.div [] []
+      SessionContextPanel = Elem.div [] []
       OutputPanel = Elem.div [] []
       SessionsPanel = Elem.div [] []; SessionPicker = Elem.div [] []
       ThemePicker = Elem.div [] []; ThemeVars = Elem.div [] []

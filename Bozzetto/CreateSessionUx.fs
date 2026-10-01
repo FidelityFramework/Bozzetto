@@ -15,15 +15,14 @@ module CreateSessionUx =
   /// typo instead — Finding #6) so the two tools can never drift on
   /// wording for the same mistake.
   let formatUnknownWorkflowError (raw: string) : string =
-    sprintf "Error: unknown workflow '%s'. Valid values: 'interactive' (REPL), 'livetesting' (Live Testing), 'hotreload' (Hot Reload)" raw
+    sprintf "Error: unknown workflow '%s'. Valid values: 'interactive' (REPL), 'livetesting' (Live Testing)" raw
 
   /// Parse `create_session`'s `workflow` argument, REJECTING an
   /// unrecognized value instead of silently defaulting to Interactive.
   /// `switch_workflow` already rejects a typo loudly via `tryOfString`
   /// (`SessionWorkflow.ofString` — what `create_session` used before this —
   /// exists specifically to default unrecognized input, so a typo like
-  /// "hotreoad" silently became a plain REPL and the agent believed it got
-  /// hot reload; Finding #6). A BLANK value means "not specified" and
+  /// a misspelled workflow silently became a plain REPL). A BLANK value means "not specified" and
   /// legitimately defaults to Interactive — that is the documented default
   /// for an omitted argument, not a typo, and `tryOfString ""` already
   /// returns `None` so it must be special-cased here rather than rejected.

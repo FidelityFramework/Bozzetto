@@ -120,14 +120,9 @@ let private genError =
       return BozzettoError.WarmupContextFailed(s, r)
     }
     gen {
-      let! p = genStr
-      let! r = genStr
-      return BozzettoError.HotReloadFailed(p, r)
-    }
-    gen {
       let! s = genStr
       let! r = genStr
-      return BozzettoError.HotReloadStateError(s, r)
+      return BozzettoError.LoadedStateStale(s, r)
     }
     gen {
       let! c = Gen.choose (1, 10)

@@ -15,9 +15,6 @@ open Bozzetto.Server.DashboardFragments
 // `data-testid` vocabulary a demos-side DU mirrors — so a renamed/restructured
 // control breaks a test here, not a demo recording.
 
-let private runningProject : Bozzetto.ProjectLoading.ClassifiedProject =
-  { Path = "MyApp.fsproj"; Role = Bozzetto.ProjectLoading.ProjectRole.Executable; PackageRefs = [] }
-
 let private mkSession (id: string) (app: Bozzetto.AppRun.AppRunState) (projectRoles: Bozzetto.ProjectLoading.ClassifiedProject list) : ParsedSession =
   { Id = WorkerProtocol.SessionId.validate id |> Result.defaultValue (WorkerProtocol.SessionId.newId ())
     Status = SessionDisplayStatus.Running
@@ -38,7 +35,7 @@ let private mkSnap () : DashboardSnapshot =
     WarmupProgress = ""; WorkflowLabel = "REPL"
     EvalStats = { Count = 0; AvgMs = 0.0; MinMs = 0.0; MaxMs = 0.0; Sparkline = ""; P50Ms = None; P95Ms = None }
     ThemeName = "default"; ConnectionLabel = None; ConnectionState = DashboardConnectionState.Connected
-    HotReloadPanel = Elem.div [] []; SessionContextPanel = Elem.div [] []
+    SessionContextPanel = Elem.div [] []
     OutputPanel = renderOutputForSession "0a2b3c4d" 0 [] "No output yet"
     SessionsPanel = Elem.div [] []; SessionPicker = Elem.div [] []
     ThemePicker = Elem.div [] []; ThemeVars = Elem.div [] []
@@ -56,21 +53,6 @@ let private mkSnap () : DashboardSnapshot =
 
 [<Tests>]
 let dashboardTestIdTests = testList "Dashboard data-testid hooks" [
-
-  testCase "WHY — a runnable session's Run App button carries data-testid=\"run-app\" so a demo can start the app without matching the ▶ glyph" <| fun _ ->
-    let sessions = [ mkSession "0a2b3c4d" AppRun.AppRunState.NotRunning [ runningProject ] ]
-    let html = renderSessionsForSession "0a2b3c4d" sessions false |> renderNode
-    html |> Expect.stringContains "run-app testid present" "data-testid=\"run-app\""
-
-  testCase "WHY — a running app's Stop App button carries data-testid=\"stop-app\" so a demo can stop the app without matching the ■ glyph" <| fun _ ->
-    let running =
-      AppRun.AppRunState.Running
-        { RunId = "r1"; Project = "MyApp.fsproj"; EntryPoint = "Program"
-          Endpoint = AppRun.AppEndpoint.Http ("http://localhost:5000", [])
-          StartedAt = DateTime.UtcNow }
-    let sessions = [ mkSession "0a2b3c4d" running [ runningProject ] ]
-    let html = renderSessionsForSession "0a2b3c4d" sessions false |> renderNode
-    html |> Expect.stringContains "stop-app testid present" "data-testid=\"stop-app\""
 
   testCase "WHY — every session row carries data-testid=\"session-card\" so a demo can select a specific session by id, not by row position" <| fun _ ->
     let sessions = [ mkSession "0a2b3c4d" AppRun.AppRunState.NotRunning [] ]

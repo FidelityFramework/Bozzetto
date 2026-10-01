@@ -27,22 +27,6 @@ let ofResponse (response: LiveTestingStatusResponse) : LiveTestingState =
   | true -> Enabled
   | false -> Disabled
 
-/// The daemon's hot-reload watch state for one session, once decoded off
-/// the wire — never a bare watchedCount int downstream of `ofHotReloadResponse`.
-type HotReloadWatchState =
-  | NoFilesWatched
-  | SomeFilesWatched of count: int
-
-/// Shape of the raw JSON body from `GET /api/sessions/{sid}/hotreload` —
-/// only the field this suite actually reads.
-type HotReloadStatusResponse =
-  abstract watchedCount: int
-
-let ofHotReloadResponse (response: HotReloadStatusResponse) : HotReloadWatchState =
-  match response.watchedCount with
-  | 0 -> NoFilesWatched
-  | n -> SomeFilesWatched n
-
 /// What a proof attempt actually established — never a bare bool/exception,
 /// so a caller can report exactly why an interaction wasn't proven.
 type ProofOutcome =

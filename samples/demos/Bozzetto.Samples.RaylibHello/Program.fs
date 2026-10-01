@@ -1,12 +1,11 @@
 // ============================================================
 //  🎮  Raylib Hello World — Bozzetto Edition
-//  A GPU-rendered window that hot-reloads when you save.
-//  Change the color, the text, the layout — save — it's live.
-//  No restart. The window keeps running.
+//  A GPU-rendered window with an animated drawing loop.
+//  Change the color, text, or layout, then rebuild and restart.
 // ============================================================
 //
 //  Dependencies: Raylib-cs  (in Directory.Packages.props)
-//  Run via: boz gui   (or load in a Bozzetto session)
+//  Run this sample project directly after building its dependencies.
 
 module Bozzetto.Samples.RaylibHello.Program
 
@@ -15,13 +14,6 @@ module Bozzetto.Samples.RaylibHello.Program
 open Raylib_cs
 open System.Numerics
 open Bozzetto.Samples.DemoEnv
-
-// ── Everything that changes goes here — make it a function ──
-// Bozzetto hot-patches function bodies at runtime (via Harmony).
-// Put your rendering logic in a top-level function and it will
-// update live when you save.
-
-// ┌─ HOT RELOAD ZONE: edit anything below, save, see it update ─┐
 
 let backgroundColor = Color.RayWhite   // try: Color.SkyBlue, Color.DarkGray
 
@@ -92,17 +84,9 @@ let main _argv =
   0
 
 // ── What to try ──
-// 1. Change `backgroundColor` to Color.DarkPurple — save — instant!
-// 2. Change the title string — save — updates in the running window
+// Rebuild and restart after edits to try each change:
+// 1. Change `backgroundColor` to Color.DarkPurple
+// 2. Change the title string
 // 3. Add a second animated shape in `drawFrame`
 // 4. Try Raylib.DrawRectangle, Raylib.DrawTriangle, Raylib.DrawLine
 // 5. Change the animation formula — sin → cos, multiply speed
-
-// ── Bozzetto hot reload: how it works here ──
-// • You save the file
-// • Bozzetto sends it to F# Interactive (~100ms)
-// • Harmony patches the `drawFrame` function pointer in-memory
-// • Next frame, the game loop calls the NEW `drawFrame`
-// • No window close. No app restart. Zero interruption.
-// This is the same mechanism used for web app hot reload —
-// one runtime, patched live.

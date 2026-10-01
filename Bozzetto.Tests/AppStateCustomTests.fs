@@ -22,7 +22,6 @@ let private makeState customMap : AppState =
     Diagnostics = Unchecked.defaultof<_>
     WarmupFailures = []
     WarmupContext = Unchecked.defaultof<_>
-    HotReloadState = Unchecked.defaultof<_>
   }
 
 [<Tests>]
@@ -101,7 +100,7 @@ let appStateCustomTests =
       let state = makeState Map.empty
       let files = mkFiles []
       let updated = AppStateCustom.set openedFileKey files state
-      (AppStateCustom.tryGetFeature<Bozzetto.Middleware.HotReloadCore.State> openedFileKey updated) |> Expect.isNone "wrong type returns None"
+      (AppStateCustom.tryGetFeature<string> openedFileKey updated) |> Expect.isNone "wrong type returns None"
   ]
 
 [<Tests>]

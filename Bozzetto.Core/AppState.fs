@@ -83,9 +83,6 @@ type StartupConfig = {
   StartupTimestamp: DateTime
   StartupProfileLoaded: string option
 }
-  with
-    /// Backward-compatible accessor for code that still checks the bool.
-    member this.HotReloadEnabled = WorkflowTypes.SessionWorkflow.isHotReloadActive this.Workflow
 
 /// A warm-up failure — alias for the rich WarmupOpenFailure type.
 type WarmupFailure = WarmupOpenFailure
@@ -103,7 +100,6 @@ type AppState = {
   Diagnostics: Features.DiagnosticsStore.T
   WarmupFailures: WarmupFailure list
   WarmupContext: WarmupContext
-  HotReloadState: HotReloadState.T
 }
 
 /// Contract documentation for AppState.Custom.
@@ -112,7 +108,6 @@ type AppState = {
 ///
 /// REGISTERED KEYS (update this list when adding a key):
 ///   "openedFiles"  | OpenDirective.OpenedFiles  | Bozzetto.Middleware.Directives.OpenDirective
-///   "hotReload"    | HotReloadCore.State         | Bozzetto.Middleware.HotReloadCore
 ///
 /// CONVENTION FOR NEW KEYS:
 ///   1. Define [<Literal>] key constant in the owning module.
@@ -698,15 +693,15 @@ let private evalAsChoice (session: FsiSession.IFsiSession) (code: string) (ct: C
 /// Creates a fresh FSI session with warm-up: loads startup files and opens namespaces.
 /// The CancellationToken is passed through to FSI EvalInteraction calls so that
 /// warm-up can be cancelled if it takes too long (e.g. a stuck module initializer).
-let createFsiSession (kind: SessionKinds.FsiSessionKind) (logger: ILogger) (outStream: TextWriter) (useAsp: bool) (originalSln: Solution) (sln: Solution) (autoOpenNamespaces: bool) (hotReload: bool) (ct: CancellationToken) (onProgress: (int * int * string) -> unit) =
+let createFsiSession (kind: SessionKinds.FsiSessionKind) (logger: ILogger) (outStream: TextWriter) (useAsp: bool) (originalSln: Solution) (sln: Solution) (autoOpenNamespaces: bool) (ct: CancellationToken) (onProgress: (int * int * string) -> unit) =
   async {
     match kind with
     | SessionKinds.Isolated -> invalidOp ExternalFSharpService.message
     | SessionKinds.InProcess -> ()
     let warmupStartedAt = System.DateTimeOffset.UtcNow
     let sw = System.Diagnostics.Stopwatch.StartNew()
-    let args = solutionToFsiArgs logger useAsp hotReload sln
-    let replayArgs = solutionToFsiArgs logger useAsp hotReload originalSln
+    let args = solutionToFsiArgs logger useAsp sln
+    let replayArgs = solutionToFsiArgs logger useAsp originalSln
     let recorder = new TextWriterRecorder(outStream)
 
     logger.LogInfo (sprintf "  Creating FSI session (%A) with %d args..." kind (Array.length args))
@@ -735,20 +730,14 @@ let createFsiSession (kind: SessionKinds.FsiSessionKind) (logger: ILogger) (outS
           match fsiInitErrors.Length > 0 with
           | true -> logger.LogWarning (sprintf "  FSI init warnings: %s" fsiInitErrors)
           | false -> ()
-          return (new FsiSession.InProcessFsiSession(raw, SessionAgent.agentInitOf sln hotReload (SessionAgent.reflectionSettingsFor System.Environment.CurrentDirectory)) :> FsiSession.IFsiSession)
+          return (new FsiSession.InProcessFsiSession(raw, SessionAgent.agentInitOf sln) :> FsiSession.IFsiSession)
         }
       | SessionKinds.Isolated -> async { return invalidOp ExternalFSharpService.message }
     logger.LogInfo (sprintf "  FSI session created in %dms, loading startup files..." sw.ElapsedMilliseconds)
     onProgress(1, 4, "FSI session created")
 
 
-    // Chesterton's fence: evaluate the embedded base.fsx FIRST so the
-    // feature-gate flags (_BozzettoHotReload, _BozzettoCompExpr) are bound before
-    // any user code runs. The middleware gates read these via
-    // Session.TryFindBoundValue; if they are never bound, hot-reload detouring
-    // and computation-expression rewriting silently no-op (the P0 hot-reload
-    // gap: HotReload sessions never detoured because _BozzettoHotReload was
-    // unbound). getBaseConfigString() was dead code — wire it here.
+    // Initialize the explicit retained F# computation-expression feature gate.
     let baseConfig =
       try
         Bozzetto.Utils.Configuration.getBaseConfigString()
@@ -1026,7 +1015,7 @@ let private observeEvalLatencyToHealthWatch (elapsedMs: float) : unit =
 let observeEvalLatency (observe: float -> unit) (elapsedMs: float) : unit =
   observe elapsedMs
 
-let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger) (initCustomData: Map<string, obj>) outStream useAsp (originalSln: Solution) (shadowDir: string option) (autoOpenNamespaces: bool) (hotReload: bool) (onEvent: Events.BozzettoEvent -> unit) (pipelineBuildFn: PipelineBuildFn) (sln: Solution) =
+let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger) (initCustomData: Map<string, obj>) outStream useAsp (originalSln: Solution) (shadowDir: string option) (autoOpenNamespaces: bool) (workflow: WorkflowTypes.SessionWorkflow) (onEvent: Events.BozzettoEvent -> unit) (pipelineBuildFn: PipelineBuildFn) (sln: Solution) =
   match sessionKind with
   | SessionKinds.Isolated -> invalidOp ExternalFSharpService.message
   | SessionKinds.InProcess -> ()
@@ -1374,7 +1363,7 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
             // StartupConfig is NOT a closure capture: it is built in init()
             // after warmup. When Active, read the live config so a reset
             // preserves the fields the live config genuinely carries — e.g.
-            // AutoOpenNamespaces, HotReloadEnabled (via Workflow), and the
+            // AutoOpenNamespaces, Workflow, and the
             // profile-loaded flag (StartupProfileLoaded); when Faulted
             // (StartupConfig was None in the tombstone) fall back to the same
             // defaults the old code used.
@@ -1386,10 +1375,6 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
               startupConfig
               |> Option.map (fun cfg -> cfg.AutoOpenNamespaces)
               |> Option.defaultValue true
-            let hotReload =
-              startupConfig
-              |> Option.map (fun cfg -> cfg.HotReloadEnabled)
-              |> Option.defaultValue false
             // Immutable reset context: on the live path these come off the
             // current st (they may have evolved through prior hard resets);
             // on the Faulted path the closure captures ARE today's tombstone
@@ -1408,7 +1393,6 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
                 resetOriginalSolution
                 resetSolution
                 autoOpenNamespaces
-                hotReload
                 softResetCts.Token
                 onProgress
             softResetCts.Dispose()
@@ -1419,7 +1403,7 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
                 // Recovery from Faulted: start fresh — same field values the
                 // deleted faulted tombstone held (Custom = initCustomData,
                 // Diagnostics empty, WarmupFailures [], WarmupContext empty,
-                // HotReloadState empty, StartupConfig None, plus the closure
+                // StartupConfig None, plus the closure
                 // solution/shadow context).
                 { Solution = sln
                   OriginalSolution = originalSln
@@ -1431,7 +1415,6 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
                   Diagnostics = Features.DiagnosticsStore.empty
                   WarmupFailures = warmupFailures
                   WarmupContext = warmupCtx
-                  HotReloadState = HotReloadState.empty
                   StartupConfig = None }
             let newSt =
               match activeSt with
@@ -1472,10 +1455,6 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
               startupConfig
               |> Option.map (fun cfg -> cfg.AutoOpenNamespaces)
               |> Option.defaultValue true
-            let hotReload =
-              startupConfig
-              |> Option.map (fun cfg -> cfg.HotReloadEnabled)
-              |> Option.defaultValue false
             let resetOriginalSolution =
               match activeSt with
               | Some st -> st.OriginalSolution
@@ -1602,7 +1581,6 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
                       resetOriginalSolution
                       newSln
                       autoOpenNamespaces
-                      hotReload
                       warmupCts.Token
                       onProgress)
                   |> Ok
@@ -1636,7 +1614,7 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
             let newSt =
               match activeSt with
               | Some st ->
-                // Live path: preserve Custom/HotReloadState/StartupConfig and
+                // Live path: preserve Custom/StartupConfig and
                 // swap the session-bearing fields.
                 { st with
                     Session = newSession
@@ -1659,7 +1637,6 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
                   Diagnostics = Features.DiagnosticsStore.empty
                   WarmupFailures = warmupFailures
                   WarmupContext = warmupCtx
-                  HotReloadState = HotReloadState.empty
                   StartupConfig = None }
             logger.LogInfo "✅ Hard reset complete"
             publishSnapshot newSt Idle evalStats
@@ -1712,7 +1689,6 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
               originalSln
               sln
               autoOpenNamespaces
-              hotReload
               initCts.Token
               onProgress
           initCts.Dispose()
@@ -1729,13 +1705,11 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
           // Evaluate startup profile if found
           let startupProfileResult =
             let workingDir = System.Environment.CurrentDirectory
-            // Registers with the file-watcher's own agent so AppHolds learns
-            // what a #load'ed app calls (evalFn used to skip middleware).
+            // Discover tests from a successful startup evaluation.
             let evalFn code =
               FsiSession.evalOrThrow fsiSession code CancellationToken.None
-              let detours = match hotReload with true -> HostAgent.DetourPolicy.ApplyDetours | false -> HostAgent.DetourPolicy.RegisterOnly
               fsiSession.AfterEval
-                { EvaluatedCode = code; Detours = detours; Discovery = HostAgent.DiscoveryPolicy.WhenChanged; IsFileSave = false }
+                { Discovery = HostAgent.DiscoveryPolicy.WhenChanged }
               |> ignore
             let logFn msg = logger.LogInfo msg
             let outcome = StartupProfile.applyIfPresent workingDir evalFn logFn
@@ -1761,12 +1735,11 @@ let mkAppStateActor (sessionKind: SessionKinds.FsiSessionKind) (logger: ILogger)
             Diagnostics = Features.DiagnosticsStore.empty
             WarmupFailures = warmupFailures
             WarmupContext = warmupCtx
-            HotReloadState = HotReloadState.empty
             StartupConfig = Some {
               CommandLineArgs = args
               LoadedProjects = sln.Projects |> List.map (fun p -> p.ProjectFileName)
               WorkingDirectory = System.Environment.CurrentDirectory
-              Workflow = WorkflowTypes.SessionWorkflow.fromHotReloadBool hotReload
+              Workflow = workflow
               AutoOpenNamespaces = autoOpenNamespaces
               AspireDetected = useAsp
               StartupTimestamp = DateTime.UtcNow

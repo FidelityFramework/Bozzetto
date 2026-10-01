@@ -1021,7 +1021,7 @@ let httpApiRoutingTests =
     // leave two sessions registered for this directory — the exact
     // "Multiple sessions match workingDirectory" failure mode the route was
     // chosen to avoid.
-    Integration.retireFSharp <| testTask "POST /api/sessions/{sid}/workflow switches Interactive to HotReload on the SAME session, spawn-first" {
+    Integration.retireFSharp <| testTask "POST /api/sessions/{sid}/workflow switches Interactive to LiveTesting on the SAME session, spawn-first" {
       let port = reserveLoopbackPort ()
       let! proc, client =
         startDaemonWithArgs port repoRoot []
@@ -1049,7 +1049,7 @@ let httpApiRoutingTests =
         sessionsBeforeDoc.Dispose()
 
         let! switchStatus, switchBody =
-          postJson client (sprintf "/api/sessions/%s/workflow" sessionId) {| workflow = "hotreload" |}
+          postJson client (sprintf "/api/sessions/%s/workflow" sessionId) {| workflow = "livetesting" |}
         switchStatus |> Expect.equal "workflow switch accepted" 200
         let switchDoc = JsonDocument.Parse(switchBody: string)
         switchDoc.RootElement.GetProperty("success").GetBoolean()
@@ -1057,7 +1057,7 @@ let httpApiRoutingTests =
         switchDoc.RootElement.GetProperty("sessionId").GetString()
         |> Expect.equal "the switch replies with the SAME session id — spawn-first restarts in place, it never forks" sessionId
         switchDoc.RootElement.GetProperty("workflow").GetString()
-        |> Expect.equal "the switch reports the target workflow's label" "Hot Reload"
+        |> Expect.equal "the switch reports the target workflow's label" "Live Testing"
         switchDoc.Dispose()
 
         // spawn-first replies as soon as the replacement worker is accepted,
@@ -1081,13 +1081,13 @@ let httpApiRoutingTests =
             matching.Length = 1
             && matching.[0].GetProperty("id").GetString() = sessionId
             && matching.[0].GetProperty("status").GetString() = "Ready"
-            && matching.[0].GetProperty("workflowLabel").GetString() = "Hot Reload"
+            && matching.[0].GetProperty("workflowLabel").GetString() = "Live Testing"
           doc.Dispose()
 
         settled
         |> Expect.isTrue (
           sprintf
-            "the SAME session id should settle Ready in Hot Reload after the switch — a fork would leave two sessions for one directory. Last /api/sessions: %s"
+            "the SAME session id should settle Ready in Live Testing after the switch — a fork would leave two sessions for one directory. Last /api/sessions: %s"
             lastBody)
       finally
         client.Dispose()
@@ -1106,7 +1106,7 @@ let httpApiLiveTestingCompiledProjectTests =
   //
   // The group is shared with McpToolOutcomeTests' live-testing suite: they wait
   // on the same kind of resource and must not overlap each other either. Same
-  // mechanism the Harmony suites already use.
+  // mechanism used by other process-owning suites.
   testSequencedGroup LiveTestingWorkerSuites.groupName <|
     Integration.retiredFSharpList "HTTP API compiled live testing" [
     testTask "editing a compiled F# file reruns tests against rebuilt output without an explicit rerun" {

@@ -34,6 +34,15 @@ type WatchConfig = {
   DebounceMs: int
 }
 
+/// Resource and duplicate-notification policy for ordinary file watching.
+type WatcherOptions = {
+  BufferSizeBytes: int
+  DuplicateChangeGuardMs: int
+}
+
+module WatcherOptions =
+  let defaults = { BufferSizeBytes = 65536; DuplicateChangeGuardMs = 500 }
+
 /// Pure: check if a file path matches any exclusion glob pattern.
 /// Supports ** (any path segments), * (any chars in segment).
 let shouldExcludeFile (patterns: string list) (filePath: string) : bool =
@@ -223,7 +232,7 @@ type FileChangeAction =
   | SoftReset
   /// The watch buffer overflowed under `directory` — Bozzetto cannot know
   /// which files changed, so it resets the session as a precaution AND
-  /// must say why (see Features.ReloadBroadcast.watcherOverflow). Kept
+  /// must say why. Kept
   /// distinct from `SoftReset` so a consumer never reports "project file
   /// changed" for a save it never actually saw.
   | RecoverFromOverflow of directory: string
@@ -315,7 +324,7 @@ let classifyWatcherError (ex: exn) : string * string =
   match ex with
   | :? InternalBufferOverflowException ->
     "buffer overflow",
-    "The OS-level watch buffer overflowed under heavy file-change volume — raise DevReload.FileWatcherBufferSizeBytes if this recurs."
+    "The OS-level watch buffer overflowed under heavy file-change volume — raise the file watcher's BufferSizeBytes if this recurs."
   | :? UnauthorizedAccessException
   | _ when ex.Message.Contains("denied", StringComparison.OrdinalIgnoreCase) ->
     "permission denied",
@@ -440,7 +449,7 @@ let startPrunedWatcher
 /// Returns a dispose function that stops all watchers.
 let start
   (config: WatchConfig)
-  (devConfig: DevReload.DevReloadConfig)
+  (options: WatcherOptions)
   (onRebuildNeeded: FileChange -> unit)
   : IDisposable =
 
@@ -456,9 +465,9 @@ let start
         cs)
     Log.info "FileWatcher debounce fired: %d pending changes" changes.Length
     for c in changes do
-      match shouldSuppressRecompile devConfig.DoubleCompileGuardMs lastCompiled c with
+      match shouldSuppressRecompile options.DuplicateChangeGuardMs lastCompiled c with
       | true ->
-        Log.info "FileWatcher suppressed duplicate compile for %s (within %dms guard)" c.FilePath devConfig.DoubleCompileGuardMs
+        Log.info "FileWatcher suppressed duplicate compile for %s (within %dms guard)" c.FilePath options.DuplicateChangeGuardMs
       | false ->
         Instrumentation.fileWatcherChanges.Add(1L)
         let activity =
@@ -496,7 +505,7 @@ let start
           // Overflow kind, so `fileChangeAction` routes it to a recovery
           // reset rather than pretending it was an ordinary edit.
           enqueue { FilePath = overflowDir; Kind = FileChangeKind.Overflow; Timestamp = DateTimeOffset.UtcNow }
-        Some (startPrunedWatcher dir config.Extensions devConfig.FileWatcherBufferSizeBytes handler onOverflow)
+        Some (startPrunedWatcher dir config.Extensions options.BufferSizeBytes handler onOverflow)
       | false ->
         Log.debug "[FileWatcher] Skipping %s — directory does not exist" dir
         None)

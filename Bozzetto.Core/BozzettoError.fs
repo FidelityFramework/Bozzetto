@@ -158,9 +158,8 @@ type BozzettoError =
   // ── Warm-up ──
   | WarmupOpenFailed of name: string * reason: string
   | WarmupContextFailed of sessionId: string * reason: string
-  // ── Hot reload ──
-  | HotReloadFailed of path: string * reason: string
-  | HotReloadStateError of sessionId: string * reason: string
+  // ── Loaded definitions ──
+  | LoadedStateStale of sessionId: string * reason: string
   // ── Running apps ──
   | AppRunFailed of project: string * reason: string
   // ── Restart policy ──
@@ -244,10 +243,8 @@ module BozzettoError =
       sprintf "Failed to open '%s' during warm-up: %s" name reason
     | BozzettoError.WarmupContextFailed(id, reason) ->
       sprintf "Failed to get warmup context for session '%s': %s" id reason
-    | BozzettoError.HotReloadFailed(path, reason) ->
-      sprintf "Hot reload failed for '%s': %s. Check the file for syntax errors." path reason
-    | BozzettoError.HotReloadStateError(id, reason) ->
-      sprintf "Hot reload state error in session '%s': %s" id reason
+    | BozzettoError.LoadedStateStale(id, reason) ->
+      sprintf "Loaded definition is stale in session '%s': %s" id reason
     | BozzettoError.AppRunFailed("", reason) ->
       sprintf "Could not run the app: %s" reason
     | BozzettoError.AppRunFailed(project, reason) ->
@@ -289,7 +286,6 @@ module BozzettoError =
     | BozzettoError.HardResetFailed _ -> LogLevel.Error
     | BozzettoError.BuildFailed _ -> LogLevel.Error
     | BozzettoError.ScriptLoadFailed _ -> LogLevel.Error
-    | BozzettoError.HotReloadFailed _ -> LogLevel.Error
     | BozzettoError.AppRunFailed _ -> LogLevel.Error
     | BozzettoError.SseConnectionError _ -> LogLevel.Error
     | BozzettoError.Unexpected _ -> LogLevel.Error
@@ -304,7 +300,7 @@ module BozzettoError =
     | BozzettoError.EvalSupersededByReset -> LogLevel.Warning
     | BozzettoError.WarmupOpenFailed _ -> LogLevel.Warning
     | BozzettoError.WarmupContextFailed _ -> LogLevel.Warning
-    | BozzettoError.HotReloadStateError _ -> LogLevel.Warning
+    | BozzettoError.LoadedStateStale _ -> LogLevel.Warning
     | BozzettoError.JsonParseError _ -> LogLevel.Warning
     // Information — expected conditions, not bugs
     | BozzettoError.ToolNotAvailable _ -> LogLevel.Information
@@ -362,8 +358,7 @@ module BozzettoError =
     | BozzettoError.EvalSupersededByReset -> 500
     | BozzettoError.WarmupOpenFailed _ -> 500
     | BozzettoError.WarmupContextFailed _ -> 500
-    | BozzettoError.HotReloadFailed _ -> 500
-    | BozzettoError.HotReloadStateError _ -> 500
+    | BozzettoError.LoadedStateStale _ -> 500
     | BozzettoError.AppRunFailed _ -> 500
     | BozzettoError.DaemonStartFailed _ -> 500
     | BozzettoError.Unexpected _ -> 500
@@ -402,8 +397,7 @@ module BozzettoError =
     | BozzettoError.EvalSupersededByReset
     | BozzettoError.WarmupOpenFailed _
     | BozzettoError.WarmupContextFailed _
-    | BozzettoError.HotReloadFailed _
-    | BozzettoError.HotReloadStateError _
+    | BozzettoError.LoadedStateStale _
     | BozzettoError.RestartLimitExceeded _
     | BozzettoError.DaemonStartFailed _
     | BozzettoError.PortInUse _
@@ -429,8 +423,7 @@ module BozzettoError =
     | BozzettoError.EvalSupersededByReset -> true
     | BozzettoError.WarmupOpenFailed _ -> true
     | BozzettoError.WarmupContextFailed _ -> true
-    | BozzettoError.HotReloadFailed _ -> true
-    | BozzettoError.HotReloadStateError _ -> true
+    | BozzettoError.LoadedStateStale _ -> true
     | BozzettoError.DaemonStartFailed _ -> true
     | BozzettoError.AppRunFailed _ -> true
     | BozzettoError.Unexpected _ -> true
@@ -492,8 +485,7 @@ module BozzettoError =
     | BozzettoError.EvalSupersededByReset
     | BozzettoError.WarmupOpenFailed _
     | BozzettoError.WarmupContextFailed _
-    | BozzettoError.HotReloadFailed _
-    | BozzettoError.HotReloadStateError _
+    | BozzettoError.LoadedStateStale _
     | BozzettoError.RestartLimitExceeded _
     | BozzettoError.DaemonStartFailed _
     | BozzettoError.PortInUse _
@@ -539,8 +531,7 @@ module BozzettoError =
     | BozzettoError.EvalSupersededByReset
     | BozzettoError.WarmupOpenFailed _
     | BozzettoError.WarmupContextFailed _
-    | BozzettoError.HotReloadFailed _
-    | BozzettoError.HotReloadStateError _
+    | BozzettoError.LoadedStateStale _
     | BozzettoError.DaemonStartFailed _
     | BozzettoError.SseConnectionError _
     | BozzettoError.Unexpected _ -> false
@@ -582,8 +573,7 @@ module BozzettoError =
     | BozzettoError.EvalSupersededByReset
     | BozzettoError.WarmupOpenFailed _
     | BozzettoError.WarmupContextFailed _
-    | BozzettoError.HotReloadFailed _
-    | BozzettoError.HotReloadStateError _
+    | BozzettoError.LoadedStateStale _
     | BozzettoError.AppRunFailed _
     | BozzettoError.RestartLimitExceeded _
     | BozzettoError.DaemonStartFailed _
@@ -626,8 +616,7 @@ module BozzettoError =
     | BozzettoError.EvalSupersededByReset -> "Run the code again in the fresh session"
     | BozzettoError.WarmupOpenFailed _ -> "Run 'dotnet build' for the project, then hard_reset_fsi_session. If it still doesn't resolve, it is not a public, top-level, fully-qualified name in any loaded assembly — Bozzetto cannot auto-open a nested or private module by its short name."
     | BozzettoError.WarmupContextFailed _ -> "Run hard_reset_fsi_session"
-    | BozzettoError.HotReloadFailed _ -> "Check the file for syntax errors"
-    | BozzettoError.HotReloadStateError _ -> "Run hard_reset_fsi_session"
+    | BozzettoError.LoadedStateStale _ -> "Run hard_reset_fsi_session"
     | BozzettoError.AppRunFailed _ -> "Run list_runnable_projects to see which projects can run"
     | BozzettoError.RestartLimitExceeded _ -> "Check the log file and restart Bozzetto"
     | BozzettoError.DaemonStartFailed _ -> "Check port availability and .NET SDK"

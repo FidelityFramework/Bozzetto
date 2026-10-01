@@ -1595,16 +1595,9 @@ module SessionManager =
         // The app's single owner: every Run, Stop and run step is decided here,
         // against the state and generation this mailbox holds (AppRun.AppSlot).
         | SessionCommand.ClaimRun(id, project, reply) ->
-          match ManagerState.tryGetSession id state with
-          | Some session ->
-            let phase = AppRunOrchestration.startPhaseFor session.Info.Status session.Workflow
-            let claim, slot = AppRun.AppSlot.claimRun project phase DateTime.UtcNow (appSlotOf session)
-            reply.Reply(Ok claim)
-            onSessionProgressChanged ()
-            return ManagerState.addSession id (withAppSlot slot session) state
-          | None ->
-            reply.Reply(Error (BozzettoError.SessionNotFound (SessionId.value id)))
-            return state
+          reply.Reply(Error (BozzettoError.WorkerCommunicationFailed (SessionId.value id,
+            "Embedded managed application execution has been removed. Use the Composer provider for Clef artifacts.")))
+          return state
         | SessionCommand.ClaimStop(id, reply) ->
           match ManagerState.tryGetSession id state with
           | Some session ->

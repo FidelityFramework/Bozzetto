@@ -278,7 +278,7 @@ let startupInfoTests =
         CommandLineArgs = [| "--mcp-port"; "47749" |]
         LoadedProjects = ["Test.fsproj"]
         WorkingDirectory = "/code"
-        Workflow = SessionWorkflow.HotReload BrowserRefreshConfig.defaults
+        Workflow = SessionWorkflow.LiveTesting
         AutoOpenNamespaces = true
         AspireDetected = false
         StartupTimestamp = DateTime.UtcNow
@@ -289,8 +289,10 @@ let startupInfoTests =
       let root = doc.RootElement
       root.GetProperty("workingDirectory").GetString()
       |> Expect.equal "working dir" "/code"
-      root.GetProperty("hotReloadEnabled").GetBoolean()
-      |> Expect.isTrue "hot reload on"
+      root.GetProperty("aspireDetected").GetBoolean()
+      |> Expect.isFalse "the declared startup flag is preserved"
+      root.TryGetProperty("hotReloadEnabled") |> fst
+      |> Expect.isFalse "removed patching capability is not advertised"
 
     testCase "includes loaded projects array" <| fun _ ->
       let config: AppState.StartupConfig = {

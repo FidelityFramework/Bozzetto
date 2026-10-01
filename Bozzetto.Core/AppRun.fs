@@ -235,11 +235,9 @@ type RunningApp = {
 
 [<RequireQualifiedAccess>]
 type StartPhase =
-  | RestartingIntoWebLive
   /// The session has no worker (its last build failed), so Run rebuilds it first.
   | RebuildingSession
   | LaunchingEntryPoint
-  | RebuildingForChanges of first: Bozzetto.Features.ReloadPlanning.ReloadChange * rest: Bozzetto.Features.ReloadPlanning.ReloadChange list
 
 /// The one app a session may run, as the user should see it.
 [<RequireQualifiedAccess>]
@@ -253,8 +251,6 @@ type AppRunState =
   /// not a crash. A crash implies something ran and then died; this is a
   /// start that could not happen at all.
   | CouldNotStart of project: string * reason: BozzettoError * at: DateTime
-  /// The run was stopped because a save changed something that only takes effect at startup.
-  | RestartRequired of project: string * first: Bozzetto.Features.ReloadPlanning.ReloadChange * rest: Bozzetto.Features.ReloadPlanning.ReloadChange list * at: DateTime
   /// A rebuild of the app failed: the code did not compile, the app did not crash.
   | BuildFailed of project: string * reason: string * at: DateTime * lastAddress: PreviousAddress
   /// Watching the run failed, so what the app is doing is no longer known: it
@@ -270,7 +266,6 @@ let acrossWorkerRestart (state: AppRunState) : AppRunState =
   | AppRunState.Exited _
   | AppRunState.Crashed _
   | AppRunState.CouldNotStart _
-  | AppRunState.RestartRequired _
   | AppRunState.BuildFailed _ -> state
   | AppRunState.Running _
   // Whatever the lost run was doing, it died with the worker that hosted it.
@@ -336,9 +331,6 @@ type StepOutcome =
 [<RequireQualifiedAccess>]
 type RunEnd =
   | Recorded
-  /// The run ended for changes and its generation still owns the app: the
-  /// owner now says it is rebuilding, and the watcher rebuilds and relaunches.
-  | RebuildForChanges of project: string * previous: PreviousAddress
   /// Not the current run (stopped, replaced, or its worker is gone): nothing changed.
   | NotCurrent
 
@@ -362,7 +354,6 @@ module AppSlot =
     | AppRunState.Exited _
     | AppRunState.Crashed _
     | AppRunState.CouldNotStart _
-    | AppRunState.RestartRequired _
     | AppRunState.LostTrack _
     | AppRunState.BuildFailed _ ->
       // After a failed rebuild, come back where the app listened so open tabs keep working.
@@ -386,7 +377,6 @@ module AppSlot =
     | AppRunState.Exited _
     | AppRunState.Crashed _
     | AppRunState.CouldNotStart _
-    | AppRunState.RestartRequired _
     | AppRunState.LostTrack _
     | AppRunState.BuildFailed _ -> StopClaim.StopWorkerApp generation, { slot with Generation = generation }
 
@@ -396,17 +386,11 @@ module AppSlot =
     | true -> StepOutcome.Applied, { slot with State = next }
     | false -> StepOutcome.Stale slot.State, slot
 
-  /// A worker's report that run `runId` ended applies only while that run is
-  /// the current one. A run ended for changes whose generation still owns the
-  /// app moves straight to rebuilding, so no Run or Stop can slip in between.
+  /// A worker's terminal report applies only to the current run and generation.
   let endRun (generation: RunGeneration) (runId: string) (final: AppRunState) (slot: AppSlot) : RunEnd * AppSlot =
     match slot.State with
-    | AppRunState.Running app when app.RunId = runId ->
-      match final with
-      | AppRunState.RestartRequired (project, first, rest, at) when generation = slot.Generation ->
-        RunEnd.RebuildForChanges (project, addressOf app),
-        { slot with State = AppRunState.Starting (project, StartPhase.RebuildingForChanges (first, rest), at) }
-      | _ -> RunEnd.Recorded, { slot with State = final }
+    | AppRunState.Running app when app.RunId = runId && generation = slot.Generation ->
+      RunEnd.Recorded, { slot with State = final }
     | _ -> RunEnd.NotCurrent, slot
 
   /// What the slot becomes when the session's worker is replaced.
@@ -417,14 +401,10 @@ module AppSlot =
 let describeState (state: AppRunState) : string =
   match state with
   | AppRunState.NotRunning -> "Not running"
-  | AppRunState.Starting (project, StartPhase.RestartingIntoWebLive, _) ->
-    sprintf "Restarting the session with hot reload before starting %s…" (projectName project)
   | AppRunState.Starting (project, StartPhase.RebuildingSession, _) ->
     sprintf "Rebuilding %s…" (projectName project)
   | AppRunState.Starting (project, StartPhase.LaunchingEntryPoint, _) ->
     sprintf "Starting %s…" (projectName project)
-  | AppRunState.Starting (project, StartPhase.RebuildingForChanges (first, rest), _) ->
-    sprintf "Rebuilding %s: %s…" (projectName project) (Bozzetto.Features.ReloadPlanning.ReloadChange.describeAll first rest)
   | AppRunState.Running { Project = project; Endpoint = AppEndpoint.Http (url, _) } ->
     sprintf "%s is running at %s" (projectName project) url
   | AppRunState.Running { Project = project; Endpoint = AppEndpoint.NoServer } ->
@@ -439,8 +419,6 @@ let describeState (state: AppRunState) : string =
   | AppRunState.LostTrack (project, reason, _) ->
     sprintf "Lost track of %s: %s. → It may still be serving: press Run to take it over again, or Stop to end it."
       (projectName project) (BozzettoError.describe reason)
-  | AppRunState.RestartRequired (project, first, rest, _) ->
-    sprintf "%s must restart: %s" (projectName project) (Bozzetto.Features.ReloadPlanning.ReloadChange.describeAll first rest)
 
 /// The app state as HTTP and MCP clients read it.
 type AppStateView = {
@@ -460,7 +438,6 @@ let toView (state: AppRunState) : AppStateView =
     | AppRunState.Exited _ -> "Exited"
     | AppRunState.Crashed _ -> "Crashed"
     | AppRunState.CouldNotStart _ -> "CouldNotStart"
-    | AppRunState.RestartRequired _ -> "RestartRequired"
     | AppRunState.BuildFailed _ -> "BuildFailed"
     | AppRunState.LostTrack _ -> "LostTrack"
   let urls, entryPoint, runId =
@@ -476,7 +453,6 @@ let toView (state: AppRunState) : AppStateView =
     | AppRunState.Exited _
     | AppRunState.Crashed _
     | AppRunState.CouldNotStart _
-    | AppRunState.RestartRequired _
     | AppRunState.LostTrack _
     | AppRunState.BuildFailed _ -> [], "", ""
   { State = name

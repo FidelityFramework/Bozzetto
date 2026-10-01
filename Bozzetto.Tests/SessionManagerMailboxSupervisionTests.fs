@@ -213,7 +213,7 @@ let sessionManagerMailboxSupervisionTests =
         let! info = createSession harness
 
         match! postAndReply harness.Mailbox (fun reply ->
-          SessionCommand.SwitchWorkflow(info.Id, WorkflowTypes.SessionWorkflow.HotReload WorkflowTypes.BrowserRefreshConfig.defaults, reply)) with
+          SessionCommand.SwitchWorkflow(info.Id, WorkflowTypes.SessionWorkflow.LiveTesting, reply)) with
         | Ok _ -> ()
         | Error err -> failtestf "spawn-first workflow switch failed: %s" (BozzettoError.describe err)
 
@@ -250,7 +250,7 @@ let sessionManagerMailboxSupervisionTests =
 
         switchFault.Value <- true
         match! tryPostAndReply 1500 harness.Mailbox (fun reply ->
-          SessionCommand.SwitchWorkflow(info.Id, WorkflowTypes.SessionWorkflow.HotReload WorkflowTypes.BrowserRefreshConfig.defaults, reply)) with
+          SessionCommand.SwitchWorkflow(info.Id, WorkflowTypes.SessionWorkflow.LiveTesting, reply)) with
         | Some (Error (BozzettoError.HardResetFailed _)) -> ()
         | Some other -> failtestf "expected fail-closed HardResetFailed, got %A" other
         | None -> failtest "SwitchWorkflow hung — the handler exception left the reply channel unanswered"

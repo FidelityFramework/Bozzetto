@@ -366,7 +366,7 @@ let releaseOnlyReferenceTests =
     test "WHY — solutionToFsiArgs — forwarded compiler references are resolved to outputs that exist, because a missing -r: kills FSI before any diagnostics" {
       let root, appDll, coreRefRelease, coreRefDebug = releaseOnlyLayout ()
       try
-        let args = solutionToFsiArgs Bozzetto.Tests.TestInfrastructure.quietLogger false false (solutionWith appDll [ "-r:" + coreRefDebug ])
+        let args = solutionToFsiArgs Bozzetto.Tests.TestInfrastructure.quietLogger false (solutionWith appDll [ "-r:" + coreRefDebug ])
         args |> Array.contains ("-r:" + coreRefRelease) |> Expect.isTrue "the Release reference is passed to FSI"
         args |> Array.contains ("-r:" + coreRefDebug) |> Expect.isFalse "the missing Debug reference is never passed"
       finally
@@ -379,7 +379,7 @@ let releaseOnlyReferenceTests =
         let gone = Path.Combine(root, "Gone", "obj", "Debug", "net10.0", "ref", "Gone.dll")
         let error =
           try
-            solutionToFsiArgs Bozzetto.Tests.TestInfrastructure.quietLogger false false (solutionWith appDll [ "-r:" + gone ]) |> ignore
+            solutionToFsiArgs Bozzetto.Tests.TestInfrastructure.quietLogger false (solutionWith appDll [ "-r:" + gone ]) |> ignore
             None
           with ex -> Some ex.Message
         error |> Expect.isSome "a missing reference is reported before FSI starts"
@@ -454,7 +454,7 @@ let projectReferenceOrderingTests =
         // FIRST, then its transitive reference (Bozzetto) — the exact wrong
         // order that broke resolution live.
         let sln = { emptySolution with Projects = [ bozzettoTestsProj; bozzettoProj ] }
-        let args = solutionToFsiArgs Bozzetto.Tests.TestInfrastructure.quietLogger false false sln
+        let args = solutionToFsiArgs Bozzetto.Tests.TestInfrastructure.quietLogger false sln
         let indexOf dll = args |> Array.findIndex (fun a -> a = "-r:" + dll)
         (indexOf bozzettoDll, indexOf bozzettoTestsDll)
         |> Expect.isLessThan "Bozzetto.dll (the dependency) is referenced before Bozzetto.Tests.dll (the dependent), regardless of Ionide's discovery order"
@@ -478,7 +478,7 @@ let projectReferenceOrderingTests =
                mkNamedProject (sprintf "P%d.fsproj" i) dlls.[i] refs |]
         for order in permutationsOfIndices [ 0 .. chainLength - 1 ] do
           let sln = { emptySolution with Projects = order |> List.map (fun i -> projects.[i]) }
-          let args = solutionToFsiArgs Bozzetto.Tests.TestInfrastructure.quietLogger false false sln
+          let args = solutionToFsiArgs Bozzetto.Tests.TestInfrastructure.quietLogger false sln
           let indexOf dll = args |> Array.findIndex (fun a -> a = "-r:" + dll)
           for i in 1 .. chainLength - 1 do
             (indexOf dlls.[i - 1], indexOf dlls.[i])

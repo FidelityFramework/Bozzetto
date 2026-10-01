@@ -128,9 +128,7 @@ type [<AllowNullLiteral>] EventEmitter<'T> =
 type [<AllowNullLiteral>] TreeView<'T> =
   abstract dispose: unit -> unit
   /// Fires when the user ticks or unticks a row's checkbox. The native VS Code
-  /// affordance for "this row has an on/off state" — which is what the
-  /// hot-reload watch flag is. Binding that state to `TreeItem.command`
-  /// instead meant there was no way to LOOK at a file row without changing it.
+  /// affordance for a row with an independent on/off state.
   abstract onDidChangeCheckboxState: listener: (obj -> unit) -> Disposable
 
 /// `TreeItemCheckboxState` — VS Code's own enum values.

@@ -26,7 +26,7 @@ module EndpointContracts =
   /// API contract version. Increment when endpoints are added, removed, or
   /// have breaking changes to request/response shapes. Plugins can check this
   /// against their minimum required version to detect incompatibility.
-  let apiVersion = 3
+  let apiVersion = 4
 
   /// All daemon endpoints grouped by category.
   let coreEndpoints = [
@@ -48,8 +48,6 @@ module EndpointContracts =
     Endpoint.create POST "/api/sessions/{sid}/buffer-changed" "Sessions" "Submit unsaved editor buffer content"
     Endpoint.create GET "/api/sessions/{sid}/export-fsx" "Sessions" "Export session as .fsx"
     Endpoint.create GET "/api/sessions/{sid}/warmup-context" "Sessions" "Get warmup context"
-    Endpoint.create POST "/api/sessions/{sid}/run-app" "Sessions" "Run a session's app"
-    Endpoint.create POST "/api/sessions/{sid}/stop-app" "Sessions" "Stop a session's app"
   ]
 
   let liveTestingEndpoints = [
@@ -72,13 +70,6 @@ module EndpointContracts =
     Endpoint.create POST "/api/local-data/clear" "Diagnostics" "Clear locally stored friction data or a finished cohort ledger"
   ]
 
-  let hotReloadEndpoints = [
-    Endpoint.create GET "/api/sessions/{sid}/hotreload" "HotReload" "Get hotreload state"
-    Endpoint.create POST "/api/sessions/{sid}/hotreload/toggle" "HotReload" "Toggle file watching"
-    Endpoint.create POST "/api/sessions/{sid}/hotreload/watch-all" "HotReload" "Watch all files"
-    Endpoint.create POST "/api/sessions/{sid}/hotreload/unwatch-all" "HotReload" "Unwatch all files"
-  ]
-
   let codeAnalysisEndpoints = [
     Endpoint.create POST "/api/explore" "Analysis" "Code exploration"
     Endpoint.create POST "/api/completions" "Analysis" "Code completions"
@@ -91,11 +82,10 @@ module EndpointContracts =
     @ sessionEndpoints
     @ liveTestingEndpoints
     @ diagnosticEndpoints
-    @ hotReloadEndpoints
     @ codeAnalysisEndpoints
 
-  /// Endpoints expected by the Neovim plugin (sagefs.nvim).
-  /// This is the contract surface that must not break without updating the plugin.
+  /// Supported compatibility subset for Neovim clients. Removed managed-patching
+  /// routes are unavailable in API4; external clients must check apiVersion.
   let neovimContract = [
     POST, "/exec"
     GET, "/health"
@@ -112,10 +102,6 @@ module EndpointContracts =
     POST, "/api/live-testing/policy"
     GET, "/api/status"
     POST, "/api/cancel-eval"
-    GET, "/api/sessions/{sid}/hotreload"
-    POST, "/api/sessions/{sid}/hotreload/toggle"
-    POST, "/api/sessions/{sid}/hotreload/watch-all"
-    POST, "/api/sessions/{sid}/hotreload/unwatch-all"
   ]
 
   /// Endpoints expected by the VS Code extension (bozzetto-vscode).
@@ -130,8 +116,6 @@ module EndpointContracts =
     POST, "/api/sessions/create"
     POST, "/api/sessions/switch"
     POST, "/api/sessions/stop"
-    POST, "/api/sessions/{sid}/run-app"
-    POST, "/api/sessions/{sid}/stop-app"
     POST, "/api/live-testing/enable"
     POST, "/api/live-testing/disable"
     POST, "/api/completions"

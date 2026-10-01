@@ -358,7 +358,7 @@ let renderShell (version: string) (clientId: string) (initialSessionId: string) 
       Elem.style [] [ Text.raw fontFaceCss ]
     ]
     Elem.body [ Ds.safariStreamingFix; Attr.create "data-connected" "true" ] [
-      Elem.div [ Ds.onInit (Ds.get (sprintf "/dashboard/stream/%s" clientId)); Ds.signal (Signals.HelpVisible, false); Ds.signal (Signals.SidebarOpen, true); Ds.signal (Signals.Connected, true); Ds.signal (Signals.ViewingSessionId, initialSessionId); Ds.signal (Signals.ClientId, clientId); Ds.signal (Signals.Code, ""); Ds.signal (Signals.NewSessionDir, defaultWorkingDir); Ds.signal (Signals.ManualProjects, ""); Ds.signal (Signals.Theme, ""); Ds.signal (Signals.CursorPos, "0"); Ds.signal (Signals.TestFilter, "all"); Ds.signal (Signals.ExpandedDashboard, false); Ds.signal (Signals.BindingsPanelOpen, true); Ds.signal (Signals.FrictionEndpoint, ""); Ds.signal (Signals.FrictionToken, ""); Ds.signal (Signals.FrictionEdits, "{}"); Ds.signal (Signals.FrictionSending, false); Ds.signal (Signals.AlarmBannerOpen, false); Ds.signal (Signals.FailureNarrativesOpen, false); Ds.signal (Signals.FilmstripOpen, false); Ds.signal (Signals.DiagnosticsOpen, false); Ds.signal (Signals.EvaluateSectionOpen, false); Ds.signal (Signals.PerfStatsOpen, false); Ds.signal (Signals.NewSessionOpen, false); Ds.signal (Signals.HotReloadFilesOpen, false); Ds.signal (Signals.FrictionPanelOpen, false); Ds.signal (Signals.FrictionHistoryOpen, false); Ds.signal (Signals.SessionContextOpen, false); Ds.signal (Signals.SessionContextAssembliesOpen, false); Ds.signal (Signals.SessionContextNamespacesOpen, false); Ds.signal (Signals.SessionContextFailedOpensOpen, true); Ds.signal (Signals.SessionContextTimingOpen, false); Ds.signal (Signals.SessionContextFilesOpen, false); Ds.signal (Signals.ShadowedBindingsOpen, false); Ds.signal (Signals.CohortPanelOpen, false); Ds.signal (Signals.CohortMatrixTextOpen, false); Ds.signal (Signals.CohortTerritoryTextOpen, false); Ds.signal (Signals.CohortViewingSeq, "");
+      Elem.div [ Ds.onInit (Ds.get (sprintf "/dashboard/stream/%s" clientId)); Ds.signal (Signals.HelpVisible, false); Ds.signal (Signals.SidebarOpen, true); Ds.signal (Signals.Connected, true); Ds.signal (Signals.ViewingSessionId, initialSessionId); Ds.signal (Signals.ClientId, clientId); Ds.signal (Signals.Code, ""); Ds.signal (Signals.NewSessionDir, defaultWorkingDir); Ds.signal (Signals.ManualProjects, ""); Ds.signal (Signals.Theme, ""); Ds.signal (Signals.CursorPos, "0"); Ds.signal (Signals.TestFilter, "all"); Ds.signal (Signals.ExpandedDashboard, false); Ds.signal (Signals.BindingsPanelOpen, true); Ds.signal (Signals.FrictionEndpoint, ""); Ds.signal (Signals.FrictionToken, ""); Ds.signal (Signals.FrictionEdits, "{}"); Ds.signal (Signals.FrictionSending, false); Ds.signal (Signals.AlarmBannerOpen, false); Ds.signal (Signals.FailureNarrativesOpen, false); Ds.signal (Signals.FilmstripOpen, false); Ds.signal (Signals.DiagnosticsOpen, false); Ds.signal (Signals.EvaluateSectionOpen, false); Ds.signal (Signals.PerfStatsOpen, false); Ds.signal (Signals.NewSessionOpen, false); Ds.signal (Signals.FrictionPanelOpen, false); Ds.signal (Signals.FrictionHistoryOpen, false); Ds.signal (Signals.SessionContextOpen, false); Ds.signal (Signals.SessionContextAssembliesOpen, false); Ds.signal (Signals.SessionContextNamespacesOpen, false); Ds.signal (Signals.SessionContextFailedOpensOpen, true); Ds.signal (Signals.SessionContextTimingOpen, false); Ds.signal (Signals.SessionContextFilesOpen, false); Ds.signal (Signals.ShadowedBindingsOpen, false); Ds.signal (Signals.CohortPanelOpen, false); Ds.signal (Signals.CohortMatrixTextOpen, false); Ds.signal (Signals.CohortTerritoryTextOpen, false); Ds.signal (Signals.CohortViewingSeq, "");
                 // Chat-style output following (see `OutputFollow`). The browser's
                 // own state lives here, outside #main, so no morph resets it;
                 // the server's feed signals are seeded here too and then
@@ -555,13 +555,12 @@ let reconcileViewing
     | [] -> ViewingDecision.ShowPicker
 
 /// Whether a daemon state change can alter the worker-fetched panels (eval
-/// stats, hot-reload state, warmup context), so the push must re-fetch them
+/// stats, warmup context), so the push must re-fetch them
 /// instead of reusing the TTL cache — reusing it across a real change would
 /// render identical HTML and wrongly suppress the morph.
 let invalidatesWorkerData (change: SseEvent) =
   match change with
   | SseEvent.ModelChanged _
-  | SseEvent.HotReloadChanged _
   | SseEvent.FileReloaded _
   | SseEvent.WarmupProgress _
   | SseEvent.SessionReady _
@@ -580,8 +579,6 @@ let invalidatesWorkerData (change: SseEvent) =
   // route one of these through this stream is forced to decide, here,
   // whether it invalidates the worker-fetched panels.
   | SseEvent.WarmupContextSnapshot _
-  | SseEvent.HotReloadSnapshot _
-  | SseEvent.HotReloadFileToggled _
   | SseEvent.SessionActivated _
   | SseEvent.SessionCreated _
   | SseEvent.SessionStopped _
@@ -836,7 +833,7 @@ let private panelFactsFor
 /// resolved theme name so the caller can update its tracking state.
 ///
 /// `cachedWorkerData` lets an SSE stream reuse recent worker-fetched values
-/// (eval stats / hot-reload state / warmup context) across high-frequency
+/// (eval stats / warmup context) across high-frequency
 /// ticks: the three fetches are the expensive per-push cost (worker HTTP
 /// round-trips), and the render-diff guard means reusing a cache can never
 /// SEND stale HTML — it only makes unchanged ticks cheaper. When None, all
@@ -855,7 +852,7 @@ let buildDashboardSnapshotWithSessions
   (lastThemeName: string)
   (cachedWorkerData: DashboardWorkerCache option)
   (sessions: WorkerProtocol.SessionInfo list)
-  : System.Threading.Tasks.Task<DashboardSnapshot * WorkerProtocol.SessionId * string * {| EvalStats: Bozzetto.Affordances.EvalStats; HotReloadState: {| files: {| path: string; watched: bool |} list; watchedCount: int; kept: Bozzetto.Features.ReloadOutcome.KeptValue list; reflection: Bozzetto.Features.KeptState.ReflectionReadsView |} option; WarmupContext: WarmupContext option; FrictionPanel: XmlNode |}> =
+  : System.Threading.Tasks.Task<DashboardSnapshot * WorkerProtocol.SessionId * string * {| EvalStats: Bozzetto.Affordances.EvalStats; WarmupContext: WarmupContext option; FrictionPanel: XmlNode |}> =
   task {
     let sessionId = currentSessionId
     let sid = WorkerProtocol.SessionId.value sessionId
@@ -867,16 +864,11 @@ let buildDashboardSnapshotWithSessions
       match cachedWorkerData with
       | Some cache when cache.SessionId = sessionId -> System.Threading.Tasks.Task.FromResult cache.EvalStats
       | _ -> q.GetEvalStats sessionId
-    let hrTask =
-      match cachedWorkerData with
-      | Some cache when cache.SessionId = sessionId -> System.Threading.Tasks.Task.FromResult cache.HotReloadState
-      | _ -> q.GetHotReloadState sessionId
     let wCtxTask =
       match cachedWorkerData with
       | Some cache when cache.SessionId = sessionId -> System.Threading.Tasks.Task.FromResult cache.WarmupContext
       | _ -> q.GetWarmupContext sessionId
     let! stats = statsTask
-    let! hrState = hrTask
     let! wCtx = wCtxTask
     let timelineStats = q.GetEvalTimeline()
     let evalStatsView = EvalStatsView.fromStats stats timelineStats
@@ -920,35 +912,19 @@ let buildDashboardSnapshotWithSessions
         | true -> Some (sprintf "%d connected" tracker.TotalCount)
         | false -> Some (String.Join(" ", parts))
       | None -> None
-    let hrPanel =
-      match sid.Length > 0 with
-      | true ->
-        match hrState with
-        | Some hr -> renderHotReloadPanelFull sid hr.files hr.watchedCount hr.kept hr.reflection
-        | None -> renderHotReloadEmpty
-      | false -> renderHotReloadEmpty
     let scPanel =
       match sid.Length > 0 with
       | true ->
         match wCtx with
         | Some ctx' ->
-          let fileStatuses =
-            match hrState with
-            | Some hr ->
-              hr.files |> List.map (fun f ->
-                let readiness =
-                  ctx'.NamespacesOpened
-                  |> List.exists (fun b -> f.path.EndsWith(b.Name, StringComparison.OrdinalIgnoreCase))
-                  |> fun loaded -> match loaded with | true -> FileReadiness.Loaded | false -> FileReadiness.NotLoaded
-                { Path = f.path; Readiness = readiness; LastLoadedAt = None; IsWatched = f.watched })
-            | None -> []
           renderSessionContextPanel
             { SessionId = sid
               ProjectNames = []
               WorkingDir = q.GetSessionWorkingDir sessionId
               Status = SessionState.label (q.GetSessionState sessionId)
               Warmup = ctx'
-              FileStatuses = fileStatuses
+              // Warmup metadata has no per-file residency snapshot.
+              FileStatuses = []
               Workflow = WorkflowTypes.SessionWorkflow.Interactive
               AutoOpenNamespaces = DirectoryConfig.autoOpenNamespacesForDirectory (q.GetSessionWorkingDir sessionId) }
         | None -> renderSessionContextEmpty
@@ -1020,7 +996,6 @@ let buildDashboardSnapshotWithSessions
               FilmstripPanel = Elem.div [] []
               ThemeName = themeName
               ConnectionLabel = connectionLabel
-              HotReloadPanel = hrPanel
               LiveTestingPanel = liveTestingPanel
               SessionContextPanel = scPanel
               OutputPanel = outputPanel
@@ -1037,7 +1012,7 @@ let buildDashboardSnapshotWithSessions
               EvalToPixelP50Ms = evalToPixelP50Ms
               EvalToPixelP99Ms = evalToPixelP99Ms
             }
-    return snap, sessionId, themeName, {| EvalStats = stats; HotReloadState = hrState; WarmupContext = wCtx; FrictionPanel = frictionPanel |}
+    return snap, sessionId, themeName, {| EvalStats = stats; WarmupContext = wCtx; FrictionPanel = frictionPanel |}
   }
 
 /// Standalone entry point for callers that do not already have a fresh
@@ -1051,7 +1026,7 @@ let buildDashboardSnapshot
   (lastWorkingDir: string)
   (lastThemeName: string)
   (cachedWorkerData: DashboardWorkerCache option)
-  : System.Threading.Tasks.Task<DashboardSnapshot * WorkerProtocol.SessionId * string * {| EvalStats: Bozzetto.Affordances.EvalStats; HotReloadState: {| files: {| path: string; watched: bool |} list; watchedCount: int; kept: Bozzetto.Features.ReloadOutcome.KeptValue list; reflection: Bozzetto.Features.KeptState.ReflectionReadsView |} option; WarmupContext: WarmupContext option; FrictionPanel: XmlNode |}> =
+  : System.Threading.Tasks.Task<DashboardSnapshot * WorkerProtocol.SessionId * string * {| EvalStats: Bozzetto.Affordances.EvalStats; WarmupContext: WarmupContext option; FrictionPanel: XmlNode |}> =
   task {
     let! sessions = q.GetAllSessions ()
     return! buildDashboardSnapshotWithSessions q infra currentSessionId lastSessionId lastWorkingDir lastThemeName cachedWorkerData sessions
@@ -1137,7 +1112,6 @@ let buildNoSessionSnapshotWithSessionsSorted
       FilmstripPanel = Elem.div [] []
       ThemeName = defaultThemeName
       ConnectionLabel = connectionLabel
-      HotReloadPanel = renderHotReloadEmpty
       LiveTestingPanel = liveTestingPanel
       SessionContextPanel = renderSessionContextEmpty
       OutputPanel = renderOutputForSession "" 0 [] "No session in play — create or resume one to start."
@@ -1248,7 +1222,7 @@ let createStreamHandler
     // byte-compare (`lastPushedMain`) guard, which stays as a cheap,
     // independent safety net right before the send.
     let mutable renderMemory : SnapshotRenderGuard.RenderMemory<DashboardSnapshot> = SnapshotRenderGuard.RenderMemory.initial
-    // Worker-data cache: the three worker HTTP fetches (eval stats, hot-reload
+    // Worker-data cache: the worker HTTP fetches (eval stats,
     // state, warmup context) are the dominant per-push cost. In poll mode
     // (StateChanged = None) pushState fires every second; reusing the last
     // fetch for up to `workerDataTtlMs` keeps unchanged ticks cheap. The
@@ -1369,7 +1343,6 @@ let createStreamHandler
         workerCache <- Some {
           SessionId = sessionId
           EvalStats = rawWorkerData.EvalStats
-          HotReloadState = rawWorkerData.HotReloadState
           WarmupContext = rawWorkerData.WarmupContext
           FrictionPanel = Some rawWorkerData.FrictionPanel
         }
@@ -1841,7 +1814,7 @@ let switchWorkflowViaApi
   task {
     try
       use http = new HttpClient()
-      // A HotReload switch can rebuild the target project before the new
+      // A workflow switch can rebuild the target project before the new
       // worker is ready — generous, matching Hard Reset's own expectations
       // (SessionBuild's kill timer) rather than a short eval-style timeout.
       http.Timeout <- TimeSpan.FromMinutes(10.0)
@@ -1984,7 +1957,7 @@ let private settingsPaths () : Bozzetto.ConfigPaths =
     Repo = Bozzetto.RepoRootAt (System.Environment.CurrentDirectory) }
 
 let private settingsRows (paths: Bozzetto.ConfigPaths) : SettingsPanel.SettingRow list =
-  (Bozzetto.SettingsCatalog.pilots @ [ Bozzetto.SessionAgent.reflectionReadModeSetting; Bozzetto.SessionAgent.tieredCompilationSetting ])
+  Bozzetto.SettingsCatalog.pilots
   |> List.map (fun d -> { Descriptor = d; Resolved = Bozzetto.SettingsCatalog.resolve paths d })
 
 /// The persisted default working directory (session.defaultWorkingDirectory),
@@ -1997,7 +1970,7 @@ let private resolveDefaultWorkingDir () : string =
   | Error _ -> ""
 
 let private descriptorForSignal (sigName: string) : Bozzetto.SettingDescriptor option =
-  (Bozzetto.SettingsCatalog.pilots @ [ Bozzetto.SessionAgent.reflectionReadModeSetting; Bozzetto.SessionAgent.tieredCompilationSetting ]) |> List.tryFind (fun d -> SettingsPanel.signalName d.Key = sigName)
+  Bozzetto.SettingsCatalog.pilots |> List.tryFind (fun d -> SettingsPanel.signalName d.Key = sigName)
 
 /// Morph the whole panel back with the given notice — the one authoritative
 /// re-render after an edit (Tao of Datastar).
@@ -2619,8 +2592,6 @@ let createApiStateHandler
                       tooltip = a.Tooltip |}) |})
         | None -> []
       let liveTestingStatus = q.GetLiveTestingStatus ()
-      let! hrState = q.GetHotReloadState activeSid
-      let watchedCount = hrState |> Option.map (fun hr -> hr.watchedCount) |> Option.defaultValue 0
       let testSourceLocations =
         q.GetTestSourceLocations()
         |> List.map (fun l ->
@@ -2634,12 +2605,9 @@ let createApiStateHandler
              avgMs = if stats.EvalCount > 0 then stats.TotalDuration.TotalMilliseconds / float stats.EvalCount else 0.0
              activeWorkingDir = activeDir
              liveTestingStatus = liveTestingStatus
-             watchedCount = watchedCount
              regions = regions
              testSourceLocations = testSourceLocations
-             workflowLabel = WorkflowTypes.SessionWorkflow.label workflow
-             replCapability = WorkflowTypes.ReplCapability.label (WorkflowTypes.SessionWorkflow.replCapability workflow)
-             hotReloadActive = WorkflowTypes.SessionWorkflow.isHotReloadActive workflow |})
+             workflowLabel = WorkflowTypes.SessionWorkflow.label workflow |})
       do! ctx.Response.WriteAsync(sprintf "data: %s\n\n" payload)
       do! ctx.Response.Body.FlushAsync()
     }
@@ -3182,23 +3150,6 @@ let createEndpoints
     yield mapPostRaw "/dashboard/session/purge/{id}"
       (routeValue "id")
       (fun sid -> createSessionActionHandler q infra a.PurgeSession true (WorkerProtocol.SessionId.validate sid |> Result.defaultValue (WorkerProtocol.SessionId.newId ())))
-    // Run App / Stop App: the session's executable project — the only one (or
-    // the active one), or a named one when the session has several.
-    yield mapPostRaw "/dashboard/run-app/{id}"
-      (routeValue "id")
-      (fun sid ->
-        let sessionId = WorkerProtocol.SessionId.validate sid |> Result.defaultValue (WorkerProtocol.SessionId.newId ())
-        createSessionActionHandler q infra (fun s -> a.RunApp s AppRun.RunRequest.DefaultTarget) false sessionId)
-    yield mapPostRaw "/dashboard/run-app/{id}/{project}"
-      (fun ctx -> routeValue "id" ctx, routeValue "project" ctx)
-      (fun (sid, project) ->
-        let sessionId = WorkerProtocol.SessionId.validate sid |> Result.defaultValue (WorkerProtocol.SessionId.newId ())
-        createSessionActionHandler q infra (fun s -> a.RunApp s (AppRun.RunRequest.Named project)) false sessionId)
-    yield mapPostRaw "/dashboard/stop-app/{id}"
-      (routeValue "id")
-      (fun sid ->
-        let sessionId = WorkerProtocol.SessionId.validate sid |> Result.defaultValue (WorkerProtocol.SessionId.newId ())
-        createSessionActionHandler q infra a.StopApp false sessionId)
     // The Composer page uses the same daemon owner as MCP on its API listener.
     yield get "/composer" (fun ctx -> task {
       let target = UriBuilder("http", ctx.Request.Host.Host, infra.McpPort, "/composer")

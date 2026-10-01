@@ -30,10 +30,10 @@ open Bozzetto
 /// `WorkflowSwitchGenerators.overlappingSwitchThenRevertLosesOriginalWorkflow`
 /// and the "known transition defect" section of `WorkflowSwitchSimTests.fs`.
 ///
-/// `SessionWorkflow` (`Bozzetto.Core/WorkflowTypes.fs:117-128`) has THREE cases
-/// — `Interactive | LiveTesting | HotReload of BrowserRefreshConfig` — so the
-/// transition space this sim exercises is the full 3x3 (nine ordered pairs,
-/// including same-workflow no-ops), not just Interactive<->HotReload.
+/// `SessionWorkflow` (`Bozzetto.Core/WorkflowTypes.fs:117-128`) has two cases
+/// — `Interactive | LiveTesting` — so the
+/// transition space this sim exercises is the full 2x2 (four ordered pairs,
+/// including same-workflow no-ops).
 ///
 /// Same design principles as `FileReloadRoutingSim` / `SupervisorSim`:
 ///   * Chaos is DATA: a `Scenario` is a seed plus an ordered `SwitchOp` list
@@ -65,11 +65,10 @@ module WorkflowSwitchSim =
   /// A fully-specified, replayable scenario.
   type Scenario = { Seed: int; Ops: SwitchOp list }
 
-  // ── Fixed, deterministic workflow pool — the real three-case DU ─────────
+  // ── Fixed, deterministic workflow pool — the real two-case DU ─────────
   let workflows : WorkflowTypes.SessionWorkflow[] =
     [| WorkflowTypes.SessionWorkflow.Interactive
-       WorkflowTypes.SessionWorkflow.LiveTesting
-       WorkflowTypes.SessionWorkflow.HotReload WorkflowTypes.BrowserRefreshConfig.defaults |]
+       WorkflowTypes.SessionWorkflow.LiveTesting |]
 
   let workflowLabel (idx: int) : string =
     if idx < 0 then "<none>" else WorkflowTypes.SessionWorkflow.label workflows.[idx]

@@ -8,7 +8,7 @@
 // These pin the table against package.json's own enum and descriptions, so the
 // promise and the behaviour cannot drift apart again.
 //
-// Runs under plain `dotnet fsi` (no Fable), mirroring AppRunContractTests.fsx.
+// Runs under plain `dotnet fsi` (no Fable), mirroring WorkflowPickContractTests.fsx.
 #r "nuget: Expecto, 11.0.0-alpha8"
 #load "../src/DensityPure.fs"
 

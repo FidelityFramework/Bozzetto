@@ -26,7 +26,7 @@
 //      exists, and
 //   4. every keystroke named in onboarding PROSE is a real binding.
 //
-// Runs under plain `dotnet fsi` (no Fable), mirroring AppRunContractTests.fsx.
+// Runs under plain `dotnet fsi` (no Fable), mirroring WorkflowPickContractTests.fsx.
 #r "nuget: Expecto, 11.0.0-alpha8"
 
 open System

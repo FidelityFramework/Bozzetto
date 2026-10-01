@@ -145,7 +145,7 @@ let evalStatsDuplicateIdRegressionTests =
           WarmupProgress = ""; WorkflowLabel = "Interactive"
           EvalStats = { Count = 3; AvgMs = 1.0; MinMs = 1.0; MaxMs = 1.0; Sparkline = ""; P50Ms = None; P95Ms = None }
           ThemeName = "default"; ConnectionLabel = None; ConnectionState = DashboardConnectionState.Connected
-          HotReloadPanel = Elem.div [] []; SessionContextPanel = Elem.div [] []
+          SessionContextPanel = Elem.div [] []
           OutputPanel = Elem.div [] []
           SessionsPanel = Elem.div [] []; SessionPicker = Elem.div [] []
           ThemePicker = Elem.div [] []; ThemeVars = Elem.div [] []
@@ -178,7 +178,7 @@ let workflowBadgeTests =
           WarmupProgress = ""; WorkflowLabel = "LiveTesting"
           EvalStats = { Count = 0; AvgMs = 0.0; MinMs = 0.0; MaxMs = 0.0; Sparkline = ""; P50Ms = None; P95Ms = None }
           ThemeName = "default"; ConnectionLabel = None; ConnectionState = DashboardConnectionState.Connected
-          HotReloadPanel = Elem.div [] []; SessionContextPanel = Elem.div [] []
+          SessionContextPanel = Elem.div [] []
           OutputPanel = Elem.div [] []
           SessionsPanel = Elem.div [] []; SessionPicker = Elem.div [] []
           ThemePicker = Elem.div [] []; ThemeVars = Elem.div [] []
@@ -201,21 +201,6 @@ let quickStartAccessibilityTests =
       html.Contains("role=\"button\"") |> Expect.isTrue "screen readers must announce this as actionable"
       html.Contains("tabindex=\"0\"") |> Expect.isTrue "must be reachable by Tab"
       html.Contains("data-on:keydown") |> Expect.isTrue "Enter/Space must activate it like a native button")
-  ]
-
-[<Tests>]
-let hotReloadZeroFilesTests =
-  testList "Watch All / Unwatch All with zero discovered files say so instead of doing nothing (roast §4.3)" [
-
-    testCase "zero files: no Watch All / Unwatch All buttons, an explanation instead" (fun () ->
-      let html = renderHotReloadPanel "abcd1234" [] 0 |> renderNode
-      html.Contains("Watch All") |> Expect.isFalse "must not offer a control that silently does nothing"
-      html.Contains("Unwatch All") |> Expect.isFalse "must not offer a control that silently does nothing"
-      html |> Expect.stringContains "explains why there is nothing to watch" "No source files were discovered")
-
-    testCase "non-zero files: the buttons are back" (fun () ->
-      let html = renderHotReloadPanel "abcd1234" [ {| path = "src/A.fs"; watched = false |} ] 0 |> renderNode
-      html |> Expect.stringContains "Watch All present when there is something to watch" "Watch All")
   ]
 
 [<Tests>]

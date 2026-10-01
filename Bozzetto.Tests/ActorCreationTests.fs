@@ -90,10 +90,6 @@ let tests =
         args.AutoOpenNamespaces |> Expect.isTrue "AutoOpenNamespaces should default to true"
       }
 
-      test "sets HotReloadEnabled to false" {
-        let args = mkCommonActorArgs logger false onEvent loadConfig
-        args.HotReloadEnabled |> Expect.isFalse "HotReloadEnabled should be false"
-      }
     ]
 
     test "commonMiddleware is non-empty" {

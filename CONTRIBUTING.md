@@ -33,7 +33,7 @@ cd Bozzetto
 dotnet fsi build.fsx
 ```
 
-The build script restores the packages pinned in `Directory.Packages.props` and builds the solution. The MCP SDK comes from nuget.org; no dependency checkout or local MCP package feed is required. The owned `Bozzetto.Harmony` package and provenance manifest are versioned in `vendor/Bozzetto.Harmony/` and resolved through `nuget.config`. CI verifies this artifact without fetching upstream. To rebuild it from the controlled fork, run `scripts/update-harmony /absolute/path/to/Bozzetto.Harmony`, then review the package, manifest and lockfile changes. Generated package output stays in the external cache.
+The build script restores the packages pinned in `Directory.Packages.props` and builds the solution. The MCP SDK comes from nuget.org; no dependency checkout or local MCP package feed is required. Bozzetto orchestrates compiler work and controlled process lifetimes; it contains no runtime method-patching backend.
 
 `dotnet build` also restores these dependencies directly. Use `dotnet fsi ci-pipeline.fsx` for the complete build and test gate.
 

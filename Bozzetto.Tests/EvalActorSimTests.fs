@@ -22,9 +22,9 @@ open Bozzetto.Simulation.EvalActorInvariants
 /// loop-survival twin.
 ///
 /// `EvalActorStragglerTests.fs`'s `supersededAtWorkerBoundaryTests` stays as
-/// the one real process-boundary smoke worth keeping — it proves the
-/// structured `BozzettoError.EvalSupersededByReset` case crosses the worker
-/// HTTP boundary intact, which this pure DST cannot exercise.
+/// a wire-codec identity check: the structured
+/// `BozzettoError.EvalSupersededByReset` case survives serialization. The
+/// retired managed worker HTTP host is not part of that check.
 
 let private simConfig = { FsCheckConfig.defaultConfig with maxTest = 500 }
 

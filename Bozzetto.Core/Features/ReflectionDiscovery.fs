@@ -14,8 +14,7 @@ module ReflectionDiscovery =
   /// GetExportedTypes() still returns an empty array for the whole dynamic
   /// assembly). A freshly FSI-defined `[<Tests>]` value would therefore never
   /// be discoverable no matter how eagerly the caller re-scans — so for a
-  /// dynamic assembly, reflect with GetTypes() (which HotReloading.fs's own
-  /// Harmony method-diffing already relies on for dynamic FSI assemblies)
+  /// dynamic assembly, reflect with GetTypes()
   /// filtered to externally-visible types, instead of skipping discovery on
   /// dynamic assemblies outright. Non-dynamic assemblies (real compiled
   /// project DLLs) are completely unaffected — this only WIDENS what a

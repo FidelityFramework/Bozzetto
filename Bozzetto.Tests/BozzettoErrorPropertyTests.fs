@@ -121,14 +121,9 @@ let private genBozzettoError =
       return BozzettoError.WarmupContextFailed(id, reason)
     }
     gen {
-      let! path = genNonEmptyString
-      let! reason = genNonEmptyString
-      return BozzettoError.HotReloadFailed(path, reason)
-    }
-    gen {
       let! id = genNonEmptyString
       let! reason = genNonEmptyString
-      return BozzettoError.HotReloadStateError(id, reason)
+      return BozzettoError.LoadedStateStale(id, reason)
     }
     gen {
       let! project = genNonEmptyString
@@ -306,12 +301,12 @@ let bozzettoErrorPropertyTests =
           1)
 
     // 9. DU completeness guard — detect new cases
-    testCase "BozzettoError DU has exactly 41 cases" <| fun _ ->
+    testCase "BozzettoError DU has exactly 40 cases" <| fun _ ->
       allDuCaseInfos
       |> Array.length
       |> Expect.equal
         "BozzettoError case count changed — update generators and property tests"
-        41
+        40
 
     // 10. Unexpected wraps exception message
     testPropertyWithConfig propConfig "Unexpected description contains exception message" <|

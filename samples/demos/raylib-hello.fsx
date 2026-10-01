@@ -1,12 +1,11 @@
 // ============================================================
 //  🎮  Raylib Hello World — Bozzetto Edition
-//  A GPU-rendered window that hot-reloads when you save.
-//  Change the color, the text, the layout — save — it's live.
-//  No restart. The window keeps running.
+//  A GPU-rendered window for rendering and animation experiments.
+//  Edit, rebuild and restart the corresponding RaylibHello project.
 // ============================================================
 //
 //  Dependencies: Raylib-cs  (in Directory.Packages.props)
-//  Run via: boz gui   (or load in a Bozzetto session)
+//  Run the project: dotnet run --project Bozzetto.Samples.RaylibHello
 
 // #r "nuget: Raylib-cs"
 
@@ -14,11 +13,7 @@ open Raylib_cs
 open System.Numerics
 
 // ── Everything that changes goes here — make it a function ──
-// Bozzetto hot-patches function bodies at runtime (via Harmony).
-// Put your rendering logic in a top-level function and it will
-// update live when you save.
-
-// ┌─ HOT RELOAD ZONE: edit anything below, save, see it update ─┐
+// Keep rendering logic in a top-level function for clarity.
 
 let backgroundColor = Color.RayWhite   // try: Color.SkyBlue, Color.DarkGray
 
@@ -52,7 +47,7 @@ let drawFrame (time: float32) =
   Raylib.DrawFPS(10, 10)
 
   // Hot-reload hint
-  Raylib.DrawText("💾 Save this file to see hot reload in action", 80, 530, 16, Color.LightGray)
+  Raylib.DrawText("Edit, rebuild and restart to explore changes", 80, 530, 16, Color.LightGray)
 
 // └─────────────────────────────────────────────────────────────┘
 
@@ -77,17 +72,8 @@ while not (Raylib.WindowShouldClose()) do
 Raylib.CloseWindow()
 
 // ── What to try ──
-// 1. Change `backgroundColor` to Color.DarkPurple — save — instant!
-// 2. Change the title string — save — updates in the running window
+// 1. Change `backgroundColor` to Color.DarkPurple — rebuild and restart
+// 2. Change the title string — rebuild and restart
 // 3. Add a second animated shape in `drawFrame`
 // 4. Try Raylib.DrawRectangle, Raylib.DrawTriangle, Raylib.DrawLine
 // 5. Change the animation formula — sin → cos, multiply speed
-
-// ── Bozzetto hot reload: how it works here ──
-// • You save the file
-// • Bozzetto sends it to F# Interactive (~100ms)
-// • Harmony patches the `drawFrame` function pointer in-memory
-// • Next frame, the game loop calls the NEW `drawFrame`
-// • No window close. No app restart. Zero interruption.
-// This is the same mechanism used for web app hot reload —
-// one runtime, patched live.

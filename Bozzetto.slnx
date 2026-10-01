@@ -7,7 +7,6 @@
   <Project Path="Bozzetto.Core/Bozzetto.Core.fsproj" />
   <Project Path="Bozzetto.Simulation/Bozzetto.Simulation.fsproj" />
   <Project Path="Bozzetto/Bozzetto.fsproj" />
-  <Project Path="Bozzetto.Host/Bozzetto.Host.fsproj" />
   <Project Path="Bozzetto.Tests/Bozzetto.Tests.fsproj" />
   <Folder Name="/Samples/">
     <Project Path="samples/from-koans/Bozzetto.Samples.Koans/Bozzetto.Samples.Koans.fsproj" />

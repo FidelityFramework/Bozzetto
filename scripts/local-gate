@@ -147,7 +147,7 @@ trap release_gate_lease EXIT INT TERM
 # A persistent clean checkout per source repo, on real disk (a Release build is
 # several GB and the integration suites write temp dirs; a tmpfs has filled
 # and hung this before). Persistent means bin/obj, node_modules, the MCP SDK
-# clone and the Harmony nupkg stay warm between runs. git clean without -x
+# clone and package caches stay warm between runs. git clean without -x
 # keeps ignored build output while removing every untracked source file.
 WT="$STATE/checkout-$(echo -n "$REPO" | sha1sum | cut -c1-8)"
 if [ ! -d "$WT/.git" ] && [ ! -f "$WT/.git" ]; then

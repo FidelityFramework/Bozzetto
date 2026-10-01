@@ -6,9 +6,87 @@ The auditor's remit covers these repositories and their ownership boundaries,
 including Alex as a reader of the changed PSG contract. The retained
 filename preserves links to the original provider checkpoint; detailed compiler
 contracts remain in the linked sibling documents. This records source integration
-and separately identified gate results, not an installed-daemon promotion.
+and separately identified gate results. Deployment identities are recorded
+explicitly; earlier source anchors do not establish installed runtime behavior.
 
-## Audit repairs and stable runtime checkpoint
+## Minimal host and aligned compiler checkpoint
+
+The dedicated [auditor checkpoint](Bozzetto_Minimal_Host_Auditor_Checkpoint_2026-10-01.md)
+records the architectural correction, deletion scope, retained controls and
+reproduction guidance.
+
+The [minimal hosting architecture](Minimal_Hosting_Architecture.md) defines the
+remaining host responsibilities and the obligations a native implementation
+must preserve. Runtime method patching, its owned fork, package, production
+host, browser injection, client controls and patch-only tests are removed.
+There is no optional patching mode. F# implementation work uses separate SageFS;
+Composer retains native artifact and launch authority.
+
+The default gate registered and ran **8,957 tests: 8,954 passed, three ignored,
+zero failed or errored**, with a `Trusted` receipt. The three ignores are
+unimplemented performance-budget checks, not ignored correctness failures.
+The count decreased because tests for the removed feature were deleted; it is
+not a claim that the two suites have identical coverage. The first purge run's
+13 failures and two errors, then their corrected contract assertions, remain
+in the external evidence. Watcher, session, authority, cancellation and joined
+cleanup checks remain. The compiled dependency guard rejects transitive
+Harmony/MonoMod references.
+
+The daemon/test Release build passed with zero warnings or errors. VS Code's
+Fable compilation, bundle and golden checks passed. The public daemon API is
+version 4; the active VS Code adapter checks that version. The external Neovim
+client has not been validated against it.
+
+Running the entire Composer tier against the previously installed worker
+(`4229c332`) produced **38/40 passes**, one failure and one error. Its first
+request consumed the reservation, preventing shared build observation; it
+also omitted the status observation sequence now required by the daemon.
+Saved resource evidence explicitly names that missing sequence. Neither
+regression was weakened. The fresh, aligned Release compiler and worker then
+passed the entire tier: **40/40, zero failures, errors or ignores; Trusted**.
+That includes real native object reuse and shared MCP/HTTP authority. The
+source is unchanged between the failed old-worker run and the aligned run.
+
+The standalone shared-daemon launcher now uses Bash. Thirteen controlled
+launcher cases passed, covering dedicated workspace placement, existing
+listeners, exact process identity, startup failure and bounded readiness.
+
+The installed daemon now runs API 4 on **CoreCLR 10.0.12**. The fresh installed
+MCP/HTTP workflow passed cold, unchanged and one-function-edit native runs;
+reservation refused the old artifact before writing, and the stable function
+retained its object with zero witness visits. Owned cleanup and lease release
+completed. Exact assembly/closure hashes and the bounded replay results are in
+the dedicated auditor checkpoint. Twenty-two retired binary/cache roots were
+removed after shutdown; no patching assemblies remain in the checkout or the
+installed Bozzetto releases.
+
+Clef `ba694e1` passed **2,156/2,255**, retaining the identical 99 failures with
+one passing addition and no missing cases. Composer `723e900` over implementation
+`c1e3ff6` passed **385/386**, the same callable-Result failure with all five added
+ownership checks passing. The compiled editor run passed 30 checks, including
+all six failure-classification controls, then stopped at the source-only encoding
+check with two CCS8011 range diagnostics. That last check remains unresolved;
+the preceding selected encoding refusal/repair controls executed successfully.
+
+The published contract remains **Fidelity.PSG schema 12** (`e2effe3`), with
+Alex `9d53b9e` and Incremental Hosting **preview.6**. The unintegrated binary
+codec/control-channel drafts are not part of this compiled closure. Actual
+PSG revision transport remains open work; a handshake is not graph transport.
+
+The bounded [compiler authority review](../../Composer/docs/Compiler_Authority_Boundaries_2026-10-01.md)
+also identifies MCU image resolvers reading CCS structures and project options
+after checking. Baker-published image facts and captured backend inputs are
+the required repair. The exercised incremental project-session path admits
+CPU targets and retains capture validation; this review is not MCU acceptance.
+
+Receipts remain outside Git under
+`~/.codex/work/incremental-audit-repairs-2026-10-01/validation/`:
+`bozzetto-purge-tests-build-r6.log`, `bozzetto-purge-default-r2.log`,
+`bozzetto-purge-trust-r2.jsonl`, `bozzetto-purge-vscode-golden.log`,
+`bozzetto-purge-provider.log`, `purge-aligned-provider.log`,
+`purge-aligned-provider-trust.jsonl`, and `aligned-compiler-publish.log`.
+
+## Earlier audit repairs and stable runtime source checkpoint
 
 This commit records the next source-control anchor. Compiler and transport
 contracts remain fail-closed: a Git checkpoint is not runtime fallback behavior.

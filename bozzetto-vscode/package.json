@@ -1,7 +1,7 @@
 {
   "name": "bozzetto",
   "displayName": "Bozzetto — Live F# Development",
-  "description": "Send F# code to Bozzetto for instant evaluation, type-checking, and hot reload.",
+  "description": "Send F# code for evaluation, type-checking, and live test feedback.",
   "version": "0.6.834",
   "publisher": "fidelityframework",
   "license": "MIT",
@@ -23,7 +23,6 @@
     "f#",
     "repl",
     "interactive",
-    "hot-reload",
     "mcp"
   ],
   "extensionKind": [
@@ -123,31 +122,6 @@
         "title": "Bozzetto: Cycle Density (Full → Normal → Minimal)"
       },
       {
-        "command": "bozzetto.hotReloadToggle",
-        "title": "Bozzetto: Toggle Hot Reload for File",
-        "icon": "$(eye)"
-      },
-      {
-        "command": "bozzetto.hotReloadWatchAll",
-        "title": "Bozzetto: Watch All Files",
-        "icon": "$(check-all)"
-      },
-      {
-        "command": "bozzetto.hotReloadUnwatchAll",
-        "title": "Bozzetto: Unwatch All Files",
-        "icon": "$(close-all)"
-      },
-      {
-        "command": "bozzetto.hotReloadRefresh",
-        "title": "Bozzetto: Refresh Hot Reload",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "bozzetto.hotReloadToggleDirectory",
-        "title": "Bozzetto: Toggle Directory Hot Reload",
-        "icon": "$(eye)"
-      },
-      {
         "command": "bozzetto.sessionContextRefresh",
         "title": "Bozzetto: Refresh Session Context",
         "icon": "$(refresh)"
@@ -227,16 +201,6 @@
         "command": "bozzetto.resetSessionInline",
         "title": "Reset",
         "icon": "$(debug-restart)"
-      },
-      {
-        "command": "bozzetto.runApp",
-        "title": "Bozzetto: Run App",
-        "icon": "$(play)"
-      },
-      {
-        "command": "bozzetto.stopApp",
-        "title": "Bozzetto: Stop App",
-        "icon": "$(primitive-square)"
       },
       {
         "command": "bozzetto.evalAdvance",
@@ -412,11 +376,6 @@
           "contextualTitle": "Bozzetto Sessions"
         },
         {
-          "id": "bozzetto-hotReload",
-          "name": "Hot Reload Files",
-          "contextualTitle": "Bozzetto Hot Reload"
-        },
-        {
           "id": "bozzetto-sessionContext",
           "name": "Session Context",
           "contextualTitle": "Bozzetto Session Context"
@@ -515,26 +474,6 @@
           "when": "bozzetto:daemonRunning && bozzetto:hasSession"
         },
         {
-          "command": "bozzetto.hotReloadToggle",
-          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
-        },
-        {
-          "command": "bozzetto.hotReloadWatchAll",
-          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
-        },
-        {
-          "command": "bozzetto.hotReloadUnwatchAll",
-          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
-        },
-        {
-          "command": "bozzetto.hotReloadRefresh",
-          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
-        },
-        {
-          "command": "bozzetto.hotReloadToggleDirectory",
-          "when": "false"
-        },
-        {
           "command": "bozzetto.sessionContextRefresh",
           "when": "bozzetto:daemonRunning && bozzetto:hasSession"
         },
@@ -603,14 +542,6 @@
           "when": "false"
         },
         {
-          "command": "bozzetto.runApp",
-          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
-        },
-        {
-          "command": "bozzetto.stopApp",
-          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
-        },
-        {
           "command": "bozzetto.nextFailingTest",
           "when": "bozzetto:daemonRunning && bozzetto:hasSession"
         },
@@ -620,21 +551,6 @@
         }
       ],
       "view/title": [
-        {
-          "command": "bozzetto.hotReloadWatchAll",
-          "when": "view == bozzetto-hotReload",
-          "group": "navigation"
-        },
-        {
-          "command": "bozzetto.hotReloadUnwatchAll",
-          "when": "view == bozzetto-hotReload",
-          "group": "navigation"
-        },
-        {
-          "command": "bozzetto.hotReloadRefresh",
-          "when": "view == bozzetto-hotReload",
-          "group": "navigation"
-        },
         {
           "command": "bozzetto.sessionContextRefresh",
           "when": "view == bozzetto-sessionContext",
@@ -665,26 +581,6 @@
         {
           "command": "bozzetto.stopSessionInline",
           "when": "view == bozzetto-sessions && viewItem =~ /session-(active|inactive)/ && viewItem != session-stopped",
-          "group": "inline"
-        },
-        {
-          "command": "bozzetto.runApp",
-          "when": "view == bozzetto-sessions && viewItem =~ /session-active/",
-          "group": "inline"
-        },
-        {
-          "command": "bozzetto.stopApp",
-          "when": "view == bozzetto-sessions && viewItem =~ /session-active/",
-          "group": "inline"
-        },
-        {
-          "command": "bozzetto.hotReloadToggleDirectory",
-          "when": "view == bozzetto-hotReload && viewItem == directory",
-          "group": "inline"
-        },
-        {
-          "command": "bozzetto.hotReloadToggle",
-          "when": "view == bozzetto-hotReload && viewItem =~ /(watched|unwatched)File/",
           "group": "inline"
         }
       ]
@@ -880,21 +776,6 @@
         "view": "bozzetto-sessions",
         "when": "bozzetto:hasFsharpProject && bozzetto:daemonRunning && !bozzetto:hasSession",
         "contents": "Bozzetto is running with no active session.\n[Create Session](command:bozzetto.createSession)"
-      },
-      {
-        "view": "bozzetto-hotReload",
-        "when": "!bozzetto:daemonRunning",
-        "contents": "Bozzetto isn't running.\n[Start Bozzetto](command:bozzetto.start)"
-      },
-      {
-        "view": "bozzetto-hotReload",
-        "when": "bozzetto:daemonRunning && !bozzetto:hasSession",
-        "contents": "No active session.\n[Create Session](command:bozzetto.createSession)\n\nHot reload files appear once a session is running."
-      },
-      {
-        "view": "bozzetto-hotReload",
-        "when": "bozzetto:daemonRunning && bozzetto:hasSession && !bozzetto:hotReloadLoaded",
-        "contents": "No hot-reloadable files yet.\n\nWarmup lists a session's source files, which takes 15-30 seconds. If it stays empty, the project may not have been built.\n[Refresh](command:bozzetto.hotReloadRefresh)\n[Rebuild Session](command:bozzetto.hardReset)"
       },
       {
         "view": "bozzetto-sessionContext",

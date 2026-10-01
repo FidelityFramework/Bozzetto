@@ -1655,10 +1655,8 @@ let tests =
   })
 
   // --- Contextual panels (dashboard-ux-redesign.md, suggested order item 2):
-  // a REPL session shows no hot reload, cohort, lanes or friction panel;
-  // switching to Hot Reload brings its panel; a cohort with a present member
-  // brings the cohort panel and its lanes. Last in the list because it
-  // restarts the shared session twice (two workflow switches). ---
+  // a REPL session shows no cohort, lanes or friction panel;
+  // a cohort with a present member brings the cohort panel and its lanes. ---
 
   retiredPlaywrightTest "optional panels show only when they're relevant" (fun page -> task {
     let shot (name: string) = task {
@@ -1670,7 +1668,7 @@ let tests =
     do! PlaywrightExpect.waitForSelectorText 30_000 page "#session-status" "Ready"
     do! DashboardDom.ensureExpanded page
     // 1. A REPL session: none of them, even with the extra panels expanded.
-    for selector in [ "#hot-reload-panel"; "#cohort-panel"; "#cohort-lanes"; "#friction-panel"; "#live-testing-panel" ] do
+    for selector in [ "#cohort-panel"; "#cohort-lanes"; "#friction-panel"; "#live-testing-panel" ] do
       do! count selector 0 15_000
     do! shot "1-repl"
 
@@ -1697,49 +1695,6 @@ let tests =
     finally
       (client :> IAsyncDisposable).DisposeAsync().AsTask().GetAwaiter().GetResult()
 
-    // 3. Switch the session to Hot Reload through the REAL dashboard control
-    // — the workflow <select> in the sidebar — not the raw HTTP route.
-    // Fixed bug: the select's onchange fired
-    // `@post('/dashboard/switch-workflow', {workflowTarget: w})`, and
-    // Datastar's @post destructures only known option keys out of its
-    // second argument (payload/headers/contentType/...); an arbitrary
-    // `workflowTarget` key there was silently dropped, so the server never
-    // learned what the user picked. This journey proves the fix end to end:
-    // picking an option in the dropdown must actually switch the session.
-    let consoleErrors = Collections.Generic.List<string>()
-    page.Console.Add(fun msg ->
-      if msg.Type = "error" then
-        consoleErrors.Add(sprintf "[console] %s" msg.Text))
-    page.PageError.Add(fun err -> consoleErrors.Add(sprintf "[pageerror] %s" err))
-    let switcher = page.Locator(sprintf "#%s" DomIds.WorkflowSwitcher)
-    do! PlaywrightExpect.isVisibleAsync switcher "workflow switcher visible once a session is selected"
-    let switchViaDropdown (value: string) = task {
-      let! _ = switcher.SelectOptionAsync(value)
-      return ()
-    }
-    do! switchViaDropdown "hotreload"
-    do! count "#hot-reload-panel" 1 180_000
-    do! PlaywrightExpect.waitForSelectorText 180_000 page "#session-status" "Ready"
-    do! DashboardDom.ensureExpanded page
-    do! shot "3-hot-reload"
-    for selector in [ "#cohort-panel"; "#cohort-lanes"; "#friction-panel" ] do
-      do! count selector 0 5_000
-    // The switcher's OWN selected option reflects the switch actually
-    // landed server-side (the select is server-rendered from the session's
-    // real workflow, not just whatever the click left in the DOM).
-    let! selectedLabel = switcher.EvaluateAsync<string>("el => el.options[el.selectedIndex].textContent")
-    Expect.equal selectedLabel "Hot Reload" "the switcher itself shows Hot Reload selected after the real switch landed"
-
-    // Put the shared session back the way the other journeys expect it.
-    do! switchViaDropdown "interactive"
-    do! count "#hot-reload-panel" 0 180_000
-    do! PlaywrightExpect.waitForSelectorText 180_000 page "#session-status" "Ready"
-    let! selectedLabelBack = switcher.EvaluateAsync<string>("el => el.options[el.selectedIndex].textContent")
-    Expect.equal selectedLabelBack "REPL" "the switcher shows REPL selected again after switching back"
-
-    let datastarOrConsoleErrors = consoleErrors |> List.ofSeq
-    Expect.isEmpty datastarOrConsoleErrors
-      (sprintf "zero Datastar/console errors across the dropdown-driven workflow switch, got: %s" (String.concat " | " datastarOrConsoleErrors))
   })
   // Keep the no-session shell claim independently of the retired transition
   // from the picker into a production F# session.

@@ -16,7 +16,7 @@ type SseChannel =
 /// Unified SSE event vocabulary for daemon -> editor/dashboard push
 /// notifications. Replaces the formerly-separate DaemonStateChange
 /// ("state" channel) and SessionEvents.SessionEvent ("session" channel)
-/// types: the same worker occurrence (e.g. a hot-reload toggle) used to be
+/// types: the same worker occurrence (e.g. a session-ready notification) used to be
 /// represented by two unrelated DUs, serialized by two different ad hoc
 /// techniques (sprintf string-templating vs. a hand-rolled Utf8JsonWriter),
 /// and SseWriter had to track "two event types" separately. Now there is one
@@ -27,7 +27,6 @@ type SseEvent =
   | SessionProgress
   | SessionReady of sessionId: WorkerProtocol.SessionId
   | SessionSwitched of sessionId: WorkerProtocol.SessionId
-  | HotReloadChanged of sessionId: WorkerProtocol.SessionId
   | FileReloaded of sessionId: WorkerProtocol.SessionId * path: string
   | SessionFaulted of sessionId: WorkerProtocol.SessionId * error: string
   | ModelChanged of outputCount: int * diagCount: int
@@ -41,19 +40,17 @@ type SseEvent =
   | CohortChanged
   // ── Session channel (was SessionEvents.SessionEvent) — rich, session-scoped snapshots ──
   | WarmupContextSnapshot of sessionId: string * context: WarmupContext
-  | HotReloadSnapshot of sessionId: string * watchedFiles: string list
-  | HotReloadFileToggled of sessionId: string * file: string * watched: bool
   | SessionActivated of sessionId: string
   | SessionCreated of sessionId: string * projectNames: string list
   | SessionStopped of sessionId: string
   | WorkflowSwitching of sessionId: string * fromLabel: string * toLabel: string
-  | WorkflowSwitched of sessionId: string * label: string * replCapability: string * hotReloadActive: bool
+  | WorkflowSwitched of sessionId: string * label: string
   /// A session's `SessionHealth` verdict (`Bozzetto.SessionHealth.classify`)
   /// changed since the last one pushed for it — the SSE half of roast-8 §1:
   /// `/health` and `/api/sessions` compute this verdict on every GET, but
   /// nothing pushed it, so a session going Healthy -> Degraded mid-session
   /// was invisible to every connected client until an unrelated refetch.
-  /// Session-scoped like `WarmupContextSnapshot`/`HotReloadSnapshot`, so it
+  /// Session-scoped like `WarmupContextSnapshot`, so it
   /// rides the "session" channel and gets the same connect-time replay.
   | SessionHealthChanged of sessionId: string * health: SessionHealth
 
@@ -65,7 +62,6 @@ module SseEvent =
     | SessionProgress
     | SessionReady _
     | SessionSwitched _
-    | HotReloadChanged _
     | FileReloaded _
     | SessionFaulted _
     | ModelChanged _
@@ -73,8 +69,6 @@ module SseEvent =
     | SystemAlarm _
     | CohortChanged -> SseChannel.State
     | WarmupContextSnapshot _
-    | HotReloadSnapshot _
-    | HotReloadFileToggled _
     | SessionActivated _
     | SessionCreated _
     | SessionStopped _
@@ -167,8 +161,6 @@ module SseEvent =
       JsonSerializer.Serialize({| sessionReady = sid s |}, jsonOpts)
     | SessionSwitched s ->
       JsonSerializer.Serialize({| sessionSwitched = sid s |}, jsonOpts)
-    | HotReloadChanged s ->
-      JsonSerializer.Serialize({| hotReloadChanged = true; sessionId = sid s |}, jsonOpts)
     | FileReloaded (s, path) ->
       JsonSerializer.Serialize({| fileReloaded = path; sessionId = sid s |}, jsonOpts)
     | SessionFaulted (s, error) ->
@@ -185,12 +177,6 @@ module SseEvent =
     | WarmupContextSnapshot (s, ctx) ->
       JsonSerializer.Serialize(
         {| ``type`` = "warmup_context_snapshot"; sessionId = s; context = warmupContextJson ctx |}, jsonOpts)
-    | HotReloadSnapshot (s, watchedFiles) ->
-      JsonSerializer.Serialize(
-        {| ``type`` = "hotreload_snapshot"; sessionId = s; watchedFiles = watchedFiles |}, jsonOpts)
-    | HotReloadFileToggled (s, file, watched) ->
-      JsonSerializer.Serialize(
-        {| ``type`` = "hotreload_file_toggled"; sessionId = s; file = file; watched = watched |}, jsonOpts)
     | SessionActivated s ->
       JsonSerializer.Serialize({| ``type`` = "session_activated"; sessionId = s |}, jsonOpts)
     | SessionCreated (s, projectNames) ->
@@ -201,13 +187,11 @@ module SseEvent =
     | WorkflowSwitching (s, fromLabel, toLabel) ->
       JsonSerializer.Serialize(
         {| ``type`` = "workflow_switching"; sessionId = s; fromWorkflow = fromLabel; toWorkflow = toLabel |}, jsonOpts)
-    | WorkflowSwitched (s, label, replCapability, hotReloadActive) ->
+    | WorkflowSwitched (s, label) ->
       JsonSerializer.Serialize(
         {| ``type`` = "workflow_switched"
            sessionId = s
-           workflowLabel = label
-           replCapability = replCapability
-           hotReloadActive = hotReloadActive |}, jsonOpts)
+           workflowLabel = label |}, jsonOpts)
     | SessionHealthChanged (s, health) ->
       JsonSerializer.Serialize(
         {| ``type`` = "session_health_changed"; sessionId = s; health = sessionHealthJson health |}, jsonOpts)

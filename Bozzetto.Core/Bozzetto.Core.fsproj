@@ -63,11 +63,6 @@
         <Compile Include="HolderRewrite.fs" />
         <Compile Include="TranslationValidation.fs" />
         <Compile Include="BuildPreflight.fs" />
-        <Compile Include="Middleware\ValueReads.fs" />
-        <Compile Include="Features\RestartScope.fs" />
-        <Compile Include="Features\ReloadOutcome.fs" />
-        <Compile Include="Features\ReloadPlanning.fs" />
-        <Compile Include="Features\RestartAttribution.fs" />
         <!-- Phase 3 (live tweaking): pure address/edit/classification/transaction
              modules. Self-contained, no dependency on ReloadPlanning/ReloadOutcome
              above (deliberately, since those are owned by a parallel change),
@@ -82,13 +77,10 @@
              with bounded-growth compaction, on top of the address/edit
              modules above. -->
         <Compile Include="Features\Tweak\TweakLog.fs" />
-        <Compile Include="Features\LiveStateEmit.fs" />
-        <Compile Include="Features\KeptState.fs" />
         <Compile Include="ShadowCopy.fs" />
         <Compile Include="WarmUp.fs" />
         <Compile Include="AspireSetup.fs" />
         <Compile Include="ErrorMessages.fs" />
-        <Compile Include="WorkflowErrorContext.fs" />
         <Compile Include="Features\LiveTestingTypes.fs" />
         <Compile Include="Features\TestExecutionContracts.fs" />
         <Compile Include="Features\RequestedRuns.fs" />
@@ -223,7 +215,6 @@
         <Compile Include="CrossCheckoutOverlap.fs" />
         <Compile Include="Features\Verification.fs" />
         <Compile Include="SessionMode.fs" />
-        <Compile Include="AppRunOrchestration.fs" />
         <Compile Include="HttpWorkerClient.fs" />
         <Compile Include="HostManifest.fs" />
         <Compile Include="VariantSelector.fs" />
@@ -262,13 +253,8 @@
         <Compile Include="SessionHealth.fs" />
         <Compile Include="WarmupReplayCache.fs" />
         <Compile Include="StartupProfile.fs" />
-        <Compile Include="HotReloadState.fs" />
         <Compile Include="HttpOriginGuard.fs" />
-        <Compile Include="DevReload.fs" />
         <!-- Needs both ReloadOutcome/ReloadPlanning (above) and DevReload. -->
-        <Compile Include="Features\ReloadBroadcast.fs" />
-        <Compile Include="Middleware\ValueReadTracking.fs" />
-        <Compile Include="Middleware\HotReloadCore.fs" />
         <Compile Include="HostAgent.fs" />
         <!-- No dependency on FileWatcher.fs itself (System/System.IO only) —
              placed beside it because they're both directory-walk primitives,
@@ -293,12 +279,11 @@
              AppState.fs over its line budget. -->
         <Compile Include="OpenReplay.fs" />
         <Compile Include="AppState.fs" />
+        <Compile Include="Middleware\TestDiscovery.fs" />
         <Compile Include="Middleware\EvaluableSubmission.fs" />
         <Compile Include="Middleware\ComputationExpression.fs" />
         <Compile Include="Middleware\Directives.fs" />
         <Compile Include="Middleware\CompilationContext.fs" />
-        <Compile Include="Middleware\NonBlockingRun.fs" />
-        <Compile Include="Middleware\HotReloading.fs" />
         <Compile Include="Middleware\Tracing.fs" />
         <Compile Include="ActorCreation.fs" />
     </ItemGroup>
@@ -347,7 +332,6 @@
         <PackageReference Include="TreeSitter.DotNet" />
 
         <PackageReference Include="FuzzySharp" />
-        <PackageReference Include="Bozzetto.Harmony" />
         <PackageReference Include="Ionide.ProjInfo" />
         <PackageReference Include="Ionide.ProjInfo.FCS" />
         <PackageReference Include="System.Configuration.ConfigurationManager" />

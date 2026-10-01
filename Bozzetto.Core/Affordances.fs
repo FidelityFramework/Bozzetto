@@ -72,8 +72,7 @@ let availableTools (state: SessionState) : string list =
       "get_available_projects"
       "reset_fsi_session"
       "hard_reset_fsi_session"
-      // Switching REPL <-> Live (hot reload) is a Ready-session action — the
-      // web-package detection hint points agents here, so it must be callable.
+      // Switching Interactive <-> LiveTesting requires a Ready session.
       "switch_workflow"
       "cancel_eval"
       // Feature-analysis surface (P15–P19 + orphaned modules): all session
@@ -95,10 +94,7 @@ let availableTools (state: SessionState) : string list =
       "get_eval_diff"
       "get_cell_dependencies"
       "discover_features"
-      "suggest_repair"
-      "list_runnable_projects"
-      "run_app"
-      "stop_app" ]
+      "suggest_repair" ]
   | Evaluating ->
     [ "cancel_eval"
       "get_session_status"
@@ -148,8 +144,8 @@ let checkToolAvailability (state: SessionState) (toolName: string) : Result<unit
 //   - `AlwaysAvailable`— it has no session-state dependence and must remain
 //                        callable in every state (and before any session
 //                        exists). Monitoring/session-listing tools plus the
-//                        non-session surface (friction telemetry, hot-reload
-//                        toggles, stop_session) belong here.
+//                        non-session surface (friction telemetry and
+//                        stop_session) belong here.
 // The gate logic itself never special-cases a tool name — it consults only
 // this declaration table, so a newly registered tool is either declared or it
 // fails closed (and the registration-integrity tests force the declaration).
@@ -187,15 +183,6 @@ let private gatingDomain : Map<string, ToolGate> =
     // Reads and clears Bozzetto's own files under its data dir. No session involved.
     "manage_local_data", ToolGate.AlwaysAvailable
     "report_friction", ToolGate.AlwaysAvailable
-    "enable_hot_reload", ToolGate.AlwaysAvailable
-    "disable_hot_reload", ToolGate.AlwaysAvailable
-    // Lists or resets live state a hot-reload save kept. It goes straight to
-    // the worker, which answers for itself when it can't (no worker, nothing
-    // kept), so it doesn't need the session-state gate either.
-    "reset_hot_reload_state", ToolGate.AlwaysAvailable
-    // Lists or switches rule 2's reflection read mode. Same shape: it goes
-    // straight to the worker, which answers for itself.
-    "set_reflection_read_mode", ToolGate.AlwaysAvailable
     "stop_session", ToolGate.AlwaysAvailable
     // switch_session is navigation, not code execution: it only rebinds which
     // session the agent views and moves the daemon-global active pointer. It
@@ -259,10 +246,6 @@ let private gatingDomain : Map<string, ToolGate> =
     "get_cell_dependencies", ToolGate.StateGated
     "discover_features", ToolGate.StateGated
     "suggest_repair", ToolGate.StateGated
-    // Running the session's executable project needs a Ready worker.
-    "list_runnable_projects", ToolGate.StateGated
-    "run_app", ToolGate.StateGated
-    "stop_app", ToolGate.StateGated
   ]
 
 /// Look up a tool's gating classification. `None` means the tool is not

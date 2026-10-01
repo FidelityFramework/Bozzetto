@@ -1081,23 +1081,9 @@ module LiveTestingHook =
   /// module name as a substring (or vice versa) select tests sharing no
   /// real relationship (roast-7 §4).
   ///
-  /// HONEST GAP: `updatedMethodNames` today carries Harmony's reflected
-  /// `Method.FullName` values from the hot-reload middleware
-  /// (Bozzetto.Core/Middleware/HotReloading.fs, `handleNewAsmFromRepl`, the
-  /// sole production caller via `afterReload` below) — dotted-qualified
-  /// reflection names, NOT the compiler's own symbol-use table. The richer
-  /// input roast-7 §4 points at — the FCS `WorkerSymbolRef`/`SymbolReference`
-  /// data already produced by `GetAllUsesOfAllSymbolsInFile`
-  /// (Bozzetto.Core/Features/Diagnostics.fs:88, Bozzetto.Core/WorkerProtocol.fs:289)
-  /// and already consumed by the separate `TestDependencyGraph`
-  /// exact-symbol-map machinery (Bozzetto.Core/Features/LiveTestingTypes.fs:3712+,
-  /// `TestDependencyGraph.findAffected`) — is not threaded to this call site.
-  /// Wiring that would mean changing `HotReloading.fs`'s call into
-  /// `afterReload` to pass real FCS symbol-use data (or routing affected-set
-  /// selection through `TestDependencyGraph.findAffected` instead of this
-  /// function), which is outside this change's owned files. This function is
-  /// qualified-name-correct for whatever symbol names it is given today; it
-  /// does not fabricate a connection to data that isn't actually wired.
+  /// This helper accepts caller-supplied names; it is not compiler symbol-use
+  /// authority. The assembly-discovery adapter supplies no changed-method
+  /// claims and marks its newly discovered tests affected directly.
   ///
   /// Empty updatedMethodNames means nothing changed — returns empty.
   /// Conservative fallback: when methods changed but none match by

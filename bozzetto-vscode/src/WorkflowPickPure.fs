@@ -1,25 +1,5 @@
 /// Pure decisions behind "Switch Workflow".
 ///
-/// WHY this module exists — three measured defects in one 35-line command
-/// (bozzetto-ux-roast.md §4.2):
-///
-///   * The picker offered two workflows. `SessionWorkflow` has had THREE cases
-///     since `LiveTesting` landed, and `LiveTesting` is the mode the
-///     extension's own sidebar, gutters, CodeLenses and Test Explorer adapter
-///     all exist to serve. It was simply absent from the only UI that can
-///     select it.
-///   * The picker called `HotReload` "Live", while `SessionWorkflow.label`
-///     calls it "Hot Reload" — so you picked "Live" and the status bar then
-///     said something else. The labels here are pinned to the daemon's own
-///     `label` function by a contract test that loads the real
-///     `Bozzetto.Core/WorkflowTypes.fs`, so they cannot drift again.
-///   * Nothing marked which workflow the session was already in.
-///
-/// The wire strings are the aliases `SessionWorkflow.tryOfString` accepts
-/// (`WorkflowTypes.fs:469-472`); the same contract test round-trips each one
-/// through the real parser, so a rename on the daemon breaks here instead of
-/// silently switching the user into the wrong mode.
-///
 /// No Fable dependency; tested under `dotnet fsi`
 /// (tests/WorkflowPickContractTests.fsx).
 module Bozzetto.Vscode.WorkflowPickPure
@@ -43,15 +23,11 @@ let choices: WorkflowChoice list = [
   { Wire = "Interactive"
     Label = "REPL"
     Icon = "notebook"
-    Detail = "Full interactive REPL. No hot reload, no test-on-save." }
+    Detail = "Interactive evaluation without test-on-save." }
   { Wire = "LiveTesting"
     Label = "Live Testing"
     Icon = "beaker"
     Detail = "Full REPL, and affected tests re-run as you type." }
-  { Wire = "HotReload"
-    Label = "Hot Reload"
-    Icon = "globe"
-    Detail = "Patches the running app on save. REPL restricted to expressions." }
 ]
 
 /// One rendered quick-pick row.

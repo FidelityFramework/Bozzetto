@@ -20,8 +20,6 @@
         <Compile Include="ComposerSupervisorTests.fs" />
         <Compile Include="ComposerWorkerClientTests.fs" />
         <Compile Include="TestCountBadge.fs" />
-        <Compile Include="StableIdentityProbeFixture.fs" />
-        <Compile Include="StableIdentityEvalTests.fs" />
         <Compile Include="BozzettoConfigTests.fs" />
         <Compile Include="AppStateCustomTests.fs" />
         <Compile Include="DaemonModeProxyTests.fs" />
@@ -39,10 +37,8 @@
         <Compile Include="SharedGenerators.fs" />
         <Compile Include="McpFormatterPropertyTests.fs" />
         <Compile Include="CompExprSimplifierTests.fs" />
-        <Compile Include="MethodPatcherTests.fs" />
         <Compile Include="SnapshotTests.fs" />
         <Compile Include="ToolDescriptionTests.fs" />
-        <Compile Include="HotReloadToolTests.fs" />
         <Compile Include="SessionResetTests.fs" />
         <Compile Include="ShadowCopyTests.fs" />
         <Compile Include="DiagnosticsToolTests.fs" />
@@ -59,30 +55,20 @@
         <Compile Include="AffordancesPropertyTests.fs" />
         <Compile Include="WorkflowPropertyTests.fs" />
         <Compile Include="WorkflowScenarioTests.fs" />
-        <Compile Include="WorkflowErrorContextTests.fs" />
         <Compile Include="WorkflowElmModelTests.fs" />
         <Compile Include="WorkflowSwitchTests.fs" />
         <Compile Include="WorkflowTransitionPropertyTests.fs" />
-        <Compile Include="WorkflowDetectionWiringTests.fs" />
         <Compile Include="McpAffordanceHardeningTests.fs" />
         <Compile Include="McpToolGateTests.fs" />
-        <Compile Include="WorkerMainTests.fs" />
         <Compile Include="WorkerProtocolTests.fs" />
         <Compile Include="CheckoutTests.fs" />
         <Compile Include="NativeResolutionTests.fs" />
         <Compile Include="MemberTableTests.fs" />
         <Compile Include="CrossCheckoutOverlapTests.fs" />
         <Compile Include="AppRunTests.fs" />
-        <Compile Include="ReloadPlanningTests.fs" />
         <Compile Include="LiveTestActivityTests.fs" />
-        <Compile Include="AppRunnerTests.fs" />
-        <Compile Include="AppRunOrchestrationTests.fs" />
-        <Compile Include="SessionAppRoutesHttpTests.fs" />
         <Compile Include="WorkflowRouteHttpTests.fs" />
         <Compile Include="EvalStatsWorkerReadTests.fs" />
-        <Compile Include="HotReloadDetourPlanTests.fs" />
-        <Compile Include="RestartScopeAttributionTests.fs" />
-        <Compile Include="RestartAttributionRegistryTests.fs" />
         <Compile Include="DaemonStateTests.fs" />
         <Compile Include="McpBridgeTests.fs" />
         <Compile Include="HttpOriginGuardTests.fs" />
@@ -127,7 +113,6 @@
         <Compile Include="DashboardEscapingTests.fs" />
         <Compile Include="SessionCardActionsTests.fs" />
         <Compile Include="DashboardViewingTests.fs" />
-        <Compile Include="WorkerReloadRelayTests.fs" />
         <Compile Include="DashboardRenderGateTests.fs" />
         <Compile Include="DashboardHealthVerdictRenderingTests.fs" />
         <Compile Include="DashboardWorkflowSwitchTests.fs" />
@@ -150,11 +135,7 @@
         <Compile Include="HotReloadTests.fs" />
         <Compile Include="HostAgentTests.fs" />
         <Compile Include="SessionProjectPickerTests.fs" />
-        <Compile Include="HotReloadingDiscoveryGateTests.fs" />
-        <Compile Include="WorkerLiveTestEvalTests.fs" />
-        <Compile Include="HotReloadStateTests.fs" />
         <Compile Include="MutationTestingFramework.fs" />
-        <Compile Include="HotReloadStateMutationTests.fs" />
         <Compile Include="ResultExMutationTests.fs" />
         <Compile Include="BozzettoErrorMutationTests.fs" />
         <Compile Include="SessionLifecycleMutationTests.fs" />
@@ -171,24 +152,10 @@
         <Compile Include="FlakyPersistenceTests.fs" />
         <Compile Include="FsiNamingContractTests.fs" />
         <Compile Include="FsiDiscoveryIdentitySimTests.fs" />
-        <Compile Include="FsiEmitSimTests.fs" />
-        <Compile Include="ValueReadSimTests.fs" />
-        <Compile Include="ReflectionReadSimTests.fs" />
         <Compile Include="EvalStoreMutationTests.fs" />
         <Compile Include="SessionDisplayMutationTests.fs" />
-        <Compile Include="ReloadPlanningDecisionMutationTests.fs" />
-        <Compile Include="ReloadPlanningOutcomeRegressionTests.fs" />
-        <Compile Include="ReloadPlanningWholeFileReevalTests.fs" />
-        <Compile Include="HotReloadStateCorrespondenceTests.fs" />
         <Compile Include="BozzettoIOTests.fs" />
-        <Compile Include="HotReloadBrowserTests.fs" />
         <Compile Include="LiveTestingBrowserTests.fs" />
-        <Compile Include="HotReloadEndpointTests.fs" />
-        <Compile Include="DevReloadTests.fs" />
-        <Compile Include="DevReloadLastOutcomeTests.fs" />
-        <Compile Include="WorkerHttpTransportTests.fs" />
-        <Compile Include="WorkerHttpTransportLastOutcomeTests.fs" />
-        <Compile Include="WorkerHttpGuardTests.fs" />
         <Compile Include="SessionIsolationTests.fs" />
         <Compile Include="ShutdownLifecycleTests.fs" />
         <Compile Include="CompletionsContractTests.fs" />
@@ -248,7 +215,6 @@
          <Compile Include="ExpectoModuleBindingFixture.fs" />
           <Compile Include="LiveTestingExecutorTests.fs" />
          <Compile Include="ArgsCleanupTests.fs" />
-         <Compile Include="AssemblyResolverTests.fs" />
          <Compile Include="SseWriterTests.fs" />
          <Compile Include="SseDedupKeyTests.fs" />
          <Compile Include="ThemeTests.fs" />
@@ -285,7 +251,6 @@
         <Compile Include="EvalDiffTests.fs" />
         <Compile Include="CellDependencyGraphTests.fs" />
         <Compile Include="TestSourceResolverTests.fs" />
-        <Compile Include="ReloadOutcomeTests.fs" />
         <!-- Phase 3 (live tweaking): pure module coverage, then the DST sim. -->
         <Compile Include="TweakAddressTests.fs" />
         <Compile Include="LiteralEditTests.fs" />
@@ -295,12 +260,6 @@
         <Compile Include="TweakLogTests.fs" />
         <Compile Include="TweakSimDstTests.fs" />
         <Compile Include="RetentionSimDstTests.fs" />
-        <Compile Include="LiveStateEmitTests.fs" />
-        <Compile Include="ValueReadsTests.fs" />
-        <Compile Include="ReflectionReadsTests.fs" />
-        <Compile Include="ReflectionReadTrackingTests.fs" />
-        <Compile Include="ReflectionReadSurfaceTests.fs" />
-        <Compile Include="ReloadBroadcastTests.fs" />
         <Compile Include="BindingExplorerTests.fs" />
         <Compile Include="IdentifierScanTests.fs" />
         <Compile Include="EvalTimelineTests.fs" />
@@ -340,10 +299,6 @@
         <Compile Include="SessionIdTests.fs" />
         <Compile Include="EndpointContractTests.fs" />
         <Compile Include="FsiRegressionTests.fs" />
-        <Compile Include="HotReloadingPropertyTests.fs" />
-        <Compile Include="DevReloadCanaryTests.fs" />
-        <Compile Include="HarmonyCanaryTests.fs" />
-        <Compile Include="DevReloadMiddlewareTests.fs" />
         <Compile Include="QuarantineTests.fs" />
         <Compile Include="FlakyClassificationTests.fs" />
         <Compile Include="FlakyClassificationPropertyTests.fs" />
@@ -370,7 +325,6 @@
         <Compile Include="WorkflowSwitchSimTests.fs" />
         <Compile Include="DstCoverageTests.fs" />
         <Compile Include="McpToolOutcomeTests.fs" />
-        <Compile Include="McpAppRunOutcomeTests.fs" />
         <Compile Include="DstShrinkTests.fs" />
         <Compile Include="OriginGuardOutcomeTests.fs" />
         <Compile Include="SessionBindingIsolationOutcomeTests.fs" />
@@ -532,18 +486,12 @@
         <Compile Include="SettingsTests.fs" />
         <Compile Include="SettingsPanelTests.fs" />
         <Compile Include="SupervisorPortHandshakeTests.fs" />
-        <Compile Include="WebAppHotReloadVerificationTests.fs" />
-        <Compile Include="HotReloadStateHarness.fs" />
-        <Compile Include="HotReloadStateOutcomeTests.fs" />
-        <Compile Include="TieredCompilationCostBenchmark.fs" />
-        <Compile Include="HotReloadKeptStateSurfaceTests.fs" />
         <Compile Include="DaemonStateChangeContractTests.fs" />
         <Compile Include="LiveTestWatcherCoreTests.fs" />
         <Compile Include="FrictionCaptureDurabilityTests.fs" />
         <Compile Include="FrictionSendSafetyTests.fs" />
         <Compile Include="IntegrationRegistryTests.fs" />
         <Compile Include="DashboardBrowserRunner.fs" />
-        <Compile Include="VscodeCommandProofTests.fs" />
         <Compile Include="CoverageTreemapTests.fs" />
         <Compile Include="FrictionClassificationTests.fs" />
         <Compile Include="FaultReasonSurfacingTests.fs" />
@@ -573,7 +521,6 @@
         <Compile Include="RewriteValidationSimTests.fs" />
         <Compile Include="GranularRestartTests.fs" />
         <Compile Include="GranularRestartSimTests.fs" />
-        <Compile Include="RestartScopeTests.fs" />
         <Compile Include="../tools/agent-hooks/ReplGuard.fs" Link="AgentHooks/ReplGuard.fs" />
         <Compile Include="ReplGuardTests.fs" />
         <Compile Include="CohortLedgerSqliteTests.fs" />
@@ -622,7 +569,6 @@
         <PackageReference Include="FsCheck" />
         <PackageReference Include="YoloDev.Expecto.TestSdk" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" />
-        <PackageReference Include="Bozzetto.Harmony" />
         <PackageReference Include="Fantomas.Core" />
         <PackageReference Include="Falco" />
         <PackageReference Include="Falco.Markup" />
@@ -642,15 +588,6 @@
         <ProjectReference Include="..\Bozzetto.Core\Bozzetto.Core.fsproj" />
         <ProjectReference Include="..\Bozzetto.Simulation\Bozzetto.Simulation.fsproj" />
         <ProjectReference Include="..\Bozzetto\Bozzetto.fsproj" />
-        <ProjectReference Include="..\Bozzetto.Host\Bozzetto.Host.fsproj" />
-        <!-- The web-app hot-reload fixture is a build-time dependency: the
-             host process #loads its source and needs the fixture's compiled
-             bin/ assemblies to resolve references. Reference with
-             ReferenceOutputAssembly=false so the fixture DLL is built (and its
-             bin/ populated) without polluting the test project's references. -->
-        <ProjectReference Include="fixtures\WebAppFixture\WebAppFixture.fsproj"
-                          PrivateAssets="all"
-                          ReferenceOutputAssembly="false" />
         <!-- #141/#142's outcome gate needs a REAL compiled project with no package references (the SDK's
              implicit FSharp.Core — the config every normal user is in, and Bozzetto's own dogfood tests
              never exercise since Bozzetto.Tests.fsproj references Bozzetto.Core). Same

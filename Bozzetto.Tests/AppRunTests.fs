@@ -225,8 +225,7 @@ let private runningWeb (endpoint: AppEndpoint) : RunningApp =
 let stateViewTests =
   testList "AppRun describeState and toView" [
     testCase "WHY — AppRun.describeState — every state about a project names it because several sessions may run apps at once" <| fun _ ->
-      [ AppRunState.Starting (projectPath, StartPhase.RestartingIntoWebLive, at)
-        AppRunState.Starting (projectPath, StartPhase.LaunchingEntryPoint, at)
+      [ AppRunState.Starting (projectPath, StartPhase.LaunchingEntryPoint, at)
         AppRunState.Running (runningWeb (AppEndpoint.Http ("http://127.0.0.1:5123", [])))
         AppRunState.Running (runningWeb AppEndpoint.NoServer)
         AppRunState.Exited (projectPath, 3, at)
@@ -255,25 +254,6 @@ let appRunFailedWordingTests =
   ]
 
 [<Tests>]
-let restartWordingTests =
-  let at = System.DateTime(2026, 9, 11, 0, 0, 0, System.DateTimeKind.Utc)
-  let typeChange = Bozzetto.Features.ReloadPlanning.ReloadChange.TypeChanged "TodoItem"
-  let valueChange = Bozzetto.Features.ReloadPlanning.ReloadChange.ValueChanged "getHome"
-  testList "AppRun restart wording" [
-    testCase "WHY — AppRun.describeState — a run ended for a restart names what changed because the user must know why their app went down" <| fun _ ->
-      describeState (AppRunState.RestartRequired ("/src/Web/Web.fsproj", typeChange, [ valueChange ], at))
-      |> Expect.equal "names the app and each change" "Web must restart: type TodoItem changed; getHome changed (it is built at startup)"
-
-    testCase "WHY — AppRun.describeState — rebuilding for changes names them because a long rebuild must not look like a hang" <| fun _ ->
-      describeState (AppRunState.Starting ("/src/Web/Web.fsproj", StartPhase.RebuildingForChanges (typeChange, []), at))
-      |> Expect.equal "names the app and the change" "Rebuilding Web: type TodoItem changed…"
-
-    testCase "WHY — AppRun.toView — a restart-required run reports its own state name because clients switch on it" <| fun _ ->
-      (toView (AppRunState.RestartRequired ("/src/Web/Web.fsproj", typeChange, [], at))).State
-      |> Expect.equal "state name" "RestartRequired"
-  ]
-
-[<Tests>]
 let reuseAddressTests =
   let projectPath = Path.Combine(Path.GetTempPath(), "src", "Web", "Web.fsproj")
   testList "AppRun planLaunch reuse" [
@@ -294,15 +274,10 @@ let reuseAddressTests =
 let acrossWorkerRestartTests =
   let at = System.DateTime(2026, 9, 11, 0, 0, 0, System.DateTimeKind.Utc)
   let web = "/src/Web/Web.fsproj"
-  let rebuilding =
-    AppRunState.Starting (web, StartPhase.RebuildingForChanges (Bozzetto.Features.ReloadPlanning.ReloadChange.TypeChanged "Priority", []), at)
   let running =
     AppRunState.Running
       { RunId = "r1"; Project = web; EntryPoint = "Web.Program.main"; Endpoint = AppEndpoint.Http ("http://127.0.0.1:5123", []); StartedAt = at }
   testList "AppRun acrossWorkerRestart" [
-    testCase "WHY — AppRun.acrossWorkerRestart — an app being rebuilt stays Starting because the card must not flash Not running mid-rebuild" <| fun _ ->
-      acrossWorkerRestart rebuilding |> Expect.equal "still rebuilding" rebuilding
-
     testCase "WHY — AppRun.acrossWorkerRestart — a running app is not running once its worker is replaced because the process that hosted it is gone" <| fun _ ->
       acrossWorkerRestart running |> Expect.equal "not running" AppRunState.NotRunning
 

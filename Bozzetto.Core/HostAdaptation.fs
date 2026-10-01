@@ -13,7 +13,7 @@ open System.Reflection
 /// - API-compatible (FSharp.Core, FCS, SystemTextJson, Adaptive): the host
 ///   loads the PROJECT's pinned version (same runtime => same FSharp.Core;
 ///   the others are API-stable).
-/// - API-coupled (Fantomas, Cecil, Harmony): select the version-matched
+/// - API-coupled (Fantomas, Cecil): select the version-matched
 ///   VARIANT (VariantSelector); none -> pre-eval refusal (fail-closed).
 /// - Feature deps: not in the host at all (daemon-side) — never a collision.
 ///
@@ -25,7 +25,7 @@ module HostAdaptation =
   /// The API-coupled library families (host code calls their APIs directly).
   /// Everything else in the host closure is API-compatible by policy.
   let apiCoupledLibraries =
-    [ "Fantomas"; "Mono.Cecil"; "HarmonyLib" ]
+    [ "Fantomas"; "Mono.Cecil" ]
 
   /// The API-compatible library families (host loads the project's version).
   let apiCompatibleLibraries =

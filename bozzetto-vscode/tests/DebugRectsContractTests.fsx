@@ -7,7 +7,7 @@
 // written); GREEN once the module's geometry carve-outs are correct.
 //
 // Runs under plain `dotnet fsi` (no Fable, no VS Code, no Node) — mirrors
-// AppRunContractTests.fsx/DaemonDiscoveryContractTests.fsx.
+// WorkflowPickContractTests.fsx/DaemonDiscoveryContractTests.fsx.
 #r "nuget: Expecto, 11.0.0-alpha8"
 #load "../src/DebugRects.fs"
 
@@ -38,7 +38,7 @@ let tests =
       RectTarget.parse "caret" |> Expect.equal "caret" (Some RectTarget.Caret)
       RectTarget.parse "editor" |> Expect.equal "editor" (Some RectTarget.Editor)
       RectTarget.parse "statusBar" |> Expect.equal "statusBar" (Some RectTarget.StatusBar)
-      RectTarget.parse "view:hotReload" |> Expect.equal "view" (Some(RectTarget.View "hotReload"))
+      RectTarget.parse "view:sessions" |> Expect.equal "view" (Some(RectTarget.View "sessions"))
 
     testCase "WHY - target vocabulary - an unrecognized string is a real absence, not a fallback guess" <| fun _ ->
       RectTarget.parse "" |> Expect.equal "empty" None
@@ -126,7 +126,7 @@ let tests =
       |> Expect.equal "hidden sidebar" None
 
     testCase "WHY - unknown named view - honest absence, never a fabricated rect" <| fun _ ->
-      resolve window chromeFull None (RectTarget.View "hotReload")
+      resolve window chromeFull None (RectTarget.View "sessions")
       |> Expect.equal "unresolvable named view" None
   ]
 

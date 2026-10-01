@@ -20,18 +20,7 @@
       "layer": "real-client-e2e",
       "client": "dashboard",
       "status": "not-applicable",
-      "historicalEvidence": {
-        "kind": "ci",
-        "tests": [
-          "Bozzetto.Tests/HotReloadBrowserTests.fs"
-        ],
-        "runner": "--integration-hr",
-        "stage": "test tiers",
-        "run": "35656311515",
-        "commit": "200e88b6",
-        "summary": "Real Chromium against a real daemon: Watch All arms the watcher and the panel reflects it; saving Greeting.fs makes the SAME running app serve the new value; a compile-error save keeps the last good value and the repair reloads. The --integration-hr tier ran 3 of 3 registered, 3 passed (TRUST verdict Trusted) in the gate for commit 200e88b6, whose result main build run 35656311515 promoted and published in its job summary's trust report. Closes #127."
-      },
-      "reason": "2026-10-01: this row describes the retired embedded F# provider. F# hot reload and live testing now belong to separate SageFS. Future Clef/ORC and heterogeneous HMR require their own compiler contracts and acceptance; the preserved historical evidence does not verify those capabilities. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
+      "reason": "2026-10-01: managed runtime patching, its daemon endpoints, client commands and acceptance fixtures were removed. Historical receipts remain in git history; they do not establish a current Bozzetto capability. Future native replacement requires its own compiler authority and acceptance. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
     },
     {
       "id": "HR-VSC-E2E",
@@ -39,18 +28,7 @@
       "layer": "real-client-e2e",
       "client": "vscode",
       "status": "not-applicable",
-      "historicalEvidence": {
-        "kind": "ci",
-        "tests": [
-          "Bozzetto.Tests/VscodeCommandProofTests.fs"
-        ],
-        "runner": "--integration-host",
-        "stage": "test tiers",
-        "run": "35523239725",
-        "commit": "88991359",
-        "summary": "bozzetto.hotReloadWatchAll / bozzetto.hotReloadUnwatchAll invoked via vscode.commands.executeCommand inside a real @vscode/test-electron extension host, proven against the real daemon's GET /api/sessions/{sid}/hotreload (watchedCount 0 -> N -> 0). Issue #133 closed."
-      },
-      "reason": "2026-10-01: this row describes the retired embedded F# provider. F# hot reload and live testing now belong to separate SageFS. Future Clef/ORC and heterogeneous HMR require their own compiler contracts and acceptance; the preserved historical evidence does not verify those capabilities. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
+      "reason": "2026-10-01: managed runtime patching, its daemon endpoints, client commands and acceptance fixtures were removed. Historical receipts remain in git history; they do not establish a current Bozzetto capability. Future native replacement requires its own compiler authority and acceptance. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
     },
     {
       "id": "HR-NVIM-E2E",
@@ -58,17 +36,7 @@
       "layer": "real-client-e2e",
       "client": "neovim",
       "status": "not-applicable",
-      "historicalEvidence": {
-        "kind": "external",
-        "repo": "WillEhrendreich/sagefs.nvim",
-        "tests": [
-          "spec/e2e/e2e_realdaemon_spec.lua"
-        ],
-        "commit": "ce2f615aef7d1edcb9d6007020aa7f10d26ec341",
-        "attestedAt": "2026-09-04",
-        "summary": "13/13 real-daemon journeys passing in sagefs.nvim at the pinned commit. ATTESTATION, NOT VERIFICATION: this repository cannot execute the plugin, so nothing here re-runs it."
-      },
-      "reason": "2026-10-01: this row describes the retired embedded F# provider. F# hot reload and live testing now belong to separate SageFS. Future Clef/ORC and heterogeneous HMR require their own compiler contracts and acceptance; the preserved historical evidence does not verify those capabilities. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
+      "reason": "2026-10-01: managed runtime patching, its daemon endpoints, client commands and acceptance fixtures were removed. Historical receipts remain in git history; they do not establish a current Bozzetto capability. Future native replacement requires its own compiler authority and acceptance. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
     },
     {
       "id": "LT-DASH-E2E",
@@ -95,18 +63,7 @@
       "layer": "real-client-e2e",
       "client": "vscode",
       "status": "not-applicable",
-      "historicalEvidence": {
-        "kind": "ci",
-        "tests": [
-          "Bozzetto.Tests/VscodeCommandProofTests.fs"
-        ],
-        "runner": "--integration-host",
-        "stage": "test tiers",
-        "run": "35523239725",
-        "commit": "88991359",
-        "summary": "bozzetto.enableLiveTesting / bozzetto.disableLiveTesting invoked via vscode.commands.executeCommand inside a real @vscode/test-electron extension host, proven against the real daemon's GET /api/live-testing/status (Enabled true/false transitions, real discovery: 11 tests, 1 genuinely failing on the sample). Issue #133 closed."
-      },
-      "reason": "2026-10-01: this row describes the retired embedded F# provider. F# hot reload and live testing now belong to separate SageFS. Future Clef/ORC and heterogeneous HMR require their own compiler contracts and acceptance; the preserved historical evidence does not verify those capabilities. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
+      "reason": "2026-10-01: the embedded F# command-proof fixture was retired with its worker. Separate SageFS owns F# live testing; no current Bozzetto client gate is claimed. Historical receipts remain in git history. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
     },
     {
       "id": "LT-NVIM-E2E",

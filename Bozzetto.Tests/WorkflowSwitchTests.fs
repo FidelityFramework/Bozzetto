@@ -19,19 +19,10 @@ open Bozzetto.Tests.SharedGenerators
 
 // ── Generators ──────────────────────────────────────────────
 
-let private genBrowserRefreshConfig =
-  Gen.elements [
-    BrowserRefreshConfig.defaults
-    { WatchPatterns = [ "*.fs" ] }
-    { WatchPatterns = [ "*.fsx"; "*.fs"; "*.html" ] }
-    { WatchPatterns = [] }
-  ]
-
 let private genSessionWorkflow =
   Gen.oneof [
     Gen.constant SessionWorkflow.Interactive
     Gen.constant SessionWorkflow.LiveTesting
-    genBrowserRefreshConfig |> Gen.map SessionWorkflow.HotReload
   ]
 
 let private genTransitionCost =
@@ -44,8 +35,6 @@ let private genTransitionCost =
 type SwitchGenerators =
   static member SessionWorkflow () =
     Arb.fromGen genSessionWorkflow
-  static member BrowserRefreshConfig () =
-    Arb.fromGen genBrowserRefreshConfig
   static member TransitionCost () =
     Arb.fromGen genTransitionCost
 
@@ -175,7 +164,7 @@ let workflowSwitchOutcomeTests =
         "preview returns cost without switching" <| fun _ ->
         // GIVEN a session in Interactive mode with some state
         let current = SessionWorkflow.Interactive
-        let target = SessionWorkflow.HotReload BrowserRefreshConfig.defaults
+        let target = SessionWorkflow.LiveTesting
         let cost = TransitionCost.compute 5 3
 
         // WHEN previewing the switch
@@ -211,9 +200,9 @@ let workflowSwitchOutcomeTests =
 
       testCase
         "switch creates Executed outcome with correct metadata" <| fun _ ->
-        // GIVEN switching from Interactive to HotReload
+        // GIVEN switching from Interactive to LiveTesting
         let previous = SessionWorkflow.Interactive
-        let target = SessionWorkflow.HotReload BrowserRefreshConfig.defaults
+        let target = SessionWorkflow.LiveTesting
         let cost = TransitionCost.compute 2 1
         let newSid = "abc-new-session"
 
@@ -232,7 +221,7 @@ let workflowSwitchOutcomeTests =
             "should record previous workflow" "REPL"
           SessionWorkflow.label tgt
           |> Expect.equal
-            "should record target workflow" "Hot Reload"
+            "should record target workflow" "Live Testing"
           c
           |> Expect.equal
             "should carry transition cost" cost
@@ -280,7 +269,7 @@ let workflowSseEventTests =
         // Missing fields = broken status bar.
         let evt =
           Bozzetto.Server.SseEvent.WorkflowSwitched(
-            "sid-2", "Live", "ExpressionOnly", true)
+            "sid-2", "Live Testing")
         let json =
           Bozzetto.Server.SseEvent.toJson evt
 
@@ -290,12 +279,6 @@ let workflowSseEventTests =
         json
         |> Expect.stringContains
           "should include label" "Live"
-        json
-        |> Expect.stringContains
-          "should include replCapability" "ExpressionOnly"
-        json
-        |> Expect.stringContains
-          "should include hotReloadActive" "true"
 
       testPropertyWithConfig switchConfig
         "round-trip preserves session ID" <|
@@ -303,7 +286,7 @@ let workflowSseEventTests =
           let sid = "test-session-42"
           let evt =
             Bozzetto.Server.SseEvent.WorkflowSwitched(
-              sid, "REPL", "Full", false)
+              sid, "REPL")
           let json =
             Bozzetto.Server.SseEvent.toJson evt
           json.Contains sid

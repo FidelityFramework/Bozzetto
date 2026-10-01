@@ -14,7 +14,6 @@ Bozzetto brings live evaluation, instant test feedback, and coverage visualizati
 | **Failure Details** | Inline `⊘` markers show Expected vs Actual diffs |
 | **Failure Narratives** | Rich context: what changed, when it last passed, causal analysis |
 | **Test Source Jump** | Test Explorer items link to their source location automatically |
-| **Hot Reload** | Save a `.fs` file and Bozzetto reloads it via Harmony method patching. Browser refresh over SSE works; propagating changes into a running module-declared app is still being completed. |
 | **Eval Performance** | Status bar sparkline with P50/P95/P99 eval latencies |
 
 > This is the Bozzetto fork's extension source. Package IDs, settings, and command-palette labels still use Bozzetto. The published Bozzetto Marketplace/Open VSX extension is upstream, not a Bozzetto release.
@@ -131,10 +130,6 @@ Click the daemon status item to open the dashboard.
 ### Live Diagnostics
 - F# type errors and warnings stream in via SSE as you edit, appearing as native VS Code squiggles
 
-### Hot Reload
-- **Hot Reload sidebar** — Tree view in the activity bar showing all project files with per-file and per-directory watch toggles
-- Toggle individual files, directories, or watch/unwatch everything at once
-
 ### Session Management
 - **Session Context sidebar** — Loaded assemblies, opened namespaces, failed opens, warmup details
 - **Sessions sidebar** — View all sessions with inline switch/stop/reset actions
@@ -223,7 +218,7 @@ The extension still shares upstream's identifier and command labels. See the [fo
 | Bozzetto: Switch Session | — | Switch to a different session |
 | Bozzetto: Switch Project | — | Change which `.fsproj`/`.sln` the session loads |
 | Bozzetto: Browse for Project | — | Pick a project file from a file dialog |
-| Bozzetto: Switch Workflow | — | Switch the session between REPL and Live |
+| Bozzetto: Switch Workflow | — | Switch the session between REPL and Live Testing |
 | Bozzetto: Stop Session | — | Stop the active session |
 | Bozzetto: Reset Session | — | Soft reset (clear definitions, keep session) |
 | Bozzetto: Hard Reset (Rebuild) | — | Full rebuild and reload |
@@ -233,21 +228,9 @@ The extension still shares upstream's identifier and command labels. See the [fo
 | Bozzetto: Configure Warmup Auto-Open | — | Create or open `.bozzetto/config.fsx` |
 | Bozzetto: Refresh Sessions | — | Refresh the Sessions sidebar |
 | Bozzetto: Refresh Session Context | — | Refresh the Session Context sidebar |
-| Bozzetto: Run App | — | Run the session's executable project, with hot reload |
-| Bozzetto: Stop App | — | Stop the app started by Run App |
 | Bozzetto: Open Getting Started Sample | — | Open the bundled getting-started `.fsx` |
 
 The Sessions sidebar also has inline per-row actions (Switch To, Stop, Reset) — click the icons on a session row instead of going through the command palette.
-
-### Hot Reload
-
-| Command | Keybinding | Description |
-|---------|-----------|-------------|
-| Bozzetto: Toggle Hot Reload for File | — | Toggle file watching for current file |
-| Bozzetto: Toggle Directory Hot Reload | — | Toggle watching for a directory |
-| Bozzetto: Watch All Files | — | Enable watching for all project files |
-| Bozzetto: Unwatch All Files | — | Disable all file watching |
-| Bozzetto: Refresh Hot Reload | — | Refresh the hot reload file list |
 
 ### Live Testing
 
@@ -269,7 +252,6 @@ The Sessions sidebar also has inline per-row actions (Switch To, Stop, Reset) �
 
 | View | Location | Description |
 |------|----------|-------------|
-| Hot Reload Files | Activity Bar | File tree with watch toggles |
 | Session Context | Activity Bar | Assemblies, namespaces, warmup details |
 | Sessions | Activity Bar | All sessions with inline switch/stop/reset |
 | API Browser | Activity Bar | Browse .NET types and namespaces (the Type Explorer) |

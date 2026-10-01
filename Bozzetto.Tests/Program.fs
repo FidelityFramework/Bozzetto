@@ -45,7 +45,6 @@ let runTests argv =
       |> Option.defaultValue 0.0
     let mutationTests =
       testList "Mutation Score" [
-        HotReloadStateMutationTests.hotReloadMutationTests
         ResultExMutationTests.resultExMutationTests
         BozzettoErrorMutationTests.bozzettoErrorMutationTests
         SessionLifecycleMutationTests.sessionLifecycleMutationTests
@@ -61,7 +60,6 @@ let runTests argv =
         TestCachePersistenceMutationTests.testCachePersistenceMutationTests
         EvalStoreMutationTests.evalStoreMutationTests
         SessionDisplayMutationTests.sessionDisplayMutationTests
-        ReloadPlanningDecisionMutationTests.reloadPlanningDecisionMutationTests
       ]
     // Honest mutation accounting: each mutant is one test case that PASSES only
     // when the mutant is killed (real <> mutant). Deriving the score from the
@@ -170,13 +168,12 @@ let runTests argv =
     3
   | None ->
 
-  // Run EVERY self-contained [Integration] suite — real FSI sessions, real
-  // Bozzetto.Host spawns, Harmony detours, real daemons on reserved ports with
+  // Run self-contained integration suites against real daemons on reserved ports with
   // isolated BOZZETTO_DATA_DIRs, the HTTP API against the samples. The set is
   // structural: every suite registered as `Integration.Host`
   // (TestInfrastructure.Integration), so a new host suite runs here by
   // construction. Suites that need a browser or VS Code are registered against
-  // their own entry points (--integration-browser/-hr/-lt below).
+  // their own entry points (--integration-browser and --integration-disconnect below).
   //
   // `--shard k/n` runs only this process's share. The suites are sequenced
   // WITHIN a process because they share in-process state (below); that reason
@@ -213,8 +210,7 @@ let runTests argv =
         allSuites |> List.filter (fun (name, _) -> plan[name] = s.Index),
         sprintf "--integration-host[%d/%d]" s.Index s.Count
     // Sequenced: these suites share process-global state — the one
-    // TestInfrastructure.globalActorResult FSI actor (which the reset suites
-    // reset), Harmony patches, environment variables. Run in parallel, a reset
+    // compatibility actor and environment variables. Run in parallel, a reset
     // in one suite lands mid-eval in another (observed: "State: WarmingUp",
     // "Expected Active phase, got Initializing" in suites that pass alone).
     let hostIntegrationTests =
@@ -267,13 +263,6 @@ let runTests argv =
     Environment.Exit result
     result
   | false ->
-
-  // The CDP-driven VS Code DoD journeys (HR-VSC-E2E, LT-VSC-E2E) that used
-  // to run here via --integration-vsc were retired 2026-09-12 — see issue
-  // #133 and VscodeCommandProofTests.fs's header. That file's tests are
-  // registered under Integration.hostList and run via --integration-host
-  // like every other real-daemon [Integration] suite; no separate CLI flag
-  // or runner is needed.
 
   // Run the [Integration] dashboard disconnect-indicator browser journeys
   // (Playwright.NET): the daemon dying mid-stream must surface a visible

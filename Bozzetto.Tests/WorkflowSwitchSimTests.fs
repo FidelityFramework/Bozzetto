@@ -56,10 +56,10 @@ let tests =
         t.Final |> Expect.equal "AlreadyActive touches nothing — status, workflow, and pending swap are all unchanged from right after Create" afterCreate
         assertHolds t
 
-      testCase "Interactive -> LiveTesting -> HotReload -> Interactive, each switch settling before the next" <| fun _ ->
-        let t = run WorkflowSwitchGenerators.allThreeWorkflowsInSequence
+      testCase "Interactive -> LiveTesting -> Interactive, each switch settling before the next" <| fun _ ->
+        let t = run WorkflowSwitchGenerators.bothWorkflowsInSequence
         t.Final.WorkflowIdx |> Expect.equal "settled back on Interactive (index 0)" 0
-        t.Final.Status |> Expect.equal "the fourth worker (pid 4) is the one serving" (Status.Ready 4)
+        t.Final.Status |> Expect.equal "the third worker (pid 3) is the one serving" (Status.Ready 3)
         assertHolds t
 
       testCase "a spawn failure reverts to the pre-switch workflow, not the failed target" <| fun _ ->
@@ -90,7 +90,7 @@ let tests =
     testList "the stop-before-spawn twin reproduces a dead window" [
 
       testCase "REPRODUCED — stopping the old worker before the replacement exists opens a dead window" <| fun _ ->
-        let t = runStopBeforeSpawn WorkflowSwitchGenerators.allThreeWorkflowsInSequence
+        let t = runStopBeforeSpawn WorkflowSwitchGenerators.bothWorkflowsInSequence
         violations t
         |> List.map fst
         |> Expect.contains "no-dead-window must fire against the stop-before-spawn twin" "no-dead-window"
@@ -129,7 +129,7 @@ let tests =
           // for the full citation. Walking it by hand:
           //   Create(pid=1, Interactive)
           //   RequestSwitch(LiveTesting, pid=2)   -- spawnFirst parks {old=1, wf=Interactive(0)}, still warming
-          //   RequestSwitch(HotReload,  pid=3)    -- OVERLAPS the first: SwitchWorkflow has no in-flight
+          //   RequestSwitch(Interactive,  pid=3)    -- OVERLAPS the first: SwitchWorkflow has no in-flight
           //                                          guard (SessionManager.fs:1620-1642 only rejects a
           //                                          concurrent REBUILD, not a concurrent switch), so
           //                                          spawnFirst runs again and ManagerState.setPendingSwap

@@ -15,10 +15,10 @@ open Bozzetto.Server.DashboardTypes
 [<Tests>]
 let optionsTests =
   testList "WorkflowSwitch.options" [
-    testCase "WHY — the picker offers exactly the three workflows the brief names, in a stable order" <| fun _ ->
+    testCase "WHY — the picker offers exactly the two supported workflows, in a stable order" <| fun _ ->
       WorkflowSwitch.options
       |> List.map SessionWorkflow.label
-      |> Expect.equal "Interactive, LiveTesting, HotReload — in that order" [ "REPL"; "Live Testing"; "Hot Reload" ]
+      |> Expect.equal "Interactive, LiveTesting — in that order" [ "REPL"; "Live Testing" ]
   ]
 
 [<Tests>]
@@ -36,28 +36,28 @@ let requestValueTests =
 
     testCase "WHY — a deliberately-wrong wire value would be caught by the round-trip check above (mutation-proofing the table)" <| fun _ ->
       // A broken requestValue that always returned "interactive" would still
-      // "round trip" for the Interactive case but would fail the LiveTesting
-      // and HotReload round-trips above — this just documents the values are
+      // "round trip" for the Interactive case but would fail LiveTesting —
+      // this check documents that the values are
       // pairwise distinct, so no case can silently alias another.
       WorkflowSwitch.options
       |> List.map WorkflowSwitch.requestValue
       |> List.distinct
       |> List.length
-      |> Expect.equal "three distinct wire values for three distinct workflows" 3
+      |> Expect.equal "two distinct wire values for two supported workflows" 2
   ]
 
 [<Tests>]
 let parseResponseTests =
   testList "WorkflowSwitch.parseResponse" [
     testCase "WHY — a successful switch reads the server's own message, not an invented one" <| fun _ ->
-      let body = """{"success":true,"message":"Switching to Hot Reload","sessionId":"0a0b0c0d","workflow":"Hot Reload"}"""
+      let body = """{"success":true,"message":"Switching to Live Testing","sessionId":"0a0b0c0d","workflow":"Live Testing"}"""
       WorkflowSwitch.parseResponse 200 body
-      |> Expect.equal "Ok with the server's message" (Ok "Switching to Hot Reload")
+      |> Expect.equal "Ok with the server's message" (Ok "Switching to Live Testing")
 
     testCase "WHY — a successful switch with no message field falls back to a message naming the workflow, never a blank string" <| fun _ ->
-      let body = """{"success":true,"workflow":"Hot Reload"}"""
+      let body = """{"success":true,"workflow":"Live Testing"}"""
       WorkflowSwitch.parseResponse 200 body
-      |> Expect.equal "Ok, synthesized from the workflow field" (Ok "Switched to Hot Reload")
+      |> Expect.equal "Ok, synthesized from the workflow field" (Ok "Switched to Live Testing")
 
     testCase "WHY — a 400 unrecognized-workflow body ({success:false; error}) reads its error text" <| fun _ ->
       let body = """{"success":false,"error":"Unknown workflow 'hotreoad'"}"""

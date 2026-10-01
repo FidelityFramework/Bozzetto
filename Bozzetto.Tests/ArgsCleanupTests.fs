@@ -264,46 +264,6 @@ let workerSpawnConfigTests =
       |> Expect.isFalse "no auto-open env var"
   ]
 
-let hotReloadWorkerConfigTests =
-  testList "WorkerConfig hot-reload env var" [
-
-    testCase "BOZZETTO_HOT_RELOAD=1 enables hot-reload" <| fun () ->
-      let getEnv = fakeEnv [ WorkerConfig.hotReloadEnvVar, "1"; WorkerConfig.bareEnvVar, "1" ]
-      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
-      config.HotReloadEnabled |> Expect.isTrue "should enable hot-reload"
-
-    testCase "BOZZETTO_HOT_RELOAD=true enables hot-reload" <| fun () ->
-      let getEnv = fakeEnv [ WorkerConfig.hotReloadEnvVar, "true"; WorkerConfig.bareEnvVar, "1" ]
-      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
-      config.HotReloadEnabled |> Expect.isTrue "should enable hot-reload"
-
-    testCase "missing BOZZETTO_HOT_RELOAD defaults to disabled" <| fun () ->
-      let getEnv = fakeEnv [ WorkerConfig.bareEnvVar, "1" ]
-      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
-      config.HotReloadEnabled |> Expect.isFalse "should default to disabled"
-
-    testCase "BOZZETTO_HOT_RELOAD=0 disables hot-reload" <| fun () ->
-      let getEnv = fakeEnv [ WorkerConfig.hotReloadEnvVar, "0"; WorkerConfig.bareEnvVar, "1" ]
-      let config = WorkerConfig.fromEnvironmentWith getEnv "test-id" 0
-      config.HotReloadEnabled |> Expect.isFalse "should be disabled"
-  ]
-
-let hotReloadSpawnConfigTests =
-  testList "worker spawn config hot-reload" [
-
-    testCase "HotReload workflow sets BOZZETTO_HOT_RELOAD env var" <| fun () ->
-      let _, envVars = buildWorkerSpawnConfig "s" [ Bozzetto.SessionProjectTarget.Bare ] false true (SessionWorkflow.HotReload BrowserRefreshConfig.defaults)
-      envVars
-      |> List.exists (fun (k, v) -> k = WorkerConfig.hotReloadEnvVar && v = "1")
-      |> Expect.isTrue "hot-reload env var set"
-
-    testCase "Interactive workflow omits BOZZETTO_HOT_RELOAD env var" <| fun () ->
-      let _, envVars = buildWorkerSpawnConfig "s" [ Bozzetto.SessionProjectTarget.Bare ] false true SessionWorkflow.Interactive
-      envVars
-      |> List.exists (fun (k, _) -> k = WorkerConfig.hotReloadEnvVar)
-      |> Expect.isFalse "no hot-reload env var"
-  ]
-
 [<Tests>]
 let allArgsCleanupTests =
   testList "Args cleanup" [
@@ -311,6 +271,4 @@ let allArgsCleanupTests =
     workerConfigTests
     projectLoadConfigTests
     workerSpawnConfigTests
-    hotReloadWorkerConfigTests
-    hotReloadSpawnConfigTests
   ]

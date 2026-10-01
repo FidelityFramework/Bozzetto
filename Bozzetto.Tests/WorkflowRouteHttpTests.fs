@@ -67,7 +67,6 @@ let private startTestServer (ops: SessionManagementOps) = task {
       SessionOps = ops
       ElmRuntime = None
       GetWarmupContext = None
-      GetHotReloadState = None
       SharedBindingScope = ref None
       SharedFeatureState = None
       ActivityTracker = Bozzetto.AgentActivityTracker.create ()
@@ -97,7 +96,6 @@ let private startTestServer (ops: SessionManagementOps) = task {
   let sseContext : Bozzetto.Server.McpServer.SseContext =
     { GetElmModel = None
       GetWarmupContext = None
-      GetHotReloadState = None
       SseJsonOpts = JsonSerializerOptions()
       TestEventBroadcast = Event<string>()
       SessionEventBroadcast = Event<string>()
@@ -144,20 +142,20 @@ let workflowRouteHttpTests =
       let! (app: WebApplication), baseUrl = startTestServer fakeOps
       try
         let! (status: int), (body: string) =
-          postRaw (sprintf "%s/api/sessions/%s/workflow" baseUrl (SessionId.value sid)) (Some """{"workflow":"hotreload"}""")
+          postRaw (sprintf "%s/api/sessions/%s/workflow" baseUrl (SessionId.value sid)) (Some """{"workflow":"livetesting"}""")
         status |> Expect.equal "switching to a recognized workflow returns 200" 200
         let doc = JsonDocument.Parse(body)
         doc.RootElement.GetProperty("success").GetBoolean()
         |> Expect.isTrue "success should be true"
         doc.RootElement.GetProperty("workflow").GetString()
-        |> Expect.equal "response should carry the target workflow's label" "Hot Reload"
+        |> Expect.equal "response should carry the target workflow's label" "Live Testing"
       finally (app :> IDisposable).Dispose()
     }
 
     testTask "POST /api/sessions/{sid}/workflow accepts every SessionWorkflow.tryOfString alias" {
       let! (app: WebApplication), baseUrl = startTestServer fakeOps
       try
-        for alias, expectedLabel in [ "interactive", "REPL"; "livetesting", "Live Testing"; "hotreload", "Hot Reload" ] do
+        for alias, expectedLabel in [ "interactive", "REPL"; "livetesting", "Live Testing" ] do
           let! (status: int), (body: string) =
             postRaw (sprintf "%s/api/sessions/%s/workflow" baseUrl (SessionId.value sid)) (Some (sprintf """{"workflow":"%s"}""" alias))
           status |> Expect.equal (sprintf "'%s' should be a recognized workflow" alias) 200

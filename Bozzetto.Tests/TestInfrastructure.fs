@@ -415,7 +415,7 @@ module Integration =
     |> List.distinct
 
   /// A `Dedicated` payload that names a real, single-token CLI flag (e.g.
-  /// "--integration-hr") rather than a documented on-demand suite whose
+  /// "--integration-composer") rather than a documented on-demand suite whose
   /// payload is a human-readable note (e.g. VscodeExtensionTests.fs's
   /// "--all (on demand: VS Code + a daemon already running on 47749)").
   /// Only bare-flag entry points are expected to have a Program.fs dispatch
@@ -695,7 +695,7 @@ let quietLogger =
 
 /// Serialize process-global environment-variable mutations across test lists.
 /// Expecto runs test LISTS in parallel, so two lists mutating the same env
-/// var (BOZZETTO_DEVRELOAD kill-switch tests + HotReloadTool env-reading tests)
+/// var (tests that exercise process environment configuration)
 /// race: one test's SetEnvironmentVariable can be observed mid-flight by the
 /// other, producing intermittent failures that pass in isolation.
 let envLock = obj()
@@ -777,10 +777,64 @@ let globalActorResult = lazy(
   createActor args |> Async.AwaitTask |> Async.RunSynchronously
 )
 
-/// Create a SessionProxy from a test actor result
+/// Adapt the retained Core actor for component tests. Unsupported worker
+/// operations fail explicitly; this harness does not host a worker process.
 let mkProxy (result: ActorResult) : Bozzetto.WorkerProtocol.SessionProxy =
-  fun msg ->
-    Bozzetto.Server.WorkerMain.handleMessage result.Actor result.GetSessionState result.GetEvalStats result.GetStatusMessage result.ProjectRoles (fun () -> Bozzetto.Features.LiveTesting.LiveTestHookResult.noOp) (fun _ -> ()) (fun () -> [||], []) (fun _ _ -> async { return Result.Error (Bozzetto.BozzettoError.EvalFailed "EvalLiveTestFile not available on this test proxy") }) Bozzetto.Server.WorkerMain.noAppRuns msg
+  let actor = result.Actor
+  let diagnostic = Bozzetto.WorkerProtocol.WorkerDiagnostic.ofDiagnostic
+  fun msg -> async {
+    match msg with
+    | Bozzetto.WorkerProtocol.WorkerMessage.EvalCode(code, replyId) ->
+      use deadline = new CancellationTokenSource(Bozzetto.Timeouts.workerHttpRequest)
+      let! response = actor.PostAndAsyncReply(fun reply -> Eval({ Code = code; Args = Map.empty }, deadline.Token, reply))
+      let evaluated =
+        response.EvaluationResult
+        |> Result.mapError (function
+          | :? Bozzetto.BozzettoErrorException as failure -> failure.Error
+          | failure -> Bozzetto.BozzettoError.EvalFailed(failure.ToString()))
+      return Bozzetto.WorkerProtocol.WorkerResponse.EvalResult(replyId, evaluated, response.Diagnostics |> Array.map diagnostic |> Array.toList, Map.empty)
+    | Bozzetto.WorkerProtocol.WorkerMessage.CheckCode(code, replyId) ->
+      let! diagnostics = actor.PostAndAsyncReply(fun reply -> GetDiagnostics(code, reply))
+      return Bozzetto.WorkerProtocol.WorkerResponse.CheckResult(replyId, diagnostics |> Array.map diagnostic |> Array.toList)
+    | Bozzetto.WorkerProtocol.WorkerMessage.TypeCheckWithSymbols(code, path, replyId) ->
+      let! checkedResult = actor.PostAndAsyncReply(fun reply -> GetTypeCheckWithSymbols(code, path, reply))
+      return Bozzetto.WorkerProtocol.WorkerResponse.TypeCheckWithSymbolsResult(replyId, checkedResult.Diagnostics |> Array.map diagnostic |> Array.toList, checkedResult.SymbolRefs |> List.map Bozzetto.WorkerProtocol.WorkerSymbolRef.fromDomain)
+    | Bozzetto.WorkerProtocol.WorkerMessage.GetCompletions(code, cursor, replyId) ->
+      let! completions = actor.PostAndAsyncReply(fun reply -> Autocomplete(code, cursor, "", reply))
+      return Bozzetto.WorkerProtocol.WorkerResponse.CompletionResult(replyId, completions |> List.map (fun item -> item.DisplayText))
+    | Bozzetto.WorkerProtocol.WorkerMessage.CancelEval ->
+      let! cancelled = actor.PostAndAsyncReply CancelEval
+      return Bozzetto.WorkerProtocol.WorkerResponse.EvalCancelled cancelled
+    | Bozzetto.WorkerProtocol.WorkerMessage.ResetSession replyId ->
+      let! reset = actor.PostAndAsyncReply ResetSession
+      return Bozzetto.WorkerProtocol.WorkerResponse.ResetResult(replyId, reset)
+    | Bozzetto.WorkerProtocol.WorkerMessage.HardResetSession(rebuild, replyId) ->
+      let! reset = actor.PostAndAsyncReply(fun reply -> HardResetSession(rebuild, reply))
+      return Bozzetto.WorkerProtocol.WorkerResponse.HardResetResult(replyId, reset)
+    | Bozzetto.WorkerProtocol.WorkerMessage.GetLiveValues replyId ->
+      let! values = actor.PostAndAsyncReply GetLiveValues
+      return Bozzetto.WorkerProtocol.WorkerResponse.LiveValuesResult(replyId, values)
+    | Bozzetto.WorkerProtocol.WorkerMessage.GetStatus replyId ->
+      let stats = result.GetEvalStats()
+      let status =
+        match result.GetSessionState() with
+        | Bozzetto.SessionState.Uninitialized | Bozzetto.SessionState.WarmingUp -> Bozzetto.WorkerProtocol.SessionStatus.Starting
+        | Bozzetto.SessionState.Ready -> Bozzetto.WorkerProtocol.SessionStatus.Ready
+        | Bozzetto.SessionState.Evaluating -> Bozzetto.WorkerProtocol.SessionStatus.Evaluating
+        | Bozzetto.SessionState.Faulted -> Bozzetto.WorkerProtocol.SessionStatus.Faulted
+      let snapshot: Bozzetto.WorkerProtocol.WorkerStatusSnapshot =
+        { Status = status
+          StatusMessage = result.GetStatusMessage()
+          EvalCount = stats.EvalCount
+          AvgDurationMs = if stats.EvalCount = 0 then 0L else int64 (stats.TotalDuration.TotalMilliseconds / float stats.EvalCount)
+          MinDurationMs = int64 stats.MinDuration.TotalMilliseconds
+          MaxDurationMs = int64 stats.MaxDuration.TotalMilliseconds
+          Projects = result.ProjectRoles
+          CoreVersion = typeof<Bozzetto.BozzettoError>.Assembly.GetName().Version.ToString() }
+      return Bozzetto.WorkerProtocol.WorkerResponse.StatusResult(replyId, snapshot)
+    | unsupported ->
+      return invalidOp (sprintf "The Core actor test adapter does not implement %A" unsupported)
+  }
 
 /// Create a test SessionManagementOps that routes to the global actor
 let mkTestSessionOps (result: ActorResult) (sessionId: Bozzetto.WorkerProtocol.SessionId) : Bozzetto.SessionManagementOps =

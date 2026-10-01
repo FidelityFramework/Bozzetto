@@ -18,7 +18,7 @@ let createEffectDeps
       SessionOperations.resolveSession sessionIdOpt sessions
     GetProxy = fun sessionId ->
       // CQRS read path — lock-free snapshot, no mailbox blocking. This is the
-      // Elm effect loop's own proxy resolver (live-testing cycles, hot-reload
+      // Elm effect loop's own proxy resolver (live-testing cycles and
       // discovery) — a separate closure from SessionManagementOps.GetProxy,
       // so it gets the same `SessionProxy.touching` wrap independently. Both
       // resolve from the same worker URLs; neither may forget the touch.

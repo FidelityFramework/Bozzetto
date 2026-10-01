@@ -1,27 +1,4 @@
-/// Tests for project classification — the path that decides whether a session's
-/// projects are a web app, and therefore whether the user is offered the
-/// hot-reload workflow.
-///
-/// Two defects motivated this file:
-///
-/// 1. The "web" marker list was duplicated: `ProjectKind.classify`'s
-///    `webPackages` and `WorkflowDetection.suggest`'s own near-copy. Two lists
-///    that must agree, don't, and nothing forced them to. They HAD already
-///    drifted — `StarFederation.Datastar` was only in the detection copy, so a
-///    raw-Datastar (non-Falco) project was told "web, switch to hot reload"
-///    while `ProjectKind` called it a console app.
-///
-/// 2. Both lists were PackageReference-only. A modern ASP.NET Core / Minimal API
-///    project gets ASP.NET from `Sdk="Microsoft.NET.Sdk.Web"` plus a
-///    `<FrameworkReference Include="Microsoft.AspNetCore.App" />` — NOT from any
-///    `<PackageReference>`. Verified in-tree against this repo's own
-///    `Bozzetto.Tests/fixtures/WebAppFixture/WebAppFixture.fsproj`, which the live
-///    daemon reports with `PackageRefs: []`. So every plain ASP.NET, Minimal API
-///    and Oxpecker project classified as Console and was never offered hot reload.
-///
-/// The drift test below is the structural guard: it iterates the ONE shared
-/// marker list, so a marker added to `WebMarkers` is automatically required to
-/// behave identically on both classification paths.
+/// Project SDK, framework and package markers determine the runtime shape.
 module Bozzetto.Tests.ProjectClassificationTests
 
 open Expecto
@@ -115,11 +92,6 @@ let minimalApiClassificationTests =
       |> ProjectKind.label
       |> Expect.equal "a Microsoft.NET.Sdk.Web project is a web app even with no PackageReference" "web"
 
-    testCase "a Web SDK project is offered the hot-reload workflow" <| fun _ ->
-      ProjectFileMarkers.parse minimalApiFsproj
-      |> WorkflowDetection.suggest
-      |> Expect.isSome "a Minimal API project must be nudged toward hot reload"
-
     testCase "an ASP.NET FrameworkReference project classifies as web" <| fun _ ->
       ProjectFileMarkers.parse frameworkRefFsproj
       |> ProjectKind.classify
@@ -132,10 +104,6 @@ let minimalApiClassificationTests =
       |> ProjectKind.label
       |> Expect.equal "a plain SDK console project must not be promoted to web" "console"
 
-    testCase "a plain console project is offered no workflow switch" <| fun _ ->
-      ProjectFileMarkers.parse plainConsoleFsproj
-      |> WorkflowDetection.suggest
-      |> Expect.isNone "a console project must not be nudged toward hot reload"
   ]
 
 [<Tests>]
@@ -153,68 +121,35 @@ let oxpeckerClassificationTests =
         |> ProjectKind.label
         |> Expect.equal (sprintf "%s is a server-side Oxpecker package" pkg) "web"
 
-    testCase "Oxpecker is offered the hot-reload workflow" <| fun _ ->
-      [ "Oxpecker"; "FSharp.Core" ]
-      |> WorkflowDetection.suggest
-      |> Expect.isSome "an Oxpecker project must be nudged toward hot reload"
   ]
 
 [<Tests>]
 let webMarkerDriftTests =
   testList "web marker drift" [
 
-    // THE regression test for the two-lists defect. It reads the ONE shared
-    // list, so a marker added there is automatically required to behave
-    // identically on both classification paths — the two can no longer drift
-    // without this failing.
-    testCase "every shared web marker classifies as web AND suggests hot reload" <| fun _ ->
+    // Every marker must independently establish the server runtime shape.
+    testCase "every shared web marker classifies as web" <| fun _ ->
       for marker in WebMarkers.all do
         let refs = [ marker ]
         ProjectKind.classify refs
         |> ProjectKind.label
         |> Expect.equal (sprintf "'%s' is in WebMarkers.all, so ProjectKind must call it web" marker) "web"
-        WorkflowDetection.suggest refs
-        |> Expect.isSome (sprintf "'%s' is in WebMarkers.all, so WorkflowDetection must suggest hot reload" marker)
-
-    testCase "the two classification paths agree on every marker combination" <| fun _ ->
-      // Both paths must answer the same question the same way. NativeGui is the
-      // one legitimate override (a game wins over a web package), so it is
-      // excluded from the pool here and covered by its own test.
-      let pool = WebMarkers.all @ [ "FSharp.Core"; "Newtonsoft.Json"; "Expecto" ]
-      // Every 2-subset, which is enough to catch a marker present in one list
-      // and absent from the other.
-      for a in pool do
-        for b in pool do
-          let refs = [ a; b ]
-          let isWeb = ProjectKind.classify refs = ProjectKind.Web BrowserRefreshConfig.defaults
-          let isSuggested = (WorkflowDetection.suggest refs) |> Option.isSome
-          isSuggested
-          |> Expect.equal
-            (sprintf "ProjectKind and WorkflowDetection must agree for [%s; %s]" a b)
-            isWeb
 
     testCase "a native GUI marker still wins over a web marker" <| fun _ ->
       ProjectKind.classify [ "Raylib-cs"; "Falco" ]
       |> ProjectKind.label
       |> Expect.equal "a native game dominates the runtime shape" "native-gui"
 
-    // The concrete drift that had already happened: StarFederation.Datastar was
-    // only in the detection list, and was spelled with a lowercase 'f' so it
-    // never matched the real package id `StarFederation.Datastar.FSharp` anyway.
-    testCase "raw StarFederation Datastar is web on both paths" <| fun _ ->
+    testCase "raw StarFederation Datastar is web" <| fun _ ->
       let refs = [ "StarFederation.Datastar.FSharp"; "FSharp.Core" ]
       ProjectKind.classify refs
       |> ProjectKind.label
       |> Expect.equal "a raw Datastar project is a web app" "web"
-      WorkflowDetection.suggest refs
-      |> Expect.isSome "a raw Datastar project must be nudged toward hot reload"
 
     testCase "marker matching is case-insensitive" <| fun _ ->
       ProjectKind.classify [ "falco" ]
       |> ProjectKind.label
       |> Expect.equal "package id casing must not decide classification" "web"
-      WorkflowDetection.suggest [ "GIRAFFE" ]
-      |> Expect.isSome "package id casing must not decide the suggestion"
   ]
 
 // ─── Fable / browser projects ───────────────────────────────
@@ -274,9 +209,6 @@ let fableWebSuppressionTests =
       |> ProjectKind.label
       |> Expect.notEqual "Oxpecker.Solid is a Solid.js client, not an ASP.NET server" "web"
 
-    testCase "Oxpecker.Solid is offered no hot-reload workflow" <| fun _ ->
-      WorkflowDetection.suggest [ "Oxpecker.Solid"; "Fable.Browser.Dom" ]
-      |> Expect.isNone "a browser-only project must not be nudged toward browser hot reload"
 
     testCase "a plain Fable client is not a web app" <| fun _ ->
       ProjectKind.classify [ "Fable.Core"; "Feliz"; "Fable.Elmish.React" ]
@@ -291,9 +223,6 @@ let fableWebSuppressionTests =
       |> ProjectKind.label
       |> Expect.equal "Giraffe is real server evidence that Fable references cannot cancel" "web"
 
-    testCase "a server project with Fable references is still offered hot reload" <| fun _ ->
-      WorkflowDetection.suggest [ "Saturn"; "Fable.Core" ]
-      |> Expect.isSome "the server half of a SAFE app must still be nudged toward hot reload"
   ]
 
 [<Tests>]

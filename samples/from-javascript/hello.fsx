@@ -122,13 +122,6 @@ let concat (a: string) b = a + b   // one annotation is enough
 // The Bozzetto VS Code extension is written entirely in F# via Fable.
 // No TypeScript needed.
 
-// ── The Bozzetto hot reload vs. webpack/vite HMR comparison ──
-// vite HMR:    ~200-400ms, sometimes flashes, sometimes loses state
-// webpack HMR: 1-5s, often just does a full reload anyway
-// Bozzetto:      ~100ms, Harmony patches method pointers in the running process
-//              Your server doesn't restart.  Your client reconnects via SSE.
-//              The browser updates before you look up from your keyboard.
-
 // ── Migration cheatsheet ──
 // const x = 42                     → let x = 42
 // let x = 42 (mutable)             → let mutable x = 42

@@ -140,6 +140,21 @@ let architectureTests =
 
     testList "Assembly dependency rules" [
 
+      testCase "compiled delivery and test closure contains no managed patching dependency"
+      <| fun _ ->
+        let seen = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        let rec inspect (assembly: Assembly) =
+          if seen.Add assembly.FullName then
+            for reference in assembly.GetReferencedAssemblies() do
+              [ "Harmony"; "MonoMod" ]
+              |> List.exists (fun forbidden -> reference.Name.Contains(forbidden, StringComparison.OrdinalIgnoreCase))
+              |> Expect.isFalse (sprintf "%s must not depend on retired patching assembly %s" assembly.FullName reference.FullName)
+              // Inspect the delivered application closure, including dependencies
+              // that are copied locally but have not yet been loaded at runtime.
+              let path = IO.Path.Combine(AppContext.BaseDirectory, reference.Name + ".dll")
+              if IO.File.Exists path then Assembly.Load reference |> inspect
+        [ coreAssembly; cliAssembly; testAssembly ] |> List.iter inspect
+
       testCase "Bozzetto.Core must not reference Bozzetto CLI assembly"
       <| fun _ ->
         coreAssembly
@@ -367,32 +382,7 @@ let architectureTests =
 
     ]
 
-    testList "Closure seams (daemon vs host)" [
-
-      let hostAssembly =
-        tryLoadAssembly "Bozzetto.Host"
-
-      testCase "Bozzetto.Host must not reference the Bozzetto daemon assembly"
-      <| fun _ ->
-        match hostAssembly with
-        | Some host ->
-          host
-          |> doesNotReference
-            "FSI host closure must be Core-only — the daemon (Bozzetto) must never load into the worker"
-            "Bozzetto"
-        | None ->
-          failwith "Bozzetto.Host assembly not loadable — closure seam unverifiable"
-
-      testCase "Bozzetto.Host must not reference ModelContextProtocol"
-      <| fun _ ->
-        match hostAssembly with
-        | Some host ->
-          host
-          |> doesNotReferenceAny
-            "MCP surface must stay out of the worker process closure"
-            [ "ModelContextProtocol"; "StreamJsonRpc" ]
-        | None ->
-          failwith "Bozzetto.Host assembly not loadable — closure seam unverifiable"
+    testList "Daemon closure seams" [
 
       testCase "Bozzetto.Core must not contain the MCP hub modules"
       <| fun _ ->

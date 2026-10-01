@@ -1,12 +1,4 @@
-/// Session workflow model — encodes the hot-reload / REPL tradeoff structurally.
-///
-/// The core constraint (CLR-level, non-negotiable):
-///   Hot reload requires Harmony to detour JIT-compiled methods.
-///   Harmony requires --multiemit- (single-assembly FSI mode).
-///   Single-assembly mode prevents type redefinition in the REPL.
-///
-/// This module models that constraint as a discriminated union so that
-/// illegal states (hot reload + full REPL) are unrepresentable.
+/// Explicit workflows for retained F# implementation tooling.
 module Bozzetto.WorkflowTypes
 
 open System
@@ -253,22 +245,14 @@ module BrowserRefreshConfig =
 
 // ─── Project kind ───────────────────────────────────────────
 
-/// What kind of runtime a session's projects are, which decides HOW hot reload
-/// applies. The browser-refresh config lives on `Web` because it is only
-/// meaningful there — a Console or native-GUI project structurally cannot carry a
-/// browser config, so that illegal combination cannot be constructed.
+/// Classifies project runtime shape for tooling and presentation.
 [<RequireQualifiedAccess>]
 type ProjectKind =
-  /// A web app (ASP.NET Core / Falco / Giraffe / Saturn). Hot reload uses the
-  /// DevReload middleware plus browser SSE refresh.
+  /// A web application and its browser refresh configuration.
   | Web of BrowserRefreshConfig
-  /// A console or headless app. Hot reload uses FSI method-detour only — no web
-  /// machinery.
+  /// A console or headless application.
   | Console
-  /// A native windowed app — a game (Raylib / SDL / Silk.NET / MonoGame) or a
-  /// desktop UI (Avalonia / MAUI / WinUI / Uno / WPF). Both run a native window
-  /// with a render/event loop and no WebApplication. Hot reload detours the
-  /// frame/render-loop methods; no WebApplication/RunAsync patches.
+  /// A native windowed application.
   | NativeGui
 
 module ProjectKind =
@@ -288,11 +272,6 @@ module ProjectKind =
   /// over Console: a native game/desktop-UI library dominates the runtime shape,
   /// then a web framework, else a plain console/headless app.
   ///
-  /// WPF is a Windows framework feature enabled by `<UseWPF>`, not a package, so
-  /// it is not detected here and lands in Console. That is harmless and not a
-  /// regression: the web DevReload patch is inert for a WPF app (it never calls
-  /// WebApplication.Run) and reload still works through the method detour — so
-  /// existing Windows/WPF users are unaffected.
   /// `packageRefs` is the project's package references PLUS any non-package
   /// classification markers the loader surfaced for it — `UseWPF` and friends
   /// from `ProjectLoading.activeUiPropertyMarkers`, and the Web SDK /
@@ -317,170 +296,30 @@ module ProjectKind =
     | ProjectKind.Console   -> "console"
     | ProjectKind.NativeGui -> "native-gui"
 
-// ─── Feedback strategy ──────────────────────────────────────
-
-/// How the user wants to see their changes reflected.
-/// Determined at session creation — controls FSI compiler flags.
-[<RequireQualifiedAccess>]
-type FeedbackStrategy =
-  /// Full REPL: type redefinition, interactive exploration.
-  /// FSI runs with default flags (multi-emit enabled).
-  | ReplDriven
-  /// Hot reload: save → #load → Harmony patch → SSE refresh.
-  /// FSI runs with --multiemit- (single assembly mode).
-  | SaveDriven of BrowserRefreshConfig
-
-// ─── REPL capability ────────────────────────────────────────
-
-/// What the REPL can do — derived from FeedbackStrategy, never set independently.
-/// This is a consequence of the CLR constraint, not a user choice.
-[<RequireQualifiedAccess>]
-type ReplCapability =
-  /// Type/module redefinition, expression eval, everything.
-  | Full
-  /// Expression eval, function calls — no type/module redefinition.
-  | ExpressionOnly
-
-module ReplCapability =
-  let label = function
-    | ReplCapability.Full -> "Full"
-    | ReplCapability.ExpressionOnly -> "ExpressionOnly"
-
-// ─── Session workflow (the main DU) ─────────────────────────
-
-/// The session workflow — what the user chose at session creation.
-/// Encodes the hot-reload/REPL tradeoff structurally:
-/// you cannot construct "hot reload + full REPL" because there is no DU case for it.
+/// Retained F# implementation workflows; neither rewrites running methods.
 [<RequireQualifiedAccess>]
 type SessionWorkflow =
-  /// Full REPL, no hot reload, no test-on-save. The "exploring and
-  /// prototyping" workflow.
   | Interactive
-  /// Full REPL, no hot reload, affected tests re-run on debounced keystrokes
-  /// (as you type — the editor streams buffer changes, it is NOT save-driven).
-  /// The "TDD as you type" workflow. Keeps the full REPL because running tests
-  /// never patches the running app, so the --multiemit- CLR constraint does
-  /// not apply.
   | LiveTesting
-  /// Hot reload active, restricted REPL. The "building an app" workflow.
-  | HotReload of BrowserRefreshConfig
-
-/// How hot reload actually applies to a running app — derived from the workflow
-/// AND the project kind, never chosen directly. This is the seam that decouples
-/// "hot reload is on" from "this is a web app": the same hot-reload workflow
-/// produces web-middleware reload, method-detour-only, or game-loop reload
-/// depending on what kind of project is loaded.
-[<RequireQualifiedAccess>]
-type ReloadStrategy =
-  /// No hot reload (Interactive workflow).
-  | NoReload
-  /// Web app: FSI method-detour PLUS DevReload middleware and browser SSE refresh.
-  | WebReload of BrowserRefreshConfig
-  /// Console/headless: FSI method-detour only, no web machinery.
-  | MethodDetourOnly
-  /// Native GUI (game or desktop UI): frame/render-loop method-detour, no
-  /// WebApplication/RunAsync patches.
-  | NativeGuiReload
-
-module ReloadStrategy =
-
-  /// Whether to install the web DevReload middleware (the WebApplication.Run/
-  /// RunAsync Harmony patch plus browser SSE refresh).
-  ///
-  /// Installed for a web app, AND for the method-detour (console) case. The
-  /// console case is now a genuine belt-and-braces rather than a workaround:
-  /// `ProjectFileMarkers` DOES surface the Web SDK attribute and the ASP.NET
-  /// FrameworkReference, so a plain ASP.NET / Minimal API project classifies as
-  /// `Web` on its own merits. It is still installed for `MethodDetourOnly`
-  /// because the patch is inert for a genuine console app — it never calls
-  /// WebApplication.Run — so a project that reaches ASP.NET by some route we
-  /// have not enumerated still gets browser reload, and nothing else pays for
-  /// it. A native game is the one kind we are certain has no WebApplication, so
-  /// it — and non-reloading Interactive — skip it.
-  let installsWebDevReload = function
-    | ReloadStrategy.WebReload _      -> true
-    | ReloadStrategy.MethodDetourOnly -> true
-    | ReloadStrategy.NativeGuiReload  -> false
-    | ReloadStrategy.NoReload         -> false
 
 module SessionWorkflow =
-
-  /// Derive the feedback strategy from the workflow.
-  let feedbackStrategy = function
-    | SessionWorkflow.Interactive  -> FeedbackStrategy.ReplDriven
-    | SessionWorkflow.LiveTesting  -> FeedbackStrategy.ReplDriven
-    | SessionWorkflow.HotReload cfg  -> FeedbackStrategy.SaveDriven cfg
-
-  /// Derive what the REPL can do — total function, no ambiguity.
-  let replCapability workflow =
-    match feedbackStrategy workflow with
-    | FeedbackStrategy.ReplDriven   -> ReplCapability.Full
-    | FeedbackStrategy.SaveDriven _ -> ReplCapability.ExpressionOnly
-
-  /// Derive the extra FSI args needed for this workflow.
-  let fsiArgs = function
-    | SessionWorkflow.Interactive -> []
-    | SessionWorkflow.LiveTesting -> []
-    | SessionWorkflow.HotReload _   -> [ "--multiemit-" ]
-
-  /// User-facing label — short, searchable, universal.
   let label = function
     | SessionWorkflow.Interactive -> "REPL"
     | SessionWorkflow.LiveTesting -> "Live Testing"
-    | SessionWorkflow.HotReload _   -> "Hot Reload"
 
-  /// Whether hot reload (Harmony patching) is active.
-  let isHotReloadActive = function
-    | SessionWorkflow.Interactive -> false
-    | SessionWorkflow.LiveTesting -> false
-    | SessionWorkflow.HotReload _   -> true
-
-  /// Derive the actual reload strategy from the workflow AND the project kind —
-  /// total, no ambiguity. Interactive never reloads. A hot-reload workflow
-  /// reloads differently per kind: web gets middleware + browser refresh,
-  /// console gets method-detour only, a game gets frame-loop detour.
-  let reloadStrategy (workflow: SessionWorkflow) (kind: ProjectKind) : ReloadStrategy =
-    match workflow with
-    | SessionWorkflow.Interactive -> ReloadStrategy.NoReload
-    | SessionWorkflow.LiveTesting -> ReloadStrategy.NoReload
-    | SessionWorkflow.HotReload cfg ->
-      match kind with
-      | ProjectKind.Web _   -> ReloadStrategy.WebReload cfg
-      | ProjectKind.Console -> ReloadStrategy.MethodDetourOnly
-      | ProjectKind.NativeGui -> ReloadStrategy.NativeGuiReload
-
-  /// Default workflow — full REPL, no restrictions.
   let defaultWorkflow = SessionWorkflow.Interactive
 
-  /// Parse a user- or agent-supplied workflow string into a SessionWorkflow.
-  /// Case-insensitive and alias-tolerant, so the CLI, HTTP API, and MCP tools
-  /// all accept the same spellings ("hotreload"/"live"/"weblive"/"web" → hot
-  /// reload; "livetesting"/"testing"/"test" → tests as you type; "interactive"/
-  /// "repl" → full REPL). Unknown or empty input defaults to Interactive, the
-  /// safe full-REPL mode. This is the single source of truth for the
-  /// string→workflow mapping — surfaces call it instead of re-matching.
-  ///
-  /// Note "live" maps to hot reload for backward compatibility (the workflow
-  /// was once labelled "Live"); the as-you-type testing mode is "livetesting".
-  /// Parse a workflow string, returning None for anything unrecognized.
-  /// The single alias table; `ofString` defaults None to Interactive, while
-  /// callers that must reject an unknown target (e.g. switch_workflow) use this
-  /// directly instead of writing a second parser that drifts from this one.
+  /// Explicitly reject unsupported modes, including retired method patching.
   let tryOfString (s: string) : SessionWorkflow option =
     match (s |> Option.ofObj |> Option.defaultValue "").Trim().ToLowerInvariant() with
     | "interactive" | "repl" | "normal" -> Some SessionWorkflow.Interactive
-    | "hotreload" | "weblive" | "live" | "web" -> Some (SessionWorkflow.HotReload BrowserRefreshConfig.defaults)
     | "livetesting" | "live-testing" | "testing" | "test" -> Some SessionWorkflow.LiveTesting
     | _ -> None
 
   let ofString (s: string) : SessionWorkflow =
-    tryOfString s |> Option.defaultValue SessionWorkflow.Interactive
-
-  /// Convert from the legacy bool representation.
-  /// Used at the boundary where env vars are parsed.
-  let fromHotReloadBool = function
-    | true  -> SessionWorkflow.HotReload BrowserRefreshConfig.defaults
-    | false -> SessionWorkflow.Interactive
+    match tryOfString s with
+    | Some workflow -> workflow
+    | None -> invalidArg (nameof s) "Unsupported workflow. Use interactive or livetesting."
 
 // ─── Transition cost ────────────────────────────────────────
 
@@ -599,49 +438,7 @@ module WorkflowSwitchOutcome =
 
 // ─── Workflow suggestion (project detection) ────────────────
 
-/// Suggestion to switch workflows based on project package references.
-/// Computed once at session creation — never auto-applied.
-type WorkflowSuggestion = {
-  /// The workflow Bozzetto thinks would be a good fit.
-  SuggestedWorkflow: SessionWorkflow
-  /// Human-readable reason for the suggestion.
-  Reason: string
-  /// Package references that triggered the suggestion.
-  DetectedPackages: string list
-}
-
 module WorkflowDetection =
-
-  /// Suggest a workflow based on project package references.
-  /// Returns None for non-web projects (default to Interactive).
-  /// NEVER auto-applies — the UI presents this as a one-time suggestion.
-  /// Reads the SAME `WebMarkers` vocabulary `ProjectKind.classify` reads, so
-  /// the two can no longer disagree about what "web" means. The only thing
-  /// special-cased here is Datastar, and only to change the WORDING.
-  let suggest (packageRefs: string list) : WorkflowSuggestion option =
-    // Same browser-only exclusion `ProjectKind.classify` applies, for the same
-    // reason and from the same list — the two must not disagree.
-    let webEvidence = packageRefs |> List.filter (FableMarkers.isJsOnly >> not)
-    let datastarHits = WebMarkers.findMatches WebMarkers.datastar webEvidence
-    let webHits = WebMarkers.findMatches WebMarkers.all webEvidence
-    match datastarHits, webHits with
-    | _ :: _, _ ->
-      Some {
-        SuggestedWorkflow =
-          SessionWorkflow.HotReload BrowserRefreshConfig.defaults
-        Reason =
-          "Datastar project detected — Live mode enables SSE-driven DOM morphing"
-        DetectedPackages = datastarHits
-      }
-    | [], _ :: _ ->
-      Some {
-        SuggestedWorkflow =
-          SessionWorkflow.HotReload BrowserRefreshConfig.defaults
-        Reason =
-          "Web project detected — Live mode enables browser hot reload"
-        DetectedPackages = webHits
-      }
-    | [], [] -> None
 
   // ── Package extraction (pure) ─────────────────────────────
 

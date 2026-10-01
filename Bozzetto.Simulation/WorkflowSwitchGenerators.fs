@@ -13,9 +13,9 @@ module WorkflowSwitchGenerators =
   /// failures) — see `WorkflowSwitchInvariants`'s scope note for why the
   /// general property sweep is restricted this way. Same-workflow requests
   /// ("no-ops") are mixed in freely since they need no resolving Ready. Same
-  /// seed => identical scenario, forever. Exercises all 3x3 ordered pairs of
+  /// seed => identical scenario, forever. Exercises all 2x2 ordered pairs of
   /// `SessionWorkflow` (including same-workflow no-ops), not just
-  /// Interactive<->HotReload.
+  /// Interactive<->LiveTesting.
   let fromSeed (seed: int) : Scenario =
     let rnd = Random(seed)
     let mutable nextPid = 0
@@ -49,19 +49,15 @@ module WorkflowSwitchGenerators =
     { Seed = 1
       Ops = [ SwitchOp.Create(1, 0); SwitchOp.RequestSwitch(0, 999) ] }
 
-  /// Interactive -> LiveTesting -> HotReload -> Interactive, each switch
-  /// resolved cleanly — exercises the full 3-case transition space, not just
-  /// a single Interactive<->HotReload round trip.
-  let allThreeWorkflowsInSequence : Scenario =
+  /// Interactive -> LiveTesting -> Interactive, each switch resolving cleanly.
+  let bothWorkflowsInSequence : Scenario =
     { Seed = 2
       Ops =
         [ SwitchOp.Create(1, 0) // Interactive, pid 1
           SwitchOp.RequestSwitch(1, 2)
           SwitchOp.Ready 2 // -> LiveTesting, pid 2
-          SwitchOp.RequestSwitch(2, 3)
-          SwitchOp.Ready 3 // -> HotReload, pid 3
-          SwitchOp.RequestSwitch(0, 4)
-          SwitchOp.Ready 4 ] } // -> Interactive, pid 4
+          SwitchOp.RequestSwitch(0, 3)
+          SwitchOp.Ready 3 ] } // -> Interactive, pid 3
 
   /// The replacement worker fails to come up: `WorkerEventGuard`'s
   /// `RevertSwap` restores the session to the still-serving OLD worker on
@@ -70,7 +66,7 @@ module WorkflowSwitchGenerators =
   /// it.
   let spawnFailureRevertsToPreSwitchWorkflow : Scenario =
     { Seed = 3
-      Ops = [ SwitchOp.Create(1, 0); SwitchOp.RequestSwitch(2, 2); SwitchOp.SpawnFailed 2 ] }
+      Ops = [ SwitchOp.Create(1, 0); SwitchOp.RequestSwitch(1, 2); SwitchOp.SpawnFailed 2 ] }
 
   /// The OLD (still-registered) worker's own late Ready arrives DURING the
   /// swap, before the replacement's. `WorkerEventGuard.classifyReady`'s
@@ -109,5 +105,5 @@ module WorkflowSwitchGenerators =
       Ops =
         [ SwitchOp.Create(1, 0) // Interactive, pid 1
           SwitchOp.RequestSwitch(1, 2) // -> LiveTesting requested, pid 2 warming (still Swapping 1)
-          SwitchOp.RequestSwitch(2, 3) // OVERLAPPING second request -> HotReload, pid 3 warming, while pid 2 is still in flight
+          SwitchOp.RequestSwitch(0, 3) // OVERLAPPING second request -> Interactive, pid 3 warming, while pid 2 is still in flight
           SwitchOp.SpawnFailed 3 ] } // pid 3 fails to come up -- reverts to WHICH workflow?

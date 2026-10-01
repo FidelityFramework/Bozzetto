@@ -316,9 +316,6 @@ module VscodeFixture =
 /// there fails a FAST default-suite test instead of silently breaking a
 /// [Integration]-only VS Code journey.
 type BozzettoPaletteCommand =
-  | FocusHotReloadView
-  | HotReloadWatchAll
-  | HotReloadRefresh
   | EnableLiveTesting
   | DisableLiveTesting
   | ShowBozzettoContainer
@@ -330,9 +327,6 @@ module BozzettoPaletteCommand =
   /// that isn't declared there, so the contract test has nothing to check.
   let id =
     function
-    | FocusHotReloadView -> None // VS Code auto-generates "<viewId>.focus" per view; not in contributes.commands
-    | HotReloadWatchAll -> Some "bozzetto.hotReloadWatchAll"
-    | HotReloadRefresh -> Some "bozzetto.hotReloadRefresh"
     | EnableLiveTesting -> Some "bozzetto.enableLiveTesting"
     | DisableLiveTesting -> Some "bozzetto.disableLiveTesting"
     | ShowBozzettoContainer -> None // VS Code built-in, auto-generated from contributes.viewsContainers
@@ -341,9 +335,6 @@ module BozzettoPaletteCommand =
   /// The exact text to type into the command palette (Ctrl+Shift+P).
   let title =
     function
-    | FocusHotReloadView -> "Bozzetto: Focus on Hot Reload Files View"
-    | HotReloadWatchAll -> "Bozzetto: Watch All Files"
-    | HotReloadRefresh -> "Bozzetto: Refresh Hot Reload"
     | EnableLiveTesting -> "Bozzetto: Enable Live Testing"
     | DisableLiveTesting -> "Bozzetto: Disable Live Testing"
     | ShowBozzettoContainer -> "View: Show Bozzetto"
@@ -646,8 +637,7 @@ let bozzettoPaletteCommandContractTests =
         |> Seq.map (fun c -> c.GetProperty("command").GetString(), c.GetProperty("title").GetString())
         |> Map.ofSeq
       let allCommands =
-        [ FocusHotReloadView; HotReloadWatchAll; HotReloadRefresh
-          EnableLiveTesting; DisableLiveTesting; ShowBozzettoContainer; FocusOutputView ]
+        [ EnableLiveTesting; DisableLiveTesting; ShowBozzettoContainer; FocusOutputView ]
       for cmd in allCommands do
         match BozzettoPaletteCommand.id cmd with
         | None -> () // VS Code built-in / auto-generated — nothing in package.json to check

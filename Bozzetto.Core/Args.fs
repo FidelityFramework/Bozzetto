@@ -80,9 +80,7 @@ type WorkerConfig = {
   WorkingDir: string
   NoWatch: bool
   AutoOpenNamespaces: bool
-  /// The session workflow — determines FSI flags, REPL capability, and hot reload.
-  /// Interactive = full REPL (default). HotReload = save-driven hot reload.
-  /// Derived from BOZZETTO_HOT_RELOAD env var for backward compat.
+  /// Explicit retained F# implementation workflow.
   Workflow: WorkflowTypes.SessionWorkflow
   /// PID of the daemon that spawned this worker (None when run standalone,
   /// e.g. tests or manual worker invocation).
@@ -94,8 +92,6 @@ type WorkerConfig = {
   DaemonStartTicks: int64 option
 }
   with
-    /// Backward-compatible accessor.
-    member this.HotReloadEnabled = WorkflowTypes.SessionWorkflow.isHotReloadActive this.Workflow
     /// Worker project/solution paths derived from the explicit target set.
     member this.Projects = SessionProjectTarget.projects this.Targets
     member this.Solutions = SessionProjectTarget.solutions this.Targets
@@ -106,7 +102,6 @@ module WorkerConfig =
   let bareEnvVar = "BOZZETTO_BARE_SESSION"
   let noWatchEnvVar = "BOZZETTO_NO_WATCH"
   let autoOpenNamespacesEnvVar = "BOZZETTO_AUTO_OPEN_NAMESPACES"
-  let hotReloadEnvVar = "BOZZETTO_HOT_RELOAD"
   /// PID of the daemon process that spawned this worker. Workers monitor this
   /// so they can exit when the daemon is killed hard (Task Manager, taskkill /F,
   /// crash) instead of becoming orphans (issue #126).
@@ -147,10 +142,6 @@ module WorkerConfig =
       match getEnv autoOpenNamespacesEnvVar with
       | "0" | "false" -> false
       | _ -> true
-    let hotReloadEnabled =
-      match getEnv hotReloadEnvVar with
-      | "1" | "true" -> true
-      | _ -> false
     let daemonPid =
       match getEnv daemonPidEnvVar with
       | null | "" -> None
@@ -171,7 +162,7 @@ module WorkerConfig =
       WorkingDir = Environment.CurrentDirectory
       NoWatch = noWatch
       AutoOpenNamespaces = autoOpenNamespaces
-      Workflow = WorkflowTypes.SessionWorkflow.fromHotReloadBool hotReloadEnabled
+      Workflow = WorkflowTypes.SessionWorkflow.Interactive
       DaemonPid = daemonPid
       DaemonStartTicks = daemonStartTicks }
 
@@ -221,7 +212,6 @@ let buildWorkerSpawnConfig
     if SessionProjectTarget.isBare targets then WorkerConfig.bareEnvVar, "1"
     if noWatch then WorkerConfig.noWatchEnvVar, "1"
     if not autoOpenNamespaces then WorkerConfig.autoOpenNamespacesEnvVar, "0"
-    if WorkflowTypes.SessionWorkflow.isHotReloadActive workflow then WorkerConfig.hotReloadEnvVar, "1"
   ]
   args, envVars
 

@@ -807,13 +807,12 @@ let getEvalStatsFromWorker
   return EvalStatsReading.toEvalStats reading
 }
 
-/// Create hot-reload proxy HTTP endpoints that forward to worker servers.
-let createHotReloadProxyEndpoints
+/// Create read-only warmup proxy endpoints for retained session metadata.
+let createWorkerReadEndpoints
   (getWorkerBaseUrl: WorkerProtocol.SessionId -> string option)
   (httpClient: Net.Http.HttpClient)
-  (stateChangedEvent: Event<SseEvent>)
   : HttpEndpoint list =
-  let proxyToWorker (sidStr: string) (workerPath: string) (httpCall: string -> Threading.Tasks.Task<string * int * bool>) (ctx: HttpContext) = task {
+  let proxyToWorker (sidStr: string) (workerPath: string) (httpCall: string -> Threading.Tasks.Task<string * int>) (ctx: HttpContext) = task {
     match WorkerProtocol.SessionId.validate sidStr with
     | Error _ ->
       ctx.Response.StatusCode <- 400
@@ -823,21 +822,18 @@ let createHotReloadProxyEndpoints
     | Some baseUrl ->
       try
         let url = sprintf "%s%s" baseUrl workerPath
-        let! (respBody, statusCode, triggerChange) = httpCall url
+        let! (respBody, statusCode) = httpCall url
         ctx.Response.ContentType <- "application/json"
         ctx.Response.StatusCode <- statusCode
         do! ctx.Response.WriteAsync(respBody)
-        match triggerChange with
-        | true -> stateChangedEvent.Trigger (HotReloadChanged sid)
-        | false -> ()
       with ex ->
         // Log the detail server-side; never leak ex.Message (URLs, paths,
         // exception internals) into the client body.
-        Log.warn "[hotReloadProxy] proxy to worker failed for %s%s: %s\n%s"
+        Log.warn "[workerReadProxy] proxy to worker failed for %s%s: %s\n%s"
           (WorkerProtocol.SessionId.value sid) workerPath ex.Message
           (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
         ctx.Response.StatusCode <- 502
-        do! ctx.Response.WriteAsJsonAsync({| error = "Hot-reload proxy to the worker failed" |})
+        do! ctx.Response.WriteAsJsonAsync({| error = "Worker metadata request failed" |})
     | None ->
       ctx.Response.StatusCode <- 404
       do! ctx.Response.WriteAsJsonAsync({| error = "Session not found or not ready" |})
@@ -847,42 +843,11 @@ let createHotReloadProxyEndpoints
       use timeoutCts = new System.Threading.CancellationTokenSource(5000)
       use linked = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, timeoutCts.Token)
       let! resp = httpClient.GetStringAsync(url, linked.Token)
-      return (resp, 200, false)
-    }) ctx
-  let proxyPost (sid: string) (workerPath: string) (ctx: HttpContext) =
-    proxyToWorker sid workerPath (fun url -> task {
-      use timeoutCts = new System.Threading.CancellationTokenSource(5000)
-      use linked = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, timeoutCts.Token)
-      // Guard against oversized payloads (hot-reload control messages are always < 1 KB)
-      let maxBodyBytes = 1_048_576L  // 1 MB hard limit
-      match ctx.Request.ContentLength with
-      | contentLength when contentLength.HasValue && contentLength.Value > maxBodyBytes ->
-        return (sprintf """{"error":"Request body too large (%d bytes, max 1 MB)"}""" contentLength.Value, 413, false)
-      | _ ->
-      use reader = new IO.StreamReader(ctx.Request.Body)
-      let! body = reader.ReadToEndAsync(linked.Token)
-      match int64 (System.Text.Encoding.UTF8.GetByteCount(body)) > maxBodyBytes with
-      | true -> return ("""{"error":"Request body too large (max 1 MB)"}""", 413, false)
-      | false ->
-      use content = new Net.Http.StringContent(body, Text.Encoding.UTF8, "application/json")
-      let! resp = httpClient.PostAsync(url, content, linked.Token)
-      let! respBody = resp.Content.ReadAsStringAsync(linked.Token)
-      return (respBody, int resp.StatusCode, resp.IsSuccessStatusCode)
+      return (resp, 200)
     }) ctx
   let extractSid = Dashboard.routeValue "sid"
   let proxyGetRoute path = Dashboard.mapGetRaw (sprintf "/api/sessions/{sid}%s" path) extractSid (fun sid -> fun ctx -> proxyGet sid path ctx)
-  let proxyPostRoute path = Dashboard.mapPostRaw (sprintf "/api/sessions/{sid}%s" path) extractSid (fun sid -> fun ctx -> proxyPost sid path ctx)
   [
-    proxyGetRoute "/hotreload"
-    proxyPostRoute "/hotreload/toggle"
-    proxyPostRoute "/hotreload/reset-state"
-    proxyPostRoute "/hotreload/reflection-mode"
-    proxyPostRoute "/hotreload/watch-all"
-    proxyPostRoute "/hotreload/unwatch-all"
-    proxyPostRoute "/hotreload/watch-project"
-    proxyPostRoute "/hotreload/unwatch-project"
-    proxyPostRoute "/hotreload/watch-directory"
-    proxyPostRoute "/hotreload/unwatch-directory"
     proxyGetRoute "/warmup-context"
   ]
 
@@ -1218,7 +1183,7 @@ type LiveTestWatcherManager
             Bozzetto.FileWatcher.startPrunedWatcher
               dir
               [ ".fs"; ".fsx" ]
-              DevReload.DevReloadConfig.defaults.FileWatcherBufferSizeBytes
+              FileWatcher.WatcherOptions.defaults.BufferSizeBytes
               handler
               onOverflow
           watchers.[dir] <- disposable
@@ -2345,36 +2310,6 @@ let run
   // Partially applied worker helpers (capture httpClient + readSnapshot)
   let getWorkerBaseUrl = getWorkerBaseUrl readSnapshot
 
-  // Every event on a worker's reload stream means the worker's hot-reload
-  // state may have moved (a save patched, restarted, or kept live state), so
-  // it's a HotReloadChanged: the dashboard refetches the worker's panels and
-  // morphs if anything changed. Without this the only trigger was the
-  // daemon's own file event, which fires before the worker has decided.
-  let ensureReloadRelay =
-    WorkerReloadRelay.start getWorkerBaseUrl (fun sid -> stateChangedEvent.Trigger (HotReloadChanged sid)) cts.Token
-  // Anything that can mean a session got a worker, lost one, or got a new one.
-  // HotReloadChanged is left out on purpose: the relay raises it.
-  stateChangedEvent.Publish.Add(fun change ->
-    match change with
-    | SessionReady sid
-    | SessionSwitched sid
-    | FileReloaded (sid, _)
-    | SessionFaulted (sid, _) -> ensureReloadRelay sid
-    | SessionProgress
-    | HotReloadChanged _
-    | ModelChanged _
-    | WarmupProgress _
-    | SystemAlarm _
-    | CohortChanged
-    | WarmupContextSnapshot _
-    | HotReloadSnapshot _
-    | HotReloadFileToggled _
-    | SessionActivated _
-    | SessionCreated _
-    | SessionStopped _
-    | WorkflowSwitching _
-    | WorkflowSwitched _
-    | SessionHealthChanged _ -> ())
   // Every applied cohort command tells the dashboard to redraw, so the cohort
   // panel shows up when a member joins and goes when the last one leaves.
   // Lease renewals are left out: the reaper renews every present member once
@@ -2389,10 +2324,6 @@ let run
     match visible with
     | true -> stateChangedEvent.Trigger CohortChanged
     | false -> ())
-  // Sessions that were ready before this line ran.
-  SessionManager.QuerySnapshot.allSessions (readSnapshot ())
-  |> List.iter (fun info -> ensureReloadRelay info.Id)
-
   let fetchWorkerEndpoint sessionId path timeout parse =
     fetchWorkerEndpoint httpClient readSnapshot sessionId path timeout parse
 
@@ -2400,15 +2331,6 @@ let run
   let getWarmupContextForMcp (sessionId: WorkerProtocol.SessionId) : System.Threading.Tasks.Task<WarmupContext option> =
     fetchWorkerEndpoint sessionId "/warmup-context" mcpFetchTimeoutSec
       (WorkerProtocol.Serialization.deserialize<WarmupContext>)
-
-  // Hotreload state fetcher for MCP — returns watched file paths
-  let getHotReloadStateForMcp (sessionId: WorkerProtocol.SessionId) : System.Threading.Tasks.Task<string list option> =
-    fetchWorkerEndpoint sessionId "/hotreload" mcpFetchTimeoutSec (fun resp ->
-      use doc = System.Text.Json.JsonDocument.Parse(resp)
-      doc.RootElement.GetProperty("files").EnumerateArray()
-      |> Seq.filter (fun f -> f.GetProperty("watched").GetBoolean())
-      |> Seq.map (fun f -> f.GetProperty("path").GetString())
-      |> Seq.toList)
 
   // Wire test discovery from SessionManager → Elm model
   onTestDiscoveryCallback <- handleTestDiscovery readSnapshot workingDir log elmRuntime.Dispatch
@@ -2425,8 +2347,7 @@ let run
       match info.Workflow with
       | WorkflowTypes.SessionWorkflow.LiveTesting ->
         elmRuntime.Dispatch(BozzettoMsg.EnableLiveTestingForSession (WorkerProtocol.SessionId.value sid))
-      | WorkflowTypes.SessionWorkflow.Interactive
-      | WorkflowTypes.SessionWorkflow.HotReload _ -> ())
+      | WorkflowTypes.SessionWorkflow.Interactive -> ())
 
   // Wire instrumentation maps from SessionManager → Elm model
   onInstrumentationMapsCallback <- fun sid maps ->
@@ -2590,10 +2511,6 @@ let run
       GetWarmupContext = Some (fun (sidStr: string) ->
         match WorkerProtocol.SessionId.validate sidStr with
         | Ok sid -> getWarmupContextForMcp sid
-        | Error _ -> Threading.Tasks.Task.FromResult None)
-      GetHotReloadState = Some (fun (sidStr: string) ->
-        match WorkerProtocol.SessionId.validate sidStr with
-        | Ok sid -> getHotReloadStateForMcp sid
         | Error _ -> Threading.Tasks.Task.FromResult None)
       SharedBindingScope = sharedBindingScope
       SharedFeatureState = Some sharedFeatureState
@@ -3042,44 +2959,6 @@ let run
     GetPreviousSessions = fun () ->
       getPreviousSessions manifestOwner readSnapshot
     GetAllSessions = fun () -> task { return SessionManager.QuerySnapshot.allSessions (readSnapshot()) }
-    GetHotReloadState = fun sessionId ->
-      fetchWorkerEndpoint sessionId "/hotreload" dashboardFetchTimeoutSec (fun resp ->
-        use doc = Text.Json.JsonDocument.Parse(resp)
-        let root = doc.RootElement
-        let files =
-          root.GetProperty("files").EnumerateArray()
-          |> Seq.map (fun el ->
-            {| path = el.GetProperty("path").GetString()
-               watched = el.GetProperty("watched").GetBoolean() |})
-          |> Seq.toList
-        let watchedCount = root.GetProperty("watchedCount").GetInt32()
-        // Initializers saves kept waiting for a reset (rule 3). A worker from
-        // before rule 3 doesn't send `kept`, and that just means nothing's kept.
-        let kept =
-          match root.TryGetProperty "kept" with
-          | true, arr when arr.ValueKind = Text.Json.JsonValueKind.Array ->
-            arr.EnumerateArray()
-            |> Seq.map (fun k ->
-              ({ Binding = k.GetProperty("binding").GetString() |> Option.ofObj |> Option.defaultValue ""
-                 KeptValue = k.GetProperty("keptValue").GetString() |> Option.ofObj |> Option.defaultValue ""
-                 NewInitializer = k.GetProperty("newInitializer").GetString() |> Option.ofObj |> Option.defaultValue "" }
-               : Features.ReloadOutcome.KeptValue))
-            |> Seq.toList
-          | _ -> []
-        // Rule 2's reflection reads: the mode and the hot-loop questions. A
-        // worker that doesn't send them gets no mode control, not a guessed one.
-        let reflection =
-          match root.TryGetProperty "reflectionReads" with
-          | true, el ->
-            match Features.KeptState.ReflectionReadsJson.parse el with
-            | Ok report -> Features.KeptState.ReflectionReadsView.Reported report
-            | Error why ->
-              let why = Features.KeptState.ReflectionReadsError.describe why
-              match el.TryGetProperty "unavailable" with
-              | true, reason -> Features.KeptState.ReflectionReadsView.NotReported(reason.GetString() |> Option.ofObj |> Option.defaultValue why)
-              | false, _ -> Features.KeptState.ReflectionReadsView.NotReported why
-          | false, _ -> Features.KeptState.ReflectionReadsView.NotReported "this worker doesn't report reflection reads"
-        {| files = files; watchedCount = watchedCount; kept = kept; reflection = reflection |})
     GetWarmupContext = fun sessionId ->
       fetchWorkerEndpoint sessionId "/warmup-context" dashboardFetchTimeoutSec
         (WorkerProtocol.Serialization.deserialize<WarmupContext>)
@@ -3461,17 +3340,6 @@ let run
         |> Result.mapError BozzettoError.describe
     }
     ShutdownCallback = Some (fun () -> cts.Cancel())
-    RunApp = fun sid request -> task {
-      let! result =
-        AppRunOrchestration.runApp sessionOps (fun () -> DateTime.UtcNow) Timeouts.warmupReadyPollMax sid request
-      elmRuntime.Dispatch(BozzettoMsg.Editor EditorAction.ListSessions)
-      return result |> Result.map AppRun.describeState |> Result.mapError BozzettoError.describe
-    }
-    StopApp = fun sid -> task {
-      let! result = AppRunOrchestration.stopApp sessionOps sid
-      elmRuntime.Dispatch(BozzettoMsg.Editor EditorAction.ListSessions)
-      return result |> Result.map AppRun.describeState |> Result.mapError BozzettoError.describe
-    }
   }
 
   let dashboardInfra : DashboardInfra = {
@@ -3533,10 +3401,10 @@ let run
   let dashboardEndpoints =
     Dashboard.createEndpoints dashboardQueries dashboardActions dashboardInfra
 
-  let hotReloadProxyEndpoints = createHotReloadProxyEndpoints getWorkerBaseUrl httpClient stateChangedEvent
+  let workerReadEndpoints = createWorkerReadEndpoints getWorkerBaseUrl httpClient
 
   let dashboardTask =
-    startDashboardServer log bindHost daemonOrigins dashboardPort (dashboardEndpoints @ hotReloadProxyEndpoints) cts.Token
+    startDashboardServer log bindHost daemonOrigins dashboardPort (dashboardEndpoints @ workerReadEndpoints) cts.Token
 
   // Workers handle their own warmup, middleware, and file watching.
   // The daemon just needs to wait for the MCP and dashboard servers.

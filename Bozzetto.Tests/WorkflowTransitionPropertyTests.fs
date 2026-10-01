@@ -19,24 +19,10 @@ open Bozzetto.Tests.SharedGenerators
 
 // ── FsCheck Generators ─────────────────────────────────────
 
-let private genBrowserRefreshConfig =
-  gen {
-    let! patternCount = Gen.choose (0, 5)
-    let! patterns =
-      Gen.listOfLength patternCount (
-        Gen.elements [
-          "*.fs"; "*.fsx"; "*.html"; "*.css"; "*.js"
-          "**/*.fs"; "src/**/*.fsx"; "*.json"
-        ]
-      )
-    return { WatchPatterns = patterns }
-  }
-
 let private genSessionWorkflow =
   Gen.oneof [
     Gen.constant SessionWorkflow.Interactive
     Gen.constant SessionWorkflow.LiveTesting
-    genBrowserRefreshConfig |> Gen.map SessionWorkflow.HotReload
   ]
 
 /// Direct TransitionCost record generator (for testing isZeroCost boundary)
@@ -55,8 +41,6 @@ let private genRawTransitionCost =
 type TransitionGenerators =
   static member SessionWorkflow () =
     Arb.fromGen genSessionWorkflow
-  static member BrowserRefreshConfig () =
-    Arb.fromGen genBrowserRefreshConfig
   static member TransitionCost () =
     Arb.fromGen genRawTransitionCost
 
@@ -100,16 +84,9 @@ let workflowTransitionPropertyTests =
           // WHY: Users must be confident round-trips are safe —
           // switching away and back should not silently change mode.
           let originalLabel = SessionWorkflow.label workflow
-          // A binary flip over three cases must fix one of them to stay an
-          // involution; LiveTesting is that fixed point (round-trip preserves
-          // its label trivially, while Interactive↔HotReload swap and return).
           let flip = function
-            | SessionWorkflow.Interactive ->
-              SessionWorkflow.HotReload BrowserRefreshConfig.defaults
-            | SessionWorkflow.HotReload _ ->
-              SessionWorkflow.Interactive
-            | SessionWorkflow.LiveTesting ->
-              SessionWorkflow.LiveTesting
+            | SessionWorkflow.Interactive -> SessionWorkflow.LiveTesting
+            | SessionWorkflow.LiveTesting -> SessionWorkflow.Interactive
           let opposite = flip workflow
           let roundTripped = flip opposite
           let roundTrippedLabel = SessionWorkflow.label roundTripped
@@ -251,52 +228,10 @@ let workflowTransitionPropertyTests =
           not (String.IsNullOrEmpty lbl)
 
       testPropertyWithConfig chaosConfig
-        "label is always one of the three known display labels" <|
+        "label is always one of the two supported display labels" <|
         fun (workflow: SessionWorkflow) ->
           let lbl = SessionWorkflow.label workflow
-          lbl = "REPL" || lbl = "Live Testing" || lbl = "Hot Reload"
+          lbl = "REPL" || lbl = "Live Testing"
     ]
 
-    // ── (j) fsiArgs and replCapability consistency ───────────
-
-    testList "fsiArgs and replCapability are consistent with workflow kind" [
-
-      testPropertyWithConfig chaosConfig
-        "Interactive → empty fsiArgs and Full replCapability" <|
-        fun () ->
-          // WHY: Incorrect args would silently break the REPL or hot
-          // reload — this is the #1 user confusion source.
-          let workflow = SessionWorkflow.Interactive
-          let args = SessionWorkflow.fsiArgs workflow
-          let cap = SessionWorkflow.replCapability workflow
-          args = []
-          && cap = ReplCapability.Full
-
-      testPropertyWithConfig chaosConfig
-        "HotReload → fsiArgs contains --multiemit- and ExpressionOnly" <|
-        fun (cfg: BrowserRefreshConfig) ->
-          let workflow = SessionWorkflow.HotReload cfg
-          let args = SessionWorkflow.fsiArgs workflow
-          let cap = SessionWorkflow.replCapability workflow
-          args |> List.contains "--multiemit-"
-          && cap = ReplCapability.ExpressionOnly
-
-      testPropertyWithConfig chaosConfig
-        "isHotReloadActive agrees with workflow kind" <|
-        fun (workflow: SessionWorkflow) ->
-          let isActive = SessionWorkflow.isHotReloadActive workflow
-          match workflow with
-          | SessionWorkflow.Interactive -> not isActive
-          | SessionWorkflow.LiveTesting -> not isActive
-          | SessionWorkflow.HotReload _ -> isActive
-
-      testPropertyWithConfig chaosConfig
-        "feedbackStrategy is consistent with workflow kind" <|
-        fun (workflow: SessionWorkflow) ->
-          match workflow, SessionWorkflow.feedbackStrategy workflow with
-          | SessionWorkflow.Interactive, FeedbackStrategy.ReplDriven -> true
-          | SessionWorkflow.LiveTesting, FeedbackStrategy.ReplDriven -> true
-          | SessionWorkflow.HotReload _, FeedbackStrategy.SaveDriven _ -> true
-          | _ -> false
-    ]
   ]

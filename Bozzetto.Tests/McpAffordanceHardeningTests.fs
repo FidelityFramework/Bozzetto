@@ -195,10 +195,10 @@ let affordanceAlgebraTests =
 let toolRegistrationTests =
   testList "tool registration completeness" [
 
-    testCase "affordance module covers exactly 44 unique tool names" <| fun _ ->
+    testCase "affordance module covers exactly 41 unique tool names" <| fun _ ->
       allAffordanceTools
       |> List.length
-      |> Expect.equal "unique affordance tools" 44
+      |> Expect.equal "unique affordance tools" 41
 
     testCase "all affordance tool names are non-empty and non-whitespace"
     <| fun _ ->
@@ -217,7 +217,7 @@ let toolRegistrationTests =
         |> Expect.isTrue
           (sprintf "%A (%d) should have <= Ready (%d)" state count readyCount))
 
-    testCase "McpServerTool-attributed methods total exactly 60 (reflection)"
+    testCase "McpServerTool-attributed methods total exactly 53 (reflection)"
     <| fun _ ->
       match tryGetMcpToolMethods () with
       | None ->
@@ -225,14 +225,9 @@ let toolRegistrationTests =
           "BozzettoTools type not found in loaded assemblies; \
            reflection test skipped"
       | Some methods ->
-        // 42 (incl. switch_workflow, finally [<McpServerTool>]-registered) + the
-        // 7 Claims v1 cohort tools (cohort-integration-plan.md Slice 2) + the 1
-        // item-14c cohort tool (set_integration_ref) + reset_hot_reload_state
-        // (hot-reload-state-spec.md rule 3) + manage_local_data +
-        // set_reflection_read_mode (rule 2's reflection read mode and its
-        // hot-loop questions).
+        // Retired patching and managed app tools are absent from the current surface.
         methods.Length
-          |> Expect.equal "MCP tool method count" 60
+          |> Expect.equal "MCP tool method count" 53
 
     testCase
       "every McpServerTool method has a non-empty Description (reflection)"
@@ -305,7 +300,7 @@ let stateTransitionSafetyTests =
               "checkToolAvailability threw for (%A, %s): %s"
               state tool ex.Message))
       tested
-          |> Expect.equal "should test all 220 state×tool combos" 220
+          |> Expect.equal "should test all 205 state×tool combos" 205
 
     testCase "all rejections return ToolNotAvailable specifically" <| fun _ ->
       allStates
@@ -404,13 +399,10 @@ let stateTransitionSafetyTests =
               failtestf
                 "checkToolAvailability threw for (%A, %s): %s"
                 state tool ex.Message))
-        // 41 + the 7 Claims v1 cohort tools (cohort-integration-plan.md
-        // Slice 2) + the 1 item-14c cohort tool (set_integration_ref) +
-        // reset_hot_reload_state + manage_local_data +
-        // set_reflection_read_mode = 53.
+        // Every retained tool is checked in each state.
         tested
         |> Expect.equal
-          "should test 5 states × 60 tools = 300" 300
+          "should test 5 states × 53 tools = 265" 265
   ]
 
 // ── Group 5: Affordance Superset/Subset Relationships ──

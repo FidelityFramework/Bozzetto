@@ -36,7 +36,7 @@ module StartupConfigTests =
           CommandLineArgs = [| "--mcp-port"; "8080" |]
           LoadedProjects = [ "Test.fsproj" ]
           WorkingDirectory = @"C:\Code\Test"
-          Workflow = SessionWorkflow.HotReload BrowserRefreshConfig.defaults
+          Workflow = SessionWorkflow.LiveTesting
           AutoOpenNamespaces = true
           AspireDetected = false
           StartupTimestamp = DateTime.UtcNow; StartupProfileLoaded = None
@@ -44,7 +44,7 @@ module StartupConfigTests =
         
         config.CommandLineArgs.Length |> Expect.equal "Should have command line args" 2
         config.LoadedProjects.Length |> Expect.equal "Should have loaded projects" 1
-        config.HotReloadEnabled |> Expect.isTrue "Should track hot reload"
+        config.Workflow |> Expect.equal "Should track the selected workflow" SessionWorkflow.LiveTesting
         config.AspireDetected |> Expect.isFalse "Should track Aspire detection"
       
       testCase "StartupConfig should handle empty/default states"
@@ -297,7 +297,7 @@ module McpAdapterEnhancementTests =
           CommandLineArgs = [| "--mcp-port"; "8080" |]
           LoadedProjects = [ "Test.fsproj" ]
           WorkingDirectory = @"C:\Test"
-          Workflow = SessionWorkflow.HotReload BrowserRefreshConfig.defaults
+          Workflow = SessionWorkflow.LiveTesting
           AutoOpenNamespaces = true
           AspireDetected = false
           StartupTimestamp = DateTime.UtcNow; StartupProfileLoaded = None
@@ -307,7 +307,7 @@ module McpAdapterEnhancementTests =
         
         output |> Expect.stringContains "Should include project" "Test.fsproj"
         output |> Expect.stringContains "Should include command line args" "--mcp-port"
-        output |> Expect.stringContains "Should mention hot reload" "Hot Reload"
+        output.Contains("Hot Reload", StringComparison.Ordinal) |> Expect.isFalse "retired capability is not advertised"
       
       testCase "formatStartupInfoJson should create valid JSON"
       <| fun _ ->
@@ -315,7 +315,7 @@ module McpAdapterEnhancementTests =
           CommandLineArgs = [| "--mcp-port"; "8080" |]
           LoadedProjects = [ "Test.fsproj" ]
           WorkingDirectory = @"C:\Test"
-          Workflow = SessionWorkflow.HotReload BrowserRefreshConfig.defaults
+          Workflow = SessionWorkflow.LiveTesting
           AutoOpenNamespaces = true
           AspireDetected = false
           StartupTimestamp = DateTime.UtcNow; StartupProfileLoaded = None
@@ -333,7 +333,7 @@ module McpAdapterEnhancementTests =
           CommandLineArgs = [| "--mcp-port"; "8080" |]
           LoadedProjects = [ "Test.fsproj" ]
           WorkingDirectory = @"C:\Test"
-          Workflow = SessionWorkflow.HotReload BrowserRefreshConfig.defaults
+          Workflow = SessionWorkflow.LiveTesting
           AutoOpenNamespaces = true
           AspireDetected = false
           StartupTimestamp = DateTime.UtcNow; StartupProfileLoaded = None

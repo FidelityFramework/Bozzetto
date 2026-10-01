@@ -227,17 +227,8 @@ let descriptionPropertyTests =
 
     testCase "reduced MCP surface keeps the tool count surgical"
     <| fun _ ->
-      // 41 + the 7 Claims v1 cohort tools (cohort-integration-plan.md
-      // Slice 2: join_cohort/leave_cohort/acquire_claim/release_claim/
-      // reassign_claim/request_landing/get_cohort_status) + the 1 item-14c
-      // cohort tool (set_integration_ref) + reset_hot_reload_state, the one
-      // way an agent can see and reset live state a hot-reload save kept
-      // (hot-reload-state-spec.md rule 3).
-      // + manage_local_data, the one way to see and clear what Bozzetto keeps
-      // under its data dir (friction.db, cohort.ledger.db).
-      // + set_reflection_read_mode, the way an agent sees and answers rule 2's
-      // reflection read question.
-      registeredToolDescriptions.Length |> Expect.equal "tool count should stay intentionally small" 60
+      // Exact current surface: retired patching and managed app tools are absent.
+      registeredToolDescriptions.Length |> Expect.equal "tool count should stay intentionally small" 53
 
     testCase "every tool-shaped member is registered — no write-only MCP surface"
     <| fun _ ->

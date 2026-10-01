@@ -64,10 +64,9 @@ let blockerKindOf : Bozzetto.BozzettoError -> Bozzetto.Features.FrictionTelemetr
   | Bozzetto.BozzettoError.EvalSupersededByReset -> Bozzetto.Features.FrictionTelemetryTypes.BlockerKind.OperationFailed
   | Bozzetto.BozzettoError.WarmupOpenFailed _ -> Bozzetto.Features.FrictionTelemetryTypes.BlockerKind.SessionWarming
   | Bozzetto.BozzettoError.WarmupContextFailed _ -> Bozzetto.Features.FrictionTelemetryTypes.BlockerKind.SessionWarming
-  | Bozzetto.BozzettoError.HotReloadFailed _ -> Bozzetto.Features.FrictionTelemetryTypes.BlockerKind.OperationFailed
   // A confirmed-stale loaded definition (targeted_verify) is reported as
-  // HotReloadStateError — see targetedVerifyResult in Mcp.fs.
-  | Bozzetto.BozzettoError.HotReloadStateError _ -> Bozzetto.Features.FrictionTelemetryTypes.BlockerKind.LoadedStateStale
+  // LoadedStateStale — see targetedVerifyResult in Mcp.fs.
+  | Bozzetto.BozzettoError.LoadedStateStale _ -> Bozzetto.Features.FrictionTelemetryTypes.BlockerKind.LoadedStateStale
   | Bozzetto.BozzettoError.AppRunFailed _ -> Bozzetto.Features.FrictionTelemetryTypes.BlockerKind.OperationFailed
   | Bozzetto.BozzettoError.RestartLimitExceeded _ -> Bozzetto.Features.FrictionTelemetryTypes.BlockerKind.OperationFailed
   | Bozzetto.BozzettoError.DaemonStartFailed _ -> Bozzetto.Features.FrictionTelemetryTypes.BlockerKind.OperationFailed
@@ -475,13 +474,6 @@ let withEchoOutcomeNoAwaitRecord (ctx: McpContext) (toolName: string) (t: Task<s
         return raise (Bozzetto.BozzettoErrorException(err))
   }
 
-/// One client for reset_hot_reload_state's calls to the worker (the list and
-/// the reset). A reset runs one initializer, so it gets the same budget as a
-/// hot-reload compile.
-let private keptStateClient =
-  new System.Net.Http.HttpClient(
-    Timeout = System.TimeSpan.FromMilliseconds(float Bozzetto.DevReload.DevReloadConfig.defaults.CompileBudgetMs))
-
 type BozzettoTools(ctx: McpContext, logger: ILogger<BozzettoTools>) =
     [<McpServerTool>]
     [<Description("""Send F# code to the FSI REPL session. Each ';;' marks a transaction boundary.
@@ -663,7 +655,7 @@ OUTPUT FORMAT: Each entry shows a timestamp, cell index, duration, whether it su
         Task.FromResult(acquireWorkLease "mcp" Bozzetto.ExpensiveWorkLease.Kind.TestSuiteRun) |> withEcho ctx "acquire_test_suite_lease"
 
     [<McpServerTool>]
-    [<Description("Acquire a lease for a caller-owned external run-app process. Bozzetto runs built-in applications through run_app instead.")>]
+    [<Description("Acquire a lease for a caller-owned external run-app process. Native Composer execution uses composer_run_current.")>]
     member _.acquire_run_app_lease() : Task<string> =
         Task.FromResult(acquireWorkLease "mcp" Bozzetto.ExpensiveWorkLease.Kind.RunApp) |> withEcho ctx "acquire_run_app_lease"
 
@@ -790,9 +782,8 @@ into it, so the session runs the code you just edited instead of the copy loaded
 worker spawn. There is no separate "self-host reload" tool — this IS it. After calling
 it, poll get_session_status until State='Ready'; once ready, the status text confirms which
 Bozzetto.Core version is now loaded so you can see the rebuild actually took effect.
-In-process hot reload cannot do this for Bozzetto.Core itself (the running worker's
-Bozzetto.Core is a Trusted-Platform-Assembly resolved by the native binder before any
-in-process trick gets a say) — rebuild+respawn is the real, honest mechanism.""")>]
+Managed runtime patching is retired. Retained F# development uses the separate
+SageFS service; native Composer uses explicit reservation and rebuilt artifacts.""")>]
     member _.hard_reset_fsi_session(
         [<Description("Set rebuild=true to run 'dotnet build' before reloading (default false)")>]
         [<Optional; DefaultParameterValue(false)>]
@@ -883,286 +874,6 @@ BEHAVIOR:
             | Error err -> sprintf "Error: %s" (Bozzetto.BozzettoError.describeForAgent err), Some err
         }
         |> withEchoOutcome ctx "cancel_eval"
-
-    [<McpServerTool>]
-    [<Description("""Enable hot reload (browser auto-refresh) for this session.
-
-This installs Harmony patches on WebApplication.Run/RunAsync() so that when a
-.fs file changes, the browser auto-refreshes. Designed for use after the
-session was created in Interactive workflow and the user later wants to run
-a Falco/Datastar webapp with live reload — without destroying the session.
-
-WORKFLOW:
-1. Call this tool. It returns a JSON with `patched`, `workerPort`, `health`,
-   `disabledByEnvVar`, and `nextSteps`.
-2. If a webapp is already running (webapp.Run() is blocking an eval), call
-   `cancel_eval` to stop it.
-3. Re-evaluate your `webapp.Run()` call. The Harmony patches now fire on
-   this Run() call, the DevReloadMiddleware is injected, and subsequent file
-   changes will hot-reload the browser.
-
-Idempotent: safe to call multiple times. The patches only apply to future
-webapp.Run() calls; existing in-flight webapps are unaffected.
-
-If the env var BOZZETTO_DEVRELOAD=0 is set, the tool returns `disabledByEnvVar:
-true` and does NOT install patches. This is intentional — the env var is the
-process-wide kill switch for hot reload.""")>]
-    member _.enable_hot_reload(
-        [<Description("Working directory of the MCP client. When provided, routes to the matching session if exactly one session uses this directory. If multiple sessions share the directory, you must call switch_session first (or pass session_id explicitly) — the daemon will not guess.")>]
-        [<Optional; DefaultParameterValue("")>]
-        working_directory: string
-    ) : Task<string> =
-        let wd = match System.String.IsNullOrWhiteSpace working_directory with | true -> None | false -> Some working_directory
-        let resultJson (patched: bool) (workerPort: int) (health: string) (disabledByEnvVar: bool) (nextSteps: string[]) =
-            let result = JsonObject()
-            result.["patched"] <- JsonValue.Create(patched)
-            result.["workerPort"] <- JsonValue.Create(workerPort)
-            result.["health"] <- JsonValue.Create(health)
-            result.["disabledByEnvVar"] <- JsonValue.Create(disabledByEnvVar)
-            result.["nextSteps"] <- JsonValue.Create(nextSteps)
-            result.ToJsonString()
-        let disabledByEnvVar =
-            match System.Environment.GetEnvironmentVariable("BOZZETTO_DEVRELOAD") with
-            | "0" | "false" -> true
-            | _ -> false
-        let healthToString (h: Bozzetto.DevReload.DevReloadHealth) =
-            match h with
-            | Bozzetto.DevReload.PatchPending -> "PatchPending"
-            | Bozzetto.DevReload.PatchFailed r -> sprintf "PatchFailed: %s" r
-            | Bozzetto.DevReload.Injected -> "Injected"
-            | Bozzetto.DevReload.Active _ -> "Active"
-            | Bozzetto.DevReload.Degraded r -> sprintf "Degraded: %s" r
-            | Bozzetto.DevReload.Disabled -> "Disabled"
-        // Hot reload cannot be retrofitted onto a running Interactive session.
-        // Live mode installs the DevReload Harmony patches at worker startup AND
-        // starts FSI with `--multiemit-` (see SessionWorkflow.fsiArgs) — that
-        // flag is what lets Harmony detour re-eval'd methods, and it can only be
-        // set when the session (its FSI process) is created. So the honest answer
-        // depends on the session's actual workflow: a Live session already has
-        // hot reload; an Interactive session must switch to Live (which recreates
-        // the FSI process) to get it. The old reflection-into-the-daemon approach
-        // could never work — DevReloadInjector lives in the worker process, not
-        // the daemon — and reported a misleading "architecture is broken" error.
-        logger.LogDebug("MCP-TOOL: enable_hot_reload called")
-        withSessionWd ctx "mcp" wd (fun sidStr -> task {
-            let sid = match Bozzetto.WorkerProtocol.SessionId.validate sidStr with
-                       | Ok s -> s
-                       | Error _ -> Bozzetto.WorkerProtocol.SessionId.newId ()
-            let! infoOpt = ctx.SessionOps.GetSessionInfo sid
-            let workerPort = infoOpt |> Option.bind (fun i -> Bozzetto.WorkerProtocol.SessionLifecycleStatus.workerPort i.Status) |> Option.defaultValue 0
-            let workflow = infoOpt |> Option.map (fun i -> i.Workflow) |> Option.defaultValue Bozzetto.WorkflowTypes.SessionWorkflow.Interactive
-            if disabledByEnvVar then
-                Bozzetto.DevReload.DevReloadHealthTracker.transition Bozzetto.DevReload.Disabled
-                return resultJson false workerPort "Disabled (BOZZETTO_DEVRELOAD env var)" true
-                    [| "unset BOZZETTO_DEVRELOAD or set it to '1', then start the session in Live mode" |]
-            else
-                match workflow with
-                | Bozzetto.WorkflowTypes.SessionWorkflow.HotReload _ ->
-                    return resultJson true workerPort "Active (session is in Live mode)" false
-                        [| "Hot reload is already on — this session was created in Live mode."
-                           "Start your web app (run_app, or eval webapp.Run()); connected browsers auto-refresh on save."
-                           "Edit any watched .fs file to see the reload fire." |]
-                | Bozzetto.WorkflowTypes.SessionWorkflow.Interactive
-                | Bozzetto.WorkflowTypes.SessionWorkflow.LiveTesting ->
-                    let modeLabel = Bozzetto.WorkflowTypes.SessionWorkflow.label workflow
-                    return resultJson false workerPort (sprintf "Not available: this session is in %s mode" modeLabel) false
-                        [| "Hot reload requires Live mode, which is configured when the session's FSI process starts and cannot be turned on afterward."
-                           "Switch this session to Live mode: switch_workflow target=live (this recreates the session, so REPL definitions and cell state are lost)."
-                           "Or start a fresh Live session: create_project_session or create_solution_session with workflow=live." |]
-        })
-        |> withEcho ctx "enable_hot_reload"
-
-    [<McpServerTool>]
-    [<Description("""Disable hot reload for this session.
-
-This transitions the DevReload health state to Disabled. The Harmony patches
-remain installed in the process but the prefix check will refuse to inject
-the DevReloadMiddleware into future webapp.Run() calls.
-
-WORKFLOW:
-1. Call this tool. It returns a JSON with `disabled: true` and `health`.
-2. If a webapp is already running, you do NOT need to restart it — the
-   middleware is already injected and the SSE channel is established.
-   However, future webapp.Run() calls will not get the middleware.
-3. To re-enable, call `enable_hot_reload` and then re-evaluate webapp.Run().
-
-This is the runtime analog of the BOZZETTO_DEVRELOAD=0 env var. Unlike the env
-var, this is per-session and reversible. The env var, if set, takes precedence.""")>]
-    member _.disable_hot_reload(
-        [<Description("Working directory of the MCP client. When provided, routes to the matching session if exactly one session uses this directory. If multiple sessions share the directory, you must call switch_session first (or pass session_id explicitly) — the daemon will not guess.")>]
-        [<Optional; DefaultParameterValue("")>]
-        working_directory: string
-    ) : Task<string> =
-        let wd = match System.String.IsNullOrWhiteSpace working_directory with | true -> None | false -> Some working_directory
-        logger.LogDebug("MCP-TOOL: disable_hot_reload called")
-        // The per-session runtime toggle (DevReloadInjector.disableForSession)
-        // lives in the worker process, which the daemon can't reach directly —
-        // the old reflection-into-the-daemon call silently found nothing and
-        // reported disabled=true anyway. Answer honestly by the session's real
-        // workflow instead of claiming a no-op succeeded.
-        let resultJson (disabled: bool) (health: string) (nextSteps: string[]) =
-            let result = JsonObject()
-            result.["disabled"] <- JsonValue.Create(disabled)
-            result.["health"] <- JsonValue.Create(health)
-            result.["nextSteps"] <- JsonValue.Create(nextSteps)
-            result.ToJsonString()
-        withSessionWd ctx "mcp" wd (fun sidStr -> task {
-            let sid = match Bozzetto.WorkerProtocol.SessionId.validate sidStr with
-                       | Ok s -> s
-                       | Error _ -> Bozzetto.WorkerProtocol.SessionId.newId ()
-            let! infoOpt = ctx.SessionOps.GetSessionInfo sid
-            let workflow = infoOpt |> Option.map (fun i -> i.Workflow) |> Option.defaultValue Bozzetto.WorkflowTypes.SessionWorkflow.Interactive
-            match workflow with
-            | Bozzetto.WorkflowTypes.SessionWorkflow.Interactive
-            | Bozzetto.WorkflowTypes.SessionWorkflow.LiveTesting ->
-                let modeLabel = Bozzetto.WorkflowTypes.SessionWorkflow.label workflow
-                return resultJson true (sprintf "Not active: this session is in %s mode, so hot reload was never on" modeLabel) [||]
-            | Bozzetto.WorkflowTypes.SessionWorkflow.HotReload _ ->
-                return resultJson false "Active: this session is in Live mode; a per-session runtime off-switch is not wired up"
-                    [| "To turn hot reload off, switch this session to Interactive mode: switch_workflow target=interactive (recreates the session; REPL state is lost)."
-                       "To disable hot reload daemon-wide, start the daemon with BOZZETTO_DEVRELOAD=0." |]
-        })
-        |> withEcho ctx "disable_hot_reload"
-
-    [<McpServerTool>]
-    [<Description("""List or reset live state that hot reload KEPT.
-
-When you edit the initializer of a module-level `let mutable` while the app is
-running (say `let mutable count = 0` to `= 10`), hot reload keeps the app's live
-value instead of throwing it away, and the save says so: "kept 'App.count' = 37,
-new initializer 10". The new initializer waits here until you reset it.
-
-WORKFLOW:
-1. Call with no `binding` to list what's kept: each entry has the binding, the
-   value the app kept and the initializer that's waiting.
-2. Call with `binding` (the qualified name from that list, e.g. App.State.count)
-   to run ONLY that initializer and write its value into the running app. Nothing
-   else in the file runs and nothing else is touched.
-
-A changed TYPE is never kept (that's a restart), so everything listed here is safe
-to reset. The dashboard's Hot Reload panel shows the same list with a Reset button.""")>]
-    member _.reset_hot_reload_state(
-        [<Description("Qualified binding to reset, e.g. App.State.count. Leave empty to list what's kept.")>]
-        [<Optional; DefaultParameterValue("")>]
-        binding: string,
-        [<Description("Working directory of the MCP client. When provided, routes to the matching session if exactly one session uses this directory. If multiple sessions share the directory, you must call switch_session first (or pass session_id explicitly) — the daemon will not guess.")>]
-        [<Optional; DefaultParameterValue("")>]
-        working_directory: string
-    ) : Task<string> =
-        let wd = match System.String.IsNullOrWhiteSpace working_directory with | true -> None | false -> Some working_directory
-        logger.LogDebug("MCP-TOOL: reset_hot_reload_state called: binding={Binding}", binding)
-        withSessionWd ctx "mcp" wd (fun sidStr -> task {
-            match Bozzetto.WorkerProtocol.SessionId.validate sidStr with
-            | Error _ -> return sprintf "Error: '%s' isn't a session id I know." sidStr
-            | Ok sid ->
-            let! infoOpt = ctx.SessionOps.GetSessionInfo sid
-            match infoOpt |> Option.bind (fun i -> Bozzetto.WorkerProtocol.SessionLifecycleStatus.workerPort i.Status) with
-            | None -> return "Error: the session has no running worker, so there's no live state to list or reset. Check get_session_status."
-            | Some port ->
-            let workerUrl = sprintf "http://127.0.0.1:%d" port
-            match System.String.IsNullOrWhiteSpace binding with
-            | true ->
-                let! json = keptStateClient.GetStringAsync(workerUrl + "/hotreload")
-                use doc = System.Text.Json.JsonDocument.Parse json
-                let kept =
-                    match doc.RootElement.TryGetProperty "kept" with
-                    | true, arr when arr.ValueKind = System.Text.Json.JsonValueKind.Array ->
-                        [ for k in arr.EnumerateArray() ->
-                            sprintf "kept %s = %s, new initializer %s"
-                              (k.GetProperty("binding").GetString())
-                              (k.GetProperty("keptValue").GetString())
-                              (k.GetProperty("newInitializer").GetString()) ]
-                    | _ -> []
-                match kept with
-                | [] -> return "Nothing is kept. No save has held on to live state waiting for a reset."
-                | lines ->
-                    return
-                        "Kept live state (each initializer runs when you reset it; pass its binding to this tool):\n"
-                        + (lines |> List.map (sprintf "- %s") |> String.concat "\n")
-            | false ->
-                use content = new System.Net.Http.StringContent(System.Text.Json.JsonSerializer.Serialize({| binding = binding |}), System.Text.Encoding.UTF8, "application/json")
-                let! resp = keptStateClient.PostAsync(workerUrl + "/hotreload/reset-state", content)
-                let! body = resp.Content.ReadAsStringAsync()
-                use doc = System.Text.Json.JsonDocument.Parse body
-                let message = doc.RootElement.GetProperty("message").GetString()
-                match resp.IsSuccessStatusCode with
-                | true -> return message
-                | false -> return "Error: " + message
-        })
-        |> withEcho ctx "reset_hot_reload_state"
-
-    [<McpServerTool>]
-    [<Description("""List or switch how hot reload watches module values read through REFLECTION.
-
-A redefined `let` value is patched only when nothing in the running app kept a
-copy of the old one (rule 2). A value read through reflection (`PropertyInfo.GetValue`,
-`MethodBase.Invoke`, `FieldInfo.GetValue`, a delegate made from its getter) has
-no read in anyone's IL, so Bozzetto watches the reflection entry points. How it
-watches is the mode:
-
-- probe-callers (default): exact about who read it, nearly free after each
-  caller's first read (about 40 ns a read).
-- mark-on-reflect: fastest, but any reflective read means an edit to that value
-  restarts the app.
-- exact-every-read: exact, but every read of every tracked value walks the
-  stack (8 to 16 us a read, plain reads included).
-
-When reflective reads of one value get hot (a loop), Bozzetto asks once which mode
-you want. This tool shows those questions.
-
-WORKFLOW:
-1. Call with no `mode` to see the current mode, whether the watch is on, and
-   every question the app has asked, with the choices.
-2. Call with `mode` (exact-every-read, mark-on-reflect or probe-callers) to
-   switch the running app. No restart. It answers any open question.
-
-The mode new sessions start in is the `hotreload.reflectionReadMode` setting.""")>]
-    member _.set_reflection_read_mode(
-        [<Description("exact-every-read, mark-on-reflect or probe-callers. Leave empty to see the current mode and any questions.")>]
-        [<Optional; DefaultParameterValue("")>]
-        mode: string,
-        [<Description("Working directory of the MCP client. When provided, routes to the matching session if exactly one session uses this directory. If multiple sessions share the directory, you must call switch_session first (or pass session_id explicitly) — the daemon will not guess.")>]
-        [<Optional; DefaultParameterValue("")>]
-        working_directory: string
-    ) : Task<string> =
-        let wd = match System.String.IsNullOrWhiteSpace working_directory with | true -> None | false -> Some working_directory
-        logger.LogDebug("MCP-TOOL: set_reflection_read_mode called: mode={Mode}", mode)
-        withSessionWd ctx "mcp" wd (fun sidStr -> task {
-            match Bozzetto.WorkerProtocol.SessionId.validate sidStr with
-            | Error _ -> return sprintf "Error: '%s' isn't a session id I know." sidStr
-            | Ok sid ->
-            let! infoOpt = ctx.SessionOps.GetSessionInfo sid
-            match infoOpt |> Option.bind (fun i -> Bozzetto.WorkerProtocol.SessionLifecycleStatus.workerPort i.Status) with
-            | None -> return "Error: the session has no running worker, so there's no app to ask. Check get_session_status."
-            | Some port ->
-            let workerUrl = sprintf "http://127.0.0.1:%d" port
-            let describe (report: Bozzetto.Middleware.ValueReads.ReflectionReadsReport) = Bozzetto.Features.KeptState.ReflectionReadsText.describe report
-            match System.String.IsNullOrWhiteSpace mode with
-            | true ->
-                let! json = keptStateClient.GetStringAsync(workerUrl + "/hotreload")
-                use doc = System.Text.Json.JsonDocument.Parse json
-                match doc.RootElement.TryGetProperty "reflectionReads" with
-                | true, el ->
-                    match Bozzetto.Features.KeptState.ReflectionReadsJson.parse el with
-                    | Ok report -> return describe report
-                    | Error why ->
-                        match el.TryGetProperty "unavailable" with
-                        | true, reason -> return sprintf "Error: %s" (reason.GetString())
-                        | false, _ -> return sprintf "Error: %s" (Bozzetto.Features.KeptState.ReflectionReadsError.describe why)
-                | false, _ -> return "Error: this worker doesn't report reflection reads. It's older than the build that watches them."
-            | false ->
-                use content = new System.Net.Http.StringContent(System.Text.Json.JsonSerializer.Serialize({| mode = mode |}), System.Text.Encoding.UTF8, "application/json")
-                let! resp = keptStateClient.PostAsync(workerUrl + "/hotreload/reflection-mode", content)
-                let! body = resp.Content.ReadAsStringAsync()
-                use doc = System.Text.Json.JsonDocument.Parse body
-                match resp.IsSuccessStatusCode with
-                | true ->
-                    match Bozzetto.Features.KeptState.ReflectionReadsJson.parse doc.RootElement with
-                    | Ok report -> return sprintf "Switched. %s" (describe report)
-                    | Error why -> return sprintf "Switched, but %s" (Bozzetto.Features.KeptState.ReflectionReadsError.describe why)
-                | false -> return "Error: " + doc.RootElement.GetProperty("message").GetString()
-        })
-        |> withEcho ctx "set_reflection_read_mode"
 
     [<Description("""Get code completions at a cursor position. Returns available completions (types, functions, members) for the code at the given position. Useful for discovering APIs before writing code.
 
@@ -1265,7 +976,7 @@ OUTPUT: JSON containing case names, fields per case, which cases are entry point
     member _.create_project_session(
         [<Description("Absolute or working-directory-relative path to one .fsproj project")>] project: string,
         [<Description("Working directory for the session")>] working_directory: string,
-        [<Description("Session mode: 'interactive' (default), 'livetesting', or 'hotreload'")>]
+        [<Description("Session mode: 'interactive' (default), 'livetesting'")>]
         [<Optional; DefaultParameterValue("")>]
         workflow: string
     ) : Task<string> =
@@ -1277,7 +988,7 @@ OUTPUT: JSON containing case names, fields per case, which cases are entry point
     member _.create_solution_session(
         [<Description("Absolute or working-directory-relative path to one .sln or .slnx solution")>] solution: string,
         [<Description("Working directory for the session")>] working_directory: string,
-        [<Description("Session mode: 'interactive' (default), 'livetesting', or 'hotreload'")>]
+        [<Description("Session mode: 'interactive' (default), 'livetesting'")>]
         [<Optional; DefaultParameterValue("")>]
         workflow: string
     ) : Task<string> =
@@ -1288,7 +999,7 @@ OUTPUT: JSON containing case names, fields per case, which cases are entry point
     [<Description("Create a new isolated FSI session with no project or solution loaded. Bare is explicit and never triggers project discovery. Use get_session_status until the session is Ready or Faulted.")>]
     member _.create_bare_session(
         [<Description("Working directory for the session")>] working_directory: string,
-        [<Description("Session mode: 'interactive' (default), 'livetesting', or 'hotreload'")>]
+        [<Description("Session mode: 'interactive' (default), 'livetesting'")>]
         [<Optional; DefaultParameterValue("")>]
         workflow: string
     ) : Task<string> =
@@ -1344,14 +1055,13 @@ ROUTING BEHAVIOR:
 
     [<McpServerTool>]
     [<Description("""Switch the workflow mode for a session.
-Workflows control the tradeoff between REPL capability and browser hot reload:
+Retained F# workflow settings are Interactive or LiveTesting:
 - REPL (Interactive): Full type redefinition, interactive exploration
-- Live (HotReload): Browser hot reload on save, expression-only REPL
 
 Set dryRun=true to preview the transition cost without executing.
 Switching creates a new session — REPL definitions and cell state are lost.""")>]
     member _.switch_workflow(
-        [<Description("Target workflow: 'interactive' (full REPL), 'livetesting' (full REPL + tests re-run as you type, debounced), or 'hotreload' (app hot reload; aliases: 'weblive', 'live', 'web'). Switching recreates the session, so REPL state is lost.")>]
+        [<Description("Target workflow: 'interactive' (full REPL), 'livetesting' (full REPL + tests re-run as you type, debounced). Switching recreates the session, so REPL state is lost.")>]
         target: string,
         [<Description("Working directory of the MCP client. Omit to target the active session.")>]
         [<Optional; DefaultParameterValue("")>]
@@ -2019,45 +1729,6 @@ WORKFLOW: When run_tests shows a failure, call suggest_repair with the test name
     ) : Task<string> =
         logger.LogDebug("MCP-TOOL: suggest_repair called, test={Test}", test_name)
         suggestRepair ctx test_name |> withEcho ctx "suggest_repair"
-
-    [<McpServerTool>]
-    [<Description("""Run the session's executable project (OutputType=Exe) inside the session, the way `dotnet run` would, with hot reload.
-
-Invokes the compiled entry point, applies the project's Properties/launchSettings.json (the first "Project" profile's environment variables and applicationUrl), and uses a free loopback port when the project configures no URL. An Interactive session is first restarted into HotReload so hot reload is installed — its REPL bindings are lost. Saving the project's source files then hot-patches the running app.
-
-Parameters:
-- project: project name, file name or path (optional — the active project, or the only executable)
-
-OUTPUT: JSON with State (Running|Exited|Crashed), Message, Urls, EntryPoint and RunId — or an error that says what to do next.
-
-WORKFLOW: list_runnable_projects to see what can run → run_app → edit and save to hot reload → stop_app. The dashboard's Run button does the same.""")>]
-    member _.run_app(
-        [<Description("Project name, file name or path (optional — the active project, or the only executable)")>]
-        [<Optional; DefaultParameterValue("")>]
-        project: string
-    ) : Task<string> =
-        logger.LogDebug("MCP-TOOL: run_app called, project={Project}", project)
-        runApp ctx project |> withEcho ctx "run_app"
-
-    [<McpServerTool>]
-    [<Description("""Stop the app started by run_app. Its web host stops gracefully and frees its port; the session keeps running. A console app without a web host cannot be stopped in place — hard-reset the session instead.
-
-OUTPUT: JSON with State (NotRunning) and Message — or an error that says what to do next.
-
-WORKFLOW: Use after run_app. The dashboard's Stop App button does the same.""")>]
-    member _.stop_app() : Task<string> =
-        logger.LogDebug("MCP-TOOL: stop_app called")
-        stopApp ctx |> withEcho ctx "stop_app"
-
-    [<McpServerTool>]
-    [<Description("""List the session's projects and which of them run_app can run (OutputType=Exe).
-
-OUTPUT: JSON with TotalProjects, ExecutableCount, ActiveProject, App (the current app state) and Projects (Path, Role, PackageRefs).
-
-WORKFLOW: Call before run_app to see what can run.""")>]
-    member _.list_runnable_projects() : Task<string> =
-        logger.LogDebug("MCP-TOOL: list_runnable_projects called")
-        listRunnableProjects ctx |> withEcho ctx "list_runnable_projects"
 
     // ── Cohort tools v1 (cohort-integration-plan.md Slice 2, item 9) ──────
     //

@@ -26,33 +26,6 @@ let private render viewing sessions =
 
 [<Tests>]
 let tests = testList "Session card actions" [
-  test "WHY — run buttons — several executables render as a dropdown + one Run button, not a wall of per-project buttons, because switching is rare and N labeled buttons crowded the card" {
-    let s =
-      mkCardSession "0a2b3c4d" [
-        "/a/Bozzetto.Tests.fsproj", ProjectLoading.ProjectRole.Executable
-        "/a/BozzettoWebAppFixture.fsproj", ProjectLoading.ProjectRole.Executable ]
-    let html = render "0a2b3c4e" [ s ]
-    html |> Expect.stringContains "a run-target dropdown replaces the button wall" "session-run-select"
-    html |> Expect.stringContains "first project is an option" "<option value=\"Bozzetto.Tests\""
-    html |> Expect.stringContains "second project is an option" "BozzettoWebAppFixture"
-    html.Contains "session-btn-labeled" |> Expect.isFalse "no per-project labeled buttons remain"
-  }
-
-  test "WHY — run buttons — a project name is HTML-encoded in its label because a hostile .fsproj name must not reach the DOM as markup" {
-    let s =
-      mkCardSession "0a2b3c4d" [
-        "/a/<img src=x onerror=alert(1)>.fsproj", ProjectLoading.ProjectRole.Executable
-        "/a/B.fsproj", ProjectLoading.ProjectRole.Executable ]
-    let html = render "0a2b3c4e" [ s ]
-    html.Contains "<img src=x" |> Expect.isFalse "raw markup from a project name must be encoded"
-  }
-
-  test "WHY — run buttons — a single executable keeps the square glyph button because one ▶ needs no label" {
-    let s = mkCardSession "0a2b3c4d" [ "/a/App.fsproj", ProjectLoading.ProjectRole.Executable ]
-    let html = render "0a2b3c4e" [ s ]
-    html.Contains "session-btn-labeled" |> Expect.isFalse "a single project uses the square button"
-  }
-
   test "WHY — session switching — cards and the switch button POST to /dashboard/session/switch because GET /dashboard ignores ?session= and every card reloaded onto the first session" {
     let html = render "0a2b3c4e" [ mkCardSession "0a2b3c4d" []; mkCardSession "0a2b3c4e" [] ]
     html.Contains "?session=" |> Expect.isFalse "no URL-driven navigation remains"

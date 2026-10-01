@@ -1,12 +1,5 @@
-/// The App co-actor (demo-actors-plan.md §2.3): captures the SECOND window a
-/// session launches when hot-reload runs the app under test. Unlike every
-/// other actor, App authors no scenarios of its own — it is a passenger
-/// placed at `ActorId.App` in the `EditorLeft` layout (`Layout.fs:69`) and
-/// driven only as a co-actor inside hot-reload scenarios the editor islands
-/// author. Per §2.3: "the App actor only *finds, places, and observes* the
-/// window the session spawned; it does not start it" — the daemon's own
-/// run-app endpoint (`/api/sessions/{sid}/run-app`) is what actually starts
-/// the app; this module never spawns the app process itself.
+/// Observes and places an externally launched demo window; it never starts
+/// the application process.
 ///
 /// Three `AppKind`s, two real capture mechanisms:
 ///  - `Web`: the app is a website. This actor opens its OWN second Chromium

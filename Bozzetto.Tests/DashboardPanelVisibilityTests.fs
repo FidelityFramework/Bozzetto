@@ -1,5 +1,5 @@
 /// Contextual panel visibility (dashboard-ux-redesign.md, suggested order
-/// item 2): hot reload only in the Hot Reload workflow, live testing only
+/// item 2): live testing only
 /// when it's on, cohort and lanes only while members are present, friction
 /// only when a tab asks for it. `PanelVisibility.decide` is the rule; the
 /// render tests push real panels through `apply` and `renderMainContent`.
@@ -39,7 +39,6 @@ let private frameOf (ledger: LedgerEntry<MemberId> list) : CohortFrame<MemberId>
 
 let private frameAfter commands = ledgerAfter commands |> frameOf
 
-let private hotReload = WorkflowTypes.SessionWorkflow.HotReload WorkflowTypes.BrowserRefreshConfig.defaults
 let private off = Features.LiveTestActivity.LiveTestActivity.Off
 let private running = Features.LiveTestActivity.LiveTestActivity.Running Features.LiveTestActivity.TestTally.empty
 
@@ -65,7 +64,6 @@ let private snapshotWith (activity: Features.LiveTestActivity.LiveTestActivity) 
     AlarmPanel = Elem.div [] []; DaemonHealth = Elem.div [] []
     FailureNarrativesPanel = Elem.div [] []; DiagnosticsPanel = Elem.div [] []
     FilmstripPanel = Elem.div [] []; ThemeName = "default"; ConnectionLabel = None
-    HotReloadPanel = renderHotReloadPanel "abcd1234" [] 0
     LiveTestingPanel = renderLiveTestingPanel activity
     SessionContextPanel = Elem.div [] []; OutputPanel = Elem.div [] []
     SessionsPanel = Elem.div [] []; SessionPicker = Elem.div [] []
@@ -80,7 +78,7 @@ let private idAttr (id: string) = sprintf "id=\"%s\"" id
 
 let private renderedIds (facts: PanelFacts) (snap: DashboardSnapshot) =
   let html = PanelVisibility.apply facts snap |> renderMainContent |> renderNode
-  [ DomIds.HotReloadPanel; DomIds.LiveTestingPanel; DomIds.CohortPanel; DomIds.CohortLanes; DomIds.FrictionPanel ]
+  [ DomIds.LiveTestingPanel; DomIds.CohortPanel; DomIds.CohortLanes; DomIds.FrictionPanel ]
   |> List.filter (fun id -> html.Contains(idAttr id))
 
 [<Tests>]
@@ -88,20 +86,15 @@ let dashboardPanelVisibilityTests =
   testList "Dashboard panel visibility" [
 
     testList "the rules" [
-      testCase "hot reload shows only in the Hot Reload workflow" <| fun _ ->
-        [ WorkflowTypes.SessionWorkflow.Interactive; WorkflowTypes.SessionWorkflow.LiveTesting; hotReload ]
-        |> List.map (fun wf -> isShown { replFacts with Viewed = ViewedSession.Viewing(wf, off) } OptionalPanel.HotReload)
-        |> Expect.equal "REPL no, Live Testing no, Hot Reload yes" [ false; false; true ]
-
       testCase "live testing shows only when it's on for the viewed session" <| fun _ ->
         [ off; running; Features.LiveTestActivity.LiveTestActivity.Discovering ]
         |> List.map (fun activity -> isShown { replFacts with Viewed = ViewedSession.Viewing(WorkflowTypes.SessionWorkflow.Interactive, activity) } OptionalPanel.LiveTesting)
         |> Expect.equal "off no, running yes, discovering yes" [ false; true; true ]
 
-      testCase "with no session open, neither session panel shows" <| fun _ ->
+      testCase "with no session open, the session panel is hidden" <| fun _ ->
         let noSession = { replFacts with Viewed = ViewedSession.NoSession }
-        [ isShown noSession OptionalPanel.HotReload; isShown noSession OptionalPanel.LiveTesting ]
-        |> Expect.equal "both hidden" [ false; false ]
+        [ isShown noSession OptionalPanel.LiveTesting ]
+        |> Expect.equal "live testing hidden" [ false ]
 
       testCase "cohort shows only while members are present" <| fun _ ->
         [ isShown replFacts OptionalPanel.Cohort
@@ -114,12 +107,12 @@ let dashboardPanelVisibilityTests =
         |> Expect.equal "default no, opted in yes" [ false; true ]
 
       testCase "every hidden panel says why" <| fun _ ->
-        [ OptionalPanel.HotReload; OptionalPanel.LiveTesting; OptionalPanel.Cohort; OptionalPanel.Friction ]
+        [ OptionalPanel.LiveTesting; OptionalPanel.Cohort; OptionalPanel.Friction ]
         |> List.forall (fun p ->
           match PanelVisibility.decide replFacts p with
           | PanelVisibility.Hidden reason -> not (String.IsNullOrWhiteSpace reason)
           | PanelVisibility.Shown -> false)
-        |> Expect.isTrue "a REPL session hides all four, each with a reason"
+        |> Expect.isTrue "a REPL session hides all three, each with a reason"
 
       testCase "?panels=friction opts in, anything else doesn't" <| fun _ ->
         [ "friction"; "FRICTION"; "cohort,friction"; ""; "cohort"; null ]
@@ -148,11 +141,7 @@ let dashboardPanelVisibilityTests =
 
       testCase "a REPL session renders none of the optional panels" <| fun _ ->
         renderedIds replFacts (snapshotWith off joined)
-        |> Expect.isEmpty "no hot reload, live testing, cohort, lanes or friction panel"
-
-      testCase "switching to Hot Reload renders the hot reload panel and nothing else optional" <| fun _ ->
-        renderedIds { replFacts with Viewed = ViewedSession.Viewing(hotReload, off) } (snapshotWith off joined)
-        |> Expect.equal "just hot reload" [ DomIds.HotReloadPanel ]
+        |> Expect.isEmpty "no live testing, cohort, lanes or friction panel"
 
       testCase "live testing on renders its panel" <| fun _ ->
         renderedIds { replFacts with Viewed = ViewedSession.Viewing(WorkflowTypes.SessionWorkflow.LiveTesting, running) } (snapshotWith running joined)

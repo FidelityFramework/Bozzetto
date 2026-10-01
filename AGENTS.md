@@ -78,7 +78,7 @@ The Visual Studio extension (`bozzetto-vs/`) is deprecated and no longer built, 
 ## Language & Stack
 
 - **Primary language**: F# (functional programming)
-- **Target framework**: `net10.0` throughout the hosted delivery; `global.json` selects the stable .NET 10 SDK. The retained compatibility Bozzetto.Host project is not packaged with the daemon.
+- **Target framework**: `net10.0` throughout the hosted delivery; `global.json` selects the stable .NET 10 SDK.
 - **Solution format**: `.slnx` (not `.sln`)
 - **Web framework**: Falco (functional web framework for ASP.NET Core)
 - **HTML rendering**: Falco.Markup
@@ -193,7 +193,7 @@ dotnet pack Bozzetto -o nupkg  # Package the CLI tool
 
 - **Sessions are checkout-aware.** A session's working directory is classified against the filesystem (`Bozzetto.Checkout.classify`, no `git` subprocess): a plain repository, a git **worktree** (its own root and branch — worktrees have a `.git` FILE, not a directory, pointing at the main checkout's `.git/worktrees/<name>` admin dir), or not a git checkout at all. `list_sessions` and the dashboard show a worktree session's branch.
 - **A git worktree is a routing boundary.** If you are working inside a worktree (e.g. `.claude/worktrees/agent-x`) and no session exists for it yet, tool calls resolve to `Gone` with a create hint — they never silently fall back to a session rooted at the main checkout, even though your directory is textually nested under it. Create a session for the worktree; do not assume the main checkout's session is yours to use.
-- **For a project the running daemon already serves, create a session in it.** Only spawn a second daemon when you are testing daemon code itself (changes to `Bozzetto.Core`/`Bozzetto`/`Bozzetto.Host`) that the running daemon cannot execute because it predates your change — and then give that daemon an explicit owner/TTL rather than leaving it to leak.
+- **For a project the running daemon already serves, create a session in it.** Only spawn a second daemon when you are testing daemon code itself (changes to `Bozzetto.Core`/`Bozzetto`) that the running daemon cannot execute because it predates your change — and then give that daemon an explicit owner/TTL rather than leaving it to leak.
 - **Identity is bound to your MCP connection, not to the `agentName` you pass.** Two different connections that happen to declare the same `agentName` are tracked as two separate members — you cannot see or clear another connection's active session by reusing its name.
 
 ## Generated test artifacts
@@ -202,11 +202,14 @@ dotnet pack Bozzetto -o nupkg  # Package the CLI tool
 - Keep tier scratch outside the checkout and, for isolated runs, outside `/tmp`: private bind mounts replace both locations. Copy-on-write support must be probed from the checkout into the cache, since they may be on different filesystems.
 - Tier checkout copies, temporary data, and build caches are disposable when no pipeline is using them. Preserve any logs or trust ledgers referenced by validation records before deleting artifacts, and update those records when moving them.
 
-## Owned Harmony dependency
+## Runtime ownership
 
-- `Bozzetto.Harmony` is built from the separately controlled Harmony fork. Keep package and CLR assembly identity `Bozzetto.Harmony`; the compatible API namespace is still `HarmonyLib`. The removed isolated FSI host used its own `Bozzetto.HostHarmony` identity; preserve that distinction in historical records.
-- `vendor/Bozzetto.Harmony/` contains the reviewed package plus provenance/hash manifest. CI validates it; it must never silently clone or rebuild the former upstream dependency. Refresh only through `scripts/update-harmony /absolute/path/to/Bozzetto.Harmony` and review the artifact, manifest and regenerated locks together.
-- Package versions are immutable. Increment the fork's `BozzettoBuild` and central package version before distributing changed package contents. Generated packaging output belongs in the external cache, not in a repository sibling. The controlled `Bozzetto.Harmony` Git checkout is source code, not a scratch cache.
+- Bozzetto orchestrates compiler work and owned process lifetimes. File changes
+  revoke affected work before recompilation or controlled process replacement.
+- Runtime method patching and its dependencies are removed. Do not restore
+  Harmony, MonoMod, detours, injection, an optional patching mode or a fallback.
+- Native execution and future ORC replacement require compiler-owned authority;
+  a host reload never substitutes for proof or artifact validation.
 
 ## Architecture Principles
 

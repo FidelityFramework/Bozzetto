@@ -205,8 +205,6 @@ and [<RequireQualifiedAccess>] UiAction =
   | ResizeV of int
   | ResizeR of int
   | CycleTheme
-  | HotReloadWatchAll
-  | HotReloadUnwatchAll
   | EnableLiveTesting
   | DisableLiveTesting
   | CycleRunPolicy
@@ -474,8 +472,6 @@ module UiAction =
       "ResizeRGrow", UiAction.ResizeR 1
       "ResizeRShrink", UiAction.ResizeR -1
       "CycleTheme", UiAction.CycleTheme
-      "HotReloadWatchAll", UiAction.HotReloadWatchAll
-      "HotReloadUnwatchAll", UiAction.HotReloadUnwatchAll
       "EnableLiveTesting", UiAction.EnableLiveTesting
       "DisableLiveTesting", UiAction.DisableLiveTesting
       "CycleRunPolicy", UiAction.CycleRunPolicy
@@ -594,8 +590,6 @@ module KeyMap =
       // Theme
       KeyCombo.ctrl ConsoleKey.T, UiAction.CycleTheme
       // Hot Reload
-      KeyCombo.ctrlAlt ConsoleKey.W, UiAction.HotReloadWatchAll
-      KeyCombo.ctrlAlt ConsoleKey.U, UiAction.HotReloadUnwatchAll
       // Live Testing
       KeyCombo.ctrlAlt ConsoleKey.T, UiAction.EnableLiveTesting
       KeyCombo.create ConsoleKey.T (ConsoleModifiers.Control ||| ConsoleModifiers.Alt ||| ConsoleModifiers.Shift), UiAction.DisableLiveTesting

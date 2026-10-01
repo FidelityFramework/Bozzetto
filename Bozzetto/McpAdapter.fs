@@ -118,7 +118,7 @@ module McpAdapter =
     | Some port -> sprintf "Bozzetto v%s | MCP on port %d" version port
     | None -> sprintf "Bozzetto v%s" version
 
-  let formatEvalResult (workflow: WorkflowTypes.SessionWorkflow) (result: EvalResponse) : string =
+  let formatEvalResult (_workflow: WorkflowTypes.SessionWorkflow) (result: EvalResponse) : string =
     let stdout = 
       match result.Metadata.TryFind "stdout" with
       | Some (s: obj) -> s.ToString()
@@ -149,12 +149,10 @@ module McpAdapter =
             // text (ErrorMessages.categorize).
             let errText = BozzettoError.describe se.Error
             let suggestion = BozzettoError.suggestedAction se.Error
-            let enhanced = WorkflowErrorContext.enhance workflow errText suggestion
-            sprintf "Error: %s\n%s%s" errText enhanced diagnosticsSection
+            sprintf "Error: %s\n%s%s" errText suggestion diagnosticsSection
           | _ ->
             let suggestion = ex.Message |> ErrorMessages.categorize |> ErrorMessages.getSuggestion
-            let enhanced = WorkflowErrorContext.enhance workflow ex.Message suggestion
-            sprintf "Error: %s\n%s%s" ex.Message enhanced diagnosticsSection
+            sprintf "Error: %s\n%s%s" ex.Message suggestion diagnosticsSection
     
     match String.IsNullOrEmpty(stdout) with
     | true -> output
@@ -533,7 +531,6 @@ module McpAdapter =
       match config.LoadedProjects.IsEmpty with
       | true -> "None"
       | false -> String.concat ", " config.LoadedProjects
-    let hotReloadStr = match config.HotReloadEnabled with | true -> "Enabled ✓" | false -> "Disabled"
     let aspireStr = match config.AspireDetected with | true -> "Yes ✓" | false -> "No"
     let timestamp = config.StartupTimestamp.ToString("yyyy-MM-dd HH:mm:ss")
     
@@ -554,7 +551,6 @@ Args: %s{argsStr}
 Working Directory: %s{config.WorkingDirectory}
 Loaded Projects: %s{projectsStr}
 Assemblies Loaded: %d{assemblyCount}
-Hot Reload: %s{hotReloadStr}
 Aspire Detected: %s{aspireStr}
 Startup Profile: %s{profileStr}
 Started: %s{timestamp} UTC"""
@@ -564,7 +560,6 @@ Started: %s{timestamp} UTC"""
       commandLineArgs = config.CommandLineArgs
       loadedProjects = config.LoadedProjects |> List.toArray
       workingDirectory = config.WorkingDirectory
-      hotReloadEnabled = config.HotReloadEnabled
       aspireDetected = config.AspireDetected
       startupProfileLoaded = config.StartupProfileLoaded |> Option.toObj
       startupTimestamp = config.StartupTimestamp.ToString("O")
@@ -624,16 +619,12 @@ Started: %s{timestamp} UTC"""
       match startupConfig with
       | None -> ""
       | Some config ->
-          let hotReload = match config.HotReloadEnabled with | true -> "✅" | false -> "❌"
           let aspire = match config.AspireDetected with | true -> "✅" | false -> "❌"
-          let fileWatch = match config.HotReloadEnabled with | true -> "✅ (auto-reload .fs/.fsx via #load)" | false -> "❌"
           sprintf """
 
 📋 Startup Information:
 - Working Directory: %s
-- Hot Reload: %s
-- Aspire: %s
-- File Watcher: %s""" config.WorkingDirectory hotReload aspire fileWatch
+- Aspire: %s""" config.WorkingDirectory aspire
 
     let statsSection =
       match evalStats with
@@ -676,13 +667,9 @@ Available: %s%s%s""" sessionId eventCount (SessionState.label state) projectsStr
       | None -> ""
       | Some config ->
         let workflowLabel = WorkflowTypes.SessionWorkflow.label config.Workflow
-        let replCap =
-          match WorkflowTypes.SessionWorkflow.replCapability config.Workflow with
-          | WorkflowTypes.ReplCapability.Full -> "Full"
-          | WorkflowTypes.ReplCapability.ExpressionOnly -> "ExpressionOnly"
-        sprintf ""","startup":{"workingDirectory":"%s","hotReloadEnabled":%b,"aspireDetected":%b,"workflow":"%s","workflowLabel":"%s","replCapability":"%s"}"""
-          (escapeJson config.WorkingDirectory) config.HotReloadEnabled config.AspireDetected
-          (escapeJson (sprintf "%A" config.Workflow)) workflowLabel replCap
+        sprintf ""","startup":{"workingDirectory":"%s","aspireDetected":%b,"workflow":"%s","workflowLabel":"%s"}"""
+          (escapeJson config.WorkingDirectory) config.AspireDetected
+          (escapeJson (sprintf "%A" config.Workflow)) workflowLabel
     sprintf """{"sessionId":"%s","eventCount":%d,"state":"%s","projects":%s,"tools":[%s]%s%s}"""
       (escapeJson sessionId) eventCount (SessionState.label state) projectsJson toolsJson statsJson startupJson
 

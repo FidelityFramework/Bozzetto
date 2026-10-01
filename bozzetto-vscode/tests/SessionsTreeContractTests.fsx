@@ -6,7 +6,7 @@
 // accessible name. These pin the pure row-shaping so a regression fails here
 // under `dotnet fsi` instead of silently in the sidebar.
 //
-// Runs under plain `dotnet fsi` (no Fable), mirroring AppRunContractTests.fsx.
+// Runs under plain `dotnet fsi` (no Fable), mirroring WorkflowPickContractTests.fsx.
 #r "nuget: Expecto, 11.0.0-alpha8"
 #load "../src/SessionsTreePure.fs"
 

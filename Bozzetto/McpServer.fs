@@ -685,37 +685,6 @@ let readJsonBody (ctx: Microsoft.AspNetCore.Http.HttpContext) = task {
   return System.Text.Json.JsonDocument.Parse(body)
 }
 
-/// Read an optional `project` string from the request body for run-app.
-/// A missing, empty, or property-less body all mean "no project requested"
-/// (the caller falls back to the default target) — unlike readJsonProp,
-/// this never falls back to treating the whole raw body as the value.
-let readOptionalProjectName (ctx: Microsoft.AspNetCore.Http.HttpContext) = task {
-  match ctx.Request.ContentLength with
-  | contentLength when contentLength.HasValue && contentLength.Value > maxRequestBodyBytes ->
-    do! writeRequestTooLargeResponse ctx
-    raise RequestTooLarge
-    return None  // unreachable
-  | _ ->
-  use reader = new System.IO.StreamReader(ctx.Request.Body)
-  let! body = reader.ReadToEndAsync()
-  match int64 (System.Text.Encoding.UTF8.GetByteCount(body)) > maxRequestBodyBytes with
-  | true ->
-    do! writeRequestTooLargeResponse ctx
-    raise RequestTooLarge
-    return None  // unreachable
-  | false ->
-  match System.String.IsNullOrWhiteSpace body with
-  | true -> return None
-  | false ->
-    try
-      use doc = System.Text.Json.JsonDocument.Parse(body)
-      match doc.RootElement.TryGetProperty("project") with
-      | true, v when v.ValueKind = System.Text.Json.JsonValueKind.String ->
-        return (match v.GetString() with "" -> None | s -> Some s)
-      | _ -> return None
-    with :? System.Text.Json.JsonException -> return None
-}
-
 let tryGetJsonStringAliases (root: System.Text.Json.JsonElement) (names: string list) =
   let normalize value =
     match String.IsNullOrWhiteSpace value with
@@ -835,7 +804,6 @@ type McpServerConfig = {
   SessionOps: Bozzetto.SessionManagementOps
   ElmRuntime: Bozzetto.ElmRuntime<Bozzetto.BozzettoModel, Bozzetto.BozzettoMsg, Bozzetto.RenderRegion> option
   GetWarmupContext: (string -> Task<Bozzetto.WarmupContext option>) option
-  GetHotReloadState: (string -> Task<string list option>) option
   SharedBindingScope: Bozzetto.Features.BindingExplorer.BindingScopeSnapshot option ref
   /// Shared feature push state ref — exposed so consumers (e.g. Dashboard) can read EvalTimeline.
   /// If None, startMcpServer creates a private ref that is inaccessible externally.
@@ -867,7 +835,6 @@ let private mkContext (cfg: McpServerConfig) (stateChangedStr: IEvent<string> op
 type SseContext = {
   GetElmModel: (unit -> Bozzetto.BozzettoModel) option
   GetWarmupContext: (string -> Task<Bozzetto.WarmupContext option>) option
-  GetHotReloadState: (string -> Task<string list option>) option
   SseJsonOpts: JsonSerializerOptions
   TestEventBroadcast: Event<string>
   SessionEventBroadcast: Event<string>
@@ -895,7 +862,7 @@ module SseContext =
 
 // ── SSE replay: send cached state on new SSE connection ──
 
-/// Replay warmup context + hotreload state for a new SSE connection.
+/// Replay warmup context for a new SSE connection.
 let replaySessionSnapshot (ctx: SseContext) (body: System.IO.Stream) =
   match ctx.GetElmModel, ctx.GetWarmupContext with
   | Some getModel, Some getCtx ->
@@ -913,15 +880,6 @@ let replaySessionSnapshot (ctx: SseContext) (body: System.IO.Stream) =
           | Some wctx ->
             let evt = SseEvent.WarmupContextSnapshot(activeId, wctx)
             do! evt |> SseEvent.format |> writeSseFrame body
-          | None -> ()
-          match ctx.GetHotReloadState with
-          | Some getHr ->
-            let! hrOpt = getHr activeId
-            match hrOpt with
-            | Some watchedFiles ->
-              let hrEvt = SseEvent.HotReloadSnapshot(activeId, watchedFiles)
-              do! hrEvt |> SseEvent.format |> writeSseFrame body
-            | None -> ()
           | None -> ()
         | false -> ()
       with
@@ -1040,10 +998,10 @@ let replayHealthSnapshot
     | ex -> Log.error "[SSE] Health snapshot replay error: %s\n%s" ex.Message (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
   }
 
-// ── Session event subscription: push HotReload/SessionReady via SSE ──
+// ── Session event subscription: push SessionReady via SSE ──
 
 /// Subscribe to SseEvent events and push session-level SSE events
-/// (warmup context snapshot, hotreload state) to all connected clients.
+/// (warmup context snapshot) to all connected clients.
 let wireSessionEventSubscription
   (stateChanged: IEvent<SseEvent>)
   (ctx: SseContext) =
@@ -1051,32 +1009,6 @@ let wireSessionEventSubscription
   | Some _getModel, Some getCtx ->
     stateChanged.Subscribe(fun change ->
       match change with
-      | SseEvent.HotReloadChanged sid ->
-        task {
-          try
-            // Session-isolation: the event carries the affected session. Never
-            // fall back to a global "active session" here — an event for
-            // session B must not push session A's hot-reload state just
-            // because A is the active tab in some client.
-            let activeId = Bozzetto.WorkerProtocol.SessionId.value sid
-            match ctx.GetHotReloadState with
-            | Some getHr ->
-              let! hrOpt = getHr activeId
-              match hrOpt with
-              | Some watchedFiles ->
-                let evt = SseEvent.HotReloadSnapshot(activeId, watchedFiles)
-                ctx.SessionEventBroadcast.Trigger(SseEvent.format evt)
-              | None -> ()
-            | None -> ()
-          with
-          | :? System.IO.IOException -> ()
-          | ex -> Log.error "[SSE] HotReload push error: %s\n%s" ex.Message (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
-        }
-        |> fun t -> t.ContinueWith(fun (t: Threading.Tasks.Task) ->
-          match t.IsFaulted with
-          | true -> Log.error "[SSE] HotReload push fault: %s" t.Exception.InnerException.Message
-          | false -> ())
-        |> ignore
       | SseEvent.SessionReady sid ->
         ctx.ServerTracker.AccumulateEvent(Some (Bozzetto.WorkerProtocol.SessionId.value sid), PushEvent.WarmupCompleted)
         let sidStr = Bozzetto.WorkerProtocol.SessionId.value sid
@@ -1089,15 +1021,6 @@ let wireSessionEventSubscription
               | Some wctx ->
                 let evt = SseEvent.WarmupContextSnapshot(sidStr, wctx)
                 ctx.SessionEventBroadcast.Trigger(SseEvent.format evt)
-              | None -> ()
-              match ctx.GetHotReloadState with
-              | Some getHr ->
-                let! hrOpt = getHr sidStr
-                match hrOpt with
-                | Some watchedFiles ->
-                  let hrEvt = SseEvent.HotReloadSnapshot(sidStr, watchedFiles)
-                  ctx.SessionEventBroadcast.Trigger(SseEvent.format hrEvt)
-                | None -> ()
               | None -> ()
             | false -> ()
           with
@@ -1138,8 +1061,6 @@ let wireSessionEventSubscription
       // match stays exhaustive (no wildcard) so a future emitter of one of
       // these through stateChangedEvent is forced to decide its handling here.
       | SseEvent.WarmupContextSnapshot _
-      | SseEvent.HotReloadSnapshot _
-      | SseEvent.HotReloadFileToggled _
       | SseEvent.SessionActivated _
       | SseEvent.SessionCreated _
       | SseEvent.SessionStopped _
@@ -1755,7 +1676,6 @@ let wireModelChangeHandlers
       // Daemon-level alarm — no single owning session, so every caller sees it.
       ctx.ServerTracker.AccumulateEvent(None, PushEvent.SystemAlarm (phase, msg))
     // Handled by wireSessionEventSubscription's own subscription instead.
-    | SseEvent.HotReloadChanged _
     | SseEvent.SessionReady _
     | SseEvent.WarmupProgress _
     | SseEvent.FileReloaded _
@@ -1769,8 +1689,6 @@ let wireModelChangeHandlers
     // note in wireSessionEventSubscription) — kept exhaustive, not a
     // wildcard, so a future rewire is forced to decide here too.
     | SseEvent.WarmupContextSnapshot _
-    | SseEvent.HotReloadSnapshot _
-    | SseEvent.HotReloadFileToggled _
     | SseEvent.SessionActivated _
     | SseEvent.SessionCreated _
     | SseEvent.SessionStopped _
@@ -2995,68 +2913,11 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
         | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (structuredErrorBody err)
     } :> Task
   ) |> ignore
-  // Run/stop a session's app from any editor client (previously dashboard-
-  // and MCP-only). Body/response shape is the shared contract editors code
-  // against — see AGENTS.md for the exact fields.
-  app.MapPost("/api/sessions/{sid}/run-app", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
-    task {
-      let raw = ctx.Request.RouteValues.["sid"] |> string
-      match Bozzetto.WorkerProtocol.SessionId.validate raw with
-      | Error msg ->
-        do! jsonResponse ctx 400 {| success = false; error = msg |}
-      | Ok sid ->
-        let! projectOpt = readOptionalProjectName ctx
-        let request =
-          match projectOpt with
-          | Some name -> Bozzetto.AppRun.RunRequest.Named name
-          | None -> Bozzetto.AppRun.RunRequest.DefaultTarget
-        let! result =
-          Bozzetto.AppRunOrchestration.runApp
-            rctx.Config.SessionOps
-            (fun () -> System.DateTime.UtcNow)
-            Bozzetto.Timeouts.warmupReadyPollMax
-            sid
-            request
-        match rctx.Dispatch with
-        | Some d -> d (Bozzetto.BozzettoMsg.Editor Bozzetto.EditorAction.ListSessions)
-        | None -> ()
-        match result with
-        | Ok state -> do! jsonResponse ctx 200 (Bozzetto.AppRun.toView state)
-        | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (BozzettoError.toJson err)
-    } :> Task
-  ) |> ignore
-  app.MapPost("/api/sessions/{sid}/stop-app", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
-    task {
-      let raw = ctx.Request.RouteValues.["sid"] |> string
-      match Bozzetto.WorkerProtocol.SessionId.validate raw with
-      | Error msg ->
-        do! jsonResponse ctx 400 {| success = false; error = msg |}
-      | Ok sid ->
-        let! result = Bozzetto.AppRunOrchestration.stopApp rctx.Config.SessionOps sid
-        match rctx.Dispatch with
-        | Some d -> d (Bozzetto.BozzettoMsg.Editor Bozzetto.EditorAction.ListSessions)
-        | None -> ()
-        match result with
-        | Ok state -> do! jsonResponse ctx 200 (Bozzetto.AppRun.toView state)
-        | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (BozzettoError.toJson err)
-    } :> Task
-  ) |> ignore
   // The dashboard and VS Code have no way to read OR change a session's
   // workflow — every existing switch path is MCP-only (`switch_workflow`).
   // This is the REST route Island A's dashboard badge and Island D's VS Code
   // picker fix both need (bozzetto-ux-roast.md §4.1/§4.2/§11 Island B item 4).
   //
-  // Deliberately reuses `SessionOps.SwitchWorkflow` — the SessionManager
-  // command `AppRunOrchestration.fs` already calls to auto-switch a session
-  // into HotReload when `run_app` needs it — rather than the MCP tool's
-  // create-new-session-and-stop-the-old-one dance (`Mcp.fs`'s
-  // `switchWorkflow`). `SwitchWorkflow` restarts the SAME session id
-  // spawn-first into the target workflow (`SessionManager.fs:1637-1654`):
-  // no new session is created, so there is no window where two sessions
-  // exist for one working directory (the exact "Multiple sessions match
-  // workingDirectory" condition §4.2 calls out) and no orphaned old session
-  // to separately stop. The new workflow is recorded only if the
-  // replacement worker spawns successfully.
   app.MapPost("/api/sessions/{sid}/workflow", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
       let raw = ctx.Request.RouteValues.["sid"] |> string
@@ -3442,7 +3303,6 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       let sseCtx: SseContext = {
         GetElmModel = cfg.ElmRuntime |> Option.map (fun r -> r.GetModel)
         GetWarmupContext = cfg.GetWarmupContext
-        GetHotReloadState = cfg.GetHotReloadState
         SseJsonOpts = sseJsonOpts
         TestEventBroadcast = testEventBroadcast
         SessionEventBroadcast = sessionEventBroadcast

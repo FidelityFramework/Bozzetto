@@ -134,14 +134,6 @@ let IsSupervised : bool =
 let RestartCount : int =
   envInt "BOZZETTO_RESTART_COUNT" 0
 
-/// Whether hot reload (assembly patching) is enabled for this worker session.
-let HotReloadEnabled : bool =
-  envBool "BOZZETTO_HOT_RELOAD" false
-
-/// Whether browser dev-reload (live page refresh) is enabled.
-let DevReloadEnabled : bool =
-  envBool "BOZZETTO_DEVRELOAD" false
-
 /// OTLP exporter endpoint. Empty string means OTEL is not configured.
 let OtelEndpoint : string =
   envString "OTEL_EXPORTER_OTLP_ENDPOINT" ""

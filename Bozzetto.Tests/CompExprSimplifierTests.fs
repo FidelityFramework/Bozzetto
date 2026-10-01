@@ -42,7 +42,6 @@ let private makeState () : AppState =
     Diagnostics = Unchecked.defaultof<_>
     WarmupFailures = []
     WarmupContext = Unchecked.defaultof<_>
-    HotReloadState = Unchecked.defaultof<_>
   }
 
 let private passThroughNext : MiddlewareNext =

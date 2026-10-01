@@ -35,7 +35,6 @@ module DomIds =
   let [<Literal>] FilmstripPanel = "filmstrip-panel"
   let [<Literal>] DiscoveredProjects = "discovered-projects"
   let [<Literal>] DirSuggestions = "dir-suggestions"
-  let [<Literal>] HotReloadPanel = "hot-reload-panel"
   let [<Literal>] LiveTestingPanel = "live-testing-panel"
   let [<Literal>] TestTrace = "test-trace"
   let [<Literal>] ThemeVars = "theme-vars"
@@ -137,7 +136,6 @@ module Signals =
   /// latency) — hidden by default; perf is noise unless you're chasing a slowdown.
   let [<Literal>] PerfStatsOpen = "perfStatsOpen"
   let [<Literal>] NewSessionOpen = "newSessionOpen"
-  let [<Literal>] HotReloadFilesOpen = "hotReloadFilesOpen"
   let [<Literal>] FrictionPanelOpen = "frictionPanelOpen"
   let [<Literal>] FrictionHistoryOpen = "frictionHistoryOpen"
   let [<Literal>] SessionContextOpen = "sessionContextOpen"
@@ -217,11 +215,10 @@ module Signals =
 /// `DashboardSnapshot` literal across the test suite.
 [<RequireQualifiedAccess>]
 module WorkflowSwitch =
-  /// The three workflows the dashboard picker offers, in display order.
+  /// The retained workflows the dashboard picker offers, in display order.
   let options : WorkflowTypes.SessionWorkflow list =
     [ WorkflowTypes.SessionWorkflow.Interactive
-      WorkflowTypes.SessionWorkflow.LiveTesting
-      WorkflowTypes.SessionWorkflow.HotReload WorkflowTypes.BrowserRefreshConfig.defaults ]
+      WorkflowTypes.SessionWorkflow.LiveTesting ]
 
   /// The exact string `POST /api/sessions/{sid}/workflow` accepts (one of
   /// `WorkflowTypes.SessionWorkflow.tryOfString`'s canonical aliases) — NOT
@@ -229,7 +226,6 @@ module WorkflowSwitch =
   let requestValue = function
     | WorkflowTypes.SessionWorkflow.Interactive -> "interactive"
     | WorkflowTypes.SessionWorkflow.LiveTesting -> "livetesting"
-    | WorkflowTypes.SessionWorkflow.HotReload _ -> "hotreload"
 
   /// Parse the response body `POST /api/sessions/{sid}/workflow` returns
   /// (`McpServer.fs`'s `mapSessionRoutes`) into the plain `Result<string,
@@ -1028,7 +1024,6 @@ type DashboardQueries = {
   GetElmRegionsForSession: WorkerProtocol.SessionId -> RenderRegion list option
   GetPreviousSessions: unit -> Threading.Tasks.Task<PreviousSession list>
   GetAllSessions: unit -> Threading.Tasks.Task<WorkerProtocol.SessionInfo list>
-  GetHotReloadState: WorkerProtocol.SessionId -> Threading.Tasks.Task<{| files: {| path: string; watched: bool |} list; watchedCount: int; kept: Bozzetto.Features.ReloadOutcome.KeptValue list; reflection: Bozzetto.Features.KeptState.ReflectionReadsView |} option>
   GetWarmupContext: WorkerProtocol.SessionId -> Threading.Tasks.Task<WarmupContext option>
   GetWarmupProgress: WorkerProtocol.SessionId -> string
   GetSessionTestSummary: WorkerProtocol.SessionId -> Features.LiveTesting.TestSummary option
@@ -1070,7 +1065,7 @@ type DashboardQueries = {
   GetSessionSelfHostStaleness: WorkerProtocol.SessionId -> string option
   /// Get the workflow for a session — returns Interactive as default.
   GetSessionWorkflow: WorkerProtocol.SessionId -> WorkflowTypes.SessionWorkflow
-  /// Get the active project name for a session (for Run App feature).
+  /// Get the active project name for a session (retained session metadata).
   GetSessionActiveProject: WorkerProtocol.SessionId -> string option
   /// Get the classified projects for a session (for Run App feature).
   GetSessionProjectRoles: WorkerProtocol.SessionId -> ClassifiedProject list
@@ -1089,7 +1084,6 @@ type DashboardQueries = {
 type DashboardWorkerCache = {
   SessionId: WorkerProtocol.SessionId
   EvalStats: Bozzetto.Affordances.EvalStats
-  HotReloadState: {| files: {| path: string; watched: bool |} list; watchedCount: int; kept: Bozzetto.Features.ReloadOutcome.KeptValue list; reflection: Bozzetto.Features.KeptState.ReflectionReadsView |} option
   WarmupContext: WarmupContext option
   /// Server-built friction review panel — reusing it avoids the synchronous
   /// SQLite read (GetFrictionStore + reportDirect + ListSentReports) on every
@@ -1119,10 +1113,6 @@ type DashboardActions = {
   PurgeSession: WorkerProtocol.SessionId -> Threading.Tasks.Task<Result<string, string>>
   CreateSession: SessionProjectTarget list -> string -> Threading.Tasks.Task<Result<WorkerProtocol.SessionId, string>>
   ShutdownCallback: (unit -> unit) option
-  /// Run the session's executable project (see AppRunOrchestration).
-  RunApp: WorkerProtocol.SessionId -> AppRun.RunRequest -> Threading.Tasks.Task<Result<string, string>>
-  /// Stop the app the session runs.
-  StopApp: WorkerProtocol.SessionId -> Threading.Tasks.Task<Result<string, string>>
 }
 
 /// Per-connection SSE stream command — daemon state pushes plus viewing-session
@@ -1210,7 +1200,6 @@ type DashboardSnapshot = {
   FilmstripPanel: XmlNode
   ThemeName: string
   ConnectionLabel: string option
-  HotReloadPanel: XmlNode
   LiveTestingPanel: XmlNode
   SessionContextPanel: XmlNode
   OutputPanel: XmlNode
@@ -1224,7 +1213,7 @@ type DashboardSnapshot = {
   /// (cohort-integration-plan.md Slice 4). Daemon-scoped: rendered
   /// identically regardless of which session (if any) is being viewed.
   CohortPanel: XmlNode
-  /// Active project selection for "Run App" feature.
+  /// Active project selection for retained session metadata.
   ActiveProject: string option
   /// Classification of all projects in the session.
   ProjectRoles: Bozzetto.ProjectLoading.ClassifiedProject list
@@ -1238,13 +1227,10 @@ type DashboardSnapshot = {
 }
 
 /// The sidebar panels that only show up when they're relevant. Everything
-/// else in the dashboard always renders; these four used to render all the
-/// time too, which put hot reload on a REPL session, a live-testing toggle on
-/// a session that never asked for it, and cohort lanes built from stale
-/// ledger rows in front of everyone.
+/// else in the dashboard always renders. Session-specific panels must not
+/// expose controls for another workflow or stale cohort membership.
 [<RequireQualifiedAccess>]
 type OptionalPanel =
-  | HotReload
   | LiveTesting
   /// The cohort panel and its lanes, together.
   | Cohort
@@ -1311,14 +1297,6 @@ module PanelFacts =
 module PanelVisibility =
   let decide (facts: PanelFacts) (panel: OptionalPanel) : PanelVisibility =
     match panel with
-    | OptionalPanel.HotReload ->
-      match facts.Viewed with
-      | ViewedSession.NoSession -> PanelVisibility.Hidden "Hot reload: no session is open"
-      | ViewedSession.Viewing(WorkflowTypes.SessionWorkflow.HotReload _, _) -> PanelVisibility.Shown
-      | ViewedSession.Viewing(WorkflowTypes.SessionWorkflow.Interactive, _) ->
-        PanelVisibility.Hidden "Hot reload: this session is in REPL mode"
-      | ViewedSession.Viewing(WorkflowTypes.SessionWorkflow.LiveTesting, _) ->
-        PanelVisibility.Hidden "Hot reload: this session is in Live Testing mode"
     | OptionalPanel.LiveTesting ->
       match facts.Viewed with
       | ViewedSession.NoSession -> PanelVisibility.Hidden "Live testing: no session is open"
@@ -1345,7 +1323,6 @@ module PanelVisibility =
   /// snapshot and one fat morph; hidden panels just aren't in it.
   let apply (facts: PanelFacts) (snap: DashboardSnapshot) : DashboardSnapshot =
     { snap with
-        HotReloadPanel = keep facts OptionalPanel.HotReload snap.HotReloadPanel
         LiveTestingPanel = keep facts OptionalPanel.LiveTesting snap.LiveTestingPanel
         CohortPanel = keep facts OptionalPanel.Cohort snap.CohortPanel
         FrictionPanel = keep facts OptionalPanel.Friction snap.FrictionPanel }

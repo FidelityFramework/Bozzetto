@@ -1,10 +1,3 @@
-// WHY — "Switch Workflow" shipped offering TWO of the three workflows, using
-// a label for one of them ("Live") that no other surface in the product uses,
-// and with no marker for the workflow the session was already in
-// (bozzetto-ux-roast.md §4.2). `LiveTesting` — the mode the extension's sidebar,
-// gutters, CodeLenses and Test Explorer adapter all exist to serve — was
-// simply unreachable from VS Code.
-//
 // These pin the picker against the DAEMON'S OWN source of truth rather than a
 // copy of it: this script `#load`s the real `Bozzetto.Core/WorkflowTypes.fs` and
 // asserts that
@@ -16,7 +9,7 @@
 // HERE, under `dotnet fsi`, instead of silently switching a user into a mode
 // they did not pick.
 //
-// Runs under plain `dotnet fsi` (no Fable), mirroring AppRunContractTests.fsx.
+// Runs under plain `dotnet fsi` (no Fable), mirroring WorkflowPickContractTests.fsx.
 #r "nuget: Expecto, 11.0.0-alpha8"
 #load "../../Bozzetto.Core/TestProviderTypes.fs"
 #load "../../Bozzetto.Core/WorkflowTypes.fs"
@@ -32,7 +25,6 @@ open Bozzetto.Vscode.WorkflowPickPure
 let private everyWorkflow: SessionWorkflow list = [
   SessionWorkflow.Interactive
   SessionWorkflow.LiveTesting
-  SessionWorkflow.HotReload BrowserRefreshConfig.defaults
 ]
 
 let tests =
@@ -51,13 +43,11 @@ let tests =
         match w with
         | SessionWorkflow.Interactive -> "Interactive"
         | SessionWorkflow.LiveTesting -> "LiveTesting"
-        | SessionWorkflow.HotReload _ -> "HotReload"
       let wires = choices |> List.map (fun c -> c.Wire) |> Set.ofList
       everyWorkflow |> List.map name |> Set.ofList
       |> Expect.equal "every case has a wire value in the picker" wires
 
-    testCase "WHY - every offered label is SessionWorkflow.label verbatim, because 'Live' vs 'Hot Reload' drifted" <| fun _ ->
-      // You picked "Live"; the status bar then said "Hot Reload".
+    testCase "WHY - every offered label is SessionWorkflow.label verbatim, so the picker and status agree" <| fun _ ->
       for c in choices do
         match SessionWorkflow.tryOfString c.Wire with
         | None -> failtestf "wire value %s is not parseable by the daemon" c.Wire
@@ -68,7 +58,7 @@ let tests =
     testCase "WHY - every wire value round-trips through the daemon's own parser" <| fun _ ->
       // An unparseable wire value silently becomes Interactive on the daemon
       // (`ofString` defaults), so a typo here would switch the user into REPL
-      // while the picker claimed Hot Reload.
+      // while the picker claimed Live Testing.
       choices
       |> List.iter (fun c ->
         SessionWorkflow.tryOfString c.Wire
@@ -76,7 +66,7 @@ let tests =
         |> Expect.isTrue (sprintf "'%s' parses" c.Wire))
 
     testCase "WHY - the current workflow is marked, because the picker could not say where you were" <| fun _ ->
-      let rs = rows "Hot Reload"
+      let rs = rows "Live Testing"
       rs |> List.filter (fun r -> r.IsCurrent) |> List.length
       |> Expect.equal "exactly one current row" 1
       (rs |> List.find (fun r -> r.IsCurrent)).Description
@@ -102,7 +92,7 @@ let tests =
       |> Expect.isNone "an unrecognised pick never defaults into a workflow"
 
     testCase "WHY - labelOfWire answers the confirmation message without re-deriving the label" <| fun _ ->
-      labelOfWire "HotReload" |> Expect.equal "hot reload" (Some "Hot Reload")
+      labelOfWire "LiveTesting" |> Expect.equal "live testing" (Some "Live Testing")
       labelOfWire "Nope" |> Expect.isNone "unknown wire has no label"
 
     testCase "WHY - the wire values are the exact aliases POST /api/sessions/{sid}/workflow accepts" <| fun _ ->
@@ -110,7 +100,7 @@ let tests =
       // a value it cannot parse is a 400 — not a silent default into a
       // workflow the user did not pick. Round-tripping each wire value through
       // the real parser AND back through `label` proves the picker and the
-      // route agree on all three, which is what stops the picker from claiming
+      // route agree on both cases, which is what stops the picker from claiming
       // one mode while the session lands in another.
       for c in choices do
         Bozzetto.WorkflowTypes.SessionWorkflow.tryOfString c.Wire

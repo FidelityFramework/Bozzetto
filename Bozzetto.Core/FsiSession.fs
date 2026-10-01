@@ -13,7 +13,7 @@ open Bozzetto.Features
 open Bozzetto.HostAgent
 open Bozzetto.Utils
 
-/// A boolean feature gate bound in the session (`_BozzettoHotReload`, `_BozzettoCompExpr`).
+/// A boolean feature gate bound in the session (`_BozzettoCompExpr`).
 type FlagValue =
   | FlagUnbound
   | FlagBound of value: bool
@@ -45,8 +45,7 @@ type IFsiSession =
   abstract BoundValue: name: string -> obj | null
   /// What starting the session's agent found (which project assemblies could not be loaded, and why).
   abstract AgentStarted: AgentReply<AgentStarted>
-  /// The agent's work after an eval: redefined methods (detoured when asked) and the tests found. The agent runs where
-  /// the user's code runs, so this is an in-process call or a message to the isolated host.
+  /// Discover tests from the assembly an evaluation produced.
   abstract AfterEval: AfterEval -> AgentReply<AfterEvalReport>
   /// The coverage the instrumented assemblies recorded since the last take (and reset it).
   abstract TakeCoverage: unit -> AgentReply<CoverageReading>
@@ -54,12 +53,6 @@ type IFsiSession =
   abstract LoadedAssemblyNames: unit -> AgentReply<string list>
   /// Scan what the session's process has loaded for tests.
   abstract DiscoverLoaded: unit -> AgentReply<Discovery>
-  /// Where each named module value's reads went, and which readers ran (hot reload rule 2).
-  abstract ValueReads: values: string list -> AgentReply<Bozzetto.Middleware.ValueReads.ValueEvidence list>
-  /// Where rule 2's reflection reads stand in the session's process.
-  abstract ReflectionReads: unit -> AgentReply<Bozzetto.Middleware.ValueReads.ReflectionReadsReport>
-  /// Switch the reflection read mode of the running app.
-  abstract SetReflectionMode: mode: Bozzetto.Middleware.ValueReads.ReflectionReadMode -> AgentReply<Bozzetto.Middleware.ValueReads.ReflectionReadsReport>
   /// Run one discovered test where it lives.
   abstract RunTest: test: LiveTesting.TestCase -> Async<AgentReply<LiveTesting.TestResult>>
 
@@ -100,7 +93,7 @@ let private captureLiveValueSnapshotJson (session: FsiEvaluationSession) (genera
 /// An FSI session that lives in THIS process: today's behaviour, behind the port.
 [<Sealed; AllowNullLiteral>]
 type InProcessFsiSession(session: FsiEvaluationSession, init: AgentInit) =
-  let agent = Agent(init, currentProcess (fun () -> session.DynamicAssemblies))
+  let agent = new Agent(init, currentProcess (fun () -> session.DynamicAssemblies))
 
   interface IFsiSession with
     member _.Eval(code, cancellationToken) =
@@ -148,16 +141,12 @@ type InProcessFsiSession(session: FsiEvaluationSession, init: AgentInit) =
 
     member _.DiscoverLoaded() = AgentAnswered(agent.DiscoverLoaded())
 
-    member _.ValueReads(values) = AgentAnswered(agent.ValueReads values)
-
-    member _.ReflectionReads() = AgentAnswered(agent.ReflectionReads())
-
-    member _.SetReflectionMode(mode) = AgentAnswered(agent.SetReflectionMode mode)
-
     member _.RunTest(test) =
       async {
         let! result = agent.RunTest test
         return AgentAnswered result
       }
 
-    member _.Dispose() = (session :> IDisposable).Dispose()
+    member _.Dispose() =
+      try (agent :> IDisposable).Dispose()
+      finally (session :> IDisposable).Dispose()

@@ -76,33 +76,27 @@ let allTests =
 
     // ── Unit tests: args correctness ──────────────────────────
     testList "args" [
-      testCase "solutionToFsiArgs with hotReload=true includes --multiemit- at position 1" <| fun _ ->
-        let args = solutionToFsiArgs quietLogger false true emptySolution
+      testCase "solutionToFsiArgs includes --multiemit- at position 1" <| fun _ ->
+        let args = solutionToFsiArgs quietLogger false emptySolution
         args.[0] |> Expect.equal "first arg is fsi" "fsi"
         args.[1] |> Expect.equal "second arg is --multiemit-" "--multiemit-"
 
-      testCase "solutionToFsiArgs with hotReload=true always contains --multiemit-"
+      testCase "solutionToFsiArgs always contains --multiemit-"
       <| fun _ ->
-        let args = solutionToFsiArgs quietLogger false true emptySolution
+        let args = solutionToFsiArgs quietLogger false emptySolution
         args
         |> Array.exists (fun a -> a = "--multiemit-")
-        |> Expect.isTrue "--multiemit- must be present when hotReload=true"
+        |> Expect.isTrue "--multiemit- must be present for cross-submission compatibility"
 
-      testCase "--multiemit- appears exactly once with hotReload=true" <| fun _ ->
-        let args = solutionToFsiArgs quietLogger false true emptySolution
+      testCase "--multiemit- appears exactly once" <| fun _ ->
+        let args = solutionToFsiArgs quietLogger false emptySolution
         args
         |> Array.filter (fun a -> a = "--multiemit-")
         |> Array.length
         |> Expect.equal "exactly one --multiemit-" 1
 
-      testCase "solutionToFsiArgs with hotReload=false includes --multiemit-" <| fun _ ->
-        let args = solutionToFsiArgs quietLogger false false emptySolution
-        args
-        |> Array.exists (fun a -> a = "--multiemit-")
-        |> Expect.isTrue "--multiemit- must always be present (even when hotReload=false) to enable cross-submission type+module pattern"
-
-      testCase "solutionToFsiArgs with hotReload=false still starts with fsi" <| fun _ ->
-        let args = solutionToFsiArgs quietLogger false false emptySolution
+      testCase "solutionToFsiArgs still starts with fsi" <| fun _ ->
+        let args = solutionToFsiArgs quietLogger false emptySolution
         args.[0] |> Expect.equal "first arg is fsi" "fsi"
     ]
 

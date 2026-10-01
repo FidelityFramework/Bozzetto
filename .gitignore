@@ -24,9 +24,6 @@ playwright-report/
 analyzers/community
 
 .fake
-# The owned Harmony artifact is a reviewed vendored dependency, not build scratch.
-# Refresh builds run in the separately controlled fork and use external cache.
-!vendor/Bozzetto.Harmony/*.nupkg
 *.log
 aspire-traces.png
 otel-*.png

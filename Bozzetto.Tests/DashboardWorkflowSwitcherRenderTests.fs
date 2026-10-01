@@ -1,6 +1,6 @@
 /// Render tests for the dashboard's workflow switcher (`renderWorkflowSwitcher`
 /// / `renderWorkflowSwitcherPending`, `DashboardFragments.fs` — bozzetto-ux-roast.md
-/// §4.1/§4.2/§11 Island B item 4). Pins the picker's actual markup: three
+/// §4.1/§4.2/§11 Island B item 4). Pins the picker's actual markup: two
 /// options with the current one marked, the POST it fires on change, and the
 /// optimistic "switching…" control shown before the restart resolves.
 module Bozzetto.Tests.DashboardWorkflowSwitcherRenderTests
@@ -16,17 +16,17 @@ let private html node = node |> renderNode
 [<Tests>]
 let switcherTests =
   testList "renderWorkflowSwitcher" [
-    testCase "WHY — a real session renders a <select> with all three workflows, not a static badge" <| fun _ ->
+    testCase "WHY — a real session renders a <select> with both supported workflows, not a static badge" <| fun _ ->
       let out = renderWorkflowSwitcher "REPL" "0a0b0c0d" |> html
       out |> Expect.stringContains "should be a select, not a span/badge" "<select"
       out |> Expect.stringContains "id carries the shared DOM id for morphing" (sprintf "id=\"%s\"" DomIds.WorkflowSwitcher)
-      for label in [ "REPL"; "Live Testing"; "Hot Reload" ] do
+      for label in [ "REPL"; "Live Testing" ] do
         out |> Expect.stringContains (sprintf "option '%s' present" label) label
 
     testCase "WHY — the current workflow's <option> is marked selected, and only that one" <| fun _ ->
       let out = renderWorkflowSwitcher "Live Testing" "0a0b0c0d" |> html
       // A crude but decisive check: the option carrying value=livetesting is
-      // the one with `selected`, not one of the other two.
+      // the one with `selected`, not one of the other one.
       let selectedBlock =
         System.Text.RegularExpressions.Regex.Match(out, "<option[^>]*selected[^>]*>([^<]*)</option>")
       selectedBlock.Success |> Expect.isTrue "exactly one selected option should exist"
@@ -60,11 +60,11 @@ let switcherTests =
 let pendingTests =
   testList "renderWorkflowSwitcherPending" [
     testCase "WHY — the optimistic control shares the switcher's DOM id, so the SSE morph replaces it in place" <| fun _ ->
-      let out = renderWorkflowSwitcherPending "Hot Reload" |> html
+      let out = renderWorkflowSwitcherPending "Live Testing" |> html
       out |> Expect.stringContains "same id as the real switcher" (sprintf "id=\"%s\"" DomIds.WorkflowSwitcher)
 
     testCase "WHY — the optimistic control names the TARGET workflow being switched to, so the user sees what's happening before the restart completes" <| fun _ ->
-      let out = renderWorkflowSwitcherPending "Hot Reload" |> html
-      out |> Expect.stringContains "names the target workflow" "Hot Reload"
+      let out = renderWorkflowSwitcherPending "Live Testing" |> html
+      out |> Expect.stringContains "names the target workflow" "Live Testing"
       out |> Expect.stringContains "carries a status role for a11y" "role=\"status\""
   ]

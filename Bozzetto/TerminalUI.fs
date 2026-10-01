@@ -299,8 +299,6 @@ type TerminalCommand =
   | ResizeV of int
   | ResizeR of int
   | CycleTheme
-  | HotReloadWatchAll
-  | HotReloadUnwatchAll
   | EnableLiveTesting
   | DisableLiveTesting
   | CycleRunPolicy
@@ -339,8 +337,6 @@ module TerminalInput =
     | Some (UiAction.ResizeV d) -> Some (TerminalCommand.ResizeV d)
     | Some (UiAction.ResizeR d) -> Some (TerminalCommand.ResizeR d)
     | Some (UiAction.CycleTheme) -> Some TerminalCommand.CycleTheme
-    | Some (UiAction.HotReloadWatchAll) -> Some TerminalCommand.HotReloadWatchAll
-    | Some (UiAction.HotReloadUnwatchAll) -> Some TerminalCommand.HotReloadUnwatchAll
     | Some (UiAction.EnableLiveTesting) -> Some TerminalCommand.EnableLiveTesting
     | Some (UiAction.DisableLiveTesting) -> Some TerminalCommand.DisableLiveTesting
     | Some (UiAction.CycleRunPolicy) -> Some TerminalCommand.CycleRunPolicy

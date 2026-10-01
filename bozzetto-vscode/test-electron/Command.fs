@@ -16,8 +16,6 @@ module Bozzetto.VscodeTestElectron.Command
 type Command =
   | EnableLiveTesting
   | DisableLiveTesting
-  | HotReloadWatchAll
-  | HotReloadUnwatchAll
 
 /// The command id declared in package.json's contributes.commands — the
 /// exact string `vscode.commands.executeCommand` dispatches on.
@@ -25,5 +23,3 @@ let id =
   function
   | EnableLiveTesting -> "bozzetto.enableLiveTesting"
   | DisableLiveTesting -> "bozzetto.disableLiveTesting"
-  | HotReloadWatchAll -> "bozzetto.hotReloadWatchAll"
-  | HotReloadUnwatchAll -> "bozzetto.hotReloadUnwatchAll"

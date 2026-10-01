@@ -27,7 +27,6 @@ let daemonStartFailed = BozzettoError.DaemonStartFailed "port bound"
 let restartLimitExceeded = BozzettoError.RestartLimitExceeded(10, 5.0)
 let workerSpawnFailed = BozzettoError.WorkerSpawnFailed "SDK missing"
 let sessionCreationFailed = BozzettoError.SessionCreationFailed "bad path"
-let hotReloadFailed = BozzettoError.HotReloadFailed("src/foo.fs", "syntax error")
 
 // ── Mutation Tests ─────────────────────────────────────────────────────────
 

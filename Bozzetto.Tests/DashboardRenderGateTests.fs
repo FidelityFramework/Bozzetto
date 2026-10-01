@@ -35,7 +35,6 @@ let private mkQueries (getAllSessionsCount: int ref) (sessions: WorkerProtocol.S
     GetAllSessions = fun () ->
       getAllSessionsCount.Value <- getAllSessionsCount.Value + 1
       System.Threading.Tasks.Task.FromResult sessions
-    GetHotReloadState = fun _ -> System.Threading.Tasks.Task.FromResult None
     GetWarmupContext = fun _ -> System.Threading.Tasks.Task.FromResult None
     GetWarmupProgress = fun _ -> ""
     GetSessionTestSummary = fun _ -> None
