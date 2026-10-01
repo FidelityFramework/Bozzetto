@@ -5,7 +5,7 @@
         <IsPackable>false</IsPackable>
         <!-- Deterministic Simulation Testing (DST) harness for the pure
              supervision core. Only used by Bozzetto.Tests, so it takes the repo
-             default TargetFramework (net11.0, Directory.Build.props) rather
+             default TargetFramework (net10.0, Directory.Build.props) rather
              than multi-targeting like Bozzetto.Core does. Pure F#, no IO, no
              third-party deps — only Bozzetto.Core, so the harness folds through
              the REAL policy. -->

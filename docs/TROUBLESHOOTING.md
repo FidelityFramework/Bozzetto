@@ -27,7 +27,7 @@ Verify: `boz --version` should print the version. If the command isn't
 found, make sure `~/.dotnet/tools` is on your `PATH`.
 
 **Requires**: .NET 10 SDK to install Bozzetto itself. Check with
-`dotnet --version`. Sessions can be on .NET 10 or .NET 11. Each
+`dotnet --version`. The hosted delivery uses .NET 10. Each
 session's host builds with whichever SDK `dotnet --version` reports in your
 project's folder, and runs on that SDK's runtime. That's your `global.json`
 pin if you have one, otherwise the newest SDK installed. So if an 11 preview

@@ -758,7 +758,7 @@ let handleNewAsmFromReplGatingTests =
     }
   ]
 
-/// WHY tests: the shared root cause behind BOTH the net11 "false Patched"
+/// Historical regression: the shared root cause behind BOTH the net11 "false Patched"
 /// bug and the net10 "SignatureChanged" misclassification bug was the SAME
 /// gap — the startup profile's own eval used to bypass handleNewAsmFromRepl
 /// entirely (see AppState.fs's evalFn, before the fix), so a name it defined
@@ -769,7 +769,8 @@ let handleNewAsmFromReplGatingTests =
 /// even though the edit never touched the signature. Proven live on a
 /// pinned net10.0.12 host (repro-net10-pinned.fsx): before the fix, a
 /// body-only edit reported `RestartRequired`/`SignatureChanged`; after, it
-/// reports `Patched`, matching net11.
+/// reports `Patched`, matching that historical net11 result. The current
+/// supported runtime is .NET 10; these original test identities are retained.
 let handleNewAsmFromReplAppHoldsTests =
   testList "WHY — handleNewAsmFromRepl AppHolds registration closes the net10/net11 shared root cause" [
 

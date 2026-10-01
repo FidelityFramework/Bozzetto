@@ -1,15 +1,15 @@
 {
-  "file": "Bozzetto.Harmony.2.4.2-bozzetto.1.nupkg",
+  "file": "Bozzetto.Harmony.2.4.2-bozzetto.2.nupkg",
   "id": "Bozzetto.Harmony",
   "schemaVersion": 1,
-  "sha256": "7ddc863b8e0e4ecb8ab43cbbd9e6259a0662d12e7fdef020daf44fe4c4c03e08",
+  "sha256": "b988bfafc3e75e660c16b60757563a7fe337975ca99ee01378b4766ad28a8b46",
   "source": {
-    "commit": "c52cd5a3ad4578e3362f032ae95be017fb4fe7fd",
+    "commit": "528579dd0a26cc4fe4580fdc4bf58bc94ed57fac",
     "dirty": false,
     "dirtyDiffSha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
     "submodules": " 1c2740546ca6c3a5851cf10c3b9ba1d45d78e280 LocalMonoMod (legacy-2632-g1c274054)\n c50f29b7bc305696895c075f3fc7719751426b12 LocalMonoMod/external/iced (v1.21.0)",
     "upstreamBase": "ffb6e9cabd1b83d4a51ef02fcaa914bf1269e51d",
     "upstreamRepository": "https://github.com/WillEhrendreich/LibHarmony.git"
   },
-  "version": "2.4.2-bozzetto.1"
+  "version": "2.4.2-bozzetto.2"
 }

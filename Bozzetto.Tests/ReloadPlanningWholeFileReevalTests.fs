@@ -13,7 +13,7 @@
 ///      function in the same file got redirected — the new declaration was
 ///      folded into the denominator and never named as the reason M wasn't
 ///      every declaration in the file.
-///   2. On net11, a body edit to a `.bozzetto/init.fsx`-started app (which
+///   2. In the historical net11 reproduction, a body edit to a `.bozzetto/init.fsx`-started app (which
 ///      takes this exact no-baseline route during warmup) could redirect
 ///      SOME same-named copy of the function while the running app kept
 ///      calling a different one — and still be reported Patched, because
@@ -65,7 +65,8 @@ let confirmWholeFileReevalTests =
     // WHY — job #3's exact false-positive: Harmony redirected SOME copy of
     // the function (it's in `reloadedMethods`), but nothing confirms that
     // copy is the one the running app calls (`reachedRunningProcess` is
-    // empty). Reporting Patched here is the net11 lie.
+    // empty). Reporting Patched here repeats that historical false positive,
+    // independently of the runtime; current support targets .NET 10.
     testCase "WHY — a redirected function with no reached-running-process evidence is UnverifiedCopy, not Patched" <| fun _ ->
       match confirmWholeFileReeval [ fn "greeting" ] [ "Demo.Program.greeting" ] [] with
       | ReloadOutcome.NoEffect(considered, [ RestartReason.UnverifiedCopy "greeting" ]) ->

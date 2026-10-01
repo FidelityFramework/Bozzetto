@@ -8,10 +8,43 @@ filename preserves links to the original provider checkpoint; detailed compiler
 contracts remain in the linked sibling documents. This records source integration
 and separately identified gate results, not an installed-daemon promotion.
 
+## Audit repairs and stable runtime checkpoint
+
+This commit records the next source-control anchor. Compiler and transport
+contracts remain fail-closed: a Git checkpoint is not runtime fallback behavior.
+The two [audit findings](Incremental_Cross_Repo_Fallback_Auditor_Assessment_2026-10-01.md)
+and [backlog guidance](Incremental_Compiler_Backlog_Auditor_Guidance_2026-10-01.md)
+remain unchanged as independent evidence.
+
+| Source | Change and executed evidence |
+| --- | --- |
+| Clef `794b302` | Cached publication now includes the exact sequence-authority root. Full compiled suite: **2,155 passed / 2,254**, the identical **99 failures**, all seven additions passed, no missing cases or new failures. |
+| Composer `c1e3ff6` | Exact Task terminal classification retains faulted cancellation exceptions. Failed native/session construction releases ownership before GC; outer construction joins cleanup. Sage controls: **6/6** classification and **5/5** construction. Compiled regression comparison remains pending. |
+| Bozzetto, this commit | Never-written withdrawals consume no late-reply slot; idle-monitor exit rechecks pending demand. Persisted-source Sage controls **32/32**. Session-status serialization uses the existing explicit F# wire codec; three constructor/path controls passed. |
+| Runtime delivery | Stable SDK **10.0.401**, `net10.0` targets, test paths, packaging checks and regenerated locks. Bozzetto compiled with **zero warnings/errors**. First default run: **9,789 passed, five status-serialization errors, four ignores**; the five errors are repaired in source, final default/provider runs remain pending. |
+| Harmony `528579dd` | .NET 10 patch/unpatch probe passed. Immutable package `2.4.2-bozzetto.2`, SHA-256 `b988bfafc3e75e660c16b60757563a7fe337975ca99ee01378b4766ad28a8b46`, imported through the controlled refresh script. No publishing remote is configured for this owned source fork. |
+
+Program-lifetime fixture declarations now state the required representations and
+synthetic FPGA timing facts; its complete source-loaded projection passed. The
+string fixture now declares writable storage and admits valid input. Its invalid
+byte test still exposes two downstream CCS8403 diagnostics alongside CCS8404;
+the exact-one assertion is retained and the source-admission repair is in progress.
+PSG schema 12 and Incremental preview.6 are unchanged at this anchor. Binary
+worker/PSG transport work is separate and is not included or claimed validated.
+The installed daemon is still the previous runtime; promotion requires the
+reviewed compiled closure and a fresh live-interface check.
+
+Raw receipts are outside the repositories under
+`~/.codex/work/incremental-audit-repairs-2026-10-01/`; `validation/clef-comparison.json`
+contains the exact comparison. Historical runtime receipts below retain their
+original identities. The recipe uses the current stable runtime.
+
+## Earlier integration anchor
+
 The common library is `Fidelity.FSharp.Incremental.Hosting`
 **0.1.0-preview.6**. The table below pins a pushed source checkpoint across all
 affected repositories. Full regression comparison and the final compiler/provider
-closure remain open validation work; they do not postpone this fallback point.
+closure remain open validation work; they do not postpone this Git checkpoint.
 The repaired Bozzetto default and entire Composer integration tiers are now
 `Trusted` against the frozen `compiler-preview6-c1-c4` closure. That closure
 predates the Baker repair and PSG schema 12; final aligned-closure validation
@@ -280,10 +313,10 @@ export BOZZETTO_TRUST_LEDGER=/absolute/external/evidence/trust.jsonl
 "$DOTNET_HOST_PATH" build Bozzetto.Tests/Bozzetto.Tests.fsproj -c Release
 
 export BOZZETTO_COMPOSER_WORKER="$PWD/Bozzetto.Composer/bin/Release/net10.0/Bozzetto.Composer.dll"
-export BOZZETTO_DAEMON_DLL="$PWD/Bozzetto/bin/Release/net11.0/Bozzetto.dll"
+export BOZZETTO_DAEMON_DLL="$PWD/Bozzetto/bin/Release/net10.0/Bozzetto.dll"
 
-"$DOTNET_HOST_PATH" Bozzetto.Tests/bin/Release/net11.0/Bozzetto.Tests.dll --summary
-"$DOTNET_HOST_PATH" Bozzetto.Tests/bin/Release/net11.0/Bozzetto.Tests.dll \
+"$DOTNET_HOST_PATH" Bozzetto.Tests/bin/Release/net10.0/Bozzetto.Tests.dll --summary
+"$DOTNET_HOST_PATH" Bozzetto.Tests/bin/Release/net10.0/Bozzetto.Tests.dll \
   --integration-composer --filter-test-list 'Composer native provider process' --summary
 ```
 
@@ -296,7 +329,7 @@ it does not complete the dedicated Composer tier.
 Once the rebuilt daemon closure is available, run the entire dedicated tier:
 
 ```bash
-"$DOTNET_HOST_PATH" Bozzetto.Tests/bin/Release/net11.0/Bozzetto.Tests.dll \
+"$DOTNET_HOST_PATH" Bozzetto.Tests/bin/Release/net10.0/Bozzetto.Tests.dll \
   --integration-composer --summary
 ```
 

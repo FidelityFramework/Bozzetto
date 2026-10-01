@@ -182,7 +182,7 @@ let checkPortTests =
 // ── checkDotnetSdk (fake `dotnet --list-sdks` output) ─────────────────────────
 
 let private repoRequirement : EnvCheck.SdkRequirement =
-  { Version = "11.0.100-preview.7"
+  { Version = "12.0.100-preview.7"
     RollForward = "latestMinor"
     AllowPrerelease = true }
 
@@ -192,8 +192,8 @@ let private sdkLine version = sprintf "%s [C:\\Program Files\\dotnet\\sdk]" vers
 let dotnetSdkTests =
   testList "EnvCheck.checkDotnetSdk" [
     test "parses a `dotnet --list-sdks` line into its version" {
-      EnvCheck.tryParseSdkListLine (sdkLine "11.0.100-preview.7.26381.103")
-      |> Expect.equal "version extracted before the bracket path" (Some "11.0.100-preview.7.26381.103")
+      EnvCheck.tryParseSdkListLine (sdkLine "12.0.100-preview.7.26381.103")
+      |> Expect.equal "version extracted before the bracket path" (Some "12.0.100-preview.7.26381.103")
     }
 
     test "passes when the pinned SDK is installed" {
@@ -201,9 +201,9 @@ let dotnetSdkTests =
         EnvCheck.sdkCheckFromInputs
           (Some repoRequirement)
           None
-          [ sdkLine "11.0.100-preview.7.26381.103" ]
+          [ sdkLine "12.0.100-preview.7.26381.103" ]
       result.Status |> Expect.equal "installed pin should pass" EnvCheck.Status.Pass
-      result.Detail |> Expect.stringContains "detail should cite the installed SDK" "11.0.100-preview.7.26381.103"
+      result.Detail |> Expect.stringContains "detail should cite the installed SDK" "12.0.100-preview.7.26381.103"
       result.Detail |> Expect.stringContains "detail should cite global.json" "global.json"
     }
 
@@ -212,8 +212,8 @@ let dotnetSdkTests =
         EnvCheck.sdkCheckFromInputs
           (Some repoRequirement)
           None
-          [ sdkLine "11.0.200" ]
-      result.Status |> Expect.equal "11.0.200 satisfies a latestMinor 11.0.100 pin" EnvCheck.Status.Pass
+          [ sdkLine "12.0.200" ]
+      result.Status |> Expect.equal "12.0.200 satisfies a latestMinor 12.0.100 pin" EnvCheck.Status.Pass
     }
 
     test "fails when only a lower-major SDK is installed" {
@@ -222,11 +222,11 @@ let dotnetSdkTests =
           (Some repoRequirement)
           None
           [ sdkLine "10.0.204" ]
-      result.Status |> Expect.equal "10.0.x must not satisfy an 11.0 latestMinor pin" EnvCheck.Status.Fail
+      result.Status |> Expect.equal "10.0.x must not satisfy an 12.0 latestMinor pin" EnvCheck.Status.Fail
       match result.Hint with
       | Some hint ->
-        hint |> Expect.stringContains "hint must name the exact SDK to install" "11.0.100-preview.7"
-        hint |> Expect.stringContains "hint should point at the .NET 11 downloads" "download/dotnet/11.0"
+        hint |> Expect.stringContains "hint must name the exact SDK to install" "12.0.100-preview.7"
+        hint |> Expect.stringContains "hint should point at the .NET 12 downloads" "download/dotnet/12.0"
       | None -> failtest "missing SDK should carry install guidance"
     }
 
@@ -235,27 +235,27 @@ let dotnetSdkTests =
         EnvCheck.sdkCheckFromInputs
           (Some repoRequirement)
           None
-          [ sdkLine "12.0.100" ]
-      result.Status |> Expect.equal "12.0.x is outside latestMinor" EnvCheck.Status.Fail
+          [ sdkLine "13.0.100" ]
+      result.Status |> Expect.equal "13.0.x is outside latestMinor" EnvCheck.Status.Fail
     }
 
     test "allowPrerelease=false excludes prerelease SDKs" {
       let req : EnvCheck.SdkRequirement =
-        { Version = "11.0.200"; RollForward = "latestMinor"; AllowPrerelease = false }
+        { Version = "12.0.200"; RollForward = "latestMinor"; AllowPrerelease = false }
       let withOnlyPrerelease =
-        EnvCheck.sdkCheckFromInputs (Some req) None [ sdkLine "11.0.100-preview.7.26381.103" ]
+        EnvCheck.sdkCheckFromInputs (Some req) None [ sdkLine "12.0.100-preview.7.26381.103" ]
       withOnlyPrerelease.Status |> Expect.equal "prerelease SDK must be excluded" EnvCheck.Status.Fail
       let withStable =
-        EnvCheck.sdkCheckFromInputs (Some req) None [ sdkLine "11.0.200" ]
+        EnvCheck.sdkCheckFromInputs (Some req) None [ sdkLine "12.0.200" ]
       withStable.Status |> Expect.equal "stable SDK satisfies the pin" EnvCheck.Status.Pass
     }
 
     test "fails when the selected SDK cannot build the project's target framework" {
       let result =
-        EnvCheck.sdkCheckFromInputs (Some repoRequirement) (Some 12) [ sdkLine "11.0.100-preview.7.26381.103" ]
-      result.Status |> Expect.equal "SDK 11 cannot build a net12.0 project" EnvCheck.Status.Fail
+        EnvCheck.sdkCheckFromInputs (Some repoRequirement) (Some 13) [ sdkLine "12.0.100-preview.7.26381.103" ]
+      result.Status |> Expect.equal "SDK 12 cannot build a net13.0 project" EnvCheck.Status.Fail
       match result.Hint with
-      | Some hint -> hint |> Expect.stringContains "hint should say which SDK to install" "12"
+      | Some hint -> hint |> Expect.stringContains "hint should say which SDK to install" "13"
       | None -> failtest "target framework mismatch should carry install guidance"
     }
 
@@ -274,7 +274,7 @@ let dotnetSdkTests =
     }
 
     test "parses a global.json sdk section" {
-      let json = """{ "sdk": { "version": "11.0.100-preview.7", "rollForward": "latestMinor", "allowPrerelease": true } }"""
+      let json = """{ "sdk": { "version": "12.0.100-preview.7", "rollForward": "latestMinor", "allowPrerelease": true } }"""
       EnvCheck.parseGlobalJsonSdkRequirement json
       |> Expect.equal "requirement parsed" (Ok (Some repoRequirement))
     }
@@ -296,11 +296,11 @@ let dotnetSdkTests =
     test "rejects an invalid sdk.version pin" {
       let result =
         EnvCheck.sdkCheckFromInputs
-          (Some { Version = "11"; RollForward = "latestMinor"; AllowPrerelease = true })
+          (Some { Version = "12"; RollForward = "latestMinor"; AllowPrerelease = true })
           None
-          [ sdkLine "11.0.100" ]
+          [ sdkLine "12.0.100" ]
       result.Status |> Expect.equal "invalid pin must fail" EnvCheck.Status.Fail
-      result.Detail |> Expect.stringContains "detail should name the bad pin" "11"
+      result.Detail |> Expect.stringContains "detail should name the bad pin" "12"
     }
 
     // ── #139: a rollForward-eligible SDK below the newest installed SDK must
@@ -315,7 +315,7 @@ let dotnetSdkTests =
       let req : EnvCheck.SdkRequirement =
         { Version = "10.0.0"; RollForward = "latestMinor"; AllowPrerelease = false }
       let installed =
-        [ "8.0.425"; "9.0.318"; "10.0.112"; "10.0.204"; "10.0.401"; "11.0.100-rc.1.26425.128" ]
+        [ "8.0.425"; "9.0.318"; "10.0.112"; "10.0.204"; "10.0.401"; "12.0.100-rc.1.26425.128" ]
         |> List.map sdkLine
       let result = EnvCheck.sdkCheckFromInputs (Some req) None installed
       result.Status |> Expect.equal "10.0.401 satisfies the latestMinor pin and must pass" EnvCheck.Status.Pass
@@ -323,15 +323,15 @@ let dotnetSdkTests =
     }
 
     test "newest-eligible-on-failure names the actual newest candidate, not the oldest" {
-      // No installed SDK satisfies an 11.0 latestMinor pin here — but the
+      // No installed SDK satisfies an 12.0 latestMinor pin here — but the
       // failure message's \"newest eligible\" must still be the newest of
       // the (wrong-major) candidates, so it's not misleading about what's
       // actually on the machine.
       let req : EnvCheck.SdkRequirement =
-        { Version = "11.0.0"; RollForward = "latestMinor"; AllowPrerelease = true }
+        { Version = "12.0.0"; RollForward = "latestMinor"; AllowPrerelease = true }
       let installed = [ "8.0.100"; "9.0.100"; "10.0.401" ] |> List.map sdkLine
       let result = EnvCheck.sdkCheckFromInputs (Some req) None installed
-      result.Status |> Expect.equal "no 11.x installed" EnvCheck.Status.Fail
+      result.Status |> Expect.equal "no 12.x installed" EnvCheck.Status.Fail
       result.Detail |> Expect.stringContains "newest eligible must be 10.0.401, not the oldest 8.0.100" "10.0.401"
     }
 

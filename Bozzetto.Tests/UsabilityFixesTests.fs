@@ -27,11 +27,11 @@ let targetFrameworkXmlTests =
     }
 
     test "does NOT match a framework moniker mentioned inside an XML comment" {
-      // Reproduces the repo's own Directory.Build.props: a comment warning
-      // against bumping to net11.0 sits right next to the real net10.0 pin.
+      // Reproduces the repo's own Directory.Build.props: an unrelated framework
+      // in a comment sits right next to the real net10.0 pin.
       let xml =
         "<Project><PropertyGroup>\n\
-         <!-- DO NOT bump to net11.0 until Harmony/MonoMod support CoreCLR 11. -->\n\
+         <!-- An unrelated net8.0 example is not the project's target. -->\n\
          <TargetFramework>net10.0</TargetFramework>\n\
          </PropertyGroup></Project>"
       EnvCheck.targetFrameworkMajorsFromXml xml
@@ -55,16 +55,16 @@ let targetFrameworkXmlTests =
       |> Expect.equal "malformed XML is handled, not thrown" []
     }
 
-    test "the repo's own Directory.Build.props resolves to net11 (the default TargetFramework)" {
-      // Regression pin, updated for the net10 -> net11 bump: Directory.Build.props
-      // now sets <TargetFramework>net11.0</TargetFramework> as the repo default
+    test "the repo's own Directory.Build.props resolves to net10 (the default TargetFramework)" {
+      // Regression pin for the supported stable runtime: Directory.Build.props
+      // now sets <TargetFramework>net10.0</TargetFramework> as the repo default
       // (the shipped tool closure overrides it with TargetFrameworks instead —
       // see BozzettoTargetFrameworks — which this raw-XML-major-scan intentionally
       // does not need to see here).
       let path = IO.Path.Combine(__SOURCE_DIRECTORY__, "..", "Directory.Build.props")
       let xml = IO.File.ReadAllText path
       EnvCheck.targetFrameworkMajorsFromXml xml
-      |> Expect.equal "Directory.Build.props' default TargetFramework pins net11.0" [ 11 ]
+      |> Expect.equal "Directory.Build.props' default TargetFramework pins net10.0" [ 10 ]
     }
   ]
 

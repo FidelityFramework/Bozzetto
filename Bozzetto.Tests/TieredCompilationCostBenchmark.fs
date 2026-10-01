@@ -1,6 +1,6 @@
 /// Not a gate, a measurement, so it isn't registered as a test. Run it from a
-/// Bozzetto session on Bozzetto.Tests when the tradeoff needs checking again:
-/// `Bozzetto.Tests.TieredCompilationCostBenchmark.run HostRuntime.Net11 |> Async.AwaitTask |> Async.RunSynchronously;;`
+/// separate SageFS session on Bozzetto.Tests when the tradeoff needs checking again:
+/// `Bozzetto.Tests.TieredCompilationCostBenchmark.run HostRuntime.Net10 |> Async.AwaitTask |> Async.RunSynchronously;;`
 /// The numbers go in read-tracking-costs.md. The two settings take turns every
 /// rep, so a machine that gets busier halfway through slows both down, not
 /// just one.

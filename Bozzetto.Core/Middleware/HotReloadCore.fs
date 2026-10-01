@@ -282,7 +282,7 @@ let detourMethod (logger: ILogger) (method: MethodBase) (replacement: MethodBase
   with
   | :? TargetInvocationException as ex when
     (ex.InnerException :? PlatformNotSupportedException) ->
-    // MonoMod does not yet support .NET 11+ CoreCLR — transition to Degraded
+    // An unsupported CoreCLR interface cannot be patched — transition to Degraded
     let msg = sprintf "Hot-reload detour failed: PlatformNotSupportedException for %s. MonoMod may not support this runtime." method.Name
     logger.LogWarning msg
     DevReloadHealthTracker.transition (DevReloadHealth.Degraded "MonoMod PlatformNotSupportedException")

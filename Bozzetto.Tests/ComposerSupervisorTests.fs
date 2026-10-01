@@ -599,6 +599,62 @@ let tests =
       do! owner.StopAsync()
     }
 
+    taskCase "monitor idle exit hands off reconciliation admitted before deregistration" <| fun () -> task {
+      let worker = Worker("monitor-handoff", 116)
+      let idleObserved = completion<unit> ()
+      let removeAllowed = completion<unit> ()
+      let successorRead = completion<unit> ()
+      let settledNotice = completion<unit> ()
+      let mutable exits = 0
+      let mutable phase = 0
+      let beforeExit () =
+        if Interlocked.Increment &exits = 1 then
+          idleObserved.TrySetResult() |> ignore
+          removeAllowed.Task :> Task
+        else Task.CompletedTask
+      let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true, beforeExit)
+      try
+        let! session = openSession owner worker
+        use subscription = owner.Changed.Subscribe(fun () ->
+          if successorRead.Task.IsCompleted then settledNotice.TrySetResult() |> ignore)
+        worker.Intercept <- fun operation current ->
+          if operation = "build" then
+            worker.Withdraw(current, true)
+            Some(Task.FromException<JsonElement>(OperationCanceledException "withdraw exact demand"))
+          elif operation = "status" && Volatile.Read &phase = 1 then
+            worker.SetBusy(current, false)
+            Some(Task.FromResult(worker.Response("status", current)))
+          elif operation = "status" && Volatile.Read &phase = 3 then
+            worker.SetBusy(current, false)
+            let response = worker.Response("status", current)
+            successorRead.TrySetResult() |> ignore
+            Some(Task.FromResult response)
+          else None
+        let! first = execute owner (request "build" worker session)
+        first |> refused "canceled"
+        Volatile.Write(&phase, 1)
+        do! idleObserved.Task |> bounded
+        // The first monitor has observed idle, but still owns its registry key.
+        Volatile.Write(&phase, 2)
+        let! second = execute owner (request "build" worker session)
+        second |> refused "canceled"
+        Volatile.Write(&phase, 3)
+        removeAllowed.TrySetResult() |> ignore
+        // No SessionsAsync/status request may restart monitoring for this wait.
+        do! successorRead.Task.WaitAsync(TimeSpan.FromSeconds 2.)
+        do! settledNotice.Task |> bounded
+        worker.Intercept <- fun operation _ ->
+          if operation = "status" then Some(Task.FromException<JsonElement>(IOException "inspect retained background result"))
+          else None
+        let! view = snapshots owner
+        let status = snapshot session view |> success
+        (field "busy" status).GetBoolean() |> Expect.isFalse "The successor published settled cleanup."
+        (field "current" status).ValueKind |> Expect.equal "Reconciliation does not recreate execution authority." JsonValueKind.Null
+      finally
+        removeAllowed.TrySetResult() |> ignore
+        owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult()
+    }
+
     taskCase "canceled busy work publishes its eventual settled status without observer polling" <| fun () -> task {
       let worker = Worker("busy-cancel", 114)
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)

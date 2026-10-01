@@ -1,25 +1,13 @@
 <Project>
   <PropertyGroup>
-    <!-- net11.0 is the repo default (tests, samples and demos). The owned
-         Bozzetto.Harmony package retains the pinned MonoMod changes required
-         for managed detours on CoreCLR 11. Its reviewed artifact and source
-         provenance are validated by ci-pipeline.fsx before the build.
-
-         The tool I actually ship (Bozzetto, Bozzetto.Core, Bozzetto.Host) doesn't
-         just move to net11 though — it multi-targets $(BozzettoTargetFrameworks).
-         A dotnet tool nupkg built that way carries one tools/<tfm>/any payload
-         per TFM, and `dotnet tool install` grabs whichever one matches your
-         SDK. So a .NET 10 user still gets a net10.0 build, a .NET 11 user gets
-         net11.0, and issue #131 (a net11-only package that .NET 10 users
-         couldn't install) can't happen again. If a project needs to
-         multi-target like this, clear the default with
-         `<TargetFramework></TargetFramework>` and set
-         `<TargetFrameworks>$(BozzettoTargetFrameworks)</TargetFrameworks>`. -->
-    <TargetFramework>net11.0</TargetFramework>
-    <BozzettoTargetFrameworks>net10.0;net11.0</BozzettoTargetFrameworks>
+    <!-- The complete hosted delivery, including tests and compatibility
+         tools, uses the stable SDK selected in global.json. The package gate
+         verifies the tool contains exactly this supported runtime payload. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <BozzettoTargetFrameworks>net10.0</BozzettoTargetFrameworks>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- F# nullness analysis: surfaces nullability warnings at compile time
-         (requires the newer FCS/SDK — the whole point of keeping those current).
+         independently of the hosted runtime target.
          NoWarn NU1608/NU1902 for the pre-1.0/known-audited transitive pins. -->
     <CheckNulls>true</CheckNulls>
     <NoWarn>$(NoWarn);NU1608;NU1902</NoWarn>
@@ -33,5 +21,4 @@
     <RestoreLockedMode Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">true</RestoreLockedMode>
   </PropertyGroup>
 </Project>
-
 

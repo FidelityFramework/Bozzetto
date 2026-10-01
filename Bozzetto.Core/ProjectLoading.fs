@@ -149,7 +149,7 @@ module ManualProjectParse =
           // Same-named DLLs can appear in MULTIPLE TFM subdirs (a project's bin
           // may hold orphans from old target layouts, e.g. a net10 copy of
           // Bozzetto.Core.dll left behind after the project targeted a different
-          // TFM (net11-only during the preview era, or a net9 orphan)). Passing
+          // TFM (an unrelated preview target, or a net9 orphan)). Passing
           // both to FSI lets the stale one shadow the fresh build, so the REPL
           // compiles against ancient metadata. Dedupe by file name, keeping the
           // NEWEST copy — an orphan can never shadow a fresh build.
@@ -175,7 +175,7 @@ module ManualProjectParse =
           // framework is not installed. A FrameworkReference normally adds these; the
           // manual fallback must add them or FSI fails with "type ... is defined in an
           // assembly that is not referenced". Taking the "newest" directory instead
-          // handed a net10 worker net11's reference assemblies on a box with both.
+          // handed a net10 worker another runtime's reference assemblies on a box with both.
           let sharedFrameworkDlls (frameworkName: string) =
             let dir = Path.Combine(dotnetRoot, "shared", frameworkName)
             match Directory.Exists dir with
@@ -320,12 +320,12 @@ let resolveFreshestConfigOutput (dllPath: string) : string option =
 /// Which target framework each referenced project has to be loaded at.
 ///
 /// Ionide loads every project in the closure on its own, and for a project with
-/// `<TargetFrameworks>net10.0;net11.0</TargetFrameworks>` it just takes the
-/// FIRST one. It never asks the project that references it. So a net11.0 test
-/// project referencing a multi-targeted library got the library's net10.0
+/// `<TargetFrameworks>net9.0;net10.0</TargetFrameworks>` it just takes the
+/// FIRST one. It never asks the project that references it. So a net10.0 test
+/// project referencing a multi-targeted library got the library's net9.0
 /// TargetPath. After a normal `dotnet build` of the test project only the
-/// net11.0 output exists, and warmup died with "Not all DLLs are found" on a
-/// project that was built. When the net10.0 output did exist, it was worse:
+/// net10.0 output exists, and warmup died with "Not all DLLs are found" on a
+/// project that was built. When the net9.0 output did exist, it was worse:
 /// the session quietly loaded the wrong build.
 ///
 /// MSBuild already worked out the right answer. During the consumer's
@@ -500,7 +500,7 @@ module ProjectLoadProgress =
     | WorkspaceProjectState.Failed(projFile, _errors) -> Failed projFile
 
 /// Pure: the leading major version number from a `dotnet --version`-style string
-/// ("11.0.100-rc.1.26425.128" -> 11, "10.0.401" -> 10).
+/// ("9.0.100-rc.1" -> 9, "10.0.401" -> 10).
 let sdkMajorOf (version: string) : int option =
   match version.Split '.' with
   | [||] -> None

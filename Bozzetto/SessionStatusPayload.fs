@@ -56,7 +56,9 @@ module SessionStatusPayload =
   let serialize (facts: Facts) : string =
     let sessionState = facts.SessionState
 
-    System.Text.Json.JsonSerializer.Serialize(
+    // Targets are a closed F# union. Use the same explicit wire codec as
+    // worker messages instead of relying on runtime-default serialization.
+    WorkerProtocol.Serialization.serialize(
       {| state = stateLabelOf sessionState
          scope = "Session"
          sessionId = facts.SessionId

@@ -108,13 +108,14 @@ type private StatusFacts = {
   Loaded: int
 }
 
-let private callStatus (info: SessionInfo) : StatusFacts =
-  let json =
-    BozzettoTools(ctxFor info, Microsoft.Extensions.Logging.Abstractions.NullLogger<BozzettoTools>.Instance)
-      .get_session_status(info.WorkingDirectory)
-      .GetAwaiter()
-      .GetResult()
+let private statusJson (info: SessionInfo) =
+  BozzettoTools(ctxFor info, Microsoft.Extensions.Logging.Abstractions.NullLogger<BozzettoTools>.Instance)
+    .get_session_status(info.WorkingDirectory)
+    .GetAwaiter()
+    .GetResult()
 
+let private callStatus (info: SessionInfo) : StatusFacts =
+  let json = statusJson info
   use doc = JsonDocument.Parse(json)
   let el = doc.RootElement
   { State = el.GetProperty("state").GetString()
@@ -123,6 +124,19 @@ let private callStatus (info: SessionInfo) : StatusFacts =
 
 [<Tests>]
 let sessionStatusTruthTests = testList "session status tells the truth" [
+
+  for label, paths, target in
+    [ "Bare", [], SessionProjectTarget.Bare
+      "Project", [ "with spaces/Thing.fsproj" ], SessionProjectTarget.Project "with spaces/Thing.fsproj"
+      "Solution", [ "with spaces/Workspace.slnx" ], SessionProjectTarget.Solution "with spaces/Workspace.slnx" ] do
+    testCase (label + " target retains its explicit constructor and path in status JSON") <| fun _ ->
+      use document = JsonDocument.Parse(statusJson { warmingInfo with Projects = paths })
+      let targets = document.RootElement.GetProperty("target")
+      targets.GetArrayLength() |> Expect.equal "Exactly the requested target is reported." 1
+      targets[0].GetProperty("type").GetString()
+      |> Expect.equal "The worker wire codec preserves the target constructor." label
+      WorkerProtocol.Serialization.deserialize<SessionProjectTarget list>(targets.GetRawText())
+      |> Expect.equal "Target paths and bare intent survive the actual MCP response." [ target ]
 
   testCase "WHY — a warming session must not report Ready, because agents gate on that field" <| fun _ ->
     let facts = callStatus warmingInfo

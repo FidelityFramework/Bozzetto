@@ -37,7 +37,7 @@ let private hostExePath () =
   let root = here.Parent.Parent.Parent.Parent.FullName // repo root
   let cfg =
     if AppContext.BaseDirectory.Contains("Release") then "Release" else "Debug"
-  let hostDir = Path.Combine(root, "Bozzetto", "bin", cfg, "net11.0", "host")
+  let hostDir = Path.Combine(root, "Bozzetto", "bin", cfg, "net10.0", "host")
   // Windows: Bozzetto.Host.exe; Linux/macOS: extensionless Bozzetto.Host.
   let exe = Path.Combine(hostDir, "Bozzetto.Host.exe")
   let noExt = Path.Combine(hostDir, "Bozzetto.Host")

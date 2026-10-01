@@ -20,13 +20,8 @@
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://forge.spkez.dev/FidelityFramework/Bozzetto</RepositoryUrl>
 
-        <!-- The daemon multi-targets net10.0;net11.0 (Directory.Build.props):
-             a dotnet tool nupkg packed with TargetFrameworks carries one
-             tools/<tfm>/any payload per TFM, so `dotnet tool install` serves a
-             .NET 10 SDK user the net10.0 build and a .NET 11 SDK user the
-             net11.0 build (issue #131). Clearing TargetFramework is required:
-             Directory.Build.props sets it for every project by default, and
-             TargetFramework/TargetFrameworks cannot both be set. -->
+        <!-- Share the supported tool payload list with Core and the
+             compatibility host. Clear the inherited singular property. -->
         <TargetFramework></TargetFramework>
         <TargetFrameworks>$(BozzettoTargetFrameworks)</TargetFrameworks>
     </PropertyGroup>

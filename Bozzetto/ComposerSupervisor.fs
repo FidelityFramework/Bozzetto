@@ -87,7 +87,7 @@ module private ComposerJson =
 
 /// One daemon owner, shared by HTTP, MCP tools and resources. Compiler authority
 /// remains in the worker; the daemon never loads Composer or artifact assemblies.
-type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool) =
+type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, configured: bool, beforeMonitorExit: unit -> Task) =
   let gate = obj ()
   let lifecycle = new SemaphoreSlim(1, 1)
   let changedEvent = Event<unit>()
@@ -252,7 +252,7 @@ type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool
       return raise error
   }
 
-  let reconcile (connection: IComposerWorker) session =
+  let rec reconcile (connection: IComposerWorker) session =
     let identity = ComposerJson.hostIdentity connection.Handshake
     let key = ComposerJson.text "host" identity, ComposerJson.text "epoch" identity, session
     let active () = lock gate (fun () -> isOwner connection && connection.IsAlive && not stopped && not retiring)
@@ -261,6 +261,7 @@ type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool
     if admitted then
       Task.Run(Func<Task>(fun () -> task {
         use deadline = new CancellationTokenSource(TimeSpan.FromMinutes 8.)
+        let mutable observedIdle = false
         try
           try
             let mutable polling = true
@@ -278,9 +279,18 @@ type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool
                 | _ -> ()
                 polling <- needed ()
               else polling <- false
+            if not polling then
+              observedIdle <- true
+              do! beforeMonitorExit ()
           with :? OperationCanceledException -> ()
         finally
-          lock gate (fun () -> monitors.Remove key |> ignore)
+          // A new reconciliation request may have found our key after the
+          // idle observation. Remove and recheck together; a competing starter
+          // and this handoff still share the ordinary one-monitor admission.
+          let restart = lock gate (fun () ->
+            monitors.Remove key |> ignore
+            observedIdle && not deadline.IsCancellationRequested && active () && needed ())
+          if restart then reconcile connection session
       })) |> ignore
 
   let retire request connection = task {
@@ -313,6 +323,8 @@ type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool
         lifecycle.Release() |> ignore
         changed ()
   }
+
+  new(factory, configured) = ComposerSupervisor(factory, configured, fun () -> Task.CompletedTask)
 
   member _.Changed = changedEvent.Publish
   member _.WorkerPid = lock gate (fun () -> worker |> Option.filter _.IsAlive |> Option.map _.ProcessId)

@@ -257,7 +257,7 @@ let tests =
       }
 
       test "reads the leading major from a prerelease version" {
-        sdkMajorOf "11.0.100-rc.1.26425.128" |> Expect.equal "major 11" (Some 11)
+        sdkMajorOf "9.0.100-rc.1" |> Expect.equal "prerelease major 9" (Some 9)
       }
 
       test "None for unparseable input" {

@@ -1,5 +1,13 @@
 # Hot Reload: How It Works
 
+> **Current scope (October 1, 2026):** this describes the retained F# hot-reload
+> implementation. Bozzetto's deployed product direction is Composer; use
+> separate SageFS for F# work, as described in the
+> [host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md).
+> The supported runtime in the current source is **.NET 10**. Historical
+> .NET 10/.NET 11 test and performance observations below retain their original
+> runtime attribution; they do not establish validation of this migration.
+
 Save a `.fs` file and the change lands in the process that's already running your
 app, including apps whose route table was built once at startup, the Falco /
 Giraffe / Saturn pattern (`module App.Program` + `let routes = [...]`). No
@@ -37,9 +45,9 @@ delegate was created six minutes ago. It cares where the call ends up.
 
 The rule I'm going for: code changes take effect, state stays, and Bozzetto
 never does either one quietly. Every row below names the test that pins it.
-The "real app" ones start a real host on .NET 10 and on .NET 11, save a real
-file and read what the same process serves afterwards. The planner ones are
-unit tests on the decision, and I've said which is which.
+The "real app" cases start a real host, save a real file and read what the same
+process serves afterwards. Their historical receipts covered .NET 10 and .NET 11;
+the current harness selects .NET 10. The planner cases test the decision only.
 
 ### Code
 
@@ -54,16 +62,17 @@ A change reaches the running app when it's a change to a **function body**:
 | a small function with no `[<MethodImpl(NoInlining)>]` | reloads | shape matrix `tiny` |
 | a function that reads or writes a `let mutable private` in its file | reloads, and it uses the app's OWN field, so reads and writes agree with the rest of the app | state tests, rule 1 `let mutable private` |
 
-The shape matrix is `Bozzetto.Tests/WebAppHotReloadVerificationTests.fs` (it runs
-on .NET 11). The state tests are `Bozzetto.Tests/HotReloadStateOutcomeTests.fs`
-and run once per runtime.
+The shape matrix is `Bozzetto.Tests/WebAppHotReloadVerificationTests.fs` (the
+historical receipt used .NET 11). The state tests are
+`Bozzetto.Tests/HotReloadStateOutcomeTests.fs`. Both current harnesses target
+.NET 10; a new run is required to validate the migrated closure.
 
 ### State
 
 Module-level `let mutable`s are your app's live data, and a save treats them
 that way:
 
-| You... | What happens | Pinned by (real app, net10 + net11) |
+| You... | What happens | Historical evidence (real app, net10 + net11) |
 |---|---|---|
 | edit a function, and the file has a `let mutable` you didn't touch | its live value stays. Its initializer never runs again | rule 1, public `let mutable` |
 | edit a function that uses a `let mutable private` | same, the value stays. The patch can't name a private member from FSI, so it gets a stand-in with the same name that reads and writes the app's own field. Nothing gets re-declared | rule 1, `let mutable private` |
@@ -191,8 +200,9 @@ speed, but the watch can lapse, and after a lapse every tracked value restarts
 on its next edit until the app restarts. You get more restarts, never a wrong
 answer.
 
-Here's what that cost looked like on my machine, for the hot reload test app
-on net11 (5 runs each, taking turns, median):
+The following measurements are historical results for the hot reload test app
+on **net11** (5 runs each, taking turns, median). They have not been remeasured
+on .NET 10 and must not be used as migration performance evidence:
 
 | | App start | Per request, warm |
 |---|---|---|
@@ -292,14 +302,15 @@ I'd rather you hear this from me than find it at 11pm.
 
 ## What I'm working on
 
-In the order I'm doing them. None of them is done until a real-app test proves
-it on both .NET 10 and .NET 11.
+In the order I'm doing them. New acceptance requires real-app tests on the
+supported .NET 10 closure. Historical .NET 11 receipts remain evidence for
+their original runtime, not a requirement to retain that runtime.
 
 Done already: a redefined immutable value gets its new value when nothing in
 the running app kept a copy (the values table above). The running app says
 where every read of the value went, so a Patched is never a guess.
 
-Also done: an app started by `.bozzetto/init.fsx` `#load`ing your sources
+Historical repair: an app started by `.bozzetto/init.fsx` `#load`ing your sources
 used to restart on an edit (.NET 10) or get patched on the wrong copy while
 still saying "Patched" (.NET 11). The init script's `#load` skipped the
 hot-reload middleware, so Bozzetto never learned which copy of a function the

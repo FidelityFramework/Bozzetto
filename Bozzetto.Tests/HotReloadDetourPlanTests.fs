@@ -475,8 +475,8 @@ let mutableBindingTornChangeTests =
 // verdicts `detourMethod` already returned for that binding's accessors.
 // Constructing a live Torn end-to-end would mean forcing a REAL Harmony call
 // to fail on exactly one leg of a pair while succeeding on the other. Tried
-// live against this repo's own custom Harmony fork (Bozzetto.Harmony,
-// 2.4.2-bozzetto.1 — patched for CoreCLR 11): a method detoured to ITSELF,
+// historically against this repo's own custom Harmony fork (Bozzetto.Harmony,
+// 2.4.2-bozzetto.1 — then patched for CoreCLR 11): a method detoured to ITSELF,
 // a signature-mismatched detour, and re-detouring an already-patched method
 // were all EXPECTED to throw (upstream MonoMod's own "from != to" assertion
 // documents the first) and instead all landed silently, both live via the
@@ -487,7 +487,8 @@ let mutableBindingTornChangeTests =
 // stable, environment-independent fact about this fork; what DOES stay true
 // on every build is `detourMethod`'s own three specifically-caught failure
 // paths (a stale FSI compilation unit's TypeLoadException, an already-failed
-// TypeInitializationException, and net11's PlatformNotSupportedException —
+// TypeInitializationException, and PlatformNotSupportedException (originally
+// observed on net11; the current supported runtime is .NET 10) —
 // each already exercised by its own test elsewhere), any one of which
 // returns `DetourApplied.Failed` for a real, unforced reason in production.
 //

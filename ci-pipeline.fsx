@@ -62,7 +62,7 @@ let rootDir = __SOURCE_DIRECTORY__
 let releaseDir = Path.Combine(rootDir, "release")
 let vscodeDir = Path.Combine(rootDir, "bozzetto-vscode")
 // Every downstream check runs against this ONE Release build (see "build" stage).
-let testBinDir = "Bozzetto.Tests/bin/Release/net11.0"
+let testBinDir = "Bozzetto.Tests/bin/Release/net10.0"
 let testDll = $"{testBinDir}/Bozzetto.Tests.dll"
 
 // ---- release helpers (faithful F# translations of the old pwsh steps) --------
@@ -96,16 +96,8 @@ let verifyVersionAlignment () =
       p k p
   printfn "Versions aligned at %s" p
 
-/// issue #131: a tool packaged for the wrong TFM is uninstallable on net10 SDKs
-/// ("DotnetToolSettings.xml was not found"). Bozzetto now multi-targets
-/// net10.0;net11.0 (Directory.Build.props' BozzettoTargetFrameworks) precisely so
-/// this can never recur in either direction: `dotnet pack` on a multi-targeted
-/// PackAsTool project emits one tools/<tfm>/any payload per TFM, and
-/// `dotnet tool install` picks the payload matching the CALLER's own SDK — a
-/// .NET 10 SDK user gets the net10.0 build, a .NET 11 SDK user gets the
-/// net11.0 build. Fail HERE, before anything ships, if either payload is
-/// missing or an unexpected extra TFM shows up.
-let requiredToolTfms = [ "net10.0"; "net11.0" ]
+/// Verify the installed tool payload matches the supported stable runtime.
+let requiredToolTfms = [ "net10.0" ]
 let verifyToolInstallable () =
   // The package for THIS build's version, never whichever nupkg sorts first.
   let expected = Path.Combine(releaseDir, $"Bozzetto.{pkgJsonVersion ()}.nupkg")
@@ -750,17 +742,13 @@ pipeline "bozzetto" {
     // (uninstallable / unlaunchable tool) that verifyToolInstallable's
     // nupkg-structure check alone cannot catch.
     //
-    // Bozzetto now multi-targets net10.0;net11.0 (issue #131), so this smoke
-    // test runs TWICE — once per SDK the tool claims to support — each under
-    // its own throwaway working dir carrying a global.json PINNED (rollForward
-    // "disable") to that exact SDK, so `dotnet` resolution can't accidentally
-    // fall through to the other one. A single run under whichever SDK happens
-    // to be ambient would only ever prove ONE of the two payloads works.
+    // Pin the stable SDK in an isolated directory so ambient resolution
+    // cannot silently validate a different runtime than the shipped payload.
     whenCmdArg "release"
     timeoutForStep 300
     run (fun _ ->
       async {
-        let sdks = [ "10.0.401", "net10.0"; "11.0.100-rc.1.26425.128", "net11.0" ]
+        let sdks = [ "10.0.401", "net10.0" ]
         let smokeOneSdk (sdkVersion: string, tfm: string) =
           async {
             let workDir = Path.Combine(rootDir, $".smoke-{tfm}")

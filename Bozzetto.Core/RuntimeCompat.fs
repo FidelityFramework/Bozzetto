@@ -2,7 +2,7 @@
 /// the one the FSI host was built for. No IO here: callers read the runtimeconfig.json
 /// and the installed runtimes, and apply the resulting environment.
 ///
-/// Why this exists: a net11 project needs the net11 runtime's framework assemblies, but a host built
+/// Why this exists: a project needs its selected runtime's framework assemblies, but a host built
 /// for net10 runs on the net10 runtime by default, so warmup fails with e.g.
 /// "Microsoft.Extensions.Logging.Abstractions, Version=11.0.0.0 is not referenced". A newer
 /// runtime can host older-targeted code, so the fix is to launch the host on the newer runtime

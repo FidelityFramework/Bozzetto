@@ -38,7 +38,7 @@ let private unknownTest : TestCase =
 let private webAppFixtureDll () =
   let root = DirectoryInfo(AppContext.BaseDirectory).Parent.Parent.Parent.Parent.FullName
   [ "Debug"; "Release" ]
-  |> List.map (fun cfg -> Path.Combine(root, "Bozzetto.Tests", "fixtures", "WebAppFixture", "bin", cfg, "net11.0", "WebAppFixture.dll"))
+  |> List.map (fun cfg -> Path.Combine(root, "Bozzetto.Tests", "fixtures", "WebAppFixture", "bin", cfg, "net10.0", "WebAppFixture.dll"))
   |> List.filter File.Exists
   |> List.sortByDescending File.GetLastWriteTimeUtc
   |> List.tryHead

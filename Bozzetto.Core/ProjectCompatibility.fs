@@ -95,7 +95,7 @@ type ProjectHostability =
 // .NET Framework's SDK-style short TFM has no dot: net11, net20, net35,
 // net40, net403, net45, net451, net452, net46, net461, net462, net47,
 // net471, net472, net48, net481. Modern .NET (Core) TFMs always carry a
-// dot: net5.0, net6.0, ... net10.0, net11.0. That dot is the reliable
+// dot: net5.0, net6.0, ... net9.0, net10.0. That dot is the reliable
 // discriminator — SDK-style projects never write a dotted .NET Framework
 // TFM or a dot-less modern one.
 let private netFrameworkShort = Regex(@"^net\d{2,3}$", RegexOptions.Compiled)

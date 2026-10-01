@@ -2,20 +2,20 @@
 /// project.
 ///
 /// Reported 2026-09-22 against the published 0.6.782 daemon: a session on
-/// Bozzetto.Tests (net11.0) faulted in warmup with "Not all DLLs are found (3
+/// Bozzetto.Tests (net10.0) faulted in warmup with "Not all DLLs are found (3
 /// missing: Bozzetto.Core.dll, Bozzetto.Host.dll, Bozzetto.dll) -- this project
 /// isn't built yet", right after a clean `dotnet build`. The three "missing"
-/// DLLs were exactly the references with `<TargetFrameworks>net10.0;net11.0`.
+/// DLLs were exactly the references with `<TargetFrameworks>net9.0;net10.0`.
 /// Ionide loads each referenced project at its first TFM, so Bozzetto looked in
-/// bin/Debug/net10.0 while `dotnet build` of a net11.0 consumer only ever
-/// writes bin/Debug/net11.0.
+/// bin/Debug/net9.0 while `dotnet build` of a net10.0 consumer only ever
+/// writes bin/Debug/net10.0.
 ///
 /// This builds the smallest version of that shape in a temp dir (nothing from
-/// the repo's Directory.Build.props leaks in): Lib targets net10.0;net11.0 and
-/// returns a different string per TFM, App targets net11.0 and references Lib.
+/// the repo's Directory.Build.props leaks in): Lib targets net9.0;net10.0 and
+/// returns a different string per TFM, App targets net10.0 and references Lib.
 /// Only App is built, the way a user builds their own project. The session
 /// has to reach Ready AND evaluate Lib's code, and the value has to come from
-/// the net11.0 build, the one `dotnet build` picked.
+/// the net10.0 build, the one `dotnet build` picked.
 module Bozzetto.Tests.MultiTargetReferenceOutcomeTests
 
 open System
@@ -32,7 +32,7 @@ module Http = Bozzetto.Tests.HttpApiIntegrationTests
 let private libProject =
   """<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Marker.fs" />
@@ -44,10 +44,10 @@ let private libSource =
   """module Lib.Marker
 
 let builtFor =
-#if NET11_0_OR_GREATER
-  "lib-net11.0"
-#else
+#if NET10_0_OR_GREATER
   "lib-net10.0"
+#else
+  "lib-net9.0"
 #endif
 
 let greet (name: string) = sprintf "hello %s from %s" name builtFor
@@ -56,7 +56,7 @@ let greet (name: string) = sprintf "hello %s from %s" name builtFor
 let private appProject =
   """<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net11.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.fs" />
@@ -131,7 +131,7 @@ let multiTargetReferenceOutcomeTests =
   testSequenced
   <| Integration.retiredFSharpList "Multi-targeted project reference outcome" [
 
-    testTask "WHY: a session on a net11.0 project that references a net10.0;net11.0 library reaches Ready and runs the library's net11.0 build" {
+    testTask "WHY: a session on a net10.0 project that references a net9.0;net10.0 library reaches Ready and runs the library's net10.0 build" {
       let root = Directory.CreateTempSubdirectory("bozzetto-multitfm-").FullName
       let mutable daemon : Process = null
       let mutable client : HttpClient = null
@@ -140,13 +140,13 @@ let multiTargetReferenceOutcomeTests =
         let appDir = Path.GetDirectoryName appProjectPath
         Http.runProcessExpectSuccess "dotnet" appDir [ "build"; appProjectPath; "--nologo"; "-v:q" ]
 
-        // The exact on-disk shape of the bug: the library has a net11.0 build
-        // and NO net10.0 build, because nothing asked for one.
+        // The exact on-disk shape of the bug: the library has a net10.0 build
+        // and NO net9.0 build, because nothing asked for one.
         let libBin = Path.Combine(root, "Lib", "bin", "Debug")
-        File.Exists(Path.Combine(libBin, "net11.0", "Lib.dll"))
-        |> Expect.isTrue "building App builds Lib at net11.0"
         File.Exists(Path.Combine(libBin, "net10.0", "Lib.dll"))
-        |> Expect.isFalse "building App never builds Lib at net10.0, which is the output Bozzetto used to look for"
+        |> Expect.isTrue "building App builds Lib at net10.0"
+        File.Exists(Path.Combine(libBin, "net9.0", "Lib.dll"))
+        |> Expect.isFalse "building App never builds Lib at net9.0, which is the output Bozzetto used to look for"
 
         let port = Http.reserveLoopbackPort ()
         let! proc, http = Http.startDaemonWithArgs port appDir [ "--no-resume" ]
@@ -171,8 +171,8 @@ let multiTargetReferenceOutcomeTests =
         succeeded |> Expect.isTrue (sprintf "the referenced library's code evaluates (%s)" execBody)
         result
         |> Expect.stringContains
-             "the session loaded Lib's net11.0 build, the one dotnet build made for a net11.0 consumer"
-             "hello repl from lib-net11.0"
+             "the session loaded Lib's net10.0 build, the one dotnet build made for a net10.0 consumer"
+             "hello repl from lib-net10.0"
       finally
         match isNull client with
         | true -> ()

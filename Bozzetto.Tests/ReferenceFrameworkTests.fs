@@ -1,8 +1,8 @@
 /// A session on a project that references a MULTI-TARGETED project
-/// (`<TargetFrameworks>net10.0;net11.0</TargetFrameworks>`) used to fault in
+/// (`<TargetFrameworks>net9.0;net10.0</TargetFrameworks>`) used to fault in
 /// warmup with "Not all DLLs are found" even though everything was built.
-/// Ionide loads each referenced project at its FIRST TFM, so a net11.0 consumer
-/// got the net10.0 TargetPath of Bozzetto.Core/Bozzetto.Host/Bozzetto. These pin the
+/// Ionide loads each referenced project at its FIRST TFM, so a net10.0 consumer
+/// got the net9.0 TargetPath of Bozzetto.Core/Bozzetto.Host/Bozzetto. These pin the
 /// pure planner that puts every reference at the TFM MSBuild picked for it
 /// (the consumer's `NearestTargetFramework`), and the error that now says
 /// where it looked instead of claiming the project isn't built.
@@ -25,15 +25,15 @@ let private node (name: string) (tfm: string) (refs: (string * string) list) : R
     EvaluatedAt = tfm
     ReferencesAt = refs |> List.map (fun (n, t) -> proj n, t) |> Map.ofList }
 
-/// The reported shape, as Ionide hands it over: the net11.0 test project, and
-/// its multi-targeted references each loaded at net10.0 (their first TFM).
-/// The net10.0 build of Bozzetto itself says "Core at net10.0", which is the
+/// The reported shape, as Ionide hands it over: the net10.0 test project, and
+/// its multi-targeted references each loaded at net9.0 (their first TFM).
+/// The net9.0 build of Bozzetto itself says "Core at net9.0", which is the
 /// trap: that answer belongs to the wrong build.
 let private reportedShape =
-  [ node "Tests" "net11.0" [ "Core", "net11.0"; "Host", "net11.0"; "App", "net11.0" ]
-    node "Core" "net10.0" []
-    node "App" "net10.0" [ "Core", "net10.0"; "Host", "net10.0" ]
-    node "Host" "net10.0" [ "Core", "net10.0" ] ]
+  [ node "Tests" "net10.0" [ "Core", "net10.0"; "Host", "net10.0"; "App", "net10.0" ]
+    node "Core" "net9.0" []
+    node "App" "net9.0" [ "Core", "net9.0"; "Host", "net9.0" ]
+    node "Host" "net9.0" [ "Core", "net9.0" ] ]
 
 /// A tiny stand-in for MSBuild evaluating a project at a TFM: the project's
 /// references at that TFM, each resolved to the nearest TFM the reference
@@ -45,7 +45,7 @@ type private Universe = {
   Edges: Map<string, string list>
 }
 
-let private tfmOrder = [ "netstandard2.0"; "net8.0"; "net10.0"; "net11.0" ]
+let private tfmOrder = [ "netstandard2.0"; "net8.0"; "net9.0"; "net10.0" ]
 let private rank (tfm: string) = tfmOrder |> List.findIndex ((=) tfm)
 
 let private nearest (consumer: string) (supported: string list) =
@@ -102,39 +102,39 @@ let private genUniverse : Gen<Universe> =
 let tests =
   testList "ProjectLoading.ReferenceFrameworks" [
 
-    testCase "WHY: a net11.0 consumer's multi-targeted references are reloaded at net11.0, not left at their first TFM" <| fun _ ->
+    testCase "WHY: a net10.0 consumer's multi-targeted references are reloaded at net10.0, not left at their first TFM" <| fun _ ->
       RF.mismatches reportedShape
       |> List.sort
       |> Expect.equal
-           "Core, Host and App were loaded at net10.0 but Tests builds them at net11.0"
-           ([ proj "App", "net11.0"; proj "Core", "net11.0"; proj "Host", "net11.0" ] |> List.sort)
+           "Core, Host and App were loaded at net9.0 but Tests builds them at net10.0"
+           ([ proj "App", "net10.0"; proj "Core", "net10.0"; proj "Host", "net10.0" ] |> List.sort)
 
     testCase "a project loaded at the wrong TFM does not pass down its wrong-build references" <| fun _ ->
-      // App@net10.0 says "Core at net10.0". If the planner trusted that, Core
-      // would be pinned to net10.0 before App is even reloaded.
+      // App@net9.0 says "Core at net9.0". If the planner trusted that, Core
+      // would be pinned to net9.0 before App is even reloaded.
       let nodes =
-        [ node "Tests" "net11.0" [ "App", "net11.0" ]
-          node "App" "net10.0" [ "Core", "net10.0" ]
-          node "Core" "net10.0" [] ]
+        [ node "Tests" "net10.0" [ "App", "net10.0" ]
+          node "App" "net9.0" [ "Core", "net9.0" ]
+          node "Core" "net9.0" [] ]
       let wanted = RF.plan nodes
       wanted.TryFind (proj "Core")
       |> Expect.isNone "Core waits until App is at the TFM Tests builds it at"
       RF.mismatches nodes
-      |> Expect.equal "only App is reloaded this round" [ proj "App", "net11.0" ]
+      |> Expect.equal "only App is reloaded this round" [ proj "App", "net10.0" ]
 
     testCase "roots keep the TFM they were loaded at" <| fun _ ->
-      let nodes = [ node "Lib" "net10.0" [] ]
+      let nodes = [ node "Lib" "net9.0" [] ]
       RF.plan nodes
-      |> Expect.equal "a lone multi-targeted project is its own root" (Map.ofList [ proj "Lib", "net10.0" ])
+      |> Expect.equal "a lone multi-targeted project is its own root" (Map.ofList [ proj "Lib", "net9.0" ])
 
     testCase "settle reloads until the reported shape has no mismatches" <| fun _ ->
       let universe =
         { Supported =
             Map.ofList [
-              proj "Tests", [ "net11.0" ]
-              proj "App", [ "net10.0"; "net11.0" ]
-              proj "Host", [ "net10.0"; "net11.0" ]
-              proj "Core", [ "net10.0"; "net11.0" ] ]
+              proj "Tests", [ "net10.0" ]
+              proj "App", [ "net9.0"; "net10.0" ]
+              proj "Host", [ "net9.0"; "net10.0" ]
+              proj "Core", [ "net9.0"; "net10.0" ] ]
           Edges =
             Map.ofList [
               proj "Tests", [ proj "Core"; proj "Host"; proj "App" ]
@@ -147,8 +147,8 @@ let tests =
       |> List.map (fun n -> Path.GetFileNameWithoutExtension n.ProjectFile, n.EvaluatedAt)
       |> List.sort
       |> Expect.equal
-           "every project ends up at net11.0, the TFM dotnet build uses for a net11.0 consumer"
-           [ "App", "net11.0"; "Core", "net11.0"; "Host", "net11.0"; "Tests", "net11.0" ]
+           "every project ends up at net10.0, the TFM dotnet build uses for a net10.0 consumer"
+           [ "App", "net10.0"; "Core", "net10.0"; "Host", "net10.0"; "Tests", "net10.0" ]
 
     testCase "a reload that can't produce the TFM leaves the project alone and stops" <| fun _ ->
       let mutable calls = 0
@@ -191,13 +191,13 @@ let tests =
         Map.ofList [
           "_MSBuildProjectReferenceExistent",
           Set.ofList [
-            @"..\Core\Core.fsproj", Map.ofList [ "NearestTargetFramework", "net11.0"; "TargetFrameworks", "net10.0;net11.0" ]
-            "../Host/Host.fsproj", Map.ofList [ "NearestTargetFramework", "net10.0" ]
+            @"..\Core\Core.fsproj", Map.ofList [ "NearestTargetFramework", "net10.0"; "TargetFrameworks", "net9.0;net10.0" ]
+            "../Host/Host.fsproj", Map.ofList [ "NearestTargetFramework", "net9.0" ]
             "../Legacy/Legacy.fsproj", Map.ofList [ "TargetFrameworks", "net48" ] ] ]
       RF.referencesAtOf consumer items
       |> Expect.equal
            "backslash includes resolve on every OS, and a reference with no NearestTargetFramework is left alone"
-           (Map.ofList [ proj "Core", "net11.0"; proj "Host", "net10.0" ])
+           (Map.ofList [ proj "Core", "net10.0"; proj "Host", "net9.0" ])
 
     testCase "referencesAtOf with no project references is empty" <| fun _ ->
       RF.referencesAtOf (proj "Tests") Map.empty
@@ -209,24 +209,24 @@ let missingDllMessageTests =
   testList "ProjectLoading.describeMissingDlls" [
 
     testCase "WHY: the error names every path it checked and the TFM, so 'not built' and 'wrong folder' look different" <| fun _ ->
-      let debugPath = Path.Combine(root, "Core", "bin", "Debug", "net11.0", "Core.dll")
-      let releasePath = Path.Combine(root, "Core", "bin", "Release", "net11.0", "Core.dll")
+      let debugPath = Path.Combine(root, "Core", "bin", "Debug", "net10.0", "Core.dll")
+      let releasePath = Path.Combine(root, "Core", "bin", "Release", "net10.0", "Core.dll")
       let message =
         describeMissingDlls [
           { Dll = debugPath
             LookedIn = [ debugPath; releasePath ]
-            Source = MissingDllSource.ProjectOutput (proj "Core", "net11.0") } ]
-      for expected in [ debugPath; releasePath; "net11.0"; "Core.fsproj" ] do
+            Source = MissingDllSource.ProjectOutput (proj "Core", "net10.0") } ]
+      for expected in [ debugPath; releasePath; "net10.0"; "Core.fsproj" ] do
         message |> Expect.stringContains (sprintf "the message names %s" expected) expected
 
     testCase "the error no longer claims the project isn't built without saying for which TFM" <| fun _ ->
-      let dll = Path.Combine(root, "Core", "bin", "Debug", "net10.0", "Core.dll")
+      let dll = Path.Combine(root, "Core", "bin", "Debug", "net9.0", "Core.dll")
       let message =
         describeMissingDlls [
-          { Dll = dll; LookedIn = [ dll ]; Source = MissingDllSource.ProjectOutput (proj "Core", "net10.0") } ]
+          { Dll = dll; LookedIn = [ dll ]; Source = MissingDllSource.ProjectOutput (proj "Core", "net9.0") } ]
       message.Contains "isn't built yet (both Debug and Release"
       |> Expect.isFalse "the old blanket claim is gone"
-      message |> Expect.stringContains "the not-built hint is scoped to the TFM" "isn't built for net10.0 yet"
+      message |> Expect.stringContains "the not-built hint is scoped to the TFM" "isn't built for net9.0 yet"
 
     testProperty "PROPERTY: every checked path of every missing DLL appears in the message" <|
       Prop.forAll
@@ -234,8 +234,8 @@ let missingDllMessageTests =
           Gen.nonEmptyListOf (
             Gen.elements [ "A"; "B"; "C"; "D" ]
             |> Gen.map (fun name ->
-              let a = Path.Combine(root, name, "bin", "Debug", "net11.0", name + ".dll")
-              let b = Path.Combine(root, name, "bin", "Release", "net11.0", name + ".dll")
+              let a = Path.Combine(root, name, "bin", "Debug", "net10.0", name + ".dll")
+              let b = Path.Combine(root, name, "bin", "Release", "net10.0", name + ".dll")
               { Dll = a; LookedIn = [ a; b ]; Source = MissingDllSource.Reference }))))
         (fun missing ->
           let message = describeMissingDlls missing

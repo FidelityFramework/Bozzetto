@@ -57,9 +57,8 @@ sub-agent, put the loop in the brief. Sub-agents don't inherit it.
 Working on Bozzetto itself has two extra catches:
 - **Build before `create_session`.** A session loads compiled output. If it
   still fails with "Not all DLLs are found" after a build, treat it as a Bozzetto
-  bug and report the paths it names. Bozzetto.Core, Bozzetto.Host and Bozzetto
-  multi-target net10.0;net11.0, and 0.6.782 resolved those references wrong,
-  so a session on Bozzetto.Tests faulted even when everything was built.
+  bug and report the paths it names. Mixed-framework project references must resolve to the consumer's target,
+  not the first target listed in the referenced project.
 - **Self-hosting skew.** A worktree's `Bozzetto.Core` can be newer than the
   installed daemon (the daemon is whatever was last published). A
   session that loads Core can then refuse with a version mismatch, or a
@@ -79,7 +78,7 @@ The Visual Studio extension (`bozzetto-vs/`) is deprecated and no longer built, 
 ## Language & Stack
 
 - **Primary language**: F# (functional programming)
-- **Target framework**: `net11.0` (the shipped tool closure — Bozzetto and Bozzetto.Core — multi-targets `net10.0;net11.0`; the retained test/compatibility Bozzetto.Host project also multi-targets, but is not packaged with the daemon)
+- **Target framework**: `net10.0` throughout the hosted delivery; `global.json` selects the stable .NET 10 SDK. The retained compatibility Bozzetto.Host project is not packaged with the daemon.
 - **Solution format**: `.slnx` (not `.sln`)
 - **Web framework**: Falco (functional web framework for ASP.NET Core)
 - **HTML rendering**: Falco.Markup

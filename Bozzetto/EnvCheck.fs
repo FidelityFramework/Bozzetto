@@ -183,7 +183,7 @@ let private sameReleasePrefix (n: int) (a: string) (b: string) =
     compareNumList (padTo n (List.truncate n aRel)) (padTo n (List.truncate n bRel)) = 0
   | _ -> false
 
-/// global.json sdk.version must be a full version such as 11.0.100 (with an
+/// global.json sdk.version must be a full version such as 10.0.401 (with an
 /// optional prerelease suffix); "11" or "11.0" are not valid pins.
 let private isValidSdkPin (pin: string) =
   Text.RegularExpressions.Regex.IsMatch(pin, @"^\d+(\.\d+){2,}(-[0-9A-Za-z.]+)?$")
@@ -329,8 +329,8 @@ let sdkCheckFromInputs
     match isValidSdkPin req.Version with
     | false ->
       fail ".NET SDK"
-           (sprintf "global.json sdk.version '%s' is not a valid SDK version (expected e.g. 11.0.100)" req.Version)
-           (sprintf "Fix the sdk.version in global.json to a full version such as 11.0.100, or remove it to use the latest installed SDK (%s)."
+           (sprintf "global.json sdk.version '%s' is not a valid SDK version (expected e.g. 10.0.401)" req.Version)
+           (sprintf "Fix the sdk.version in global.json to a full version such as 10.0.401, or remove it to use the latest installed SDK (%s)."
                     (match installed |> newestSdkVersion with Some v -> v | None -> "none installed"))
     | true ->
       // Prerelease policy narrows which installed SDKs are even in play
@@ -386,7 +386,7 @@ let sdkCheckFromInputs
 /// `<TargetFrameworks>` ELEMENTS — never from the file's raw text. A text scan
 /// also matches framework monikers mentioned inside an XML COMMENT (e.g. the
 /// repo's own Directory.Build.props carries a comment explaining exactly why
-/// NOT to bump to net11.0 yet) and would misreport the comment's warning as
+/// an unrelated target) and would misreport the comment's warning as
 /// the project's real target. XDocument.Parse never surfaces comment text as
 /// element content, so this reads only what MSBuild itself would read.
 let targetFrameworkMajorsFromXml (xmlText: string) : int list =

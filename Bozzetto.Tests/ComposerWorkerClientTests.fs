@@ -11,6 +11,12 @@ open Bozzetto.ComposerIntegration
 
 type private FixtureMarker = class end
 
+type CancelWhenSerialized(source: CancellationTokenSource, observed: unit -> unit) =
+  member _.Value =
+    observed ()
+    source.Cancel()
+    "canceled-before-send"
+
 /// Runs only through the test executable's explicit child-fixture branch.
 let runFixture () =
   let held = ResizeArray<JsonElement>()
@@ -121,11 +127,114 @@ let private atCapacity operation = task {
     finally client.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
 }
 
+let private canceled (work: Task<JsonElement>) = task {
+  try
+    let! _ = bounded work
+    return false
+  with :? OperationCanceledException -> return true
+}
+
+let private cancellationPhase phase = task {
+  let entered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+  let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+  let beforeWrite _ session =
+    if session = "writer" then
+      entered.TrySetResult() |> ignore
+      release.Task :> Task
+    else Task.CompletedTask
+  let cache =
+    Environment.GetEnvironmentVariable "XDG_CACHE_HOME"
+    |> Option.ofObj
+    |> Option.filter (String.IsNullOrWhiteSpace >> not)
+    |> Option.defaultWith (fun () -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache"))
+  let dotnet =
+    Environment.GetEnvironmentVariable "DOTNET_HOST_PATH"
+    |> Option.ofObj
+    |> Option.filter (String.IsNullOrWhiteSpace >> not)
+    |> Option.defaultValue "dotnet"
+  let! client = ComposerWorkerClient.startWithBoundaries ignore beforeWrite
+                  [ "--composer-worker-client-fixture" ]
+                  { WorkerPath = typeof<FixtureMarker>.Assembly.Location; DotnetPath = dotnet
+                    EvidenceDirectory = Path.Combine(cache, "bozzetto", "worker-transport-tests", Guid.NewGuid().ToString("N")) }
+  try
+    let peer = client.RequestAsync("status", "peer", [], CancellationToken.None)
+    let! initial = client.RequestAsync("barrier", "", [], CancellationToken.None) |> bounded
+    initial.GetProperty("result").GetProperty("held").GetInt32()
+    |> Expect.equal "The unrelated peer is physically retained by the child." 1
+    let mutable serialized = 0
+    if phase = "writing" || phase = "sent" then
+      use cancellation = new CancellationTokenSource()
+      let victim = client.RequestAsync("build", (if phase = "writing" then "writer" else "victim"), [], cancellation.Token)
+      if phase = "writing" then
+        do! entered.Task |> bounded
+        cancellation.Cancel()
+        victim.IsCompleted |> Expect.isFalse "A possibly-written build waits for targeted cancellation acknowledgement."
+        release.TrySetResult() |> ignore
+      else
+        let! barrier = client.RequestAsync("barrier", "", [], CancellationToken.None) |> bounded
+        barrier.GetProperty("result").GetProperty("held").GetInt32()
+        |> Expect.equal "The victim was sent before cancellation." 2
+        cancellation.Cancel()
+      let! detached = canceled victim
+      detached |> Expect.isTrue "Targeted cancellation acknowledges the exact build."
+      let! response = client.RequestAsync("release", "", [], CancellationToken.None) |> bounded
+      response.GetProperty("result").GetProperty("released").GetInt32()
+      |> Expect.equal "Both possibly-written requests retain valid late-reply correlation." 2
+    else
+      let writer =
+        if phase = "queued" then Some(client.RequestAsync("status", "writer", [], CancellationToken.None)) else None
+      if writer.IsSome then do! entered.Task |> bounded
+      // The production bound is part of the discriminator: a healthy peer
+      // must survive more never-written cancellations than late-reply slots.
+      for _ in 1 .. 4097 do
+        use cancellation = new CancellationTokenSource()
+        if phase = "initial" then cancellation.Cancel()
+        let parameters =
+          if phase = "initial" || phase = "serialization" then
+            [ "probe", box (CancelWhenSerialized(cancellation, fun () -> serialized <- serialized + 1)) ]
+          else []
+        let beforeSerialization = serialized
+        let victim = client.RequestAsync("status", "victim", parameters, cancellation.Token)
+        if phase = "serialization" then
+          serialized |> Expect.equal "The public payload getter canceled during serialization." (beforeSerialization + 1)
+        if phase = "queued" then cancellation.Cancel()
+        let! detached = canceled victim
+        detached |> Expect.isTrue "Each unsent caller observes cancellation."
+      serialized |> Expect.equal "Only serialization-time cancellation executes the getter."
+        (if phase = "serialization" then 4097 else 0)
+      client.IsAlive |> Expect.isTrue "Never-written requests do not exhaust late-reply capacity."
+      peer.IsCompleted |> Expect.isFalse "The unrelated held request remains owned."
+      release.TrySetResult() |> ignore
+      let! response = client.RequestAsync("release", "", [], CancellationToken.None) |> bounded
+      response.GetProperty("result").GetProperty("released").GetInt32()
+      |> Expect.equal "No definitively unsent victim reached the child." (if writer.IsSome then 2 else 1)
+      match writer with
+      | Some work ->
+        let! reply = bounded work
+        reply.GetProperty("success").GetBoolean() |> Expect.isTrue "The writer survives queued cancellations."
+      | None -> ()
+    let! peerReply = peer |> bounded
+    peerReply.GetProperty("success").GetBoolean() |> Expect.isTrue "The independent peer completes successfully."
+    let! final = client.RequestAsync("barrier", "", [], CancellationToken.None) |> bounded
+    final.GetProperty("result").GetProperty("held").GetInt32() |> Expect.equal "All physical replies were drained." 0
+    client.IsAlive |> Expect.isTrue "The protocol remains usable after late replies."
+  finally
+    release.TrySetResult() |> ignore
+    client.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
+}
+
 [<Tests>]
 let tests =
-  [ "build"; "run" ]
-  |> List.map (fun operation ->
-    testCaseAsync (operation + " cancellation retains its slot at transport capacity") (async {
-      do! atCapacity operation |> Async.AwaitTask
-    }))
-  |> testList "Composer worker transport capacity"
+  let capacity =
+    [ "build"; "run" ]
+    |> List.map (fun operation ->
+      testCaseAsync (operation + " cancellation retains its slot at transport capacity") (async {
+        do! atCapacity operation |> Async.AwaitTask
+      }))
+  let phases =
+    [ "initial"; "serialization"; "queued"; "writing"; "sent" ]
+    |> List.map (fun phase ->
+      testCaseAsync (phase + " cancellation preserves transport ownership and peer progress") (async {
+        do! cancellationPhase phase |> Async.AwaitTask
+      }))
+  capacity @ phases |> testList "Composer worker transport capacity"

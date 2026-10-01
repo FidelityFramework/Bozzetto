@@ -49,7 +49,7 @@ module ComposerWorkerClient =
     mutable Abandonment: exn option
   }
 
-  type private Connection(worker: Process, wire: StreamWriter, errors: FileStream, beforeCancellationAdmission: unit -> unit) =
+  type private Connection(worker: Process, wire: StreamWriter, errors: FileStream, beforeCancellationAdmission: unit -> unit, beforeWrite: string -> string -> Task) =
     let gate = obj ()
     let evidenceGate = obj ()
     let stopGate = obj ()
@@ -258,7 +258,9 @@ module ComposerWorkerClient =
             if requiresRevocation && (request.Sent || request.Writing) then
               cancellationSlots.Add requestId |> ignore
             request.Abandonment <- Some error
-            abandoned.Add(requestId, request)
+            // The writer admission uses this same gate. If it has not begun,
+            // removal prevents any send, so no late reply can require a slot.
+            if request.Sent || request.Writing then abandoned.Add(requestId, request)
           removed, request.Sent, request.Writing, abandoned.Count > 4096)
         if removed then
           if requiresRevocation && sent then cancelTarget error |> ignore
@@ -279,6 +281,7 @@ module ComposerWorkerClient =
                 true
               else false)
             if admitted then
+              do! beforeWrite operation session
               record "request" line
               do! worker.StandardInput.WriteLineAsync(line.AsMemory(), sendDeadline.Token)
               do! worker.StandardInput.FlushAsync sendDeadline.Token
@@ -347,7 +350,7 @@ module ComposerWorkerClient =
         this.RequestAsync(operation, session, parameters, cancellation)
       member this.StopAsync() = this.StopAsync()
 
-  let internal startWithCancellationBoundary beforeCancellationAdmission (arguments: string list) (config: WorkerLaunch): Task<IComposerWorker> = task {
+  let internal startWithBoundaries beforeCancellationAdmission beforeWrite (arguments: string list) (config: WorkerLaunch): Task<IComposerWorker> = task {
     if not (Path.IsPathFullyQualified config.WorkerPath && File.Exists config.WorkerPath) then
       invalidArg "config" "Composer worker must be an existing absolute file path."
     if not (Path.IsPathFullyQualified config.EvidenceDirectory) then
@@ -375,7 +378,7 @@ module ComposerWorkerClient =
     try
       if not (worker.Start()) then raise (IOException "Composer worker process did not start.")
       started <- true
-      let client = new Connection(worker, wire, errors, beforeCancellationAdmission)
+      let client = new Connection(worker, wire, errors, beforeCancellationAdmission, beforeWrite)
       try
         let! _ = client.RequestAsync("hello", "", [], CancellationToken.None)
         if not client.IsAlive then raise (IOException "Composer worker exited during its handshake.")
@@ -395,5 +398,8 @@ module ComposerWorkerClient =
       errors.Dispose()
       return raise error
   }
+
+  let internal startWithCancellationBoundary beforeCancellationAdmission arguments config =
+    startWithBoundaries beforeCancellationAdmission (fun _ _ -> Task.CompletedTask) arguments config
 
   let start config = startWithCancellationBoundary ignore [] config

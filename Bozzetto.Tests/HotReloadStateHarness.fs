@@ -3,10 +3,8 @@
 /// The state outcome tests need the same thing the shape matrix in
 /// WebAppHotReloadVerificationTests does (spawn Bozzetto.Host, start an app in
 /// it, save a file, read what the SAME process serves), plus two things it
-/// doesn't have: the runtime is a parameter, because hot reload has to hold on
-/// net10.0 AND net11.0, and each run gets its own scratch copy of the fixture,
-/// so a net10 build and a net11 build never fight over one obj/ folder and a
-/// test's edits never land in the checked-in source.
+/// doesn't have: explicit runtime selection and a private fixture copy, so
+/// test edits never land in the checked-in source.
 module Bozzetto.Tests.HotReloadStateHarness
 
 open System
@@ -25,15 +23,13 @@ open Bozzetto.WorkerProtocol
 [<RequireQualifiedAccess>]
 type HostRuntime =
   | Net10
-  | Net11
 
 module HostRuntime =
-  let all = [ HostRuntime.Net10; HostRuntime.Net11 ]
+  let all = [ HostRuntime.Net10 ]
 
   let moniker =
     function
     | HostRuntime.Net10 -> "net10.0"
-    | HostRuntime.Net11 -> "net11.0"
 
 /// From this file's own folder, not AppContext.BaseDirectory: in a Bozzetto
 /// session the base directory is the host's, so walking up from it finds the
@@ -106,12 +102,11 @@ let private http =
 /// The SDK a real user on this runtime builds with. The isolated FSI host (the
 /// process the app actually runs in) is built with the PROJECT's SDK
 /// (FsiHostBuild), so a scratch project that just inherited the repo's
-/// global.json would run its "net10" app on the .NET 11 FSI host. A net10 run
+/// global.json must not choose an unrelated SDK. Each run
 /// pins the newest installed 10.x SDK so the whole stack, Bozzetto.Host, MSBuild,
-/// FCS and the FSI host, is net10. A net11 run keeps the repo's pin.
+/// FCS and the FSI host, uses the supported stable runtime.
 let private sdkPin (runtime: HostRuntime) : string option =
   match runtime with
-  | HostRuntime.Net11 -> None
   | HostRuntime.Net10 ->
     let psi = ProcessStartInfo("dotnet", "--list-sdks")
     psi.RedirectStandardOutput <- true
@@ -279,7 +274,7 @@ let startConfigured (runtime: HostRuntime) (configureRepo: string -> unit) : Tas
       | _ -> return false })
   // The app runs in the isolated FSI host, not in Bozzetto.Host, so THAT is the
   // runtime the run has to be on. Checked, not assumed: an inherited
-  // global.json once put a "net10" run's app on .NET 11 without a word.
+  // global.json must not silently select another runtime for the fixture.
   let wantRuntime = sprintf "Isolated FSI host started: .NET %s." ((HostRuntime.moniker runtime).Substring(3).Split('.').[0])
   logText ()
   |> Expect.stringContains (sprintf "the app has to run on %s" (HostRuntime.moniker runtime)) wantRuntime
