@@ -4,8 +4,7 @@ open System.IO
 open VerifyExpecto
 open VerifyTests
 
-[<EntryPoint>]
-let main argv =
+let runTests argv =
   // Restamp the README test-count badge + property count from the live source.
   let isUpdateBadge = argv |> Array.exists (fun a -> a = "--update-badge")
   match isUpdateBadge with
@@ -394,3 +393,10 @@ let main argv =
   // foreground threads alive after all tests complete, preventing clean shutdown.
   Environment.Exit result
   result
+
+[<EntryPoint>]
+let main argv =
+  match argv with
+  | [| "--composer-worker-client-fixture"; "--stdio" |] ->
+    Bozzetto.Tests.ComposerWorkerClientTests.runFixture ()
+  | _ -> runTests argv

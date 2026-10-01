@@ -18,6 +18,7 @@
         <Compile Include="../Bozzetto.Composer.Tests/NativeProviderTests.fs" Link="Composer/NativeProviderTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/LiveProviderTests.fs" Link="Composer/LiveProviderTests.fs" />
         <Compile Include="ComposerSupervisorTests.fs" />
+        <Compile Include="ComposerWorkerClientTests.fs" />
         <Compile Include="TestCountBadge.fs" />
         <Compile Include="StableIdentityProbeFixture.fs" />
         <Compile Include="StableIdentityEvalTests.fs" />

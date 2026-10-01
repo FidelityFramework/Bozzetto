@@ -17,6 +17,12 @@ type ComposerRequest = {
   Parameters: (string * obj) list
 }
 
+type private StatusObservation = {
+  Activity: int64
+  Active: int
+  Last: uint64 option
+}
+
 module private ComposerJson =
   let options = JsonSerializerOptions(PropertyNamingPolicy = JsonNamingPolicy.CamelCase)
   let value data = JsonSerializer.SerializeToElement(data, options)
@@ -39,8 +45,13 @@ module private ComposerJson =
     if number.ValueKind <> JsonValueKind.Number then -1L
     else match number.TryGetInt64() with true, value -> value | _ -> -1L
   let sameState left right =
+    let visibleResult response =
+      (field "result" response).EnumerateObject()
+      |> Seq.filter (fun property -> property.Name <> "observation")
+      |> Seq.map (fun property -> property.Name, property.Value.GetRawText())
+      |> Map.ofSeq
     (field "authority" left).GetRawText() = (field "authority" right).GetRawText()
-    && (field "result" left).GetRawText() = (field "result" right).GetRawText()
+    && visibleResult left = visibleResult right
   let unknownIdentity (request: ComposerRequest) =
     value {| host = request.Host; session = request.Session; epoch = request.Epoch
              provider = "clef-composer"; generation = 0L |}
@@ -81,6 +92,7 @@ type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool
   let lifecycle = new SemaphoreSlim(1, 1)
   let changedEvent = Event<unit>()
   let snapshots = Dictionary<string, JsonElement>()
+  let observations = Dictionary<string, StatusObservation>()
   let monitors = HashSet<string * string * string>()
   let mutable worker: IComposerWorker option = None
   let mutable retiring = false
@@ -118,7 +130,10 @@ type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool
         if isOwner connection && connection.IsAlive && not stopped && not retiring && session <> ""
            && ComposerJson.text "host" identity = ComposerJson.text "host" expected
            && ComposerJson.text "epoch" identity = ComposerJson.text "epoch" expected && currentEnough then
-          snapshots[session] <- snapshot)
+          snapshots[session] <- snapshot
+          true
+        else false)
+    else false
 
   let uncertain (connection: IComposerWorker) session reason =
     lock gate (fun () ->
@@ -132,6 +147,20 @@ type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool
       match snapshots.TryGetValue session with
       | true, snapshot -> Some snapshot
       | _ -> None)
+
+  let observation session =
+    match observations.TryGetValue session with
+    | true, state -> state
+    | _ -> { Activity = 0L; Active = 0; Last = None }
+
+  // This fence orders the daemon's observations, not compiler work. In-flight
+  // operations leave the projection uncertain until their completion is read.
+  let activity connection session delta =
+    if session <> "" then
+      lock gate (fun () ->
+        let previous = observation session
+        observations[session] <- { previous with Activity = previous.Activity + 1L; Active = previous.Active + delta }
+        uncertain connection session "Session activity requires a new status observation.")
 
   let stale response =
     let identity = ComposerJson.field "authority" response
@@ -180,13 +209,46 @@ type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool
   }
 
   let refresh (connection: IComposerWorker) session cancellation = task {
+    let started = lock gate (fun () -> observation session)
+    let applicable () =
+      let current = observation session
+      isOwner connection && connection.IsAlive && not stopped && not retiring
+      && started.Activity = current.Activity
+    let failed reason =
+      lock gate (fun () ->
+        let current = observation session
+        if applicable () && current.Last = started.Last then
+          uncertain connection session reason
+          observations[session] <- { current with Activity = current.Activity + 1L })
+    let superseded snapshot =
+      ComposerJson.failure (ComposerJson.field "authority" snapshot) "superseded"
+        "Session activity or a newer provider observation superseded this status read."
     try
       let! snapshot = connection.RequestAsync("status", session, [], cancellation)
-      if ComposerJson.success snapshot then remember connection (ComposerJson.projection true "" snapshot)
-      else uncertain connection session "The worker refused its session status."
-      return snapshot
+      if ComposerJson.success snapshot then
+        let serial = ComposerJson.field "observation" (ComposerJson.field "result" snapshot)
+        let parsed = if serial.ValueKind = JsonValueKind.Number then serial.TryGetUInt64() else false, 0UL
+        if not (fst parsed) then
+          failed "The worker did not provide a valid status observation sequence."
+        let observed = lock gate (fun () ->
+          let current = observation session
+          match parsed with
+          | true, value when applicable () && (current.Last |> Option.forall (fun previous -> value > previous))
+                             && ComposerJson.text "session" (ComposerJson.field "authority" snapshot) = session ->
+            // A stable observation of admitted work can report progress, but
+            // cannot claim a fresh artifact until the mutation has completed.
+            let projected = ComposerJson.projection (current.Active = 0) "Session activity is still in progress." snapshot
+            if remember connection projected then
+              observations[session] <- { current with Last = Some value }
+              Some projected
+            else None
+          | _ -> None)
+        return observed |> Option.defaultWith (fun () -> superseded snapshot)
+      else
+        failed "The worker refused its session status."
+        return snapshot
     with error ->
-      uncertain connection session error.Message
+      failed error.Message
       return raise error
   }
 
@@ -306,7 +368,16 @@ type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool
             cancellation.ThrowIfCancellationRequested()
             let operationCancellation = if request.Operation = "open" then CancellationToken.None else cancellation
             openDispatched <- request.Operation = "open"
-            let! response = connection.RequestAsync(request.Operation, request.Session, parameters, operationCancellation)
+            let! response = task {
+              if request.Operation = "status" then
+                return! refresh connection request.Session operationCancellation
+              else
+                activity connection request.Session 1
+                try
+                  return! connection.RequestAsync(request.Operation, request.Session, parameters, operationCancellation)
+                finally
+                  activity connection request.Session -1
+            }
             let session = ComposerJson.text "session" (ComposerJson.field "authority" response)
             resolvedSession <- session
             let active = lock gate (fun () -> isOwner connection && not retiring && not stopped && connection.IsAlive)
@@ -314,18 +385,15 @@ type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool
               return ComposerJson.failure (ComposerJson.field "authority" response) "closed" "The response belongs to a retired worker."
             else
               if session <> "" then
-                if request.Operation = "status" then
-                  if ComposerJson.success response then remember connection (ComposerJson.projection true "" response)
-                  else uncertain connection session "The worker refused its session status."
-                else
+                if request.Operation <> "status" then
                   if request.Operation = "open" && ComposerJson.success response then
-                    remember connection (ComposerJson.projection false "Initial status has not yet been read." response)
+                    remember connection (ComposerJson.projection false "Initial status has not yet been read." response) |> ignore
                   elif ComposerJson.success response then
                     cached session |> Option.iter (fun previous ->
                       previous
                       |> ComposerJson.withAuthority (ComposerJson.field "authority" response)
                       |> ComposerJson.projection false "Session status requires refresh."
-                      |> remember connection)
+                      |> remember connection |> ignore)
                   try
                     let! _ = refresh connection session CancellationToken.None
                     ()

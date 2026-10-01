@@ -1,29 +1,105 @@
-# Incremental provider checkpoint — 2026-10-01
+# Cross-project incremental integration — 2026-10-01
 
-This checkout implements a first provider integration with
-`Fidelity.FSharp.Incremental.Hosting` **0.1.0-preview.5**. The provider owns one
-functional `AsyncMailbox` per explicitly opened Composer session. This is a
-source implementation checkpoint; full consumer build, default TrustSignal and
-native provider acceptance remain pending below. It does not describe an
-updated installed daemon.
+This is the primary audit entry for the integration across
+**Fidelity.FSharp.Incremental, Clef/CCS, Fidelity.PSG, Composer and Bozzetto**.
+The auditor's remit covers these repositories and their ownership boundaries,
+including Alex as a reader of the changed PSG contract. The retained
+filename preserves links to the original provider checkpoint; detailed compiler
+contracts remain in the linked sibling documents. This records source integration
+and separately identified gate results, not an installed-daemon promotion.
+
+The common library is `Fidelity.FSharp.Incremental.Hosting`
+**0.1.0-preview.6**. Final validation of repairs C1–C5, native execution and
+the exact final compiler/provider closure are still being completed. The audit
+handoff is ready only after those final receipts and pins are recorded here.
+The repaired Bozzetto default and entire Composer integration tiers are now
+`Trusted` against the frozen `compiler-preview6-c1-c4` closure. That closure
+predates the Baker repair and PSG schema 12; final aligned-closure validation
+remains separate.
+
+## Cross-project scope and identities
+
+| Repository | Recorded integration identity | Ownership |
+| --- | --- | --- |
+| [Fidelity.FSharp.Incremental](../../Fidelity.FSharp.Incremental/docs/Consumer_Integration_Checkpoint_2026-10-01.md) | Active preview.6 implementation `3b86e2dac96ad55cb965341bfc04395061d09c46`. Earlier preview.5 implementation `87c77d9` was independently assessed at `deabc97`; `e7089b7` records that earlier documentation checkpoint. | Pure dependency/eligibility transitions, exact admitted-operation observation, owned evaluator/cancellation-callback lifetime and physical close. No compiler semantics, proof or launch authority. |
+| [Clef / CCS](../../clef/docs/Incremental_Project_Workspace_2026-10-01.md) | `7927b3f` | Immutable captured project inputs, shared whole-project checking, process-global checker-state ownership through projection, Baker semantics and settled PSG publication. Each reserved generation still gets fresh checking. |
+| [Fidelity.PSG](../../Fidelity.PSG/AGENTS.md) | Schema 12 source change; final source pin pending. | Immutable typed correspondence for bounded sequence-pull composition. No source inference, proof derivation or scheduling. Schema/integrity tests pass 103/103. |
+| [Composer](../../Composer/docs/incremental-compilation/2026-10-01-workspace-adoption.md) | Integration base `0c9dc71`; reservation and process-cleanup repairs and revalidation in progress. | Source/proof/target/input receipts, compiler reservation, native artifacts and reuse, actual process launch, process/output/lease cleanup; editor and CLI consumers join CCS ownership. |
+| Bozzetto | Provider base `a64010a8` plus adapter reporting of retained late CCS diagnostics. The latter and lock/checkpoint updates are now included in peer commit `62285f3e`; final validated closure pin remains pending. | Explicit session and wire authority, same-ticket shared demand, caller detach, reservation acknowledgement, compiler replacement and worker supervision. One mailbox per provider session; separate opens stay separate. |
+
+These identities distinguish implementation, documentation and validation inputs.
+Before final audit, the coordinating runner must record remaining source diffs,
+final commit identities and the actual compiler/provider binary manifests.
+Independent audit is evidence for an identified revision and scope, not a frozen
+library contract. All affected repositories remain within the auditor's remit. If
+integration exposes a defect in the shared contract, repair it in
+Fidelity.FSharp.Incremental and validate its consumers against the resulting
+version; do not preserve a weaker contract merely because it was audited before.
+
+The coordinating runner owns dependency alignment across Clef's package reference,
+Composer's compiler/distribution closure and Bozzetto's central package version,
+vendored packages and lock files. Any changed shared package requires a new
+immutable version, matching hashes and renewed library and consumer receipts.
+
+## Auditor priorities
+
+Read each repository's owner instructions and inspect these boundaries across
+callers and owners, using the concrete tests in the audit map below:
+
+1. **Reserve before writing:** require acknowledgement of the exact reservation
+   before source/editor mutation. Withdrawal must not wait behind evaluator
+   saturation, and a notification or status refresh is not that acknowledgement.
+2. **Actual launch:** follow eligibility and input/artifact revalidation through
+   the owning reservation gate to `Process.Start`. Check both reservation-first
+   and launch-first orderings; queued invocation alone grants no launch authority.
+3. **Shared checker state:** prove all relevant CCS paths share process ownership
+   through checking and projection, restore configuration on failure, and preserve
+   a second demand when the first consumer withdraws. This is not cross-process
+   or cross-session sharing.
+4. **Proof and result authority:** require the matching library result token and
+   eligibility plus the compiler's current source, proof and artifact receipts.
+   Baker/Publication/Alex responsibilities remain unchanged; stale-proof refusal
+   must actually execute before it can count as a passing assertion.
+5. **Immutable capture:** inspect the exact metadata/source/platform bytes used
+   by checking, normalized override conflicts and same-generation re-observation.
+   A later disk read must not silently change an already captured generation.
+6. **Physical drain:** hold capture, checking, cancellation callbacks, process
+   exit, stdout and stderr independently. Close must retain every owner and lease
+   until real completion, while preserving failures from withdrawn work and
+   distinguishing checker diagnostics from cleanup failures.
+
+Report counterexamples and failures at the owning source contract. Record actual
+executed tests, evidence and closure identities; do not infer full acceptance
+from the library audit, focused passes, test presence or a baseline comparison.
 
 ## Dependency identity
 
 The library implementation commit is
-`87c77d91ab24c8e4d065e4e726f8c06abc3180c4`. The central package pin, explicit
-Composer distribution checks, and retained packages under
+`3b86e2dac96ad55cb965341bfc04395061d09c46`. Both preview.6 package nuspecs record
+that full source commit. Clef, Composer and Bozzetto carry identical archives;
+the central Bozzetto package pin and Clef reference select preview.6. Explicit
+Composer distribution checks and retained packages under
 [`vendor/Fidelity.FSharp.Incremental`](../vendor/Fidelity.FSharp.Incremental/README.md)
 identify the dependency. Exact archives are listed in
 [`SHA256SUMS`](../vendor/Fidelity.FSharp.Incremental/SHA256SUMS):
 
-- Core: `7f27688e98c2cee965b6ebf5f20073fb9d17b3f9d89e12511daf5e5a4eca3a88`.
-- Hosting: `fb63ca9b638dde967958c032cce13e685dd78baf6b1e67766a764b00afa8e5e3`.
+- Core: `cc017440e0fadd177b3ba8cc2ab0f809aa754728b52f45310d998271af9562f9`.
+- Hosting: `1afaa709250d578b14bea8fa15a59ed8a227f86f003e3653017106db775522e5`.
 
-Preview.5 adds `AsyncMailbox.watch`: a published snapshot and its next change
+Preview.5 introduced `AsyncMailbox.watch`: a published snapshot and its next change
 notification are captured together. Observers cannot lose a change between
 reading state and subscribing. A notification itself grants no result or effect
 authority. The provider checks the matching result token and `isEligible` before
 publishing successful producer metadata.
+
+Preview.6 adds the shared `ClrInterop.fromUncancelledTask` boundary needed by
+the Lattice proof owner. With an uncancelled owner workflow, its cold factory
+joins the exact returned task, preserves the original fault and permits cleanup
+after task cancellation. The task still owns its children and physical cleanup;
+cancellable observers remain separate. All **108 library tests passed**,
+including six new bridge controls. Integration required this shared boundary, so
+the package was revised and validated again; the earlier independent audit still
+applies to its recorded revision.
 
 ## Implemented provider contract
 
@@ -39,6 +115,13 @@ publishing successful producer metadata.
   A pre-canceled request never enters the compiler or revokes the generation.
   Releasing the last pending demand abandons that ticket; retry requires a new
   reservation. Explicit `cancel` continues to revoke the generation.
+- A refused run reconciles the compiler's typed current-artifact state outside
+  the provider gate, under the invocation fence. If the matching artifact was
+  withdrawn, the provider clears current metadata and its retained build ticket,
+  committing library scope withdrawal before returning the refusal. A retained
+  successful observation rechecks eligibility. An ordinary refusal with compiler
+  authority still intact preserves that authority; late failures cannot withdraw
+  a newer reservation.
 - Reservation first withdraws provider authority and admits library scope
   invalidation. Its receipt waits for committed invalidation and the synchronous
   Composer `Reserve` call. Compiler reservation is independent of evaluator slot
@@ -84,10 +167,14 @@ External transcripts are under
 `boz-run.messages.json`. `NativeProviderTests.fs`, including the new real wire
 sharing case, type-checked in SageFS using the actual Integration module extracted
 from the test harness. Native test bodies were not executed by that syntax check.
+The later shared-interop exact-fault probe passed; its separate cancellation
+probe timed out and is not passing evidence. The task-owned bare session was
+then stopped; the SageFS daemon was preserved. Compiled bridge and editor receipts
+below supply the subsequent execution evidence.
 
-Pending acceptance: rebuild the reviewed Composer closure; build the provider
-and Bozzetto tests; run the unfiltered default TrustSignal tier; run the dedicated
-native provider tier against that rebuilt worker. Installed daemon/MCP/browser
+The earlier Bozzetto Release build and unfiltered default receipts are summarized
+below. Final source-built consumer and native/provider gates are still being
+completed. Installed daemon/MCP/browser
 acceptance must identify the deployed closure separately.
 
 Exact reconciliation after a lost wire reply remains a follow-up. The mailbox
@@ -98,17 +185,37 @@ refresh does not prove which lost request committed. No durable actor inbox,
 cross-session producer sharing, persistent actor lifecycle or Fable runtime is
 implemented by this provider change.
 
+## Response to the consumer audit
+
+The [original C1–C4 assessment](Incremental_Consumer_Integration_Auditor_Assessment_2026-10-01.md)
+is retained unchanged. Its findings and the subsequent native C5 failure prompted
+the following controlled regressions and repairs. These receipts do not yet close the cross-project audit;
+final build, complete consumer suites, native/provider execution and exact pins
+remain pending. Paths below are relative to the external evidence workspace
+`/home/hhh/.codex/work/incremental-adoption-2026-10-01/`.
+
+| Finding and owner | Repair and discriminating evidence | Current limit |
+| --- | --- | --- |
+| **C1 — Composer reservation pairing** | `concurrent reservations keep the final native and checker pair buildable` in [ProjectSessionTests.fs](../../Composer/tests/Alex.Tests/ProjectSessionTests.fs) reproduced **one failure, zero passes**: `Project checking refused: InvalidRevision` (`validation/reservation-red.log` / `.trx`). Native and CCS immediate admissions now share an ordering boundary; notification and acknowledgement waits remain outside it. | The repaired full suite on preview.5 passed **380/381**, including this regression, with the same known callable-`Result` transport failure (`validation/composer-full-repaired.log` / `.trx`). That run predates the final preview.6 pin; it is not a preview.6 full-suite receipt. |
+| **C2 — Bozzetto transport withdrawal capacity** | A controlled Sage transport probe with a shell child reproduced slot theft and healthy-worker termination. Atomic reservation/transfer of the abandoned request's slot preserves the 256-request bound. The green probe observed capacity refusal, exact cancellation completion and a surviving worker (`sage/boz-c2-red.messages.json`, `boz-c2-green.messages.json`). | Both real .NET child-process build/run cases in [ComposerWorkerClientTests.fs](../Bozzetto.Tests/ComposerWorkerClientTests.fs) **passed in the unfiltered default gate** (`validation/bozzetto-default-c5.log`). They hold control admission, refuse an ordinary caller, complete the other 255 requests and accept the abandoned late reply. |
+| **C3 — Bozzetto same-generation status ordering** | Four controlled Supervisor regressions failed before repair (`sage/c3-red-result.messages.json`). Repair combines provider capture order with daemon activity fencing; malformed sequences invalidate freshness and observation counters do not emit visible-state changes. Native validation then exposed overly strict rejection of stable active reads. Those reads now report actual busy progress with `statusFresh=false` and `current=null`; reads crossing activity boundaries remain refused. | Seven Supervisor and three provider/wire regressions **passed in the unfiltered default gate** (`validation/bozzetto-default-c5.log`). The positive progress test retains both authority-denial assertions. Live MCP/browser cancellation progress then passed in the **40/40 entire Composer tier** (`validation/bozzetto-native-c5.log`), on the intermediate compiler closure. Earlier Sage emission errors and its zero-test command remain historical failed attempts. |
+| **C4 — Composer editor solver lifetime** | Shared process collection joins exit and retained input/output tasks; Lattice retains proof ownership across invalidation and joins it during retirement. Four shared process controls passed (`validation/process-cleanup-r2.log` / `.trx`). The earlier editor run exposed retained-fault wrapping (`validation/editor-proof-lifetime-r2.log`); preview.6's shared CLR bridge repaired that boundary. | **Actual cvc5 controls and all four lifecycle checks now pass on preview.6**, including retained fault identity and actual solver input ownership (`validation/editor-proof-lifetime-preview6.log`; [LifetimeChecks.fs](../../Composer/tests/CCS.Editor.Tests/LifetimeChecks.fs)). Complete editor/RPC and final Composer gates remain separate requirements. |
+| **C5 — Bozzetto retained artifact after compiler withdrawal** | The real native test refused a run after an unreserved source edit, but provider status still held `current` (`validation/bozzetto-native-preview6.log`). Reconciliation now reads typed backend authority outside the provider gate, withdraws only matching metadata/tickets and commits library invalidation before the refusal. Retained successful replies also recheck eligibility. | Four regressions in [ProviderSessionTests.fs](../Bozzetto.Composer.Tests/ProviderSessionTests.fs) cover withdrawal, identical refusal text with authority retained, a newer reservation and independent observer cancellation. All **29 provider tests passed in fresh Sage** (`sage/provider-authority-suite.messages.json`), then in the unfiltered default gate. The **unchanged native oracle passed** in the 40/40 entire Composer tier (`validation/bozzetto-native-c5.log`), on the intermediate closure. |
+
 ## Bounded audit map
 
 Start with the sibling [CCS workspace contract](../../clef/docs/Incremental_Project_Workspace_2026-10-01.md)
 and [Composer adoption contract](../../Composer/docs/incremental-compilation/2026-10-01-workspace-adoption.md).
 The independent [preview.5 observation assessment at deabc97](https://forge.spkez.dev/FidelityFramework/Fidelity.FSharp.Incremental/src/commit/deabc979ccc21c975b47e2e16d8722085b71d82e/docs/Consumer_Observation_Auditor_Assessment_2026-10-01.md)
-accepts library implementation `87c77d9`; its 102 repository tests and three
-additional observation controls do not substitute for consumer acceptance.
+records acceptance of library implementation `87c77d9` within that audit's scope;
+its 102 repository tests and three additional observation controls do not
+substitute for consumer acceptance or preclude a later shared-contract repair.
 
 These are source locations and discriminating assertions, not new passing-run
 claims. CCS tests use actual checking with controlled barriers; provider unit
 tests inject a backend. Rows marked native execute real processes or artifacts.
+Line numbers identify the inspected integration source; use the exact test names
+if the ongoing cleanup repair moves those locations.
 
 | Boundary | Test and location | Evidence to inspect |
 | --- | --- | --- |
@@ -118,19 +225,31 @@ tests inject a backend. Rows marked native execute real processes or artifacts.
 | Actual launch before reservation | Composer `a real launch that wins reservation remains owned and its old generation is withdrawn` ([IncrementalBuildTests.fs:355](../../Composer/tests/Alex.Tests/IncrementalBuildTests.fs)). | Native `Process.Start` occurs once before the barrier. Later reservation withdraws current authority without pretending the already launched process never ran. |
 | Physical capture and callback joins | CCS `Owned capture shares demand permits reservation and remains joined by close` ([ProjectWorkspaceTests.fs:99](../../clef/tests/Clef.Compiler.Service.Tests/ProjectWorkspaceTests.fs)); provider `close retains ownership after evaluator return until cancellation callback exits` ([ProviderSessionTests.fs:456](../Bozzetto.Composer.Tests/ProviderSessionTests.fs)); Composer `close joins a caller cancellation callback after the operation body has completed` ([IncrementalBuildTests.fs:247](../../Composer/tests/Alex.Tests/IncrementalBuildTests.fs)). | Held capture and callbacks keep close incomplete. Composer also retains the directory lease; provider prevents backend disposal. Callback barriers alone are not native execution evidence. |
 | Actual process and output joins | Composer `canceling a process joins its actual exit and both output streams` and `canceled process collection retains each independently held output cleanup` ([IncrementalBuildTests.fs:185,209](../../Composer/tests/Alex.Tests/IncrementalBuildTests.fs)). | Real child processes exit, stdout and stderr settle independently, and cancellation cannot detach either cleanup. |
-| Stale input/proof refusal | `project receipts reject changed manifests and checker text even after disk restoration` ([ProjectSessionTests.fs:48](../../Composer/tests/Alex.Tests/ProjectSessionTests.fs)); `Result branch authority rebuilds its whole scope and rejects another revisions proof receipt` ([IncrementalBuildTests.fs:518](../../Composer/tests/Alex.Tests/IncrementalBuildTests.fs)). | Actual consumed-text receipts are checked; the native branch case produces fresh proofs/artifacts and explicitly refuses a prior revision's proof. |
+| Stale input/proof refusal | `project receipts reject changed manifests and checker text even after disk restoration` ([ProjectSessionTests.fs:48](../../Composer/tests/Alex.Tests/ProjectSessionTests.fs)); `Result branch authority rebuilds its whole scope and rejects another revisions proof receipt` ([IncrementalBuildTests.fs:518](../../Composer/tests/Alex.Tests/IncrementalBuildTests.fs)). | The receipt test checks actual consumed text. The native case defines fresh-proof and stale-proof assertions, but its current recorded run stops at the initial build; the later assertions remain unexercised. |
 | Same native receipt and retained object | `two wire clients of one reservation share the same native build receipt` and `native builds retain real objects and execution gates reject changed inputs and artifacts` ([NativeProviderTests.fs:379,405](../Bozzetto.Composer.Tests/NativeProviderTests.fs)). | Real worker replies share artifact path/hash and object manifest; replay does not rebuild. Source edits preserve the unaffected object's actual path/hash and change native output. Deterministic overlap is established separately by provider unit barriers. |
 
-Final results for the rebuilt consumer closure remain pending the coordinating
-validation run; attach exact logs/TRX or TrustSignal rows rather than inferring
-success from this map.
+## Cross-project gates and current evidence
 
-| Final gate | Current-closure receipt |
+Evidence is retained under
+`/home/hhh/.codex/work/incremental-adoption-2026-10-01/validation/`.
+The table preserves failures and separates the first Composer run from its
+subsequent process-cleanup repair. Final native receipts and closure pins remain
+pending the coordinating run.
+
+| Gate | Recorded receipt and remaining limit |
 | --- | --- |
-| Clef unfiltered compiler-service suite and baseline comparison | Pending |
-| Composer native, project/editor and RPC checks | Pending |
-| Bozzetto unfiltered default tier | Pending |
-| Entire `--integration-composer` tier, including owned live daemon | Pending |
+| Library preview.5 independent audit | **102/102 passed**, plus three additional observation controls, recorded at `deabc97` for implementation `87c77d9`. This revision-scoped evidence does not certify the consumers or freeze the library contract. |
+| Library preview.6 full suite at `3b86e2d` | **108/108 passed**, zero failed/skipped, including six new CLR bridge controls (`incremental-preview6.log` / `.trx`). Package identities are recorded above; this is subsequent author validation, not the earlier independent audit. |
+| Clef focused and unfiltered compiler-service suites at `7927b3f`, preview.5 | **22/22 focused passed**. Full: **2,125 passed / 2,224 total, 99 failed, zero skipped** (`clef-full-final.log` / `.trx`). `clef-exact-comparison-final.json` preserves all baseline cases and the same 99 failures; all fifteen additions passed, with no missing cases, new failures or recoveries. Full compiler acceptance remains red; the final preview.6 receipt is pending. |
+| First Composer full comparison at integration base `0c9dc71` | **377 passed / 378 total, one failed, zero skipped** (`composer-full.log` / `.trx`). `composer-exact-comparison.json` preserves all 369 baseline cases plus nine passing additions, with no missing cases, new failures or recoveries. The existing callable-`Result` transport case fails at its initial native build, so its later stale-proof assertions remain unexercised. This run predates the reservation and cleanup repairs. |
+| Repaired Composer full suite, preview.5 | **380 passed / 381 total, one known failure, zero skipped** (`composer-full-repaired.log` / `.trx`), including the repaired C1 reservation regression. This predates the last package pin; no preview.6 full-suite result is implied. |
+| First Bozzetto unfiltered default tier, preview.5 before C2/C3 | **9,772 passed, four ignored, zero failed/errored; 9,776 registered and accounted for; Trusted** (`bozzetto-default.log`, `bozzetto-trust.jsonl`). The comparison baseline is the peer's FSI-retirement checkpoint: **9,769 passed plus four ignores**, not the older 9,802 count. See the [host transition validation](Bozzetto_Clefx_Host_Transition_2026-10-01.md#validation). |
+| Editor proof/lifetime checks, preview.6 | **Actual cvc5 controls and all four added lifecycle checks passed** (`editor-proof-lifetime-preview6.log`). This includes both cases that the earlier retained-fault failure prevented from passing. |
+| Complete editor default run, preview.6 | Stopped after **18 passing groups** at `closureEnvironmentChecks`: fixture diagnostic `CCS8011` reports unobservable ranges for `total` and the `+` result (`editor-default-preview6.log`). Later checks did not execute. No editor baseline comparison has established whether this failure predates the integration. The full editor gate remains red. |
+| Bozzetto default after C2/C3/C5 repairs, preview.6 | **9,788 passed, four ignored, zero failed/errored; 9,792 registered and accounted for; Trusted** (`bozzetto-default-c5.log`). Includes the real .NET transport fixture, status ordering/progress and retained-authority regressions. This records the current provider build; the final compiler closure after Baker repair still requires alignment and revalidation. |
+| Composer final preview.6 process/native and RPC checks | Pending after an explicit restore: an earlier no-restore build retained preview.5 assets. The final binary closure must match preview.6 hashes; aligned source pins alone do not establish that result. Preserve the earlier full-suite receipts and separate editor results above. |
+| First entire Bozzetto `--integration-composer` tier, preview.6 | **34 passed, one failed, one errored; 36 registered/executed; TestsFailed** (`bozzetto-native-preview6.log`). The native failure exposed C5; the owned live case exposed overly strict active-status refusal under C3. |
+| Entire Bozzetto tier after C3/C5 repairs | **40/40 passed, zero ignored/failed/errored; Trusted** (`bozzetto-native-c5.log`). Includes unchanged stale-current, real object/receipt reuse and live MCP/browser cancellation-progress assertions. The provider was built against frozen `compiler-preview6-c1-c4`, before the Baker repair and PSG schema 12. This is an intermediate receipt; the final aligned closure still requires a rerun. |
 
 ## Validation and promotion recipe
 

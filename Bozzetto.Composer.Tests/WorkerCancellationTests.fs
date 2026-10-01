@@ -115,6 +115,28 @@ let private canceledOperation runOperation () = task {
 
 [<Tests>]
 let tests = testList "Composer worker request lifetime" [
+  taskCase "wire status preserves provider observation order within one compiler generation" <| fun () -> task {
+    let root = directory ()
+    let projectDirectory = Path.Combine(root, "project")
+    Directory.CreateDirectory projectDirectory |> ignore
+    let project = Path.Combine(projectDirectory, "status.fidproj")
+    File.WriteAllText(project, "in-memory backend fixture")
+    let backend = new Backend(false)
+    use worker = new Worker<int64>(Path.Combine(root, "sessions"), (fun _ _ -> backend), describeCompiler)
+    let! identity = hello worker
+    let! opened = worker.Handle(request "open" "open" (Some identity) [ "project", box project ])
+    let identity = property "authority" opened
+    let first = (opened |> success |> property "observation").GetUInt64()
+    let! before = worker.Handle(request "before" "status" (Some identity) [])
+    let! after = worker.Handle(request "after" "status" (Some identity) [])
+    (property "authority" before).GetRawText()
+    |> Expect.equal "observation reads do not mint compiler authority" ((property "authority" after).GetRawText())
+    [ first; (before |> success |> property "observation").GetUInt64(); (after |> success |> property "observation").GetUInt64() ]
+    |> Expect.equal "wire values retain actual capture ordering" [ 1UL; 2UL; 3UL ]
+    let! retired = worker.RetireAsync()
+    retired |> Result.isOk |> Expect.isTrue "status fixture closes its owner"
+  }
+
   taskCase "private cancellation validates authority and targets only its exact request" <| fun () -> task {
     use target = new CancellationTokenSource()
     use unrelated = new CancellationTokenSource()

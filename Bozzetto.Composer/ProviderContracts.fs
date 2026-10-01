@@ -58,6 +58,9 @@ type Reply<'a> = {
 }
 
 type SessionSnapshot = {
+  /// Order of actual status captures under the provider gate, scoped by the
+  /// enclosing host/session/epoch. It does not grant compiler authority.
+  Observation: uint64
   Project: string
   ManifestPath: string
   Closed: bool

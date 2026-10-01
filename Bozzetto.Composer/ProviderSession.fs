@@ -32,6 +32,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   let mutable serial = 0UL
   let mutable demandSerial = 0UL
   let mutable controlSerial = 0UL
+  let mutable observationSerial = 0UL
   let mutable generation = 0L
   let mutable closed = false
   let mutable reservation: (string * Producer<AcceptedArtifact>) option = None
@@ -121,7 +122,45 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
     liveScopes.Add producer.Scope |> ignore
     producer
 
-  let define (producer: Producer<'a>) invoke =
+  let eligible (producer: Producer<'a>) =
+    let (WorkId token) = producer.Work
+    match AsyncMailbox.tryResult producer.Work mailbox with
+    | Some result when result.Scope = producer.Scope && result.Value = ValueToken token ->
+      AsyncMailbox.isEligible result mailbox
+    | _ -> false
+
+  let reconcileRunFailure expected accepted = async {
+    // This getter belongs to the compiler boundary, never Status or its gate.
+    // A refused/canceled operation alone does not withdraw another demand.
+    do! invocation.WaitAsync() |> Async.AwaitTask
+    let mutable withdrawals = []
+    let matchesCurrent () =
+      (obsolete expected).IsNone && current = Some accepted
+    try
+      if lock gate matchesCurrent then
+        let retained, inspectionError =
+          try backend.Current = Some accepted, None
+          with error -> false, Some error.Message
+        if not retained then
+          withdrawals <- lock gate (fun () ->
+            if matchesCurrent () then
+              current <- None
+              reservation <- None
+              inspectionError |> Option.iter (fun message -> backendError <- Some message)
+              let operations = liveScopes |> Seq.map (fun scope -> admit (Action.CloseScope scope)) |> Seq.toList
+              for ScopeId value in liveScopes do
+                let work = WorkId value
+                if not (active.Contains work) then evaluators.Remove work |> ignore
+              liveScopes.Clear()
+              operations
+            else [])
+    finally invocation.Release() |> ignore
+    // Commit withdrawal before publishing the refusal; physical callback and
+    // evaluator joins still belong to each producer's existing observation.
+    do! observeAll withdrawals
+  }
+
+  let define (producer: Producer<'a>) invoke onFailure =
     let evaluate cancellation = async {
       do! invocation.WaitAsync() |> Async.AwaitTask
       let mutable running: Task<Result<'a, string>> option = None
@@ -140,6 +179,9 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
           try return! ClrInterop.fromTask (fun _ -> work) cancellation
           with error -> return Result.Error error.Message
       }
+      match result with
+      | Result.Error _ -> do! onFailure ()
+      | Result.Ok _ -> ()
       lock gate (fun () -> producer.Value <- Some result)
       return StepOutcome.Complete(
         match result with
@@ -179,11 +221,8 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
           joined |> Result.bind (fun () ->
             producer.Value |> Option.defaultValue (Result.Error "The producer was canceled before invocation."))
           |> Result.bind (fun value ->
-            let (WorkId token) = producer.Work
-            match AsyncMailbox.tryResult producer.Work mailbox with
-            | Some result when result.Scope = producer.Scope && result.Value = ValueToken token
-                               && AsyncMailbox.isEligible result mailbox -> Result.Ok value
-            | _ -> Result.Error "The incremental producer no longer has eligible result authority.")
+            if eligible producer then Result.Ok value
+            else Result.Error "The incremental producer no longer has eligible result authority.")
         if not producer.Abandoned && (obsolete producer.Authority).IsNone then
           match result with Result.Ok value -> publish value | Result.Error _ -> ()
         result)
@@ -205,19 +244,24 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
         | None -> startObservation producer operation publish
       Result.Ok(demand, observation)
 
-  let complete expected result =
+  let complete (producer: Producer<'a>) result =
     lock gate (fun () ->
-      { Authority = expected
+      { Authority = producer.Authority
         Outcome =
-          match obsolete expected with
+          match obsolete producer.Authority with
           | Some refusal -> refusal
-          | None -> result |> Result.mapError (fun message -> { Code = "compiler_refused"; Message = message }) })
+          | None ->
+            result
+            |> Result.bind (fun value ->
+              if eligible producer then Result.Ok value
+              else Result.Error "The incremental producer no longer has eligible result authority.")
+            |> Result.mapError (fun message -> { Code = "compiler_refused"; Message = message }) })
 
   let projectReply producer demand (observation: Task<Result<'a, string>>) cancellation = task {
     try
       try
         let! result = observation.WaitAsync(cancellation: CancellationToken)
-        return complete producer.Authority result
+        return complete producer result
       with :? OperationCanceledException ->
         return { Authority = producer.Authority; Outcome = refuse "canceled" "This request detached its demand; other clients retain theirs." }
     finally
@@ -231,12 +275,18 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   member _.Identity = lock gate authority
 
   member _.Status() = lock gate (fun () ->
-    drainObservations ()
-    reply (Result.Ok {
-      Project = project; ManifestPath = manifestPath; Closed = closed
-      Busy = active.Count > 0; Current = current
-      RevocationPending = revocation.IsSome; BackendError = backendError
-      CleanupPending = closed && not cleanupComplete; CleanupError = cleanupError }))
+    if observationSerial = UInt64.MaxValue then
+      reply (refuse "observation_capacity" "Session observation capacity reached; open a fresh session.")
+    else
+      drainObservations ()
+      // Number the captured value, not a caller's dispatch or reply order.
+      observationSerial <- observationSerial + 1UL
+      reply (Result.Ok {
+        Observation = observationSerial
+        Project = project; ManifestPath = manifestPath; Closed = closed
+        Busy = active.Count > 0; Current = current
+        RevocationPending = revocation.IsSome; BackendError = backendError
+        CleanupPending = closed && not cleanupComplete; CleanupError = cleanupError }))
 
   member _.ReserveAsync(label: string) = lock gate (fun () ->
     if closed then Task.FromResult(reply (refuse "closed" "The provider session is closed."))
@@ -265,7 +315,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
               Result.Error { Authority = expected; Outcome = refuse "backend_failed" message }
             | None, Result.Ok ticket ->
               let producer = allocate expected
-              let operations = define producer (fun cancellation -> backend.BuildAsync(ticket, cancellation))
+              let operations = define producer (fun cancellation -> backend.BuildAsync(ticket, cancellation)) (fun () -> async.Return())
               Result.Ok(producer, operations))
           match selected with
           | Result.Error response -> return response
@@ -324,7 +374,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
           match producer.Observation with
           | Some observation when observation.IsCompleted -> task {
             let! result = observation
-            return complete producer.Authority result }
+            return complete producer result }
           | _ ->
             match attach producer (fun accepted -> current <- Some accepted) with
             | Result.Error message -> Task.FromResult(reply (refuse "session_capacity" message))
@@ -338,7 +388,9 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
     elif serial >= scopeLimit || demandSerial >= demandLimit then Task.FromResult(reply (refuse "session_capacity" "Session work capacity reached; open a fresh session."))
     else
       let producer = allocate (authority ())
-      define producer (fun token -> backend.RunCurrentAsync(arguments, token)) |> ignore
+      let accepted = current.Value
+      define producer (fun token -> backend.RunCurrentAsync(arguments, token))
+        (fun () -> reconcileRunFailure producer.Authority accepted) |> ignore
       match attach producer ignore with
       | Result.Error message -> Task.FromResult(reply (refuse "session_capacity" message))
       | Result.Ok(demand, observation) -> projectReply producer demand observation cancellation)

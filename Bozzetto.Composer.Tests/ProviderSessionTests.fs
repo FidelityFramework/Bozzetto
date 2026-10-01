@@ -47,6 +47,8 @@ type private Backend() =
   let registrations = ResizeArray<CancellationTokenRegistration>()
   member val HoldBuild = false with get, set
   member val HoldRun = false with get, set
+  member val RefuseRun = false with get, set
+  member val WithdrawOnRunRefusal = false with get, set
   member val AfterReserve: string -> unit = ignore with get, set
   member val BeforeRun: unit -> unit = ignore with get, set
   member val BeforePublish: unit -> unit = ignore with get, set
@@ -97,10 +99,15 @@ type private Backend() =
       let selected = lock gate (fun () -> this.BeforeRun(); runs <- runs + 1; current.Value)
       runEntered.TrySetResult() |> ignore
       if this.HoldRun then do! runRelease.Task
-      return Result.Ok {
-        Generation = selected.Generation; SourceVersion = selected.SourceVersion
-        ExitCode = 0; StandardOutput = "hello"; StandardError = ""
-      }
+      if this.RefuseRun then
+        lock gate (fun () ->
+          if this.WithdrawOnRunRefusal && current = Some selected then current <- None)
+        return Result.Error "The compiler refused this run."
+      else
+        return Result.Ok {
+          Generation = selected.Generation; SourceVersion = selected.SourceVersion
+          ExitCode = 0; StandardOutput = "hello"; StandardError = ""
+        }
     }
     member this.Dispose() =
       lock gate (fun () ->
@@ -188,6 +195,51 @@ let tests =
       for unknown in [ ""; "composer"; "unknown"; "FSharp"; null ] do
         ProviderIdentity.parse unknown |> Result.isError |> Expect.isTrue "unknown identity is refused"
 
+    taskCase "status observations order actual capture despite reversed caller dispatch" <| fun () -> task {
+      let backend = new Backend()
+      use owner = session "observation-order" "epoch-a" backend
+      let entered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+      let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+      let earlierCaller = task {
+        entered.TrySetResult() |> ignore
+        do! release.Task
+        return owner.Status()
+      }
+      do! entered.Task
+      let first = owner.Status()
+      release.TrySetResult() |> ignore
+      let! second = earlierCaller
+      first.Authority |> Expect.equal "same compiler authority throughout both reads" second.Authority
+      (success first).Observation |> Expect.equal "first actual capture starts the sequence" 1UL
+      (success second).Observation |> Expect.equal "earlier caller captures later and receives later sequence" 2UL
+      let! captures = [| for _ in 1 .. 32 -> Task.Run(fun () -> owner.Status() |> success) |] |> Task.WhenAll
+      captures |> Array.toList |> List.map _.Observation |> List.sort
+      |> Expect.equal "concurrent captures have distinct contiguous ordering" [ 3UL .. 34UL ]
+      owner.Identity.Generation |> Expect.equal "observing never advances compiler generation" 0L
+    }
+
+    taskCase "same-generation busy and accepted snapshots retain their own observation order" <| fun () -> task {
+      let backend = new Backend(HoldBuild = true)
+      use owner = session "observation-state" "epoch-a" backend
+      let reservation = owner.Reserve "initial" |> success
+      let before = owner.Status()
+      let building = owner.BuildAsync(reservation, CancellationToken.None)
+      do! backend.BuildEntered
+      let during = owner.Status()
+      backend.ReleaseBuild()
+      let! accepted = building
+      accepted |> success |> ignore
+      let after = owner.Status()
+      before.Authority |> Expect.equal "build start does not alter reservation authority" during.Authority
+      during.Authority |> Expect.equal "build completion keeps reservation authority" after.Authority
+      (success before).Busy |> Expect.isFalse "before dispatch is idle"
+      (success during).Busy |> Expect.isTrue "held compiler remains active"
+      (success after).Current.IsSome |> Expect.isTrue "latest observation contains accepted artifact"
+      [ success before; success during; success after ] |> List.map _.Observation
+      |> Expect.equal "state captures advance independently of compiler generations" [ 1UL; 2UL; 3UL ]
+      (success before).Current |> Expect.isNone "retained earlier snapshot is immutable"
+    }
+
     taskCase "reserving an edit immediately withdraws a previously runnable artifact" <| fun () -> task {
       let backend = new Backend()
       use owner = session "one" "epoch-a" backend
@@ -215,6 +267,82 @@ let tests =
       let! accepted = second.BuildAsync(secondToken, CancellationToken.None)
       accepted |> success |> ignore
       accepted.Authority.Session |> Expect.equal "right session remains usable" "second"
+    }
+
+    taskCase "compiler run withdrawal invalidates current and completed build replay" <| fun () -> task {
+      let backend = new Backend(RefuseRun = true, WithdrawOnRunRefusal = true)
+      use owner = session "compiler-withdrawal" "epoch-a" backend
+      let ticket = owner.Reserve "initial" |> success
+      let! built = owner.BuildAsync(ticket, CancellationToken.None)
+      built |> success |> ignore
+      let! refused = owner.RunAsync([], CancellationToken.None)
+      refused |> refuses "compiler_refused"
+      (owner.Status() |> success).Current |> Expect.isNone "compiler withdrawal reaches the provider before the refusal"
+      let! replay = owner.BuildAsync(ticket, CancellationToken.None)
+      replay |> refuses "invalid_reservation"
+      let! run = owner.RunAsync([], CancellationToken.None)
+      run |> refuses "not_accepted"
+      backend.BuildCount |> Expect.equal "withdrawn replay never restarts a consumed compiler ticket" 1
+      backend.RefuseRun <- false
+      let! restored = build owner "fresh reservation"
+      restored |> success |> ignore
+      let! running = owner.RunAsync([], CancellationToken.None)
+      running |> success |> ignore
+    }
+
+    taskCase "run refusal with retained compiler authority preserves completed build replay" <| fun () -> task {
+      let backend = new Backend(RefuseRun = true)
+      use owner = session "retained-authority" "epoch-a" backend
+      let ticket = owner.Reserve "initial" |> success
+      let! built = owner.BuildAsync(ticket, CancellationToken.None)
+      let accepted = built |> success
+      let! refused = owner.RunAsync([], CancellationToken.None)
+      refused |> refuses "compiler_refused"
+      (owner.Status() |> success).Current |> Expect.equal "error text alone cannot withdraw accepted authority" (Some accepted)
+      let! replay = owner.BuildAsync(ticket, CancellationToken.None)
+      replay |> success |> Expect.equal "the still-current ticket remains observable" accepted
+      backend.BuildCount |> Expect.equal "retained observation does not rebuild" 1
+    }
+
+    taskCase "late refused run cannot withdraw a newer accepted reservation" <| fun () -> task {
+      let backend = new Backend(HoldRun = true, RefuseRun = true, WithdrawOnRunRefusal = true)
+      use owner = session "late-refusal" "epoch-a" backend
+      let! first = build owner "initial"
+      first |> success |> ignore
+      let running = owner.RunAsync([], CancellationToken.None)
+      do! backend.RunEntered
+      let ticket = owner.Reserve "replacement" |> success
+      let! next = owner.BuildAsync(ticket, CancellationToken.None)
+      let accepted = next |> success
+      backend.ReleaseRun()
+      let! old = running
+      old |> refuses "superseded"
+      (owner.Status() |> success).Current |> Expect.equal "late old refusal preserves the new artifact" (Some accepted)
+      let! replay = owner.BuildAsync(ticket, CancellationToken.None)
+      replay |> success |> Expect.equal "new reservation retains its own result authority" accepted
+    }
+
+    taskCase "canceling one run observer preserves another demand and accepted build authority" <| fun () -> task {
+      let backend = new Backend(HoldRun = true, RefuseRun = true)
+      use owner = session "detached-run" "epoch-a" backend
+      let ticket = owner.Reserve "initial" |> success
+      let! built = owner.BuildAsync(ticket, CancellationToken.None)
+      let accepted = built |> success
+      use cancellation = new CancellationTokenSource()
+      let detached = owner.RunAsync([], cancellation.Token)
+      do! backend.RunEntered
+      let surviving = owner.RunAsync([], CancellationToken.None)
+      cancellation.Cancel()
+      let! canceled = detached
+      canceled |> refuses "canceled"
+      surviving.IsCompleted |> Expect.isFalse "another caller keeps its own run demand"
+      (owner.Status() |> success).Current |> Expect.equal "detaching an observer does not withdraw compiler authority" (Some accepted)
+      backend.ReleaseRun()
+      let! refused = surviving
+      refused |> refuses "compiler_refused"
+      let! replay = owner.BuildAsync(ticket, CancellationToken.None)
+      replay |> success |> Expect.equal "retained compiler authority survives cleanup of both runs" accepted
+      backend.ReserveLabels |> Expect.equal "observer detach never inserts a compiler reservation" [| "initial" |]
     }
 
     taskCase "two clients share one producer for the same session reservation" <| fun () -> task {

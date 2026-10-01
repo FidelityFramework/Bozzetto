@@ -155,7 +155,7 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
                     true)
                 if installed then
                   return session.Status() |> convert id (fun status ->
-                    element {| project = status.Project; manifestPath = status.ManifestPath |})
+                    element {| observation = status.Observation; project = status.Project; manifestPath = status.ManifestPath |})
                 else
                   session.BeginClose() |> ignore
                   let! closed = session.CloseAsync()
@@ -208,7 +208,7 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
               return convert id element result
             | "status" ->
               return session.Status() |> convert id (fun status ->
-                element {| project = status.Project; manifestPath = status.ManifestPath
+                element {| observation = status.Observation; project = status.Project; manifestPath = status.ManifestPath
                            closed = status.Closed; busy = status.Busy
                            revocationPending = status.RevocationPending; backendError = (status.BackendError |> Option.toObj)
                            cleanupPending = status.CleanupPending; cleanupError = (status.CleanupError |> Option.toObj)
@@ -223,7 +223,7 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
                 return result |> convert id (fun () -> element {| closed = true; cleanupPending = false |})
               else
                 return session.Status() |> convert id (fun status ->
-                  element {| closed = status.Closed; cleanupPending = status.CleanupPending; cleanupError = (status.CleanupError |> Option.toObj) |})
+                  element {| observation = status.Observation; closed = status.Closed; cleanupPending = status.CleanupPending; cleanupError = (status.CleanupError |> Option.toObj) |})
             | _ -> return response id session.Identity (Result.Error {
                 Code = "unsupported_operation"; Message = "The operation is not supported by the Clef/Composer provider." })
     with error ->

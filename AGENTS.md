@@ -223,12 +223,15 @@ dotnet pack Bozzetto -o nupkg  # Package the CLI tool
 Fidelity.FSharp.Incremental is the selected shared foundation for incremental
 dependency bookkeeping and explicitly started work across Bozzetto and the
 Clef/CCS/Baker/Composer pipeline. Follow the
-[adoption contract](docs/Bozzetto_Incremental_Foundation_Adoption.md) as its validated
-API lands. New workspace coordination should use that foundation rather than
-grow independent invalidation or task-lifetime mechanisms. Adoption is planned,
-not yet a package reference: record an exact library identity and consumer
-acceptance when integrating it. Preserve compiler proof/artifact authority,
-reservation/launch ordering, physical cleanup and portable host contracts.
+[adoption contract](docs/Bozzetto_Incremental_Foundation_Adoption.md). Provider
+sessions now use its functional Async mailbox through a pinned package reference.
+Use the shared foundation for workspace coordination instead of growing separate
+invalidation or work-lifetime mechanisms. Keep dependency identities aligned
+across consumers and validate changes at their owning contract, including the
+shared library when integration exposes a missing contract. Preserve compiler
+proof/artifact authority, reservation/launch ordering, physical cleanup and
+portable host contracts. Record exact identities and acceptance evidence in the
+[cross-project checkpoint](docs/Incremental_Provider_Checkpoint_2026-10-01.md).
 
 ## Things to Avoid
 

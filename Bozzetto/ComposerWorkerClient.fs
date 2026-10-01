@@ -49,7 +49,7 @@ module ComposerWorkerClient =
     mutable Abandonment: exn option
   }
 
-  type private Connection(worker: Process, wire: StreamWriter, errors: FileStream) =
+  type private Connection(worker: Process, wire: StreamWriter, errors: FileStream, beforeCancellationAdmission: unit -> unit) =
     let gate = obj ()
     let evidenceGate = obj ()
     let stopGate = obj ()
@@ -57,6 +57,9 @@ module ComposerWorkerClient =
     let lifetime = new CancellationTokenSource()
     let pending = Dictionary<string, Pending>()
     let abandoned = Dictionary<string, Pending>()
+    // A sent or writing request keeps its admission slot until its withdrawal
+    // takes ownership of that slot, so ordinary requests cannot steal it.
+    let cancellationSlots = HashSet<string>()
     let exited = Event<string>()
     let mutable identity: (string * string) option = None
     let mutable handshake = Unchecked.defaultof<JsonElement>
@@ -81,6 +84,7 @@ module ComposerWorkerClient =
           let requests = Seq.append pending.Values abandoned.Values |> Seq.toArray
           pending.Clear()
           abandoned.Clear()
+          cancellationSlots.Clear()
           Some requests)
       match revoked with
       | None -> ()
@@ -182,7 +186,7 @@ module ComposerWorkerClient =
       lock gate (fun () -> failure.IsNone) &&
         (try not worker.HasExited with :? InvalidOperationException -> false)
 
-    member this.RequestAsync(operation, session, parameters: (string * obj) list, cancellation: CancellationToken): Task<JsonElement> = task {
+    member private this.RequestAsyncCore(operation, session, parameters: (string * obj) list, cancellation: CancellationToken, cancellationSlot: string option): Task<JsonElement> = task {
       cancellation.ThrowIfCancellationRequested()
       let requestId = Guid.NewGuid().ToString("N")
       let completion = TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously)
@@ -194,11 +198,18 @@ module ComposerWorkerClient =
         if Set.contains key (set [ "protocolVersion"; "requestId"; "operation"; "host"; "epoch"; "provider"; "session" ]) then
           invalidArg "parameters" ("Reserved Composer protocol field: " + key)
         values.Add(key, value)
+      let checkCapacity () =
+        match cancellationSlot with
+        | Some original when cancellationSlots.Contains original -> ()
+        | Some _ -> invalidOp "Composer cancellation admission slot is unavailable."
+        | None when pending.Count + cancellationSlots.Count >= 256 ->
+          invalidOp "Too many pending Composer requests."
+        | None -> ()
       let host, epoch = lock gate (fun () ->
         match failure with
         | Some error -> raise (IOException("Composer worker is unavailable.", error))
         | None ->
-          if pending.Count >= 256 then raise (InvalidOperationException "Too many pending Composer requests.")
+          checkCapacity ()
           if identity.IsNone && operation <> "hello" then
             raise (InvalidOperationException "Composer hello has not completed.")
           identity |> Option.defaultValue ("", ""))
@@ -212,7 +223,8 @@ module ComposerWorkerClient =
         match failure with
         | Some error -> raise (IOException("Composer worker is unavailable.", error))
         | None ->
-          if pending.Count >= 256 then raise (InvalidOperationException "Too many pending Composer requests.")
+          checkCapacity ()
+          cancellationSlot |> Option.iter (fun original -> cancellationSlots.Remove original |> ignore)
           pending.Add(requestId, request))
       let requiresRevocation = operation = "build" || operation = "run"
       let completeAbandonment (error: exn) =
@@ -221,7 +233,9 @@ module ComposerWorkerClient =
         | _ -> completion.TrySetException error |> ignore
       let cancelTarget (reason: exn) = task {
         try
-          let! reply = this.RequestAsync("cancel_request", "", [ "targetRequestId", requestId :> obj ], CancellationToken.None)
+          beforeCancellationAdmission ()
+          let! reply = this.RequestAsyncCore(
+            "cancel_request", "", [ "targetRequestId", requestId :> obj ], CancellationToken.None, Some requestId)
           if not ((field "success" reply).GetBoolean()) then
             raise (InvalidDataException "Composer worker refused targeted request cancellation.")
           let acknowledgement = field "result" reply
@@ -241,6 +255,8 @@ module ComposerWorkerClient =
         let removed, sent, writing, overflow = lock gate (fun () ->
           let removed = pending.Remove requestId
           if removed then
+            if requiresRevocation && (request.Sent || request.Writing) then
+              cancellationSlots.Add requestId |> ignore
             request.Abandonment <- Some error
             abandoned.Add(requestId, request)
           removed, request.Sent, request.Writing, abandoned.Count > 4096)
@@ -287,6 +303,9 @@ module ComposerWorkerClient =
       return! completion.Task
     }
 
+    member this.RequestAsync(operation, session, parameters, cancellation) =
+      this.RequestAsyncCore(operation, session, parameters, cancellation, None)
+
     member private _.StopCore() = task {
       invalidate (ObjectDisposedException "Composer worker stopped.") false
       // Close the pipe itself: disposing StreamWriter could synchronously flush
@@ -328,7 +347,7 @@ module ComposerWorkerClient =
         this.RequestAsync(operation, session, parameters, cancellation)
       member this.StopAsync() = this.StopAsync()
 
-  let start (config: WorkerLaunch): Task<IComposerWorker> = task {
+  let internal startWithCancellationBoundary beforeCancellationAdmission (arguments: string list) (config: WorkerLaunch): Task<IComposerWorker> = task {
     if not (Path.IsPathFullyQualified config.WorkerPath && File.Exists config.WorkerPath) then
       invalidArg "config" "Composer worker must be an existing absolute file path."
     if not (Path.IsPathFullyQualified config.EvidenceDirectory) then
@@ -339,6 +358,7 @@ module ComposerWorkerClient =
       info.FileName <- config.DotnetPath
       info.ArgumentList.Add config.WorkerPath
     else info.FileName <- config.WorkerPath
+    for argument in arguments do info.ArgumentList.Add argument
     info.ArgumentList.Add "--stdio"
     info.UseShellExecute <- false
     info.RedirectStandardInput <- true
@@ -355,7 +375,7 @@ module ComposerWorkerClient =
     try
       if not (worker.Start()) then raise (IOException "Composer worker process did not start.")
       started <- true
-      let client = new Connection(worker, wire, errors)
+      let client = new Connection(worker, wire, errors, beforeCancellationAdmission)
       try
         let! _ = client.RequestAsync("hello", "", [], CancellationToken.None)
         if not client.IsAlive then raise (IOException "Composer worker exited during its handshake.")
@@ -375,3 +395,5 @@ module ComposerWorkerClient =
       errors.Dispose()
       return raise error
   }
+
+  let start config = startWithCancellationBoundary ignore [] config

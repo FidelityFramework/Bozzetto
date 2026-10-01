@@ -69,12 +69,12 @@
       },
       "Fidelity.FSharp.Incremental.Hosting": {
         "type": "Direct",
-        "requested": "[0.1.0-preview.5, )",
-        "resolved": "0.1.0-preview.5",
-        "contentHash": "HayfcL1bI5ce0xa/09upv+D0TA1vVXoC3ebnDMV9SkxboW/6t3HqL2VOYp1rFg3CKlpZxOBtdqBmXNrm9hcuzQ==",
+        "requested": "[0.1.0-preview.6, )",
+        "resolved": "0.1.0-preview.6",
+        "contentHash": "rEc6AAmjNh7ckoWM7Rw+EBPwDsAH2vjRbV4/dV0aFWZEJJkaHZP4zPR2iLaFIB11oasQBgxNGe6Hw1tL18Wpnw==",
         "dependencies": {
           "FSharp.Core": "10.1.401",
-          "Fidelity.FSharp.Incremental": "0.1.0-preview.5"
+          "Fidelity.FSharp.Incremental": "0.1.0-preview.6"
         }
       },
       "FsCheck": {
@@ -175,8 +175,8 @@
       },
       "Fidelity.FSharp.Incremental": {
         "type": "Transitive",
-        "resolved": "0.1.0-preview.5",
-        "contentHash": "eUbW6K0LiNfdydzt1c5dzyh0LNTL3taZ56HU1DzuVwFX15rCD2l1fOTyOD1ninuQhVr4O+gO5JYXduxbuUbUyA==",
+        "resolved": "0.1.0-preview.6",
+        "contentHash": "gUbzjdThNhnidJsS2t+1PGjhmUlOrFAthYucZwjqVBEvVQzUpuc99PwxBKIoY1uvFUpszg+6Kj2fTr2oP4ve2Q==",
         "dependencies": {
           "FSharp.Core": "10.1.401"
         }
