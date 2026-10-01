@@ -1,129 +1,50 @@
 # Using Bozzetto with AI agents
 
-If you give an agent Bozzetto and don't tell it how to use it, it'll do what
-agents do in every .NET repo: edit, `dotnet build`, wait, `dotnet test`, wait,
-repeat. That's the slow loop Bozzetto exists to get rid of. An eval in a warm
-Bozzetto session takes milliseconds. A build takes tens of seconds, and a test run
-takes longer. The difference isn't small. It's most of the day.
+Use Bozzetto's `composer_*` tools for Clef/Composer development. The tools and the human-facing Composer page share one daemon-owned supervisor, so both observe the same session, compiler epoch, revision and accepted-artifact evidence.
 
-So this page is about making the agent actually use the REPL, and pulling it
-back when it drifts. I've watched my own agents drift more than once, so none
-of this is hypothetical.
+## Connect to the shared provider
 
-## The rule
+Use the reviewed installed `boz` and follow the [live provider checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md), including its linked deployment corrections. From this checkout, `scripts/start-shared-daemon` preserves an existing listener or launches the daemon in its dedicated external workspace. Keep that shared daemon independent of any individual client's lifetime.
 
-**The Bozzetto REPL is the inner loop. `dotnet build` / `dotnet test` is the final
-gate, run once when the work is done.**
+Configure your MCP client to use Streamable HTTP at `http://127.0.0.1:47749/`. The [MCP reference](mcp-tools.md#connect) and [checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md#auditor-connection-prerequisites) cover client configuration. Use a timeout suitable for native builds; the checkpoint uses 600 seconds for tool calls.
 
-The loop:
-1. Show the bug in the REPL.
-2. Fix it in the REPL.
-3. Write the fix into the file.
-4. Reload with `hard_reset_fsi_session rebuild=true`.
-5. Check it again in the REPL.
-6. Commit.
-7. Run the full build and tests once, at the end.
+Confirm that the connected client exposes `get_daemon_status`, `composer_list_sessions` and `composer_open_project`. A server entry in a config file is not evidence that tools are available. The human view is `http://127.0.0.1:47749/composer`; `composer://sessions` exposes the same session directory as an MCP resource.
 
-## 1. Install the skill
+## The Composer loop
 
-The whole playbook is one file: [`skills/bozzetto/SKILL.md`](../skills/bozzetto/SKILL.md).
-It covers:
-- the first-minute checklist
-- the loop
-- the gotchas
-- what to do when the REPL fights you
-- how to brief a sub-agent
+1. Read `composer_list_sessions` and open your explicit absolute `.fidproj` path with `composer_open_project`.
+2. Retain the returned host, session and compiler epoch. Pass those identities to subsequent session operations.
+3. Call `composer_reserve_edit` before changing source or dependency files. Receive a successful response before writing, and keep its opaque single-use reservation.
+4. Make the edit and pass that reservation to `composer_build`.
+5. Inspect the compiler result and run through `composer_run_current`. Composer revalidates inputs and executable bytes before execution.
+6. Read `composer_session_status` for shared state, diagnostics and cleanup status. Close your session with `composer_close_session` when finished.
 
-**Claude Code:**
-```bash
-mkdir -p ~/.claude/skills/bozzetto
-curl -fsSL https://raw.githubusercontent.com/WillEhrendreich/SageFs/master/skills/sagefs/SKILL.md \
-  -o ~/.claude/skills/bozzetto/SKILL.md
-```
-For one repo only, put it in that repo's `.claude/skills/bozzetto/SKILL.md`
-instead.
+An edit reservation withdraws the old artifact's run authority. Human reservations and session cancellation affect agents too. A status response or cached artifact path does not grant execution permission; all runs go through `composer_run_current`.
 
-**Other agents (Codex, Copilot, Cursor, OpenCode and so on):** most of them read
-an `AGENTS.md` at the repo root. Add this to yours:
+Before a coordinated compiler-distribution replacement, `composer_retire_worker` retires every session in that worker. Complete cleanup must succeed before a fresh epoch can serve work. Compiler checkout changes alone do not change the deployed worker, and in-place patching of an active compiler is unsupported.
+
+Today's backend runs accepted native binaries. LLVM ORC JIT and automatic editor save/build integration remain planned; do not assume that an editor save builds a Composer revision.
+
+## Repository guidance for agents
+
+A project can include this in its `AGENTS.md`:
 
 ```markdown
-## F# work: use Bozzetto
+## Clef development with Bozzetto
 
-This repo is developed with Bozzetto. The Bozzetto REPL (MCP tools) is the inner
-loop. `dotnet build` / `dotnet test` is only the final gate.
-Before any F# change, read and follow
-https://github.com/WillEhrendreich/SageFs/blob/master/skills/sagefs/SKILL.md
-
-- Read `get_daemon_status`, use `get_available_projects`, then create the
-  agent's own worktree session with `create_project_session`,
-  `create_solution_session`, or `create_bare_session`. A worktree is its own
-  routing boundary. Wait for that session's `get_session_status` to say Ready.
-  If generated build state is missing, Bozzetto builds it before creating the
-  session.
-- Show the problem with `send_fsharp_code`, fix it there, write the fix to the
-  file, run `hard_reset_fsi_session rebuild=true`, check it again, commit.
-- If the REPL fights you, report the exact error. Don't quietly switch to
-  dotnet.
-- Never stop, restart or reinstall the Bozzetto daemon without asking.
+- Connect to the shared Bozzetto MCP provider at http://127.0.0.1:47749/.
+- Open an explicit absolute .fidproj with composer_open_project and retain
+  the returned host, session and compiler epoch.
+- Reserve with composer_reserve_edit and receive success before writing
+  source or dependencies. Build with its single-use reservation.
+- Execute only through composer_run_current; status and artifact paths
+  do not authorize direct execution.
+- Preserve other users' sessions and the shared daemon. Coordinate worker
+  retirement before changing the installed compiler distribution.
 ```
 
-## 2. Let the agent call Bozzetto without asking every time
+## F#/.NET implementation work
 
-In Claude Code, allow the Bozzetto tools once, in `.claude/settings.json` (for one
-repo) or `~/.claude/settings.json` (everywhere):
+Use the separate SageFS MCP service at `http://127.0.0.1:37749/` for F#/.NET work; its dashboard uses port `37750`. Keep its server entry, sessions and lifecycle separate from Bozzetto. A Composer project does not need an FSI session.
 
-```json
-{
-  "permissions": {
-    "allow": ["mcp__bozzetto__*"]
-  }
-}
-```
-
-This matters more in auto mode. An allowed tool runs without going past the
-classifier at all, while most `dotnet build`/`test`/`run` shell commands get
-reviewed one at a time. So the REPL route is faster in two ways: the eval is
-milliseconds instead of a build, and there's no approval step in between.
-Details are in Claude Code's
-[permissions](https://code.claude.com/docs/en/permissions.md) and
-[permission modes](https://code.claude.com/docs/en/permission-modes.md) docs.
-
-## 3. Connect the MCP server
-
-Point your agent at `http://localhost:47749/` (streamable HTTP), or
-`http://localhost:47749/sse` for older clients. When an agent connects, Bozzetto
-sends it a short version of the rules, so even an agent without the skill gets
-the core of it. The skill is the full version, and you want both.
-
-## 4. When the agent drifts
-
-It'll happen. Usually the agent hits something awkward (a version mismatch, a
-session that isn't ready yet) and quietly goes back to building. Three ways to
-pull it back, from least to most enforced:
-
-> If it was a version mismatch, check your own daemon before you blame the
-> agent. `boz status` prints when it started — a daemon that's been up since
-> before your last build is serving old code, and the agent was right that
-> something was wrong, just not about what. See
-> [stale daemon](TROUBLESHOOTING.md#stale-daemon--the-one-that-wastes-the-most-time).
-
-- **Tell it.** "Back to the REPL" or "mandate 1". The skill tells the agent
-  what those mean: stop, say where it left the loop, and resume from the REPL.
-- **Use the prompt.** Bozzetto ships an MCP prompt, `back_to_the_repl`. In Claude
-  Code that's the slash command `/mcp__bozzetto__back_to_the_repl`. It puts the
-  loop back in front of the agent in one keystroke.
-- **Make drift impossible to miss.** [`tools/agent-hooks/`](../tools/agent-hooks/)
-  has a Claude Code `PreToolUse` hook, `bozzetto-repl-guard`. It stops `dotnet
-  build`, `dotnet test`, `dotnet run` and `dotnet fsi` mid-task in an F# repo
-  while Bozzetto is running, and tells the agent why. The final gate goes through
-  with `BOZZETTO_FINAL_GATE=1` in front of the command. Packaging and tool
-  commands are never blocked, and neither is anything when Bozzetto isn't
-  running.
-
-## 5. When the REPL really is broken
-
-Sometimes it is, and that's worth hearing about. The skill tells agents to
-write down the exact error, try the obvious fix once, and only then fall back
-for that one step, saying so. If your agent reports something like that,
-please [open an issue](https://github.com/WillEhrendreich/SageFs/issues) with
-the error. Every silent fallback is a bug that never gets fixed.
+Contributors changing Bozzetto's retained F# implementation must read the repository's [agent guidelines](../AGENTS.md) and [F# implementation skill](../skills/bozzetto/SKILL.md). An available F# REPL, normally SageFS, is that implementation workflow's inner loop; the full build/test run is its final gate. Report exact REPL errors and self-hosting version skew instead of silently falling back to builds. That guidance applies to F# implementation work, while Clef projects use the Composer loop above.
