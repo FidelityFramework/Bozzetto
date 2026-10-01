@@ -6,8 +6,8 @@ interim .NET hosting. Bozzetto is an intended consumer alongside Clef, CCS, Bake
 and Composer's coordinated compilation pipeline. This is first-horizon engineering
 work toward self-hosting, independent of the exploratory cross-target horizons.
 
-The direction is established; integration and acceptance remain to be delivered.
-The latest independently reviewed checkpoint is
+The direction is established; consumer integration and acceptance are in progress.
+The accepted functional API baseline is
 `613e2600c1f1696eb0a363b18d8ecdd7c9b2764b`, with implementation and preview.4
 packages pinned to `d3239c26cf4de5e06babd541f576d9466e7a1986`. The
 [functional assessment](../../Fidelity.FSharp.Incremental/docs/Functional_Async_Auditor_Assessment_2026-10-01.md)
@@ -15,9 +15,15 @@ accepts the typed async surface for integration work after a fresh Release build
 99 passing tests, eight lifetime controls and an independent fault-probe repeat.
 The [original assessment](../../Fidelity.FSharp.Incremental/docs/Mailbox_Auditor_Assessment_2026-10-01.md)
 and [F1 follow-up](../../Fidelity.FSharp.Incremental/docs/Mailbox_Auditor_Followup_2026-10-01.md)
-remain preserved historical evidence. Bozzetto has no package or project
-reference to it yet; compiler integration and distribution promotion remain
-separate gates.
+remain preserved historical evidence.
+
+The additive preview.5 observation API at
+`87c77d91ab24c8e4d065e4e726f8c06abc3180c4` has a separate
+[independent assessment](../../Fidelity.FSharp.Incremental/docs/Consumer_Observation_Auditor_Assessment_2026-10-01.md):
+102 Release tests and three package-only observation controls passed. The
+`613e260` assessment remains unchanged. Bozzetto's source adoption and its
+remaining consumer/deployment gates are tracked in the
+[provider checkpoint](Incremental_Provider_Checkpoint_2026-10-01.md).
 
 The local [README](../../Fidelity.FSharp.Incremental/README.md) and
 [architecture](../../Fidelity.FSharp.Incremental/docs/Architecture.md) describe its

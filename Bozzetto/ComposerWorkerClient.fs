@@ -228,8 +228,9 @@ module ComposerWorkerClient =
           if text "targetRequestId" acknowledgement <> requestId then
             raise (InvalidDataException "Composer cancellation acknowledged another request.")
           (field "cancellationRequested" acknowledgement).GetBoolean() |> ignore
-          // The worker applies generation revocation synchronously before this
-          // acknowledgement. A caller can now safely refresh shared status.
+          // This acknowledges the exact cancellation request. Demand release
+          // and physical cleanup can still be pending; refresh actual status
+          // without assuming that another client's authority was withdrawn.
           completeAbandonment reason
         with error ->
           let failure = IOException("Composer targeted cancellation failed.", error)

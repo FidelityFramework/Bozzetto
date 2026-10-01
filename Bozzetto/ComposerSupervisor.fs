@@ -339,8 +339,9 @@ type ComposerSupervisor(factory: unit -> Task<IComposerWorker>, configured: bool
                 return stale response |> Option.defaultValue response
       with
       | :? OperationCanceledException ->
-        // The client has acknowledged exact-request cancellation before this
-        // continuation. Refresh its withdrawn authority for every observer.
+        // The client requested cancellation of this exact wire operation.
+        // Refresh actual state: another demand may keep the producer and its
+        // authority alive, and physical cleanup can still be pending.
         return! interrupted "canceled" "The caller canceled this operation."
       | :? TimeoutException as error ->
         match selectedOwner with

@@ -90,3 +90,51 @@ and explicit acknowledgement/forget protocol for reconnecting clients. A status
 refresh does not prove which lost request committed. No durable actor inbox,
 cross-session producer sharing, persistent actor lifecycle or Fable runtime is
 implemented by this provider change.
+
+## Validation and promotion recipe
+
+Use the existing SageFS build/test leases. Set these inputs to the reviewed
+closure and an external evidence directory; the fixture must be the real
+`IncrementalScalarRegions.fidproj` with its explicit absolute platform dependency.
+The commands below are a recipe, not additional recorded results.
+
+```bash
+export DOTNET_HOST_PATH=/absolute/path/to/reviewed/dotnet
+export COMPOSER_DISTRIBUTION=/absolute/path/to/rebuilt/Composer/distribution
+export BOZZETTO_COMPOSER_FIXTURE=/absolute/path/to/04d_IncrementalScalarRegions/IncrementalScalarRegions.fidproj
+export BOZZETTO_COMPOSER_EVIDENCE=/absolute/external/evidence/native-provider
+export BOZZETTO_TRUST_LEDGER=/absolute/external/evidence/trust.jsonl
+
+"$DOTNET_HOST_PATH" build Bozzetto.Composer/Bozzetto.Composer.fsproj -c Release \
+  -p:ComposerDistribution="$COMPOSER_DISTRIBUTION"
+"$DOTNET_HOST_PATH" build Bozzetto.Tests/Bozzetto.Tests.fsproj -c Release
+
+export BOZZETTO_COMPOSER_WORKER="$PWD/Bozzetto.Composer/bin/Release/net10.0/Bozzetto.Composer.dll"
+export BOZZETTO_DAEMON_DLL="$PWD/Bozzetto/bin/Release/net11.0/Bozzetto.dll"
+
+"$DOTNET_HOST_PATH" Bozzetto.Tests/bin/Release/net11.0/Bozzetto.Tests.dll --summary
+"$DOTNET_HOST_PATH" Bozzetto.Tests/bin/Release/net11.0/Bozzetto.Tests.dll \
+  --integration-composer --filter-test-list 'Composer native provider process' --summary
+```
+
+The first test command is the unfiltered default gate and must report `Trusted`.
+The second selects the complete native process test list, launches only its owned
+workers, and reports `NarrowedRun`. It is useful focused evidence for the rebuilt
+worker, including real artifact receipts, shared-ticket replay and native output;
+it does not complete the dedicated Composer tier.
+
+Once the rebuilt daemon closure is available, run the entire dedicated tier:
+
+```bash
+"$DOTNET_HOST_PATH" Bozzetto.Tests/bin/Release/net11.0/Bozzetto.Tests.dll \
+  --integration-composer --summary
+```
+
+That tier includes provider units, worker protocol tests, native process tests
+and `Live Composer shared interfaces`. The live test starts and cleans up its own
+daemon on reserved ports, with an external working/data directory and ten-minute
+TTL; it requires the complete daemon closure and MCP dependencies. Accept the tier
+only with an unfiltered `Trusted` row and retained evidence. Neither command
+updates the existing shared daemon on 47749/47750. Promotion of that service must
+record the reviewed deployed closure and repeat its MCP/browser checkpoint
+separately; a passing owned test daemon does not identify the installed service.
