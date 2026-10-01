@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <!-- The compiler worker loads FSharp.Core 10.1.401. This local central-package
+       override does not downgrade the daemon's retained FCS dependency closure. -->
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" VersionOverride="10.1.401" />
+    <Reference Include="BAREWire">
+      <HintPath>$(BAREWireAssembly)</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Compile Include="ProviderData.fs" />
+    <Compile Include="Protocol.fs" />
+    <Compile Include="BAREWireCodec.fs" />
+    <Compile Include="StreamFrames.fs" />
+    <None Include="WireSchema.txt" />
+  </ItemGroup>
+  <Target Name="RequireBAREWireAssembly" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(BAREWireAssembly)' == '' Or !$([System.IO.Path]::IsPathFullyQualified('$(BAREWireAssembly)')) Or !Exists('$(BAREWireAssembly)')"
+      Text="BAREWireAssembly must name the absolute hash-verified BAREWire.dll shared by daemon and selected Composer distribution." />
+  </Target>
+</Project>
