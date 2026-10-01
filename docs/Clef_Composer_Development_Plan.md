@@ -146,10 +146,52 @@ LAN Ornith workers, local Lemonade/Nemotron workers and LAN retrieval are option
 
 ## Reduce .NET coupling on the path to self-hosting
 
+### Shared incremental foundation
+
+Adopt **Fidelity.FSharp.Incremental** as the shared dependency and work-lifetime
+foundation for Bozzetto's interim .NET hosting, in coordination with its intended
+Clef/CCS/Baker/Composer consumers. The [adoption contract](Bozzetto_Incremental_Foundation_Adoption.md)
+records current source status, owner handoffs and the first integration gate.
+The library is still pre-integration and locally developed; establish an immutable
+dependency identity and executed evidence before promoting a consuming closure.
+
+Begin with one compiler-owned workspace workload and Bozzetto client demand,
+then extend through the intended consumers with separate acceptance records.
+Preserve reserve-before-write, complete proof premises, fresh artifact receipts,
+shared-demand cancellation and actual child-resource draining. Deferring a task
+must preserve the existing launch/reservation ordering at its new execution
+boundary. Use portable command/effect fixtures to carry these guarantees into a
+native host. This work belongs alongside shared workspace integration, rather
+than being deferred until device or remote-site horizons.
+
+The functional coordinator and scoped suspension/resumption have standalone
+[audit evidence](../../Fidelity.FSharp.Incremental/docs/Functional_Async_Auditor_Assessment_2026-10-01.md)
+at checkpoint `613e260`, with 99 passing tests and the F1 cleanup repair preserved.
+Audit its [acknowledgement and lifetime contract](Bozzetto_Incremental_Foundation_Adoption.md#workspace-coordinator-and-scoped-resumptions)
+against the actual Bozzetto workspace journey before adopting it. Require tests
+for reservation winning after scheduling but before launch, lost replies,
+stale/duplicate resumptions, shared demand and cleanup under queue pressure.
+The .NET mailbox implementation stays behind the portable protocol boundary.
+Use the accepted `AsyncMailbox` functional API and F# async workflows for new
+integration, keeping required CLR interop at explicit boundaries. Retain exact
+operation handles before observing replies; preserve admission and owned cleanup
+through the real backend. See the
+[authoring contract](Bozzetto_Incremental_Foundation_Adoption.md#functional-async-authoring-and-native-execution).
+
+The user relayed Clef-agent findings of separate Composer/editor locks around
+shared compiler state and early result retirement before Bozzetto cleanup joins.
+The agent is addressing shared whole-project checking and joined work lifetimes.
+Treat those as reported integration blockers until the actual workspace path
+demonstrates shared serialization, prompt logical withdrawal and completed
+physical cleanup with proof/artifact gates intact.
+
+### Host dependency boundaries
+
 Self-hosting is a near-term design constraint. F#/.NET workflows can remain on the separate SageFS service; expanding Bozzetto's inherited engine is not required. Add no FSI, Harmony, FCS, MSBuild or reflection requirement to Clef session contracts. A package with an upstream name is a current implementation dependency to evaluate for removal, not a retained architectural requirement.
 
 | Current dependency | Why present now | Exit boundary / acceptance |
 |---|---|---|
+| Fidelity.FSharp.Incremental and its .NET host (selected; not yet referenced) | Planned common incremental bookkeeping and work-lifetime foundation | Preserve the portable protocol and consumer admission rules while replacing .NET hosting; replay and real lifecycle conformance must pass on the native host. |
 | FSharp.Compiler.Service / FSI, Fantomas, Ionide project loading, Harmony, Cecil | Existing F# evaluation, project resolution and patching in Bozzetto.Core | Isolate and remove from the Clef-only host, which must not reference or load these assemblies. Hybrid projects can use a separate SageFS service for F# support. |
 | Composer managed DLL closure and .NET worker | Today's compiler is managed | Replace worker implementation with a native/self-hosted compiler process using the same versioned JSON authority contract; native build/run/refusal tests must pass without dotnet installed. |
 | ModelContextProtocol .NET SDK / ASP.NET Core | Current MCP transport/hosting | Keep protocol schemas independent of SDK types. A native transport implementation must pass the same tool/resource and lifecycle conformance tests; SDK-specific code remains at the hosting edge. |
@@ -185,6 +227,7 @@ Proof caching and shared-memory PSG distribution remain separate compiler work; 
 - Audit follow-up: the [independent read-only assessment](Bozzetto_Live_Provider_Auditor_Assessment_2026-09-30.md) corroborates shared visibility and recorded results. Its three usability findings are addressed in the deployed [correction response](Bozzetto_Live_Provider_Audit_Response_2026-09-30.md), with full gates rerun.
 - Independent native workflow: the [incremental assessment](Bozzetto_Incremental_Workflow_Auditor_Assessment_2026-09-30.md) records cold/unchanged/one-function-edit builds, exact object reuse, human reservation followed by MCP refusal before source mutation, successful updated execution and owned-session cleanup. Its October 1 repeat corroborates that bounded workflow against the promoted compiler. Successful retirement and provider-tier cancellation/cleanup controls do not establish every live race, arbitrary application coverage, unsaved-buffer authority or ORC execution; Lazy/Result boundaries remain explicit.
 - Next integration: shared editor/compiler workspace authority, save/build and overlay contracts, measured responsiveness and evidence views in the [editor direction checkpoint](Bozzetto_Editor_Workspace_Direction_2026-09-30.md). Ionide/Lattice inheritance does not determine the architecture.
+- Shared incremental foundation: adopt Fidelity.FSharp.Incremental across the intended compiler and Bozzetto consumers under the [adoption contract](Bozzetto_Incremental_Foundation_Adoption.md). Initial library source exists locally; dependency pinning, Bozzetto integration and cross-component acceptance remain work.
 - Remaining first-horizon work: uncovered cancellation/recovery and retirement races, shared editor workspace and progress streaming (milestone 3), standalone Composer MCP packaging (milestone 4), CPU LLVM ORC JIT and the native/.NET-free hosting boundary. Compiler owners continue parity work and promote further distributions only with their own validated identities and acceptance; Bozzetto integration must validate each adopted closure.
 - Broader direction: the [development horizons](Bozzetto_Development_Horizons.md) and [proposed component contracts](Bozzetto_Fidelity_Component_Contracts.md) describe later application-code REPL selection, heterogeneous reload and federated development. Cross-target evaluation remains research pending demonstrated demand, feasibility and proof-cost evidence; this gate does not delay first-horizon CPU ORC work. These directions are not delivered acceptance.
 

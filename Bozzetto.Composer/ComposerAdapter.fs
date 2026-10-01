@@ -16,7 +16,7 @@ module ComposerAdapter =
       ReusedObjects = List.toArray value.ReusedObjects
       RetiredObjects = List.toArray value.RetiredObjects }
 
-  let create project directory : IProjectBackend =
+  let create project directory : IProjectBackend<Core.IncrementalBuild.Ticket> =
     let options =
       { ProjectPath = project; OutputPath = None; ArtifactsDirectory = None
         TargetTriple = None; NativeLink = Core.Types.Pipeline.NativeLinkOptions.Empty
@@ -24,12 +24,12 @@ module ComposerAdapter =
         EmitMLIROnly = false; EmitLLVMOnly = false
         Verbose = false; ShowTiming = false; TreatWarningsAsErrors = false; Deploy = false }
     let session = new ProjectSession(options, directory)
-    { new IProjectBackend with
-        member _.Reserve label = box (session.Reserve label)
+    { new IProjectBackend<Core.IncrementalBuild.Ticket> with
+        member _.Reserve label = session.Reserve label
         member _.Current = session.Current |> Option.map accepted
         member _.ManifestPath = session.ManifestPath
         member _.BuildAsync(ticket, cancellation) = task {
-          let! result = session.BuildAsync(unbox<Core.IncrementalBuild.Ticket> ticket, cancellation)
+          let! result = session.BuildAsync(ticket, cancellation)
           return Result.map accepted result
         }
         member _.RunCurrentAsync(arguments, cancellation) = task {

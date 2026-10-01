@@ -41,11 +41,11 @@ type CompilerIdentity = {
 
 /// This worker owns compiler sessions. A public MCP host uses this same private
 /// protocol; it does not obtain or reconstruct Composer tickets.
-type Worker(root: string, createBackend: string -> string -> IProjectBackend, describeCompiler: unit -> CompilerIdentity, ?cancelRequest: (string -> bool)) =
+type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBackend<'Ticket>, describeCompiler: unit -> CompilerIdentity, ?cancelRequest: (string -> bool)) =
   let gate = obj ()
   let host = Guid.NewGuid().ToString("N")
   let epoch = Guid.NewGuid().ToString("N")
-  let sessions = Collections.Generic.Dictionary<string, ProviderSession>()
+  let sessions = Collections.Generic.Dictionary<string, ProviderSession<'Ticket>>()
   let opening = Collections.Generic.Dictionary<string, Task<Result<unit, Refusal>>>()
   let mutable retired = false
   let cancelRequest = defaultArg cancelRequest (fun _ -> false)
@@ -147,7 +147,7 @@ type Worker(root: string, createBackend: string -> string -> IProjectBackend, de
                 let directory = Path.Combine(root, host, sessionId, epoch)
                 // Construction can touch disk; it must not hold the host gate.
                 let backend = createBackend (Path.GetFullPath project) directory
-                let session = new ProviderSession(host, sessionId, epoch, Path.GetFullPath project, backend)
+                let session = new ProviderSession<'Ticket>(host, sessionId, epoch, Path.GetFullPath project, backend)
                 let installed = lock gate (fun () ->
                   if retired then false
                   else
@@ -235,4 +235,3 @@ type Worker(root: string, createBackend: string -> string -> IProjectBackend, de
     // The owner explicitly awaits RetireAsync within its shutdown deadline.
     // Disposing this scope must not start a second unbounded cleanup retry.
     member this.Dispose() = this.BeginRetirement() |> ignore
-

@@ -376,6 +376,32 @@ let tests =
       use releasedAgain = new FileStream(leasePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
       client.Call("run", second, []) |> refused "closed"
   
+    testCase "two wire clients of one reservation share the same native build receipt" <| fun _ ->
+      let directory = evidenceRoot ()
+      let fixture = fixture directory
+      use client = new Client(directory, "shared-build")
+      client.Hello() |> ignore
+      let session = openProject client fixture.Project
+      let token = reserve client session "two consumers"
+      use dispatch = new ManualResetEventSlim(false)
+      let request () = Task.Run(fun () ->
+        dispatch.Wait()
+        buildReserved client session token |> succeeded)
+      let first, second = request (), request ()
+      dispatch.Set()
+      let accepted = Task.WhenAll(first, second).WaitAsync(TimeSpan.FromMinutes 8.).GetAwaiter().GetResult()
+      // Provider barrier tests establish overlap deterministically. This real
+      // wire/process test establishes that both replies name the same actual
+      // artifact and object receipt, not independently rebuilt equivalents.
+      for fieldName in [ "sourceVersion"; "artifactPath"; "artifactSha256"; "objectManifest" ] do
+        stringField fieldName accepted[0]
+        |> Expect.equal ("shared native receipt: " + fieldName) (stringField fieldName accepted[1])
+      let observedAgain = buildReserved client session token |> succeeded
+      stringField "artifactPath" observedAgain
+      |> Expect.equal "completed demand observes the retained build" (stringField "artifactPath" accepted[0])
+      objects directory "shared" accepted[0] |> ignore
+      run client session "stable\nbefore\n"
+
     testCase "native builds retain real objects and execution gates reject changed inputs and artifacts" <| fun _ ->
       let directory = evidenceRoot ()
       let fixture = fixture directory

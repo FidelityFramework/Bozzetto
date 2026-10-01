@@ -134,6 +134,8 @@ flowchart LR
 
 The host and compiler worker use .NET today. Their public contracts should support the native hosting horizon without making CLR types, a particular editor or a transport the source of compiler authority.
 
+Fidelity.FSharp.Incremental is the selected shared foundation for incremental dependencies and explicitly started work across Bozzetto and the Clef/CCS/Baker/Composer pipeline. Its [planned adoption](docs/Bozzetto_Incremental_Foundation_Adoption.md) connects interim .NET hosting to self-hosting through portable ownership and lifetime contracts. Integration is still ahead.
+
 `Bozzetto/` contains daemon supervision, CLI, MCP and browser routes; `Bozzetto.Composer/` contains the worker and adapter. `Bozzetto.Core/` holds shared and inherited implementation. Tests live in `Bozzetto.Tests/` and `Bozzetto.Composer.Tests/`. The [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md) removes embedded production FSI hosting from this checkout and directs F# work to separate SageFS; a real Clef interactive host remains future work.
 
 The [documentation index](docs/README.md) retains implementation and compatibility guides, editor references and application samples, including the Raylib window and game demos.

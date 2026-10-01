@@ -25,6 +25,7 @@ and remote operation contracts below remain development work.
 
 | Component or owner | Contract Bozzetto needs | Bozzetto responsibility |
 |---|---|---|
+| Fidelity.FSharp.Incremental | Explicit dependency, demand, invalidation and execution-lifetime protocol; interim .NET hosting and portable conformance requirements. | Adopt the shared foundation for workspace coordination, map identities and resource ownership, and preserve compiler admission beyond library eligibility. |
 | Clef specification, CCS and Baker | Source admission, binding/redefinition, initialization, effects, capture/lifetime rules, numeric selection and evaluation-context requirements. | Preserve compiler authority and refusals; never reconstruct language meaning in an adapter. |
 | Fidelity.PSG | Immutable revision-bound observations, dependency facts and source/occurrence correspondence needed by consumers. | Route and retain observations with identity; distinguish compiler facts from presentation and user annotations. |
 | Composer and Alex | Shared workspace operations, proof/evidence publication, witnessed lowering, artifact manifests, compatible compositions and execution admission. Alex remains a passive witness of settled facts. | Supervise workers, order requests and expose the same accepted state to all clients. |
@@ -76,6 +77,39 @@ permission to submit more obsolete work. Preserve both identities until lifetime
 rules permit retirement.
 
 ## First horizon workspace and native execution
+
+### Shared incremental foundation
+
+Fidelity.FSharp.Incremental is the selected foundation for incremental dependency
+bookkeeping and explicitly started work across Bozzetto's interim .NET host and
+Clef/CCS/Baker/Composer. The [adoption contract](Bozzetto_Incremental_Foundation_Adoption.md)
+records the initial library source, ownership boundaries and integration gates.
+Adoption is planned; the local pre-integration library is not yet a pinned
+Bozzetto dependency.
+
+Its core command/effect protocol and replaceable hosting layer should carry the
+same lifetime rules into self-hosting. Library eligibility cannot replace Baker's
+complete premises or Composer's proof, artifact and execution gates. Agree identity
+mapping, shared consumer cancellation, actual child-resource draining, queue and
+retention limits, and portable conformance before declaring a consumer integrated.
+Cold execution must preserve authority at the actual start/commit point, including
+Bozzetto's ordering of artifact launch against edit reservation.
+
+The implemented mailbox coordinator and scoped suspension protocol have a separate
+[Bozzetto audit contract](Bozzetto_Incremental_Foundation_Adoption.md#workspace-coordinator-and-scoped-resumptions):
+reservation replies acknowledge committed authority changes; resumptions retain
+explicit ownership; control and cleanup remain serviceable under queue pressure.
+Posting a request, selecting a cancellation path or stopping a mailbox supplies
+none of those guarantees by itself.
+
+The [functional assessment](../../Fidelity.FSharp.Incremental/docs/Functional_Async_Auditor_Assessment_2026-10-01.md)
+accepts `AsyncMailbox` and preserves F1's repair; consumer integration remains
+open. Typed module operations and F# async now provide the preferred hosted
+surface, with necessary CLR interop at explicit boundaries. Retained operation
+handles support local re-observation after cancellation; adapters still own
+transport correlation and restart recovery. Native lowering must preserve the
+ownership protocol without requiring CLR Task objects or boxed payloads in
+its semantics; see the [authoring contract](Bozzetto_Incremental_Foundation_Adoption.md#functional-async-authoring-and-native-execution).
 
 ### Workspace service
 

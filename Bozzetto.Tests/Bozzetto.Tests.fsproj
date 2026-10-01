@@ -615,6 +615,7 @@
 
     <ItemGroup>
         <PackageReference Include="Expecto" />
+        <PackageReference Include="Fidelity.FSharp.Incremental.Hosting" />
         <PackageReference Include="Expecto.FsCheck" />
         <PackageReference Include="Expecto.Hopac" />
         <PackageReference Include="FsCheck" />

@@ -7,6 +7,7 @@ Bozzetto coordinates Fidelity development across compilers, editors, application
 - **[Development horizons](Bozzetto_Development_Horizons.md)**: first-horizon compiler/workspace and CPU REPL work, later heterogeneous development and federated sites; cross-target evaluation is research gated by demonstrated demand, feasibility and proof cost
 - **[Fidelity component contracts](Bozzetto_Fidelity_Component_Contracts.md)**: proposed interfaces, component ownership and acceptance requirements; these are requests for agreement, not delivered APIs
 - **[Clef/Composer development plan](Clef_Composer_Development_Plan.md)**: the concrete first-horizon delivery plan, implemented foundations and remaining integration work
+- **[Incremental foundation adoption](Bozzetto_Incremental_Foundation_Adoption.md)**: Fidelity.FSharp.Incremental across Bozzetto and the compiler pipeline, cold work, shared demand and the path from .NET hosting to self-hosting
 - **[Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md)**: removal of embedded production FSI hosting, separate SageFS development and the future Clef execution boundary
 
 ## Start here

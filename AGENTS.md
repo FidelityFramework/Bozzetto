@@ -218,6 +218,18 @@ dotnet pack Bozzetto -o nupkg  # Package the CLI tool
 - **Vertical slices**: Features as single files for locality of behavior
 - **Daemon architecture**: Long-running Composer supervision with shared MCP and browser contracts; F# execution uses separate SageFS
 
+### Shared incremental foundation
+
+Fidelity.FSharp.Incremental is the selected shared foundation for incremental
+dependency bookkeeping and explicitly started work across Bozzetto and the
+Clef/CCS/Baker/Composer pipeline. Follow the
+[adoption contract](docs/Bozzetto_Incremental_Foundation_Adoption.md) as its validated
+API lands. New workspace coordination should use that foundation rather than
+grow independent invalidation or task-lifetime mechanisms. Adoption is planned,
+not yet a package reference: record an exact library identity and consumer
+acceptance when integrating it. Preserve compiler proof/artifact authority,
+reservation/launch ordering, physical cleanup and portable host contracts.
+
 ## Things to Avoid
 
 - Do not introduce new NuGet dependencies without discussion

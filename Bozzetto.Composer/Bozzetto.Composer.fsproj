@@ -10,6 +10,8 @@
       Text="ComposerDistribution must be an explicit absolute directory." />
     <Error Condition="!Exists('$(ComposerDistribution)/Composer.dll')"
       Text="Supply -p:ComposerDistribution=/absolute/path/to/a/built/Composer/distribution. The provider never builds or guesses a sibling compiler checkout." />
+    <Error Condition="!Exists('$(ComposerDistribution)/Fidelity.FSharp.Incremental.dll') Or !Exists('$(ComposerDistribution)/Fidelity.FSharp.Incremental.Hosting.dll')"
+      Text="The Composer distribution must include its pinned Fidelity.FSharp.Incremental core and Hosting assemblies. Rebuild the reviewed compiler closure before building this provider." />
   </Target>
   <ItemGroup>
     <Reference Include="$(ComposerDistribution)/*.dll" />

@@ -31,6 +31,7 @@ type private Backend() =
   let gate = obj ()
   let buildEntered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let buildRelease = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+  let buildReturned = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let runEntered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let runRelease = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let mutable generation = 0L
@@ -43,25 +44,28 @@ type private Backend() =
   let mutable currentReads = 0
   let reserveLabels = Collections.Concurrent.ConcurrentQueue<string>()
   let mutable buildCancellation = CancellationToken.None
+  let registrations = ResizeArray<CancellationTokenRegistration>()
   member val HoldBuild = false with get, set
   member val HoldRun = false with get, set
   member val AfterReserve: string -> unit = ignore with get, set
   member val BeforeRun: unit -> unit = ignore with get, set
   member val BeforePublish: unit -> unit = ignore with get, set
   member val BeforeDispose: unit -> unit = ignore with get, set
+  member val OnCancellation: unit -> unit = ignore with get, set
   member _.BuildEntered = buildEntered.Task
+  member _.BuildReturned = buildReturned.Task
   member _.RunEntered = runEntered.Task
   member _.ReleaseBuild() = buildRelease.TrySetResult() |> ignore
   member _.ReleaseRun() = runRelease.TrySetResult() |> ignore
   member _.BuildCount = builds
-  member _.RunCount = runs
+  member _.RunCount = lock gate (fun () -> runs)
   member _.DisposeCount = disposals
   member _.CurrentReads = currentReads
   member _.ReserveLabels = reserveLabels.ToArray()
   member _.BuildCancellation = buildCancellation
   member _.Disposed = disposed
 
-  interface IProjectBackend with
+  interface IProjectBackend<Ticket> with
     member _.ManifestPath = "/project/program.fidproj"
     member _.Current = lock gate (fun () -> currentReads <- currentReads + 1; current)
     member this.Reserve label =
@@ -72,11 +76,13 @@ type private Backend() =
         let next = Ticket generation
         ticket <- Some next
         this.AfterReserve label
-        box next)
+        next)
     member this.BuildAsync(value, cancellation) = task {
-      let selected = value :?> Ticket
+      let selected = value
       builds <- builds + 1
       buildCancellation <- cancellation
+      let registration = cancellation.Register(fun () -> this.OnCancellation())
+      lock registrations (fun () -> registrations.Add registration)
       buildEntered.TrySetResult() |> ignore
       if this.HoldBuild then do! buildRelease.Task
       let result = artifact selected.Generation
@@ -84,6 +90,7 @@ type private Backend() =
         this.BeforePublish()
         if not disposed && (ticket |> Option.exists (fun latest -> obj.ReferenceEquals(latest, selected))) then
           current <- Some result)
+      buildReturned.TrySetResult() |> ignore
       return Result.Ok result
     }
     member this.RunCurrentAsync(_, _) = task {
@@ -101,6 +108,9 @@ type private Backend() =
         disposed <- true
         current <- None
         this.BeforeDispose())
+      lock registrations (fun () ->
+        for registration in registrations do registration.Dispose()
+        registrations.Clear())
 
 /// Stops inside a synchronous compiler prefix, before it can return its task.
 type private PrefixBarrier() =
@@ -130,25 +140,18 @@ let private taskCase name work =
   testCaseAsync name (async { do! work () |> bounded |> Async.AwaitTask })
 
 let private session id epoch backend =
-  new ProviderSession("test-host", id, epoch, "/project/program.fidproj", backend)
+  new ProviderSession<Ticket>("test-host", id, epoch, "/project/program.fidproj", backend)
 
-let private build (session: ProviderSession) label =
+let private build (session: ProviderSession<Ticket>) label =
   session.BuildAsync(session.Reserve(label) |> success, CancellationToken.None)
 
-let private preCanceledFailure runOperation () = task {
+let private preCanceledRequest runOperation () = task {
   let backend = new Backend()
   use owner = session "one" "epoch-a" backend
   let token = owner.Reserve "initial" |> success
   if runOperation then
     let! accepted = owner.BuildAsync(token, CancellationToken.None)
     accepted |> success |> ignore
-  let withdrawalEntered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-  use recovery = new PrefixBarrier()
-  backend.AfterReserve <- fun label ->
-    if label = "canceled" then
-      withdrawalEntered.TrySetResult() |> ignore
-      failwith "injected persistence failure after compiler mutation"
-    elif label = "recovery" then recovery.Block()
   use cancellation = new CancellationTokenSource()
   cancellation.Cancel()
   let withoutValue (response: Reply<'a>) = { Authority = response.Authority; Outcome = response.Outcome |> Result.map ignore }
@@ -161,31 +164,19 @@ let private preCanceledFailure runOperation () = task {
       let! response = owner.BuildAsync(token, cancellation.Token)
       return withoutValue response
     }
-  response |> refuses "superseded"
-  do! bounded withdrawalEntered.Task
-  // Entering the backend proves mutation began, not that the adapter published
-  // its failure. Recovery advances the revision and would legitimately suppress
-  // a late error from the previous revision, so observe that error first.
-  let failureDeadline = Diagnostics.Stopwatch.StartNew()
-  while (owner.Status() |> success).BackendError.IsNone do
-    if failureDeadline.Elapsed > TimeSpan.FromSeconds 5. then
-      failtest "Physical withdrawal failure was not published before recovery"
-    do! Task.Yield()
-  let repaired = owner.ReserveAsync "recovery"
-  do! bounded recovery.Entered
+  response |> refuses "canceled"
   let status = owner.Status() |> success
   status.Busy |> Expect.isFalse "pre-canceled registration leaves no active operation"
-  status.Current |> Expect.isNone "failed backend withdrawal grants no artifact authority"
-  status.BackendError.IsSome |> Expect.isTrue "physical withdrawal failure remains visible"
+  status.Current.IsSome |> Expect.equal "pre-canceled observation leaves existing artifact authority intact" runOperation
+  owner.Identity.Generation |> Expect.equal "pre-canceled request never revokes generation" 1L
+  backend.ReserveLabels |> Expect.equal "caller cancellation is not a compiler reservation" [| "initial" |]
   backend.RunCount |> Expect.equal "pre-canceled run never reaches native launch" 0
   backend.BuildCount |> Expect.equal "pre-canceled build never reaches compiler" (if runOperation then 1 else 0)
-  recovery.Release()
-  let! reservation = bounded repaired
-  let! accepted = owner.BuildAsync(success reservation, CancellationToken.None)
+  let! accepted = owner.BuildAsync(token, CancellationToken.None)
   accepted |> success |> ignore
   let! run = owner.RunAsync([], CancellationToken.None)
   run |> success |> ignore
-  (owner.Status() |> success).BackendError |> Expect.isNone "successful reservation clears prior withdrawal error"
+  (owner.Status() |> success).BackendError |> Expect.isNone "no backend mutation failed"
 }
 
 [<Tests>]
@@ -226,20 +217,23 @@ let tests =
       accepted.Authority.Session |> Expect.equal "right session remains usable" "second"
     }
 
-    taskCase "a reservation is single use even while its first build is pending" <| fun () -> task {
+    taskCase "two clients share one producer for the same session reservation" <| fun () -> task {
       let backend = new Backend(HoldBuild = true)
       use owner = session "one" "epoch-a" backend
       let token = owner.Reserve "edit" |> success
       let pending = owner.BuildAsync(token, CancellationToken.None)
       do! bounded backend.BuildEntered
-      let! duplicate = owner.BuildAsync(token, CancellationToken.None)
-      duplicate |> refuses "invalid_reservation"
+      let duplicate = owner.BuildAsync(token, CancellationToken.None)
+      duplicate.IsCompleted |> Expect.isFalse "the second client observes the same held producer"
       backend.BuildCount |> Expect.equal "only original build reaches compiler" 1
       backend.ReleaseBuild()
       let! accepted = bounded pending
       accepted |> success |> ignore
+      let! shared = bounded duplicate
+      shared |> Expect.equal "both clients receive the same compiler artifact" accepted
       let! replay = owner.BuildAsync(token, CancellationToken.None)
-      replay |> refuses "invalid_reservation"
+      replay |> Expect.equal "current reservation re-observes its completed producer" accepted
+      backend.BuildCount |> Expect.equal "neither sharing nor replay invokes compiler twice" 1
     }
 
     taskCase "pending build permits status and replacement reservation and rejects old success" <| fun () -> task {
@@ -276,21 +270,26 @@ let tests =
       (owner.Status() |> success).Busy |> Expect.isFalse "completed work leaves active set"
     }
 
-    taskCase "caller cancellation withdraws artifact authority before held work completes" <| fun () -> task {
+    taskCase "canceling one client detaches its demand while another keeps the shared producer" <| fun () -> task {
       let backend = new Backend(HoldBuild = true)
       use owner = session "one" "epoch-a" backend
       use cancellation = new CancellationTokenSource()
-      let pending = owner.BuildAsync(owner.Reserve "edit" |> success, cancellation.Token)
+      let token = owner.Reserve "edit" |> success
+      let pending = owner.BuildAsync(token, cancellation.Token)
       do! bounded backend.BuildEntered
+      let retained = owner.BuildAsync(token, CancellationToken.None)
       cancellation.Cancel()
-      owner.Identity.Generation |> Expect.equal "caller cancellation advances authority" 2L
-      backend.BuildCancellation.IsCancellationRequested |> Expect.isTrue "compiler receives cancellation"
-      (owner.Status() |> success).Current |> Expect.isNone "authority is withdrawn immediately"
-      backend.ReleaseBuild()
       let! response = bounded pending
-      response |> refuses "superseded"
+      response |> refuses "canceled"
+      owner.Identity.Generation |> Expect.equal "caller cancellation preserves generation" 1L
+      backend.BuildCancellation.IsCancellationRequested |> Expect.isFalse "another demand keeps the producer live"
+      retained.IsCompleted |> Expect.isFalse "surviving client still owns its held observation"
+      backend.ReleaseBuild()
+      let! accepted = bounded retained
+      accepted |> success |> ignore
+      backend.BuildCount |> Expect.equal "clients share one compiler call" 1
       let! run = owner.RunAsync([], CancellationToken.None)
-      run |> refuses "not_accepted"
+      run |> success |> ignore
     }
 
     taskCase "closing a session retires held work and permanently refuses new operations" <| fun () -> task {
@@ -299,8 +298,9 @@ let tests =
       let reserved = owner.Reserve "edit" |> success
       let pending = owner.BuildAsync(reserved, CancellationToken.None)
       do! bounded backend.BuildEntered
-      owner.Close() |> success |> ignore
-      backend.Disposed |> Expect.isTrue "backend retires with session"
+      let cleanup = owner.CloseAsync()
+      cleanup.IsCompleted |> Expect.isFalse "close retains physical ownership of held work"
+      backend.Disposed |> Expect.isFalse "backend is not disposed beneath held compiler work"
       let snapshot = owner.Status() |> success
       snapshot.Closed |> Expect.isTrue "closed state is visible before completion"
       snapshot.Current |> Expect.isNone "closed session has no current artifact"
@@ -313,6 +313,9 @@ let tests =
       backend.ReleaseBuild()
       let! response = bounded pending
       response |> refuses "closed"
+      let! cleaned = bounded cleanup
+      cleaned |> success |> ignore
+      backend.Disposed |> Expect.isTrue "backend retires only after physical work joins"
     }
 
     taskCase "compiler replacement cannot lend a new epoch's authority to old work" <| fun () -> task {
@@ -321,7 +324,7 @@ let tests =
       let oldToken = oldSession.Reserve "old edit" |> success
       let pending = oldSession.BuildAsync(oldToken, CancellationToken.None)
       do! bounded oldBackend.BuildEntered
-      oldSession.Close() |> success |> ignore
+      let cleanup = oldSession.CloseAsync()
       let freshBackend = new Backend()
       use fresh = session "project" "replacement-epoch" freshBackend
       let! foreign = fresh.BuildAsync(oldToken, CancellationToken.None)
@@ -332,6 +335,8 @@ let tests =
       oldBackend.ReleaseBuild()
       let! oldResult = bounded pending
       oldResult |> refuses "closed"
+      let! cleaned = bounded cleanup
+      cleaned |> success |> ignore
       oldResult.Authority.Epoch |> Expect.equal "old completion remains attributable to retired compiler" "retired-epoch"
       (fresh.Status() |> success).Current.IsSome |> Expect.isTrue "late old work leaves fresh session intact"
     }
@@ -369,9 +374,9 @@ let tests =
       canceled |> refuses "superseded"
     }
 
-    taskCase "pre-canceled build clears activity when compiler withdrawal fails after mutation" (preCanceledFailure false)
+    taskCase "pre-canceled build leaves its reservation available without entering compiler" (preCanceledRequest false)
 
-    taskCase "pre-canceled run clears activity without launching when compiler withdrawal fails" (preCanceledFailure true)
+    taskCase "pre-canceled run leaves accepted artifact authority intact without launching" (preCanceledRequest true)
 
     taskCase "synchronous run prefix cannot block status cancellation or logical retirement" <| fun () -> task {
       let backend = new Backend()
@@ -425,6 +430,55 @@ let tests =
       (newRun |> success).Generation |> Expect.equal "later execution selects later artifact" 2L
     }
 
+    taskCase "reservation bypasses occupied evaluator slots and prevents a deferred native launch" <| fun () -> task {
+      let backend = new Backend(HoldRun = true)
+      use owner = session "one" "epoch-a" backend
+      let! accepted = build owner "initial"
+      accepted |> success |> ignore
+      let running = [| for _ in 1..4 -> owner.RunAsync([], CancellationToken.None) |]
+      try
+        let deadline = Diagnostics.Stopwatch.StartNew()
+        while backend.RunCount < 4 do
+          if deadline.Elapsed > TimeSpan.FromSeconds 5. then failtest "The four native run slots did not become occupied"
+          do! Task.Yield()
+        let deferred = owner.RunAsync([], CancellationToken.None)
+        let! reserved = owner.ReserveAsync "edited while dispatch is full" |> bounded
+        reserved |> success |> ignore
+        backend.ReserveLabels |> Expect.equal "edit permission requires real synchronous Composer reservation" [| "initial"; "edited while dispatch is full" |]
+        backend.RunCount |> Expect.equal "queued run cannot launch behind reservation receipt" 4
+        backend.ReleaseRun()
+        let! results = Task.WhenAll(Array.append running [| deferred |]) |> bounded
+        for result in results do result |> refuses "superseded"
+        backend.RunCount |> Expect.equal "withdrawn deferred run never enters the backend" 4
+      finally backend.ReleaseRun()
+    }
+
+    taskCase "close retains ownership after evaluator return until cancellation callback exits" <| fun () -> task {
+      let backend = new Backend(HoldBuild = true)
+      use owner = session "one" "epoch-a" backend
+      use callback = new PrefixBarrier()
+      backend.OnCancellation <- callback.Block
+      let pending = build owner "held callback"
+      try
+        do! bounded backend.BuildEntered
+        let closing = owner.CloseAsync()
+        do! bounded callback.Entered
+        backend.ReleaseBuild()
+        do! bounded backend.BuildReturned
+        closing.IsCompleted |> Expect.isFalse "callback exit is part of physical close"
+        pending.IsCompleted |> Expect.isFalse "reply does not falsely certify physical settlement"
+        backend.Disposed |> Expect.isFalse "disposal cannot overtake an owned callback"
+        callback.Release()
+        let! cleaned = bounded closing
+        cleaned |> success |> ignore
+        let! response = bounded pending
+        response |> refuses "closed"
+        backend.Disposed |> Expect.isTrue "joined close can dispose compiler ownership"
+      finally
+        backend.ReleaseBuild()
+        callback.Release()
+    }
+
     taskCase "obsolete queued withdrawals cannot invalidate a newer reservation" <| fun () -> task {
       let backend = new Backend()
       use owner = session "one" "epoch-a" backend
@@ -448,6 +502,31 @@ let tests =
       refused |> refuses "superseded"
       let! result = owner.RunAsync([], CancellationToken.None)
       (result |> success).Generation |> Expect.equal "new reservation survives old cancellation queue" 2L
+    }
+
+    taskCase "control admission is bounded and a refused reservation grants no new authority" <| fun () -> task {
+      let backend = new Backend()
+      use owner = session "one" "epoch-a" backend
+      let! accepted = build owner "initial"
+      accepted |> success |> ignore
+      use prefix = new PrefixBarrier()
+      backend.BeforeRun <- prefix.Block
+      let oldRun = owner.RunAsync([], CancellationToken.None)
+      try
+        do! bounded prefix.Entered
+        let admitted = [| for index in 1..128 -> owner.ReserveAsync(sprintf "queued-%d" index) |]
+        let before = owner.Identity
+        let! refused = owner.ReserveAsync "beyond capacity" |> bounded
+        refused |> refuses "busy"
+        owner.Identity |> Expect.equal "refused admission does not fabricate a new reservation" before
+        prefix.Release()
+        let! responses = Task.WhenAll admitted |> bounded
+        responses[responses.Length - 1] |> success |> ignore
+        for response in responses[0..responses.Length - 2] do response |> refuses "superseded"
+        backend.ReserveLabels |> Expect.equal "only surviving control reaches the compiler" [| "initial"; "queued-128" |]
+        let! old = bounded oldRun
+        old |> refuses "superseded"
+      finally prefix.Release()
     }
 
     taskCase "compiler publication gate cannot block adapter status or cancellation" <| fun () -> task {

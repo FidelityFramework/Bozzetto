@@ -47,7 +47,7 @@ let private request id operation (identity: JsonElement option) extra =
   for name, value in extra do fields[name] <- value
   JsonSerializer.SerializeToElement fields
 
-let private hello (worker: Worker) = task {
+let private hello (worker: Worker<int64>) = task {
   let! response = worker.Handle(request "hello" "hello" None [])
   success response |> ignore
   return property "authority" response
@@ -61,14 +61,14 @@ type private Backend(failCleanup: bool) =
   member _.Builds = builds
   member _.Runs = runs
   member _.Disposals = disposals
-  interface IProjectBackend with
+  interface IProjectBackend<int64> with
     member _.ManifestPath = "unused-in-memory-manifest"
     member _.Current = None
-    member _.Reserve _ = generation <- generation + 1L; box generation |> nonNull
+    member _.Reserve _ = generation <- generation + 1L; generation
     member _.BuildAsync(ticket, _) =
       builds <- builds + 1
       Task.FromResult(Result.Ok {
-        Generation = unbox<int64> ticket; SourceVersion = "in-memory-source"
+        Generation = ticket; SourceVersion = "in-memory-source"
         ArtifactPath = "unused"; ArtifactSha256 = "unused"; ObjectManifest = "unused"
         ChangedWitnesses = [||]; RetainedWitnesses = [||]; RetiredWitnesses = [||]
         WitnessVisits = [||]; CompiledObjects = [||]; ReusedObjects = [||]; RetiredObjects = [||] })
@@ -88,7 +88,7 @@ let private canceledOperation runOperation () = task {
   let project = Path.Combine(projectDirectory, "test.fidproj")
   File.WriteAllText(project, "test fixture: backend injected; no compiler invoked")
   let backend = new Backend(false)
-  use worker = new Worker(Path.Combine(root, "sessions"), (fun _ _ -> backend), describeCompiler)
+  use worker = new Worker<int64>(Path.Combine(root, "sessions"), (fun _ _ -> backend), describeCompiler)
   let! identity = hello worker
   let! opened = worker.Handle(request "open" "open" (Some identity) [ "project", box project ])
   success opened |> ignore
@@ -102,10 +102,11 @@ let private canceledOperation runOperation () = task {
   canceled.Cancel()
   let operation, parameters = if runOperation then "run", [] else "build", [ "reservation", box reservation ]
   let! refused = worker.Handle(request "canceled-operation" operation (Some identity) parameters, cancellation = canceled.Token)
-  refusal "superseded" refused
+  refusal "canceled" refused
   let! status = worker.Handle(request "status" "status" (Some identity) [])
   (status |> success |> property "busy").GetBoolean() |> Expect.isFalse "forwarded cancellation leaves no stranded active request"
-  (status |> success |> property "current").ValueKind |> Expect.equal "forwarded cancellation withdraws artifact authority" JsonValueKind.Null
+  ((status |> success |> property "current").ValueKind <> JsonValueKind.Null)
+  |> Expect.equal "forwarded observer cancellation preserves current artifact authority" runOperation
   backend.Builds |> Expect.equal "pre-canceled build never enters backend" (if runOperation then 1 else 0)
   backend.Runs |> Expect.equal "pre-canceled run never launches an artifact" 0
   let! retired = worker.RetireAsync()
@@ -127,7 +128,7 @@ let tests = testList "Composer worker request lifetime" [
         unrelated.Cancel()
         true
       else false
-    use worker = new Worker(directory (), (fun _ _ -> failwith "No project should be opened"), describeCompiler, cancelRequest = cancel)
+    use worker = new Worker<int64>(directory (), (fun _ _ -> failwith "No project should be opened"), describeCompiler, cancelRequest = cancel)
     let! identity = hello worker
     for overrides, code in [ [ "host", box "foreign" ], "wrong_authority"
                              [ "epoch", box "foreign" ], "wrong_authority"
@@ -164,8 +165,8 @@ let tests = testList "Composer worker request lifetime" [
     let create _ _ =
       entered.TrySetResult() |> ignore
       release.Task.GetAwaiter().GetResult()
-      backend :> IProjectBackend
-    use worker = new Worker(Path.Combine(root, "sessions"), create, describeCompiler)
+      backend :> IProjectBackend<int64>
+    use worker = new Worker<int64>(Path.Combine(root, "sessions"), create, describeCompiler)
     let! identity = hello worker
     let opening = Task.Run<JsonElement>(Func<Task<JsonElement>>(fun () ->
       worker.Handle(request "held-open" "open" (Some identity) [ "project", box project ])))

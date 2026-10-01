@@ -64,7 +64,7 @@ let main argv =
           try source.Cancel(); true
           with :? ObjectDisposedException -> false
         | false, _ -> false
-      use worker = new Worker(cacheRoot (), ComposerAdapter.create, describeCompiler, cancelRequest = cancelRequest)
+      use worker = new Worker<Core.IncrementalBuild.Ticket>(cacheRoot (), ComposerAdapter.create, describeCompiler, cancelRequest = cancelRequest)
       let writes = obj ()
       let running = Collections.Concurrent.ConcurrentDictionary<string, Task>()
       let emit value = lock writes (fun () -> writer.WriteLine(JsonSerializer.Serialize(value, jsonOptions)))

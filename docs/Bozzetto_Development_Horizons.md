@@ -63,6 +63,10 @@ Bozzetto should provide:
 - Explicit process boundaries, compiler-state serialization, bounded queues,
   solver concurrency and cancellation. The native/pthread host must preserve
   these contracts when it replaces managed infrastructure.
+- Adoption of Fidelity.FSharp.Incremental for shared dependency bookkeeping,
+  demand and explicitly started work in the interim .NET host, coordinated with
+  Clef/CCS/Baker/Composer. Its portable core and replaceable host support the
+  self-hosting path; compiler proof and execution admission remain authoritative.
 - Distribution identification, compatibility checks and coordinated compiler
   replacement. Publishing a CLI, promoting a compiler and replacing application
   code are different operations with different owners and evidence.
@@ -79,6 +83,11 @@ until federation. ORC and the managed-to-native host migration can progress
 independently. Portable contracts must avoid CLR object identities, FSI and
 reflection requirements; a Clef-only installation without .NET remains the host
 migration exit criterion.
+
+The [incremental foundation adoption contract](Bozzetto_Incremental_Foundation_Adoption.md)
+sets the near-term integration sequence and lifetime/conformance gates. This is
+an H1 adoption direction, not a claim that the new library is already integrated
+or that later cross-target execution work has been approved.
 
 ### First horizon acceptance
 

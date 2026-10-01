@@ -76,10 +76,10 @@ type SessionSnapshot = {
 /// the adapter serializes this prefix with Reserve, then awaits outside that
 /// boundary. Status never calls Current because its getter may perform IO or
 /// contend with compiler publication. It reports observed accepted metadata.
-type IProjectBackend =
+type IProjectBackend<'Ticket> =
   inherit IDisposable
-  abstract Reserve: label: string -> obj
-  abstract BuildAsync: ticket: obj * cancellation: CancellationToken -> Task<Result<AcceptedArtifact, string>>
+  abstract Reserve: label: string -> 'Ticket
+  abstract BuildAsync: ticket: 'Ticket * cancellation: CancellationToken -> Task<Result<AcceptedArtifact, string>>
   abstract RunCurrentAsync: arguments: string list * cancellation: CancellationToken -> Task<Result<RunResult, string>>
   abstract Current: AcceptedArtifact option
   abstract ManifestPath: string
