@@ -9,9 +9,9 @@ contracts remain in the linked sibling documents. This records source integratio
 and separately identified gate results, not an installed-daemon promotion.
 
 The common library is `Fidelity.FSharp.Incremental.Hosting`
-**0.1.0-preview.6**. Final validation of repairs C1–C5, native execution and
-the exact final compiler/provider closure are still being completed. The audit
-handoff is ready only after those final receipts and pins are recorded here.
+**0.1.0-preview.6**. The table below pins a pushed source checkpoint across all
+affected repositories. Full regression comparison and the final compiler/provider
+closure remain open validation work; they do not postpone this fallback point.
 The repaired Bozzetto default and entire Composer integration tiers are now
 `Trusted` against the frozen `compiler-preview6-c1-c4` closure. That closure
 predates the Baker repair and PSG schema 12; final aligned-closure validation
@@ -21,15 +21,25 @@ remains separate.
 
 | Repository | Recorded integration identity | Ownership |
 | --- | --- | --- |
-| [Fidelity.FSharp.Incremental](../../Fidelity.FSharp.Incremental/docs/Consumer_Integration_Checkpoint_2026-10-01.md) | Active preview.6 implementation `3b86e2dac96ad55cb965341bfc04395061d09c46`. Earlier preview.5 implementation `87c77d9` was independently assessed at `deabc97`; `e7089b7` records that earlier documentation checkpoint. | Pure dependency/eligibility transitions, exact admitted-operation observation, owned evaluator/cancellation-callback lifetime and physical close. No compiler semantics, proof or launch authority. |
-| [Clef / CCS](../../clef/docs/Incremental_Project_Workspace_2026-10-01.md) | `7927b3f` | Immutable captured project inputs, shared whole-project checking, process-global checker-state ownership through projection, Baker semantics and settled PSG publication. Each reserved generation still gets fresh checking. |
-| [Fidelity.PSG](../../Fidelity.PSG/AGENTS.md) | Schema 12 source change; final source pin pending. | Immutable typed correspondence for bounded sequence-pull composition. No source inference, proof derivation or scheduling. Schema/integrity tests pass 103/103. |
-| [Composer](../../Composer/docs/incremental-compilation/2026-10-01-workspace-adoption.md) | Integration base `0c9dc71`; reservation and process-cleanup repairs and revalidation in progress. | Source/proof/target/input receipts, compiler reservation, native artifacts and reuse, actual process launch, process/output/lease cleanup; editor and CLI consumers join CCS ownership. |
-| Bozzetto | Provider base `a64010a8` plus adapter reporting of retained late CCS diagnostics. The latter and lock/checkpoint updates are now included in peer commit `62285f3e`; final validated closure pin remains pending. | Explicit session and wire authority, same-ticket shared demand, caller detach, reservation acknowledgement, compiler replacement and worker supervision. One mailbox per provider session; separate opens stay separate. |
+| [Fidelity.FSharp.Incremental](../../Fidelity.FSharp.Incremental/docs/Consumer_Integration_Checkpoint_2026-10-01.md) | `d476aea`; preview.6 implementation `3b86e2d` | Pure dependency/eligibility transitions, exact admitted-operation observation, owned evaluator/cancellation-callback lifetime and physical close. No compiler semantics, proof or launch authority. |
+| [Clef / CCS](../../clef/docs/Incremental_Project_Workspace_2026-10-01.md) | `6a5c836` | Immutable captured project inputs, shared whole-project checking, process-global checker-state ownership through projection, Baker semantics and settled PSG publication. Each reserved generation still gets fresh checking. |
+| [Fidelity.PSG](../../Fidelity.PSG/AGENTS.md) | `e2effe3`, schema 12 | Immutable typed correspondence for bounded sequence-pull composition. No source inference, proof derivation or scheduling. |
+| [Composer](../../Composer/docs/incremental-compilation/2026-10-01-workspace-adoption.md) | `6440afd` | Source/proof/target/input receipts, compiler reservation, native artifacts and reuse, actual process launch, process/output/lease cleanup; editor and CLI consumers join CCS ownership. |
+| Bozzetto | `fd10e283` implementation; this document records the synchronized anchor. | Explicit session and wire authority, same-ticket shared demand, caller detach, reservation acknowledgement, compiler replacement and worker supervision. One mailbox per provider session; separate opens stay separate. |
+
+Checkpoint evidence: library **108/108**; PSG **103/103**; the compiler's focused
+finite-sequence/loop/freshness cohort **52/52**; Bozzetto default **9,788 passed,
+four ignored** and its entire Composer tier **40/40** against the named earlier
+compiler closure. Canonical generation exactly reproduces the integrity traversal
+and all 206 publication mappers. The final editor run passes 23 groups, then
+stops at program-lifetime CCS8403: missing `string.Bytes` borrow lifetime and
+guarded-comparison memory-access/bounds evidence. Later editor groups are unrun.
+Ordinary branch-local lazy-demand activation and callable-`Result` native
+transport remain named compiler gaps. Their presence is not full compiler/editor
+acceptance, nor a reason to leave the integrated source unpushed.
 
 These identities distinguish implementation, documentation and validation inputs.
-Before final audit, the coordinating runner must record remaining source diffs,
-final commit identities and the actual compiler/provider binary manifests.
+Further validation must identify the actual compiler/provider binary manifests.
 Independent audit is evidence for an identified revision and scope, not a frozen
 library contract. All affected repositories remain within the auditor's remit. If
 integration exposes a defect in the shared contract, repair it in
