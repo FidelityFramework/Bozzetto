@@ -39,13 +39,16 @@ by these read-only probes.
    and then repeat the owned reserve/build/run/reuse journey against its explicit
    digest. Current checkout test results do not update the deployed worker. This
    is pending compiler integration work, not a newly found Bozzetto defect.
-2. **CLI discoverability:** deployed `boz --help` still leads with “F# Interactive
-   daemon,” `fsi` checks and F# session instructions, and omits the Composer
-   browser/provider entry path. Align help with the already documented provider
-   choice. Keep the accurate provider-specific status labels. A subsequent
-   checkout inspection found the peer's pending help-text repair in `Program.fs`
-   and related documentation. This audit has not built or deployed those edits;
-   they remain outside this documentation checkpoint.
+2. **CLI discoverability — implemented in the checkout; deployment pending:**
+   the peer reports that CLI help, the repository README, docs index, agent guide
+   and MCP reference now lead with Composer and label retained F# features as
+   compatibility material. Auditor readback confirms that provider order in
+   `Bozzetto/Program.fs`. On October 1 the peer reported a passing build and
+   **9,802 passed, four ignored, zero failures; Trusted**. Those test results
+   are peer-reported, not independently rerun for this note. The installed CLI
+   has not been redeployed, so the earlier deployed-help observation remains
+   historical evidence. The implementation edits remain outside this auditor's
+   documentation commits.
 3. **Shared workspace authority:** continue the
    [editor workspace audit](Bozzetto_Editor_Workspace_Audit_2026-09-30.md).
    Bozzetto coordinates sessions and execution; compiler-owned observations and
