@@ -398,7 +398,7 @@ let integrationTests =
       body |> Expect.isNotEmpty "body is not empty"
     }
 
-    testTask "GET /health includes session diagnostics when a session exists" {
+    Integration.retireFSharp <| testTask "GET /health includes session diagnostics when a session exists" {
       let client = getSharedClient()
       do! ensureSession client webSampleProject testProjectDir
       let payload =
@@ -439,7 +439,7 @@ let integrationTests =
 
     // ── Eval endpoints ──────────────────────────────────────────
 
-    testTask "POST /exec evaluates F# code and returns result" {
+    Integration.retireFSharp <| testTask "POST /exec evaluates F# code and returns result" {
       let client = getSharedClient()
       let payload =
         {| code = "1 + 1;;"
@@ -458,7 +458,7 @@ let integrationTests =
       doc.Dispose()
     }
 
-    testTask "POST /exec reports eval failure truthfully (200, success=false)" {
+    Integration.retireFSharp <| testTask "POST /exec reports eval failure truthfully (200, success=false)" {
       let client = getSharedClient()
       do! ensureSession client webSampleProject testProjectDir
       let payload =
@@ -507,7 +507,7 @@ let integrationTests =
         doc.Dispose()
     }
 
-    testTask "POST /exec routes to existing session by working_directory" {
+    Integration.retireFSharp <| testTask "POST /exec routes to existing session by working_directory" {
       let client = getSharedClient()
       do! ensureSession client webSampleProject testProjectDir
       let payload =
@@ -530,7 +530,7 @@ let integrationTests =
       sessDoc.Dispose()
     }
 
-    testTask "Multiple sequential evals maintain session scope" {
+    Integration.retireFSharp <| testTask "Multiple sequential evals maintain session scope" {
       let client = getSharedClient()
       do! ensureSession client webSampleProject testProjectDir
       let p1 = {| code = "let scopeVal = 42;;" ; working_directory = testProjectDir |}
@@ -565,7 +565,7 @@ let integrationTests =
       doc.Dispose()
     }
 
-    testTask "POST /exec then GET /api/status shows eval count > 0" {
+    Integration.retireFSharp <| testTask "POST /exec then GET /api/status shows eval count > 0" {
       let client = getSharedClient()
       do! ensureSession client webSampleProject testProjectDir
       let payload =
@@ -616,11 +616,7 @@ let integrationTests =
         | _ -> ()
       }
 
-      // Let the SSE connection establish before triggering an event.
-      do! Task.Delay 200
-      let payload = {| code = "1 + 2;;" ; working_directory = testProjectDir |}
-      let! _, _ = postJson client "/exec" payload
-
+      // Initial daemon state is delivered without creating or evaluating a session.
       try do! sseTask with _ -> ()
 
       Expect.isGreaterThan "received at least 1 SSE event" (eventsReceived.Count, 0)
@@ -712,7 +708,7 @@ let integrationTests =
       doc.Dispose()
     }
 
-    testTask "GET /api/recent-events returns content after eval" {
+    Integration.retireFSharp <| testTask "GET /api/recent-events returns content after eval" {
       let client = getSharedClient()
       do! ensureSession client webSampleProject testProjectDir
       let payload =
@@ -728,7 +724,7 @@ let integrationTests =
 
     // ── Mutations (reset, hard-reset) ───────────────────────────
 
-    testTask "POST /reset resets the session" {
+    Integration.retireFSharp <| testTask "POST /reset resets the session" {
       let client = getSharedClient()
       do! ensureSession client webSampleProject testProjectDir
       let payload = {| code = "let resetTestVal = 1;;" ; working_directory = testProjectDir |}
@@ -744,7 +740,7 @@ let integrationTests =
       doc.Dispose()
     }
 
-    testTask "POST /reset after eval allows re-eval" {
+    Integration.retireFSharp <| testTask "POST /reset after eval allows re-eval" {
       let client = getSharedClient()
       do! ensureSession client webSampleProject testProjectDir
       let p1 = {| code = "let resetReeval = 99;;" ; working_directory = testProjectDir |}
@@ -767,7 +763,7 @@ let integrationTests =
 
     // ── Session lifecycle ───────────────────────────────────────
 
-    testTask "POST /api/sessions/create creates a new session" {
+    Integration.retireFSharp <| testTask "POST /api/sessions/create creates a new session" {
       let client = getSharedClient()
       // Create for the smoke sample dir — NOT the web sample dir — so we do
       // not end up with two sessions for the same workingDirectory (which
@@ -797,7 +793,7 @@ let integrationTests =
       doc.Dispose()
     }
 
-    testTask "POST /api/sessions/stop stops a session" {
+    Integration.retireFSharp <| testTask "POST /api/sessions/stop stops a session" {
       let client = getSharedClient()
       do! ensureSession client webSampleProject testProjectDir
       let p = {| code = "let stopTest = 1;;" ; working_directory = testProjectDir |}
@@ -821,7 +817,7 @@ let integrationTests =
       stopDoc.Dispose()
     }
 
-    testTask "POST /hard-reset with rebuild=false succeeds" {
+    Integration.retireFSharp <| testTask "POST /hard-reset with rebuild=false succeeds" {
       let client = getSharedClient()
       do! ensureSession client webSampleProject testProjectDir
       let payload = {| code = "let hrTest = 1;;" ; working_directory = testProjectDir |}
@@ -842,7 +838,7 @@ let integrationTests =
 [<Tests>]
 let httpApiRoutingTests =
   Integration.hostList "HTTP API routing" [
-    testTask "POST /api/sessions/{sid}/buffer-changed accepts unsaved buffer content" {
+    Integration.retireFSharp <| testTask "POST /api/sessions/{sid}/buffer-changed accepts unsaved buffer content" {
       let port = reserveLoopbackPort ()
       let! proc, client =
         startDaemonWithArgs port repoRoot []
@@ -909,7 +905,7 @@ let httpApiRoutingTests =
         killDaemon proc
     }
 
-    testTask "POST /api/completions uses workingDirectory for startup session routing" {
+    Integration.retireFSharp <| testTask "POST /api/completions uses workingDirectory for startup session routing" {
       let port = reserveLoopbackPort ()
       let! proc, client =
         startDaemonWithArgs port repoRoot []
@@ -944,7 +940,7 @@ let httpApiRoutingTests =
         killDaemon proc
     }
 
-    testTask "POST /api/completions accepts snake_case cursor_position" {
+    Integration.retireFSharp <| testTask "POST /api/completions accepts snake_case cursor_position" {
       let port = reserveLoopbackPort ()
       let! proc, client =
         startDaemonWithArgs port repoRoot []
@@ -979,7 +975,7 @@ let httpApiRoutingTests =
         killDaemon proc
     }
 
-    testTask "WHY — POST /api/completions — a cursor past end-of-string is clamped instead of silently returning zero items because editors and agents routinely send end-relative offsets (smoke-test failure 2026-08)" {
+    Integration.retireFSharp <| testTask "WHY — POST /api/completions — a cursor past end-of-string is clamped instead of silently returning zero items because editors and agents routinely send end-relative offsets (smoke-test failure 2026-08)" {
       let port = reserveLoopbackPort ()
       let! proc, client =
         startDaemonWithArgs port repoRoot []
@@ -1025,7 +1021,7 @@ let httpApiRoutingTests =
     // leave two sessions registered for this directory — the exact
     // "Multiple sessions match workingDirectory" failure mode the route was
     // chosen to avoid.
-    testTask "POST /api/sessions/{sid}/workflow switches Interactive to HotReload on the SAME session, spawn-first" {
+    Integration.retireFSharp <| testTask "POST /api/sessions/{sid}/workflow switches Interactive to HotReload on the SAME session, spawn-first" {
       let port = reserveLoopbackPort ()
       let! proc, client =
         startDaemonWithArgs port repoRoot []
@@ -1112,7 +1108,7 @@ let httpApiLiveTestingCompiledProjectTests =
   // on the same kind of resource and must not overlap each other either. Same
   // mechanism the Harmony suites already use.
   testSequencedGroup LiveTestingWorkerSuites.groupName <|
-    Integration.hostList "HTTP API compiled live testing" [
+    Integration.retiredFSharpList "HTTP API compiled live testing" [
     testTask "editing a compiled F# file reruns tests against rebuilt output without an explicit rerun" {
       let tempProjectDir = smokeSampleProjectDir
       let tempProjectPath = smokeSampleProject

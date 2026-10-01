@@ -15,9 +15,15 @@ Welcome! Bozzetto is an open-source project and we genuinely appreciate contribu
 
 ### Prerequisites
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) (see `global.json` for exact version)
+- The .NET SDK pinned in [`global.json`](global.json)
 - Git
 - An editor — VS Code with Ionide, Neovim, Rider, or your preference
+
+Use separate SageFS on `37749`/`37750` for the F# REPL implementation loop;
+Bozzetto on `47749`/`47750` serves Clef/Composer. Embedded production FSI hosting
+is retired by the [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md).
+Follow [the implementation skill](skills/bozzetto/SKILL.md) and retain the
+unfiltered build/test gates below.
 
 ### Clone and Build
 

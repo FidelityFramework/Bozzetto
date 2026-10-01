@@ -442,7 +442,7 @@ let cleanupSession
 
 [<Tests>]
 let sessionManagerLifecycleTests =
-  Integration.hostList "SessionManager lifecycle" [
+  Integration.retiredFSharpList "SessionManager lifecycle" [
 
     // THE CLAIM: the mailbox actually routes to a REAL worker process — create
     // spawns it, the proxy it hands back reaches the real worker's real HTTP

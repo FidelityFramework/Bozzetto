@@ -426,7 +426,7 @@ let tests =
 
     yield! [
 
-      testTask "WHY — a real two-member cohort joins over two distinct MCP connections, claims disjoint files, and lands two real commits through the real daemon-owned landing pipeline (multi-agent vision, honest e2e proof)" {
+      Integration.retireFSharp <| testTask "WHY — a real two-member cohort joins over two distinct MCP connections, claims disjoint files, and lands two real commits through the real daemon-owned landing pipeline (multi-agent vision, honest e2e proof)" {
         // ── Fixture: a throwaway temp git repo, never this repo, never the
         // user's live daemon's checkout ──
         let mainRepo = Directory.CreateTempSubdirectory("cohort-dogfood-main-").FullName

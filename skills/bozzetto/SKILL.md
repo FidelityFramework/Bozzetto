@@ -19,6 +19,12 @@ working on that backend; it is not a requirement to route Clef through FSI or
 expand Bozzetto's F# product surface. Use the equivalent tools on the explicitly
 chosen F# service, and keep that service's session identity separate.
 
+The [October 1 host transition](../../docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md)
+removes embedded production FSI hosting from this checkout. Apply the REPL
+instructions below to **separate SageFS**, including session creation, reload
+and cleanup. Bozzetto's retained F# tool names do not establish an available
+F# execution provider. Clefx/ORC execution remains planned.
+
 For the shared Bozzetto deployment, use `scripts/start-shared-daemon`: it launches
 the reviewed installed CLI from an external, dedicated workspace, with logs in
 external state storage. Launching from home or the repositories parent causes

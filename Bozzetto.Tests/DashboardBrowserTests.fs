@@ -65,22 +65,25 @@ module PlaywrightExpect =
     Expect.isTrue found (sprintf "Expected '%s' in '%s' within %dms" text selector ms)
   }
 
-  /// Wait for the SSE stream to connect by checking the tabline carries the
-  /// server-pushed session identity. The shell renders #session-status as the
-  /// state pill ("Ready") and the "Session: {id}" text in a sibling
-  /// .tabline-info — both are inside #main, which the server morphs on every
-  /// SSE push, so their presence proves the round-trip is live.
+  let private sseConnections =
+    System.Runtime.CompilerServices.ConditionalWeakTable<IPage, TaskCompletionSource<bool>>()
+
+  /// Observe the stream response before navigation; a rendered status label
+  /// alone cannot prove SSE connected, and no-session pages never say Ready.
+  let observeSSE (page: IPage) =
+    let connected = TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
+    sseConnections.Add(page, connected)
+    page.Response.Add(fun response ->
+      if response.Status = 200 && response.Url.Contains("/dashboard/stream/") then
+        connected.TrySetResult true |> ignore)
+
   let waitForSSE (ms: int) (page: IPage) = task {
-    let sw = Diagnostics.Stopwatch.StartNew()
-    let mutable found = false
-    while not found && sw.ElapsedMilliseconds < int64 ms do
-      let! content = page.EvaluateAsync<string>(
-        "() => { var s = document.querySelector('#session-status'); var i = document.querySelector('#main .tabline-info'); return (s ? s.textContent : '') + '|' + (i ? i.textContent : ''); }")
-      if content <> null && content.Contains("Ready") && content.Contains("Session:") then
-        found <- true
-      else
-        do! Task.Delay(250)
-    Expect.isTrue found (sprintf "Expected SSE connection within %dms" ms)
+    match sseConnections.TryGetValue page with
+    | false, _ -> failwith "SSE observation must be installed before navigation"
+    | true, connected ->
+      let! completed = Task.WhenAny(connected.Task :> Task, Task.Delay ms)
+      obj.ReferenceEquals(completed, connected.Task)
+      |> Expecto.Flip.Expect.isTrue (sprintf "Expected SSE connection within %dms" ms)
   }
 
   /// Wait for the eval textarea to be cleared after an eval. The clear is
@@ -102,25 +105,20 @@ module PlaywrightFixture =
   let mutable activePlaywright: IPlaywright option = None
   let mutable activeBrowser: IBrowser option = None
 
-  let dashboardUrl =
-    let port =
-      match Environment.GetEnvironmentVariable("BOZZETTO_DASHBOARD_PORT") with
-      | null | "" -> "47750"
-      | p -> p
-    sprintf "http://localhost:%s" port
+  /// Discovery runs before the owned runner configures its ports. Resolve
+  /// them only when a journey executes and never target a shared daemon.
+  let private requiredPort variable =
+    match Environment.GetEnvironmentVariable variable |> Int32.TryParse with
+    | true, port when port > 0 && port <= 65535 -> port
+    | _ -> failwithf "%s must name the owned browser fixture's port" variable
 
-  /// The daemon's MCP/API port. The browser runner exports it; a daemon
-  /// started by hand binds the dashboard at MCP port + 1, so fall back to that.
-  let mcpPort =
-    match Environment.GetEnvironmentVariable("BOZZETTO_BROWSER_MCP_PORT") with
-    | null | "" ->
-      match Environment.GetEnvironmentVariable("BOZZETTO_DASHBOARD_PORT") with
-      | null | "" -> 47749
-      | p -> int p - 1
-    | p -> int p
+  let dashboardUrl () =
+    sprintf "http://localhost:%d" (requiredPort "BOZZETTO_DASHBOARD_PORT")
+
+  let mcpPort () = requiredPort "BOZZETTO_BROWSER_MCP_PORT"
 
   /// Where journeys save screenshots worth looking at.
-  let screenshotDir =
+  let screenshotDir () =
     let dir =
       match Environment.GetEnvironmentVariable("BOZZETTO_BROWSER_SCREENSHOTS") with
       | null | "" -> IO.Path.Combine(IO.Path.GetTempPath(), "bozzetto-browser-screenshots")
@@ -145,6 +143,7 @@ module PlaywrightFixture =
     let! (pw', b) = launchBrowser ()
     let! ctx = b.NewContextAsync()
     let! page = ctx.NewPageAsync()
+    PlaywrightExpect.observeSSE page
     activeBrowser <- Some b
     activePlaywright <- Some pw'
     return page
@@ -219,20 +218,16 @@ module DashboardDom =
     do! PlaywrightExpect.isVisibleAsync evalInput "eval input visible after opening"
   }
 
-  /// Open the New Session accordion (a <details class="new-session-panel">
-  /// collapsed by default). Checks the current open state first — like
-  /// `openEvalArea` — so it is a no-op when already open and safe to call
-  /// repeatedly from `throughPanelReset` (a second unconditional click would
-  /// instead toggle it closed again).
+  /// Open the sidebar's native details element, leaving an open panel alone.
+  /// Scope the click to its summary: the no-session picker also contains the
+  /// words "new session" in explanatory text before this panel in the DOM.
   let openNewSession (page: IPage) = task {
-    // New Session lives in an `.expanded-only` wrapper — reveal it first.
-    do! ensureExpanded page
-    let! isOpen =
-      page.EvaluateAsync<bool>(
-        "() => { var el = document.querySelector('.new-session-panel'); return el ? el.open : false; }")
+    let section = page.Locator(".new-session-panel")
+    let! isOpen = section.EvaluateAsync<bool>("el => el.open")
     if not isOpen then
-      let toggle = page.GetByText("New Session").First
-      do! toggle.ClickAsync()
+      do! section.Locator(":scope > summary").ClickAsync()
+    do! page.Locator(".new-session-panel[open]").WaitForAsync(
+      LocatorWaitForOptions(State = WaitForSelectorState.Attached, Timeout = 5000.0f))
   }
 
   /// The eval code textarea — located by its stable id, never by role/name
@@ -374,32 +369,11 @@ module OutputScroll =
 
   let pillVisible (page: IPage) = page.Locator(pillSelector).IsVisibleAsync()
 
-/// Gap I (outcome-gate-sweep.md, Island H — dashboard journeys): the
-/// no-session landing shipped broken TWICE (emergency releases 0.6.470 and
-/// 0.6.471) because the state matrix that would have caught it was never
-/// gated. `DashboardBrowserRunner.fs` always creates a Ready session BEFORE
-/// any journey above runs, so the no-session state is structurally
-/// unreachable through the shared daemon those journeys share.
-///
-/// This module owns its OWN isolated daemon — fresh ports, a fresh
-/// BOZZETTO_DATA_DIR, `--no-resume`, and critically NO `/api/sessions/create`
-/// call before the first assertion — so the no-session landing, and every
-/// transition into and out of it, are actually exercised. The two journeys
-/// built from it are appended to THIS file's own `tests` value below (not a
-/// new `[<Tests>]` list and not a new file), so
-/// `DashboardBrowserRunner.runBrowserJourneys` already runs them under the
-/// existing `--integration-browser` entry point with no changes to
-/// DashboardBrowserRunner.fs or Program.fs — both out of this island's file
-/// scope (owned by Island B).
-///
-/// Resource discipline: one isolated daemon per journey (2 total), each on a
-/// freshly-probed free port pair (never 47749/47750, never the shared
-/// browser-suite pair), each with its own temp BOZZETTO_DATA_DIR that is
-/// deleted on teardown, guaranteed kill via `try/finally` (mirrors
-/// DashboardDisconnectIndicatorBrowserTests.fs's proven isolated-daemon
-/// pattern), and event-driven waits throughout (`waitUntil` polls a real
-/// condition — server `/api/sessions` state or a DOM attribute — never a
-/// fixed sleep-then-assume).
+/// The no-session landing once shipped broken because the browser fixture
+/// always created an F# session first. Its shell/picker journey now runs
+/// independently; the original create/switch/stop journeys are retained as
+/// explicitly retired F# evidence. Each journey owns an isolated daemon and
+/// tears it down, without touching the shared browser fixture.
 module private NoSessionLanding =
   let private repoRoot = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, ".."))
 
@@ -515,15 +489,14 @@ module private NoSessionLanding =
     try Directory.Delete(d.DataDir, true) with _ -> ()
 
   let private waitHealthy (budgetSeconds: float) (d: Daemon) : Task<bool> = task {
-    use client = new HttpClient(BaseAddress = Uri(sprintf "http://localhost:%d" d.McpPort))
+    use client = new HttpClient(BaseAddress = Uri(sprintf "http://localhost:%d" d.DashboardPort))
     client.Timeout <- TimeSpan.FromSeconds(5.0)
     let deadline = DateTime.UtcNow.AddSeconds(budgetSeconds)
     let mutable healthy = false
     while not healthy && DateTime.UtcNow < deadline do
       try
-        let! resp = client.GetAsync("/health")
-        resp.Dispose()
-        healthy <- true
+        let! body = client.GetStringAsync("/api/daemon-info")
+        healthy <- Bozzetto.Tests.TestInfrastructure.DaemonIdentity.reportsPid body d.Process.Id
       with _ -> do! Task.Delay(250)
     return healthy
   }
@@ -637,7 +610,7 @@ module private NoSessionLanding =
   /// clicking its OWN Create button (never an API shortcut) reaches a live,
   /// Ready session — reflected in THIS SAME page via SSE, with no navigation
   /// and no reload.
-  let noSessionLandingAndCreateJourney () : Task<unit> = task {
+  let private landingJourney (createFromPicker: bool) : Task<unit> = task {
     let daemon = startDaemon ()
     let mutable playwright: IPlaywright option = None
     let mutable browser: IBrowser option = None
@@ -646,7 +619,7 @@ module private NoSessionLanding =
       let! healthy = waitHealthy 60.0 daemon
       if not healthy then
         dumpLogs daemon
-        Tests.failtestf "no-session daemon on port %d never became healthy" daemon.McpPort
+        Tests.failtestf "owned no-session dashboard on port %d never became healthy" daemon.DashboardPort
 
       let! pw = Playwright.CreateAsync()
       let! b = pw.Chromium.LaunchAsync(BrowserTypeLaunchOptions(Headless = true))
@@ -654,9 +627,11 @@ module private NoSessionLanding =
       browser <- Some b
       let! ctx = b.NewContextAsync()
       let! page = ctx.NewPageAsync()
+      PlaywrightExpect.observeSSE page
       let errors = attachErrorCollector page
 
       let! _ = page.GotoAsync(sprintf "http://localhost:%d/dashboard" daemon.DashboardPort)
+      do! PlaywrightExpect.waitForSSE 10_000 page
       let bareUrl = page.Url
 
       // --- State 1: zero sessions, bare URL. ---
@@ -667,38 +642,39 @@ module private NoSessionLanding =
       let! viewingBefore = viewingSessionId page
       Expect.equal viewingBefore "" "[state 1] #main carries no viewing session id"
 
-      // --- State 4: session created from the no-session picker, through the
-      // real UI form (never the API — that's the click-through Create
-      // journey itself). ---
-      let dirInput = picker.Locator("input[placeholder*=\"/path/to/project\"]").First
-      do! PlaywrightExpect.isVisibleAsync dirInput "[state 4] picker's own working-directory input visible"
-      do! dirInput.FillAsync(consoleTickerDir)
-      let createBtn = picker.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Create")).First
-      do! PlaywrightExpect.isVisibleAsync createBtn "[state 4] picker's own Create button visible"
-      do! createBtn.ClickAsync()
+      if createFromPicker then
+        // --- State 4: session created from the no-session picker, through the
+        // real UI form (never the API — that's the click-through Create
+        // journey itself). ---
+        let dirInput = picker.Locator("input[placeholder*=\"/path/to/project\"]").First
+        do! PlaywrightExpect.isVisibleAsync dirInput "[state 4] picker's own working-directory input visible"
+        do! dirInput.FillAsync(consoleTickerDir)
+        let createBtn = picker.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Create")).First
+        do! PlaywrightExpect.isVisibleAsync createBtn "[state 4] picker's own Create button visible"
+        do! createBtn.ClickAsync()
 
-      // Server-side proof: the session actually reaches Ready.
-      let! serverReady = waitAllReady 90.0 daemon 1
-      Expect.isTrue serverReady "[state 4] the created session reached Ready on the server within 90s"
+        // Server-side proof: the session actually reaches Ready.
+        let! serverReady = waitAllReady 90.0 daemon 1
+        Expect.isTrue serverReady "[state 4] the created session reached Ready on the server within 90s"
 
-      // Client-side proof: the SAME page reflects it via SSE — no
-      // navigation, no reload, the picker gone, a real session row present.
-      let! sidReflected = waitUntil 30_000 (fun () -> task {
+        // Client-side proof: the SAME page reflects it via SSE — no
+        // navigation, no reload, the picker gone, a real session row present.
+        let! sidReflected = waitUntil 30_000 (fun () -> task {
+          let! sid = viewingSessionId page
+          return sid <> ""
+        })
+        Expect.isTrue sidReflected "[state 4] #main's viewing-session-id populated via SSE within 30s (no reload)"
+        Expect.equal page.Url bareUrl "[state 4] no navigation/reload occurred — URL is unchanged"
+        let! pickerHiddenNow = waitUntil 10_000 (fun () -> task {
+          let! visible = picker.IsVisibleAsync()
+          return not visible
+        })
+        Expect.isTrue pickerHiddenNow "[state 4] session picker hidden once a session exists"
         let! sid = viewingSessionId page
-        return sid <> ""
-      })
-      Expect.isTrue sidReflected "[state 4] #main's viewing-session-id populated via SSE within 30s (no reload)"
-      Expect.equal page.Url bareUrl "[state 4] no navigation/reload occurred — URL is unchanged"
-      let! pickerHiddenNow = waitUntil 10_000 (fun () -> task {
-        let! visible = picker.IsVisibleAsync()
-        return not visible
-      })
-      Expect.isTrue pickerHiddenNow "[state 4] session picker hidden once a session exists"
-      let! sid = viewingSessionId page
-      let sessionRow = page.Locator(sprintf "#session-card-%s" sid)
-      do! PlaywrightExpect.isVisibleAsync sessionRow "[state 4] the new session's sidebar row is visible without a reload"
+        let sessionRow = page.Locator(sprintf "#session-card-%s" sid)
+        do! PlaywrightExpect.isVisibleAsync sessionRow "[state 4] the new session's sidebar row is visible without a reload"
 
-      assertNoErrors errors "no-session landing + Create journey"
+      assertNoErrors errors (if createFromPicker then "no-session landing + Create journey" else "no-session landing")
       try do! ctx.CloseAsync() with _ -> ()
     with ex ->
       failure <- Some ex
@@ -711,6 +687,10 @@ module private NoSessionLanding =
     | Some failure -> return raise failure
     | None -> ()
   }
+
+  let noSessionLandingJourney () = landingJourney false
+
+  let noSessionLandingAndCreateJourney () = landingJourney true
 
   /// States 2 + 3 + 5 + the Stop journey: (2) sessions already exist, bare
   /// URL renders the session view directly; (3) reaching a SPECIFIC session
@@ -732,7 +712,7 @@ module private NoSessionLanding =
       let! healthy = waitHealthy 60.0 daemon
       if not healthy then
         dumpLogs daemon
-        Tests.failtestf "sessions/switch/stop daemon on port %d never became healthy" daemon.McpPort
+        Tests.failtestf "owned sessions/switch/stop dashboard on port %d never became healthy" daemon.DashboardPort
 
       // Two sessions, created via the API (Create-through-the-UI is already
       // proven by the journey above) so this journey can focus on
@@ -848,25 +828,31 @@ module private NoSessionLanding =
   }
 
 /// Helper to run an async Playwright test body inside Expecto.
-/// All dashboard browser tests are tagged [Integration] since they
-/// require a running Bozzetto daemon with dashboard on port 47750.
-let playwrightTest name (body: IPage -> Task<unit>) =
+/// Active shell journeys use the daemon endpoint provided by the runner.
+/// Retired F# journeys retain their original assertions and a distinct registration.
+let private playwrightTestWith register name (body: IPage -> Task<unit>) =
   testCase (sprintf "[Integration] Dashboard browser: %s" name) (fun () ->
     let t = task {
       let! page = PlaywrightFixture.newPage ()
       try
         let! _ = page.GotoAsync(
-          sprintf "%s/dashboard" PlaywrightFixture.dashboardUrl)
+          sprintf "%s/dashboard" (PlaywrightFixture.dashboardUrl ()))
         do! body page
       finally
         PlaywrightFixture.closePage(page).GetAwaiter().GetResult()
     }
     t.GetAwaiter().GetResult())
-  |> Integration.register (Integration.Dedicated "--integration-browser")
+  |> register
+
+let playwrightTest name body =
+  playwrightTestWith (Integration.register (Integration.Dedicated "--integration-browser")) name body
+
+let private retiredPlaywrightTest name body =
+  playwrightTestWith Integration.retireFSharp name body
 
 /// Like playwrightTest but does NOT auto-navigate — gives a raw page
 /// so the test can set up route interceptions before navigation.
-let playwrightTestRaw name (body: IPage -> Task<unit>) =
+let private retiredPlaywrightTestRaw name (body: IPage -> Task<unit>) =
   testCase (sprintf "[Integration] Dashboard browser: %s" name) (fun () ->
     let t = task {
       let! page = PlaywrightFixture.newPage ()
@@ -876,13 +862,11 @@ let playwrightTestRaw name (body: IPage -> Task<unit>) =
         PlaywrightFixture.closePage(page).GetAwaiter().GetResult()
     }
     t.GetAwaiter().GetResult())
-  |> Integration.register (Integration.Dedicated "--integration-browser")
+  |> Integration.retireFSharp
 
 [<Tests>]
-// All dashboard browser journeys share one daemon, one FSI session and one
-// Playwright browser — they MUST run sequentially. Concurrent journeys would
-// interleave evals in the single shared session and time out waiting for
-// results that another journey consumed.
+// Active shell journeys share one daemon and Playwright browser, so viewport
+// and signal changes run sequentially. Retired F# bodies never execute.
 let tests =
   testSequenced <|
   testList "Dashboard browser tests" [
@@ -895,15 +879,15 @@ let tests =
   // NOTE: h1, eval textarea, eval button, reset/hard-reset buttons, clear button
   // moved to shellStructureTests in DashboardSnapshotTests.fs (no browser needed)
 
-  playwrightTest "output panel renders with session identity" (fun page -> task {
+  playwrightTest "output panel reports an empty session identity when no session is open" (fun page -> task {
     let panel = page.Locator("#output-panel")
     do! panel.WaitForAsync(
-      LocatorWaitForOptions(State = WaitForSelectorState.Visible))
+      LocatorWaitForOptions(State = WaitForSelectorState.Attached))
     let! sessionId = panel.GetAttributeAsync("data-session-id")
-    Expect.isNotNull sessionId "output panel carries the session id"
+    sessionId |> Expecto.Flip.Expect.equal "no session is open" ""
   })
 
-  playwrightTest "output panel scrolls like a chat: follows at the bottom, holds when scrolled up, counts unseen evals" (fun page -> task {
+  retiredPlaywrightTest "output panel scrolls like a chat: follows at the bottom, holds when scrolled up, counts unseen evals" (fun page -> task {
     do! PlaywrightExpect.waitForSSE 15_000 page
     do! OutputScroll.fillPastOneScreen page "chat-fill"
 
@@ -967,7 +951,7 @@ let tests =
     Expect.isTrue (distSelf <= OutputScroll.atBottomTolerance) (sprintf "after scrolling to the bottom yourself the panel follows again (%f px from bottom)" distSelf)
   })
 
-  playwrightTest "output panel unseen-eval pill fits a phone-width viewport" (fun page -> task {
+  retiredPlaywrightTest "output panel unseen-eval pill fits a phone-width viewport" (fun page -> task {
     do! page.SetViewportSizeAsync(390, 844)
     do! PlaywrightExpect.waitForSSE 15_000 page
     do! OutputScroll.fillPastOneScreen page "phone-fill"
@@ -1012,7 +996,7 @@ let tests =
     Expect.isFalse pillAfter "Enter on the pill hides it"
   })
 
-  playwrightTest "keyboard help toggles on click" (fun page -> task {
+  retiredPlaywrightTest "keyboard help toggles on click" (fun page -> task {
     // Help toggle lives inside the collapsed Evaluate accordion — open it.
     do! DashboardDom.openEvalArea page
     do! page.WaitForTimeoutAsync(500.0f)
@@ -1030,30 +1014,47 @@ let tests =
     do! helpWrapper.WaitForAsync(LocatorWaitForOptions(State = restoredState))
   })
 
-  playwrightTest "accordion open state survives the periodic SSE morph" (fun page -> task {
-    // Root cause (commit cdeb7567): the SSE fallback re-renders #main about
-    // once a second because a ticking uptime/relative-time label defeats the
-    // no-change dedupe, and a plain <details> loses its DOM-only `open`
-    // attribute on that morph. The fix makes `open` a Datastar signal
-    // (signalDetails in DashboardFragments.fs) instead of DOM-only state, so
-    // Datastar re-applies it from the surviving signal after every morph.
-    // This test proves that DIRECTLY — no DashboardDom.throughPanelReset
-    // reopen-retry helper — by opening the accordion once and asserting it
-    // is still open after outlasting at least two 1-second SSE-fallback
-    // ticks (Timeouts.sseEventInterval).
+  playwrightTest "New Session accordion stays open across an event-driven SSE morph" (fun page -> task {
+    // Native <details> owns its open state; signalDetails preserves the
+    // attribute during morphs with data-preserve-attr="open". Open once and
+    // never reopen during this assertion. Unchanged snapshots are suppressed,
+    // so a delay alone would not prove a morph. A second browser connection
+    // changes the snapshot; the real alarm-dismissal action then triggers its
+    // push. Connection registration alone does not emit a state-change event.
     do! PlaywrightExpect.waitForSSE 10_000 page
-    do! DashboardDom.openEvalArea page
+    do! DashboardDom.openNewSession page
     let isOpen () =
       page.EvaluateAsync<bool>(
-        "() => { var el = document.querySelector('#evaluate-section'); return el ? el.open : false; }")
+        "() => { var el = document.querySelector('.new-session-panel'); return el ? el.open : false; }")
     let! openedNow = isOpen ()
-    Expect.isTrue openedNow "evaluate section opened"
-    do! page.WaitForTimeoutAsync(2500.0f)
+    Expect.isTrue openedNow "New Session section opened"
+    let connectionSelector = "#" + DomIds.ConnectionCounts
+    let! previousConnections = page.Locator(connectionSelector).TextContentAsync()
+    // The parent fixture owns this context and also closes this extra page
+    // if an assertion fails before normal teardown below.
+    let! otherPage = page.Context.NewPageAsync()
+    PlaywrightExpect.observeSSE otherPage
+    let! _ = otherPage.GotoAsync(page.Url)
+    do! PlaywrightExpect.waitForSSE 10_000 otherPage
+    let! trigger =
+      page.APIRequest.PostAsync(
+        PlaywrightFixture.dashboardUrl () + "/dashboard/dismiss-alarm",
+        APIRequestContextOptions(Timeout = 5000.0f))
+    let triggerStatus = trigger.Status
+    do! trigger.DisposeAsync().AsTask()
+    Expect.equal triggerStatus 200 "owned dashboard accepted the state-change trigger"
+    let! observedPatch =
+      page.WaitForFunctionAsync(
+        "([selector, previous]) => { const el = document.querySelector(selector); return el && el.textContent !== previous; }",
+        [| connectionSelector; previousConnections |],
+        PageWaitForFunctionOptions(Timeout = 10000.0f))
+    do! observedPatch.DisposeAsync()
     let! stillOpen = isOpen ()
-    Expect.isTrue stillOpen "evaluate section stays open across the periodic SSE morph"
+    Expect.isTrue stillOpen "New Session section stays open across the observed SSE morph"
+    do! otherPage.CloseAsync()
   })
 
-  playwrightTest "sidebar scroll position survives an SSE morph" (fun page -> task {
+  retiredPlaywrightTest "sidebar scroll position survives an SSE morph" (fun page -> task {
     // Root cause: the server renders #main without the client-driven
     // `expanded` class, so every morph strips it, the sidebar's tall
     // `.expanded-only` panels collapse for a frame, and the browser clamps
@@ -1126,7 +1127,7 @@ let tests =
     Expect.isTrue (after > floor) (sprintf "sidebar scrollTop must not collapse toward the top across SSE morphs (was %f, now %f, floor %f, new maximum %f)\nsidebar panels before: %s\nsidebar panels after:  %s\ntext before: %s\ntext after:  %s" scrolledTo after floor maxAfter sizesBefore sizesAfter textBefore textAfter)
   })
 
-  playwrightTest "session status renders with state" (fun page -> task {
+  retiredPlaywrightTest "session status renders with state" (fun page -> task {
     // The tabline #session-status carries the state pill; the session id
     // renders in the sibling .tabline-info. Both are inside #main, pushed
     // by the server on every SSE state change.
@@ -1155,7 +1156,7 @@ let tests =
 
   // NOTE: "create session section has all inputs" moved to shellStructureTests in DashboardSnapshotTests.fs
 
-  playwrightTest "Tab inserts 2 spaces in textarea" (fun page -> task {
+  retiredPlaywrightTest "Tab inserts 2 spaces in textarea" (fun page -> task {
     // Wait for Datastar to fully initialize and bind handlers
     do! PlaywrightExpect.waitForSSE 10_000 page
     // The textarea lives inside the collapsed Evaluate accordion — open it.
@@ -1179,7 +1180,7 @@ let tests =
     Expect.isTrue (value.Contains("let x  ")) "Tab inserted 2 spaces"
   })
 
-  playwrightTest "Alt+Enter triggers eval" (fun page -> task {
+  retiredPlaywrightTest "Alt+Enter triggers eval" (fun page -> task {
     // Wait for connection before evaluating
     do! PlaywrightExpect.waitForSSE 10_000 page
     // The textarea lives inside the collapsed Evaluate accordion — open it.
@@ -1192,24 +1193,24 @@ let tests =
     do! PlaywrightExpect.waitForSelectorText 30_000 page "#output-panel" "val it: int = 2"
   })
 
-  playwrightTest "responsive layout on mobile viewport" (fun page -> task {
+  playwrightTest "no-session picker and sidebar remain usable on a mobile viewport" (fun page -> task {
     do! page.SetViewportSizeAsync(375, 812)
     let! _ = page.GotoAsync(
-      sprintf "%s/dashboard" PlaywrightFixture.dashboardUrl)
+      sprintf "%s/dashboard" (PlaywrightFixture.dashboardUrl ()))
 
     // The dashboard shell must keep its core sections usable at mobile width:
-    // the main editor area, the output section and the sidebar toggle.
+    // the main area, the session picker and the sidebar toggle.
     let main = page.Locator("#main")
     do! PlaywrightExpect.isVisibleAsync main "main visible"
-    let outputSection = page.Locator("#output-section")
-    do! PlaywrightExpect.isVisibleAsync outputSection "output visible"
+    let picker = page.Locator("#session-picker")
+    do! PlaywrightExpect.isVisibleAsync picker "session picker visible"
     let sidebarToggle = page.Locator("#sidebar-toggle-btn")
     do! PlaywrightExpect.isVisibleAsync sidebarToggle "sidebar toggle visible"
   })
 
   // --- Agent-generated tests (via Playwright test planner + generator agents) ---
 
-  playwrightTest "evaluate simple expression" (fun page -> task {
+  retiredPlaywrightTest "evaluate simple expression" (fun page -> task {
     do! PlaywrightExpect.waitForSSE 15_000 page
     let textarea = DashboardDom.textarea page
     do! DashboardDom.throughPanelReset (fun () -> DashboardDom.openEvalArea page) 5 (fun () -> task {
@@ -1220,7 +1221,7 @@ let tests =
     do! PlaywrightExpect.waitForTextareaCleared 10_000 textarea
   })
 
-  playwrightTest "evaluate with Alt+Enter shortcut" (fun page -> task {
+  retiredPlaywrightTest "evaluate with Alt+Enter shortcut" (fun page -> task {
     do! PlaywrightExpect.waitForSSE 15_000 page
     let textarea = DashboardDom.textarea page
     do! DashboardDom.throughPanelReset (fun () -> DashboardDom.openEvalArea page) 5 (fun () -> task {
@@ -1232,7 +1233,7 @@ let tests =
     do! PlaywrightExpect.waitForTextareaCleared 10_000 textarea
   })
 
-  playwrightTest "evaluate multiline code" (fun page -> task {
+  retiredPlaywrightTest "evaluate multiline code" (fun page -> task {
     do! PlaywrightExpect.waitForSSE 15_000 page
     let textarea = DashboardDom.textarea page
     do! DashboardDom.throughPanelReset (fun () -> DashboardDom.openEvalArea page) 5 (fun () -> task {
@@ -1242,7 +1243,7 @@ let tests =
     do! PlaywrightExpect.waitForSelectorText 30_000 page "#output-panel" "int = 8"
   })
 
-  playwrightTest "evaluate code with errors" (fun page -> task {
+  retiredPlaywrightTest "evaluate code with errors" (fun page -> task {
     do! PlaywrightExpect.waitForSSE 15_000 page
     let textarea = DashboardDom.textarea page
     do! DashboardDom.throughPanelReset (fun () -> DashboardDom.openEvalArea page) 5 (fun () -> task {
@@ -1254,7 +1255,7 @@ let tests =
     do! PlaywrightExpect.waitForSelectorText 30_000 page "#output-panel" "Evaluation failed"
   })
 
-  playwrightTest "consecutive evaluations maintain scope" (fun page -> task {
+  retiredPlaywrightTest "consecutive evaluations maintain scope" (fun page -> task {
     do! PlaywrightExpect.waitForSSE 15_000 page
     let textarea = DashboardDom.textarea page
     let evalBtn = DashboardDom.evalButton page
@@ -1281,7 +1282,7 @@ let tests =
     do! PlaywrightExpect.waitForSelectorText 30_000 page "#output-panel" "val it: int = 13"
   })
 
-  playwrightTest "keyboard help shows shortcuts" (fun page -> task {
+  retiredPlaywrightTest "keyboard help shows shortcuts" (fun page -> task {
     // Help toggle lives inside the collapsed Evaluate accordion — open it.
     // The accordion carries no server-tracked open state, so the periodic 1s
     // SSE fallback push (see DashboardDom.throughPanelReset) can re-collapse
@@ -1324,7 +1325,7 @@ let tests =
       LocatorWaitForOptions(State = WaitForSelectorState.Visible))
   })
 
-  playwrightTest "sessions panel shows session info" (fun page -> task {
+  retiredPlaywrightTest "sessions panel shows session info" (fun page -> task {
     do! PlaywrightExpect.waitForSSE 15_000 page
     let sessionsHeading =
       page.GetByRole(
@@ -1374,7 +1375,7 @@ let tests =
   // Each browser tab maintains its own active session independently.
   // Switching session in one tab must NOT affect other tabs.
 
-  playwrightTest "dashboard switch does not dispatch SessionSwitched to Elm" (fun page -> task {
+  retiredPlaywrightTest "dashboard switch does not dispatch SessionSwitched to Elm" (fun page -> task {
     // The dashboard switch endpoint should NOT broadcast SessionSwitched
     // to the shared Elm model. It should only update the requesting browser's
     // active session (via signal or per-connection state).
@@ -1396,10 +1397,10 @@ let tests =
       "daemon-info should be accessible"
   })
 
-  playwrightTestRaw "two browser tabs maintain independent sessions" (fun page1 -> task {
+  retiredPlaywrightTestRaw "two browser tabs maintain independent sessions" (fun page1 -> task {
     // Open page1
     let! _ = page1.GotoAsync(
-      sprintf "%s/dashboard" PlaywrightFixture.dashboardUrl)
+      sprintf "%s/dashboard" (PlaywrightFixture.dashboardUrl ()))
     do! PlaywrightExpect.waitForSSE 15_000 page1
     let tabline1 = page1.Locator("#main .tabline-info").First
     do! PlaywrightExpect.waitForText 15_000 tabline1 "Session:"
@@ -1409,7 +1410,7 @@ let tests =
     let! page2 = PlaywrightFixture.newPage ()
     try
       let! _ = page2.GotoAsync(
-        sprintf "%s/dashboard" PlaywrightFixture.dashboardUrl)
+        sprintf "%s/dashboard" (PlaywrightFixture.dashboardUrl ()))
       do! PlaywrightExpect.waitForSSE 15_000 page2
       let tabline2 = page2.Locator("#main .tabline-info").First
       do! PlaywrightExpect.waitForText 15_000 tabline2 "Session:"
@@ -1440,7 +1441,7 @@ let tests =
       "daemon health shows a version number"
   })
 
-  playwrightTest "page structure: output section and panel render" (fun page -> task {
+  retiredPlaywrightTest "page structure: output section and panel render" (fun page -> task {
     let outputSection = page.Locator("#output-section")
     do! PlaywrightExpect.isVisibleAsync outputSection "output section visible"
     let outputHeading = outputSection.Locator("h2")
@@ -1449,7 +1450,7 @@ let tests =
     do! PlaywrightExpect.isVisibleAsync outputPanel "output panel visible"
   })
 
-  playwrightTest "page structure: evaluate section has textarea and buttons" (fun page -> task {
+  retiredPlaywrightTest "page structure: evaluate section has textarea and buttons" (fun page -> task {
     let evalSection = page.Locator("#evaluate-section")
     do! PlaywrightExpect.isVisibleAsync evalSection "evaluate section visible"
     do! PlaywrightExpect.waitForText 10_000 evalSection "Evaluate"
@@ -1479,7 +1480,7 @@ let tests =
     })
   })
 
-  playwrightTest "page structure: clear output button in panel header" (fun page -> task {
+  retiredPlaywrightTest "page structure: clear output button in panel header" (fun page -> task {
     let clearBtn = page.Locator("#output-section .panel-header-btn")
     do! PlaywrightExpect.isVisibleAsync clearBtn "clear button visible"
     do! PlaywrightExpect.waitForText 10_000 clearBtn "CLEAR"
@@ -1492,29 +1493,30 @@ let tests =
     // IsVisibleAsync snapshots on a loaded machine — reopen and retry the
     // whole assertion block (see DashboardDom.throughPanelReset).
     do! DashboardDom.throughPanelReset (fun () -> DashboardDom.openNewSession page) 5 (fun () -> task {
+      let form = page.Locator(".new-session-panel")
       // Working directory input (placeholder "/path/to/project"), scoped to the
       // New Session panel so it never matches a similar input elsewhere.
-      let dirInput = page.Locator(".new-session-panel input[placeholder*=\"/path/to/project\"]").First
+      let dirInput = form.Locator("input[placeholder*=\"/path/to/project\"]").First
       do! PlaywrightExpect.isVisibleAsync dirInput "working directory input visible"
       // Discover button
       let discoverBtn =
-        page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Discover")).First
+        form.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Discover")).First
       do! PlaywrightExpect.isVisibleAsync discoverBtn "Discover button visible"
       // Manual projects input
-      let manualInput = page.Locator("input[placeholder*=\"MyProject.fsproj\"]")
+      let manualInput = form.Locator("input[placeholder*=\"MyProject.fsproj\"]")
       do! PlaywrightExpect.isVisibleAsync manualInput "manual projects input visible"
       // Create session button
       let createBtn =
-        page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Create")).First
+        form.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Create")).First
       do! PlaywrightExpect.isVisibleAsync createBtn "Create button visible"
     })
   })
 
   // --- TS journey ports (friction-panel-journey.spec.ts) ---
 
-  playwrightTest "friction panel renders honest empty state with no send form" (fun page -> task {
+  retiredPlaywrightTest "friction panel renders honest empty state with no send form" (fun page -> task {
     // The friction panel isn't in the default layout; this tab asks for it.
-    let! _ = page.GotoAsync(sprintf "%s/dashboard?panels=friction" PlaywrightFixture.dashboardUrl)
+    let! _ = page.GotoAsync(sprintf "%s/dashboard?panels=friction" (PlaywrightFixture.dashboardUrl ()))
     do! PlaywrightExpect.waitForSelectorText 30_000 page "#session-status" "Ready"
     do! DashboardDom.ensureExpanded page
     let panel = page.Locator("#friction-panel")
@@ -1542,7 +1544,7 @@ let tests =
 
   // --- TS journey ports (live-testing-journey.spec.ts) ---
 
-  playwrightTest "live testing panel appears when it's turned on and goes when it's turned off" (fun page -> task {
+  retiredPlaywrightTest "live testing panel appears when it's turned on and goes when it's turned off" (fun page -> task {
     do! PlaywrightExpect.waitForSelectorText 30_000 page "#session-status" "Ready"
     do! DashboardDom.ensureExpanded page
     let panel = page.Locator("#live-testing-panel")
@@ -1550,7 +1552,7 @@ let tests =
     do! PlaywrightExpect.waitForCount 15_000 panel 0
     // Turn it on the way an editor or agent does, through the daemon API.
     use http = new Net.Http.HttpClient()
-    let! enable = http.PostAsync(sprintf "http://localhost:%d/api/live-testing/enable" PlaywrightFixture.mcpPort, null)
+    let! enable = http.PostAsync(sprintf "http://localhost:%d/api/live-testing/enable" (PlaywrightFixture.mcpPort ()), null)
     Expect.isTrue enable.IsSuccessStatusCode (sprintf "enable live testing returned %d" (int enable.StatusCode))
     do! PlaywrightExpect.waitForCount 30_000 panel 1
     do! PlaywrightExpect.waitForText 30_000 panel "Live Testing: ON"
@@ -1567,9 +1569,9 @@ let tests =
   // AFTER the honest empty-state journey above, so the panel starts empty
   // and this journey observes the real empty -> recorded transition. ---
 
-  playwrightTest "friction feedback recorded locally reflects in the panel with the send form" (fun page -> task {
+  retiredPlaywrightTest "friction feedback recorded locally reflects in the panel with the send form" (fun page -> task {
     // The friction panel isn't in the default layout; this tab asks for it.
-    let! _ = page.GotoAsync(sprintf "%s/dashboard?panels=friction" PlaywrightFixture.dashboardUrl)
+    let! _ = page.GotoAsync(sprintf "%s/dashboard?panels=friction" (PlaywrightFixture.dashboardUrl ()))
     do! PlaywrightExpect.waitForSelectorText 30_000 page "#session-status" "Ready"
     do! DashboardDom.ensureExpanded page
     let panel = page.Locator("#friction-panel")
@@ -1618,9 +1620,9 @@ let tests =
     do! PlaywrightExpect.waitForText 10_000 panel "the eval tool result was confusing"
   })
 
-  playwrightTest "friction send validates the destination and surfaces the result inline" (fun page -> task {
+  retiredPlaywrightTest "friction send validates the destination and surfaces the result inline" (fun page -> task {
     // The friction panel isn't in the default layout; this tab asks for it.
-    let! _ = page.GotoAsync(sprintf "%s/dashboard?panels=friction" PlaywrightFixture.dashboardUrl)
+    let! _ = page.GotoAsync(sprintf "%s/dashboard?panels=friction" (PlaywrightFixture.dashboardUrl ()))
     do! PlaywrightExpect.waitForSelectorText 30_000 page "#session-status" "Ready"
     do! DashboardDom.ensureExpanded page
     let panel = page.Locator("#friction-panel")
@@ -1658,9 +1660,9 @@ let tests =
   // brings the cohort panel and its lanes. Last in the list because it
   // restarts the shared session twice (two workflow switches). ---
 
-  playwrightTest "optional panels show only when they're relevant" (fun page -> task {
+  retiredPlaywrightTest "optional panels show only when they're relevant" (fun page -> task {
     let shot (name: string) = task {
-      let path = IO.Path.Combine(PlaywrightFixture.screenshotDir, sprintf "panels-%s.png" name)
+      let path = IO.Path.Combine((PlaywrightFixture.screenshotDir ()), sprintf "panels-%s.png" name)
       let! _ = page.ScreenshotAsync(PageScreenshotOptions(Path = path, FullPage = true))
       eprintfn "screenshot: %s" path
     }
@@ -1675,7 +1677,7 @@ let tests =
     // 2. A cohort with a present member holding a claim: cohort and lanes.
     let opts =
       ModelContextProtocol.Client.HttpClientTransportOptions(
-        Endpoint = Uri(sprintf "http://localhost:%d/" PlaywrightFixture.mcpPort))
+        Endpoint = Uri(sprintf "http://localhost:%d/" (PlaywrightFixture.mcpPort ())))
     let transport = new ModelContextProtocol.Client.HttpClientTransport(opts, (null: Microsoft.Extensions.Logging.ILoggerFactory))
     let! client = ModelContextProtocol.Client.McpClient.CreateAsync(transport, null, null, Threading.CancellationToken.None)
     let call (name: string) (args: (string * obj) list) = task {
@@ -1739,19 +1741,17 @@ let tests =
     Expect.isEmpty datastarOrConsoleErrors
       (sprintf "zero Datastar/console errors across the dropdown-driven workflow switch, got: %s" (String.concat " | " datastarOrConsoleErrors))
   })
-  // --- Gap I (outcome-gate-sweep.md, Island H): the no-session landing state
-  // matrix. Each of these owns its OWN isolated daemon (see NoSessionLanding
-  // above) — never the shared daemon the journeys above depend on, which
-  // always has a session by the time they run. Registered under the SAME
-  // "--integration-browser" Dedicated tag as every journey above, and part of
-  // THIS SAME `tests` value, so DashboardBrowserRunner.runBrowserJourneys
-  // already runs them — no CI/Program.fs wiring change needed. ---
+  // Keep the no-session shell claim independently of the retired transition
+  // from the picker into a production F# session.
+  testTask "[Integration] Dashboard browser: no-session landing renders the shell and picker without console errors" {
+    do! NoSessionLanding.noSessionLandingJourney () }
+  |> Integration.register (Integration.Dedicated "--integration-browser")
 
   testTask "[Integration] Dashboard browser: no-session landing renders the full shell, then Create from the picker reaches Ready with no reload (Gap I states 1+4)" {
     do! NoSessionLanding.noSessionLandingAndCreateJourney () }
-  |> Integration.register (Integration.Dedicated "--integration-browser")
+  |> Integration.retireFSharp
 
   testTask "[Integration] Dashboard browser: sessions+bareURL renders directly, switch/row-click reach the right session, Stop auto-advances then falls back to the picker (Gap I states 2+3+5, click-through Stop)" {
     do! NoSessionLanding.sessionsSwitchAndStopJourney () }
-  |> Integration.register (Integration.Dedicated "--integration-browser")
+  |> Integration.retireFSharp
   ]

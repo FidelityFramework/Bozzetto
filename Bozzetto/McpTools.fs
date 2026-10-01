@@ -2189,9 +2189,9 @@ OUTPUT: Confirmation text, or an error (not conductor / claim not orphaned / tar
         |> withEchoOutcome ctx "reassign_claim"
 
     [<McpServerTool>]
-    [<Description("""Queue a landing request: your commits are rebased onto the integration head, verified (affected tests, served from the content-addressed cache when inputs are unchanged), and fast-forwarded in. v1 landings are strictly serial (one FIFO queue): the daemon's landing performer processes them in order through real git rebase/fast-forward — so this queues the request AND the pipeline runs it; watch its progress via get_cohort_status / the cohort://status resource.
+    [<Description("""Retained cohort landing queue contract. Production verification depended on the retired embedded F# integration session, so the full landing journey is unavailable in this checkout. Composer integration verification is not implemented. General cohort status and claims remain available.
 
-OUTPUT: Confirmation text with the new landing id, or a validation error (invalid statement, unknown/stale claim).""")>]
+OUTPUT: Queue confirmation or validation error. A queued request is not evidence of successful verification or landing.""")>]
     member _.request_landing(
         [<Description("Your agent or model name — must match the name you joined with.")>]
         agentName: string,
@@ -2230,13 +2230,9 @@ OUTPUT: Plain-text summary of members, claims, the test matrix, AND the landing 
         |> withEchoOutcome ctx "get_cohort_status"
 
     [<McpServerTool>]
-    [<Description("""Configure this cohort's integration branch/worktree — the git ref real landings rebase onto and fast-forward into (item 14c of the multi-agent landing pipeline). CONDUCTOR-ONLY — refused with a "not the cohort conductor" error for anyone else.
+    [<Description("""Retired embedded F# integration setup. This operation refuses before changing git worktrees, the cohort head or bindings, or starting a build. F# development uses separate SageFS; a Composer integration verification workflow is not implemented.
 
-Resolves integration_ref (a branch, tag, or commit sha) to a commit in the daemon's own working directory, creates a dedicated integration git worktree on a fresh branch at that commit, binds Cohort's IntegrationHead to it, and starts a daemon-owned FSI session on the worktree so landings can be test-verified.
-
-WHEN TO USE: Once per cohort, before the first request_landing, by whoever is the conductor (the first member to join_cohort). Calling it again re-points the integration worktree/branch at a new ref.
-
-OUTPUT: Confirmation text naming the resolved head sha, worktree path, branch, and session id — or an error naming what failed (an unresolvable ref, a worktree that could not be created, or — non-fatal — an integration session that failed to start).""")>]
+OUTPUT: An actionable provider-retirement error. No integration session is created.""")>]
     member _.set_integration_ref(
         [<Description("Your agent or model name — must be the cohort's current conductor.")>]
         agentName: string,

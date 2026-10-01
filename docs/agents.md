@@ -2,6 +2,8 @@
 
 Use Bozzetto's `composer_*` tools for Clef/Composer development. The tools and the human-facing Composer page share one daemon-owned supervisor, so both observe the same session, compiler epoch, revision and accepted-artifact evidence.
 
+The [October 1 host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md) removes embedded production FSI hosting from the checkout. F# implementation work requires a separate SageFS connection on `37749`; Clefx/ORC remains future work. Check the installed release separately from source status.
+
 ## Connect to the shared provider
 
 Use the reviewed installed `boz` and follow the [live provider checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md), including its linked deployment corrections. From this checkout, `scripts/start-shared-daemon` preserves an existing listener or launches the daemon in its dedicated external workspace. Keep that shared daemon independent of any individual client's lifetime.

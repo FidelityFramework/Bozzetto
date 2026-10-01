@@ -557,6 +557,11 @@ let architectureTests =
       // here would now fail the "allow-list rot" test below.
       let cohortCommandAllowList =
         Map.ofList [
+          "SetIntegrationHead",
+          "the production F# integration worktree/session provisioning path \
+           was retired on 2026-10-01; retained for the cohort wire model, \
+           persisted-event replay and component tests until a provider-owned \
+           integration-head operation is implemented"
           "DelegateConductor",
           "constructed only by Bozzetto.Tests today; no MCP tool or dashboard \
            action delegates the conductor role yet (roast-7 §5)"

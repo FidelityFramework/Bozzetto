@@ -10,6 +10,12 @@ For F#/.NET work, use the separate SageFS service on ports **37749/37750**.
 Bozzetto's [retained F# compatibility tools](#retained-f-compatibility-tools)
 are documented below; Composer does not require an FSI session.
 
+The [October 1 host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md)
+retires embedded production FSI hosting in this checkout. The inherited catalog
+below is a compatibility reference: creation, resume and rebuild requests now
+refuse and direct callers to SageFS. Installed releases retain their own
+deployment identity; a source change alone does not replace them.
+
 `tools/list` advertises the registered catalog. Calls validate availability and
 authority at execution time, so a listed tool can still refuse an operation.
 Use `get_daemon_status` for daemon health and `composer_list_sessions` for Composer
@@ -117,8 +123,8 @@ Two connections that pass the same name are still two different members.
 | `acquire_claim` | Take an exclusive claim over a file or project (`file:<path>` or `project:<path>`) so others know it's yours to edit. |
 | `release_claim` | Release a claim you hold. The presented fence must match the current one. |
 | `reassign_claim` | Conductor-only: reassign an orphaned claim to a present member. |
-| `request_landing` | Queue a landing: your commits are rebased onto the integration head, verified against affected tests, and fast-forwarded in. Landings are strictly serial (one FIFO queue). |
-| `set_integration_ref` | Conductor-only: configure the git ref that landings rebase onto, in a dedicated integration worktree. |
+| `request_landing` | Retained landing queue contract. Its production verification journey requires the retired F# integration session and is unavailable in current source; Composer verification remains future work. |
+| `set_integration_ref` | Refuses before worktree, cohort or build changes because its embedded F# integration session is retired. |
 
 ## Friction telemetry (local only)
 
@@ -133,10 +139,10 @@ These tools read or write local diagnostic data.
 
 ## Retained F# compatibility tools
 
-These tools apply to Bozzetto's inherited F# host. New F#/.NET work uses separate
-SageFS; Clef/Composer uses the workflow above. `get_session_status` reports which
-retained tools apply to the selected F# session's lifecycle. Listing a tool does
-not bypass that state check.
+These tools document Bozzetto's inherited F# host and remain in the catalog for
+compatibility. Embedded production F# execution is retired in current source;
+F#/.NET work uses separate SageFS, and Clef/Composer uses the workflow above.
+Listing a tool does not establish an available execution provider.
 
 <details>
 <summary>Expand the retained F# tool reference</summary>

@@ -9,22 +9,9 @@ open Bozzetto.Tests.DashboardBrowserTests
 
 module Integration = Bozzetto.Tests.TestInfrastructure.Integration
 
-/// LT-DASH browser journeys — real live-testing through the live dashboard:
-/// enable in the panel, watch the session's Expecto tests get discovered and
-/// run, then edit a source file on disk and watch the failing test surface in
-/// the panel, and recover after the fix. These run under `--integration-lt`
-/// (LiveTestingBrowserRunner owns the daemon + a session on a temp copy of
-/// the FromCSharp sample whose Hello.fs defines `let add a b = a + b` and 11
-/// Expecto tests including "add infers int").
-///
-/// The runner sets:
-///   BOZZETTO_DASHBOARD_PORT — dashboard URL for the page
-///   BOZZETTO_LT_FIXTURE_DIR — the temp fixture dir (Hello.fs lives here)
-///
-/// The env is read LAZILY (per access, not at module load): the module is
-/// always linked into the test assembly, so a static throw would break
-/// Expecto's discovery of every other suite on machines where the env is
-/// unset. Only a journey that actually runs touches these.
+/// Historical production F# live-testing journeys. Their original assertions
+/// remain registered as retired evidence. Fixture variables stay lazy so
+/// assembly discovery never tries to provision the removed F# host.
 module LtEnv =
   let fixtureDir =
     lazy
@@ -58,13 +45,13 @@ let private ltPlaywrightTest name (body: IPage -> Task<unit>) =
       let! page = PlaywrightFixture.newPage ()
       try
         let! _ = page.GotoAsync(
-          sprintf "%s/dashboard" PlaywrightFixture.dashboardUrl)
+          sprintf "%s/dashboard" (PlaywrightFixture.dashboardUrl ()))
         do! body page
       finally
         PlaywrightFixture.closePage(page).GetAwaiter().GetResult()
     }
     t.GetAwaiter().GetResult())
-  |> Integration.register (Integration.Dedicated "--integration-lt")
+  |> Integration.retireFSharp
 
 /// Click Enable until the panel shows ON. The #live-testing-panel is a plain
 /// div (not a collapsible <details>), always visible in the sidebar.

@@ -613,10 +613,12 @@ let realCliSdkCheckTests =
         dotnet.RedirectStandardError <- true
         dotnet.ArgumentList.Add "--list-sdks"
         dotnet.WorkingDirectory <- workDir
-        let! sdkExit, sdkOutput, sdkError = runProcess dotnet
+        let! sdkExit, (sdkOutput: string), sdkError = runProcess dotnet
         sdkExit |> Expect.equal "dotnet --list-sdks succeeds" 0
         let stableVersions =
-          Bozzetto.FsiHostBuild.parseSdkList sdkOutput
+          sdkOutput.Split([| '\n'; '\r' |], StringSplitOptions.RemoveEmptyEntries)
+          |> Array.choose EnvCheck.tryParseSdkListLine
+          |> Array.toList
           |> List.filter (fun version -> not (version.Contains "-"))
           |> List.sortDescending
         let selected =

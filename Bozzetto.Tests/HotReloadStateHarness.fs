@@ -120,7 +120,9 @@ let private sdkPin (runtime: HostRuntime) : string option =
     use p = Process.Start psi
     let listed = p.StandardOutput.ReadToEnd()
     p.WaitForExit()
-    match FsiHostBuild.parseSdkList listed |> List.filter (fun v -> v.StartsWith("10.", StringComparison.Ordinal)) with
+    match (listed.Split([| '\n'; '\r' |], StringSplitOptions.RemoveEmptyEntries)
+           |> Array.choose EnvCheck.tryParseSdkListLine
+           |> Array.toList) |> List.filter (fun v -> v.StartsWith("10.", StringComparison.Ordinal)) with
     | [] -> failwith "The net10 state tests need a .NET 10 SDK installed (dotnet --list-sdks shows none). Install one from https://dotnet.microsoft.com/download/dotnet/10.0."
     | versions -> versions |> List.maxBy (fun v -> Version(v.Split('-').[0])) |> Some
 

@@ -1,6 +1,7 @@
 module Bozzetto.Tests.BuildPreflightBoundaryTests
 
 open System
+open System.Diagnostics
 open System.IO
 open System.Threading
 open System.Threading.Tasks
@@ -10,155 +11,121 @@ open Bozzetto
 open Bozzetto.WorkerProtocol
 open Bozzetto.Server.DaemonMode
 
-let private silentLogger =
-  { new Bozzetto.Utils.ILogger with
-      member _.LogInfo _ = ()
-      member _.LogDebug _ = ()
-      member _.LogWarning _ = ()
-      member _.LogError _ = () }
+let private refused<'T> () : Result<'T, BozzettoError> =
+  Error (BozzettoError.SessionCreationFailed ExternalFSharpService.message)
 
-let private tempDir () =
-  let dir = Path.Combine(Path.GetTempPath(), "bozzetto-preflight-boundary-" + Guid.NewGuid().ToString("N"))
-  Directory.CreateDirectory(dir) |> ignore
-  dir
+let private makeOps () =
+  createSessionOpsWithRecovery
+    Unchecked.defaultof<_>
+    (fun () -> failwith "retired creation must not read a session snapshot")
+    Unchecked.defaultof<_>
+    (Some(fun _ _ -> failwith "retired creation must not recover or rebuild a project"))
 
 [<Tests>]
 let tests =
-  testList "BuildPreflight session-create boundary" [
-    testTask "NeedsRebuild returns before posting CreateSession to the mailbox" {
-      let dir = tempDir ()
-      let project = Path.Combine(dir, "App.fsproj")
-      File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net11.0</TargetFramework></PropertyGroup></Project>")
-      let mutable posted = 0
-      let mailbox =
-        MailboxProcessor<SessionManager.SessionCommand>.Start(fun inbox ->
-          let rec loop () = async {
-            let! command = inbox.Receive()
-            let isCreate =
-              match command with
-              | SessionManager.SessionCommand.CreateSession _ -> true
-              | _ -> false
-            if isCreate then
-              Interlocked.Increment(&posted) |> ignore
-            return! loop ()
-          }
-          loop ())
-      use manifest = Features.ManifestOwner.start silentLogger dir
-      let ops = createSessionOps mailbox (fun () -> SessionManager.QuerySnapshot.empty) manifest
-      try
-        let create = ops.CreateSession [ SessionProjectTarget.Project project ] dir WorkflowTypes.SessionWorkflow.Interactive
-        let! completed = Task.WhenAny(create, Task.Delay 2000)
-        if not (obj.ReferenceEquals(completed, create :> Task)) then
-          failtest "session create reached the mailbox instead of returning NeedsRebuild"
-        let! result = create
-        match result with
-        | Error (BozzettoError.NeedsRebuild missing) ->
-          missing |> Expect.isNonEmpty "the error names exact missing generated state"
-        | other -> failtestf "expected NeedsRebuild, got %A" other
-        posted |> Expect.equal "CreateSession is never posted" 0
-      finally
-        (mailbox :> IDisposable).Dispose()
-        try Directory.Delete(dir, true) with _ -> ()
-    }
-    testTask "recovery success posts CreateSession only after generated state exists" {
-      let dir = tempDir ()
-      let project = Path.Combine(dir, "App.fsproj")
-      File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net11.0</TargetFramework></PropertyGroup></Project>")
-      let mutable posted = 0
-      let mutable recoveryCalls = 0
-      let info : SessionInfo = {
-        Id = SessionId.newId(); Name = None; Projects = [ "App.fsproj" ]
-        WorkingDirectory = dir; SolutionRoot = None
-        Status = SessionLifecycleStatus.Starting { Pid = 123; Port = None }
-        Workflow = WorkflowTypes.SessionWorkflow.Interactive
-        CreatedAt = DateTime.UtcNow; LastActivity = DateTime.UtcNow
-        ActiveProject = None; ProjectRoles = []; App = AppRun.AppRunState.NotRunning }
-      let mailbox =
-        MailboxProcessor<SessionManager.SessionCommand>.Start(fun inbox ->
-          let rec loop () = async {
-            let! command = inbox.Receive()
-            match command with
-            | SessionManager.SessionCommand.CreateSession(_, _, _, _, reply) ->
-              Interlocked.Increment(&posted) |> ignore
-              reply.Reply(Ok info)
-            | _ -> ()
-            return! loop ()
-          }
-          loop ())
-      use manifest = Features.ManifestOwner.start silentLogger dir
-      let recover =
-        Some(fun (_targets) (_dir) -> task {
-          Interlocked.Increment(&recoveryCalls) |> ignore
-          Directory.CreateDirectory(Path.Combine(dir, "obj")) |> ignore
-          File.WriteAllText(Path.Combine(dir, "obj", "project.assets.json"), "{}")
-          File.WriteAllText(Path.Combine(dir, "obj", "App.fsproj.nuget.g.props"), "<Project />")
-          return Result.Ok ()
-        })
-      let ops = createSessionOpsWithRecovery mailbox (fun () -> SessionManager.QuerySnapshot.empty) manifest recover
-      try
-        let! result = ops.CreateSession [ SessionProjectTarget.Project project ] dir WorkflowTypes.SessionWorkflow.Interactive
-        result |> Expect.isOk "recovery success creates the session"
-        recoveryCalls |> Expect.equal "recovery runs once" 1
-        posted |> Expect.equal "create is posted only after recovery" 1
-      finally
-        (mailbox :> IDisposable).Dispose()
-        try Directory.Delete(dir, true) with _ -> ()
+  testSequenced <| testList "External FSharp service boundary" [
+    for target in
+      [ SessionProjectTarget.Bare
+        SessionProjectTarget.Project "/missing/Project.fsproj"
+        SessionProjectTarget.Solution "/missing/Workspace.slnx" ] do
+      testTask (sprintf "create %A refuses before config, recovery, mailbox or manifest work" target) {
+        let! result = (makeOps ()).CreateSession [ target ] "/missing/working-directory" WorkflowTypes.SessionWorkflow.Interactive
+        result |> Expect.equal "the external provider owns FSharp execution" (refused ())
+      }
+
+    testTask "restart refuses before inspecting or stopping the previous session" {
+      let! result = (makeOps ()).RestartSession (SessionId.newId()) true
+      result |> Expect.equal "restart cannot invoke build recovery or a worker" (refused ())
     }
 
-    testTask "recovery failure returns BuildFailed without posting CreateSession" {
-      let dir = tempDir ()
-      let project = Path.Combine(dir, "App.fsproj")
-      File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net11.0</TargetFramework></PropertyGroup></Project>")
-      let mutable posted = 0
-      let mailbox =
-        MailboxProcessor<SessionManager.SessionCommand>.Start(fun inbox ->
-          let rec loop () = async {
-            let! command = inbox.Receive()
-            match command with
-            | SessionManager.SessionCommand.CreateSession _ -> Interlocked.Increment(&posted) |> ignore
-            | _ -> ()
-            return! loop ()
-          }
-          loop ())
-      use manifest = Features.ManifestOwner.start silentLogger dir
-      let expected = BozzettoError.BuildFailed(1, [ BuildDiagnostic.ofLine "error FS0001: recovery failed" ])
-      let recover = Some(fun _ _ -> Task.FromResult(Result.Error expected))
-      let ops = createSessionOpsWithRecovery mailbox (fun () -> SessionManager.QuerySnapshot.empty) manifest recover
-      try
-        let! result = ops.CreateSession [ SessionProjectTarget.Project project ] dir WorkflowTypes.SessionWorkflow.Interactive
-        result |> Expect.equal "the build error is preserved" (Result.Error expected)
-        posted |> Expect.equal "failed recovery never posts create" 0
-      finally
-        (mailbox :> IDisposable).Dispose()
-        try Directory.Delete(dir, true) with _ -> ()
+    testTask "Elm creation and restart cannot bypass the provider refusal" {
+      let deps =
+        Bozzetto.ElmDaemon.createEffectDeps
+          Unchecked.defaultof<_>
+          (fun () -> failwith "retired Elm operation must not read a snapshot")
+          (fun _ -> failwith "retired Elm operation must not evaluate configuration")
+          (fun _ -> failwith "retired Elm operation must not write configuration")
+      let! created =
+        deps.CreateSession [ SessionProjectTarget.Bare ] "/missing" WorkflowTypes.SessionWorkflow.Interactive
+        |> Async.StartAsTask
+      created |> Expect.equal "Elm create refuses" (refused ())
+      let! restarted = deps.RestartSession (SessionId.newId()) true |> Async.StartAsTask
+      restarted |> Expect.equal "Elm restart refuses" (refused ())
     }
 
-    testTask "successful recovery with missing post-build outputs still fails closed" {
-      let dir = tempDir ()
-      let project = Path.Combine(dir, "App.fsproj")
-      File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net11.0</TargetFramework></PropertyGroup></Project>")
-      let mutable posted = 0
-      let mailbox =
-        MailboxProcessor<SessionManager.SessionCommand>.Start(fun inbox ->
-          let rec loop () = async {
-            let! command = inbox.Receive()
-            match command with
-            | SessionManager.SessionCommand.CreateSession _ -> Interlocked.Increment(&posted) |> ignore
-            | _ -> ()
-            return! loop ()
-          }
-          loop ())
-      use manifest = Features.ManifestOwner.start silentLogger dir
-      let recover = Some(fun _ _ -> Task.FromResult(Result.Ok ()))
-      let ops = createSessionOpsWithRecovery mailbox (fun () -> SessionManager.QuerySnapshot.empty) manifest recover
+    testCase "raw worker creation refuses before resolving paths or starting a process" <| fun () ->
+      match SessionManager.startWorkerProcess (SessionId.newId()) [ SessionProjectTarget.Bare ] null false WorkflowTypes.SessionWorkflow.Interactive (fun _ _ -> failwith "no worker can exit") with
+      | Error (BozzettoError.WorkerSpawnFailed message) ->
+        message |> Expect.equal "the worker boundary directs callers to SageFS" ExternalFSharpService.message
+      | other -> failtestf "expected the production worker refusal, got %A" other
+
+    testTask "production build delegate refuses without examining projects or a working directory" {
+      let! result =
+        SessionManager.defaultRuntime.RunBuildAsync Unchecked.defaultof<_> null
+        |> Async.StartAsTask
+      result |> Expect.equal "raw rebuild cannot recreate FSharp hosting" (refused ())
+    }
+
+    testTask "startup resume preserves the old manifest and never calls session operations" {
+      let infra : DaemonInfra =
+        { Log = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance
+          LoggerFactory = Unchecked.defaultof<_>
+          HttpClient = Unchecked.defaultof<_>
+          FrictionStore = None
+          DaemonStreamId = "retirement-test"
+          Cts = Unchecked.defaultof<_>
+          StateChangedEvent = Unchecked.defaultof<_>
+          McpFetchTimeoutSec = 1.0
+          DashboardFetchTimeoutSec = 1.0 }
+      do! resumePreviousSessions infra Unchecked.defaultof<_> Unchecked.defaultof<_> null (fun () -> failwith "retired sessions must not resume")
+    }
+
+    testTask "cohort integration refuses before changing its binding or provisioning a worktree" {
+      let previous = McpCohortIntegration.cohortIntegrationRef.Value
+      let expected : McpCohortIntegration.CohortIntegrationBinding =
+        { WorktreePath = "/preserved/worktree"
+          Branch = "preserved-branch"
+          Session = McpCohortIntegration.IntegrationSession.Pending }
       try
-        let! result = ops.CreateSession [ SessionProjectTarget.Project project ] dir WorkflowTypes.SessionWorkflow.Interactive
-        match result with
-        | Error (BozzettoError.NeedsRebuild missing) -> missing |> Expect.isNonEmpty "postcondition names the missing state"
-        | other -> failtestf "expected NeedsRebuild after an empty recovery, got %A" other
-        posted |> Expect.equal "missing post-build outputs never post create" 0
+        McpCohortIntegration.cohortIntegrationRef.Value <- Some expected
+        let! result = McpCohortIntegration.setIntegrationRef Unchecked.defaultof<_> "test" "HEAD"
+        result |> Expect.equal "FSharp integration provisioning is refused before accessing context" (refused ())
+        McpCohortIntegration.cohortIntegrationRef.Value
+        |> Expect.equal "the existing binding remains untouched" (Some expected)
       finally
-        (mailbox :> IDisposable).Dispose()
-        try Directory.Delete(dir, true) with _ -> ()
+        McpCohortIntegration.cohortIntegrationRef.Value <- previous
+    }
+  ]
+
+[<Tests>]
+let hostEntryTests =
+  Bozzetto.Tests.TestInfrastructure.Integration.hostList "Retired FSharp host entry point" [
+    testTask "standalone Host exits 2 with the same refusal before processing worker arguments" {
+      let output = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)
+      let framework = Path.GetFileName output
+      let configuration = Directory.GetParent(output).Name
+      let host = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Bozzetto.Host", "bin", configuration, framework, "Bozzetto.Host.dll"))
+      File.Exists host |> Expect.isTrue (sprintf "the independently built Host output must exist: %s" host)
+      let start = ProcessStartInfo("dotnet")
+      start.UseShellExecute <- false
+      start.RedirectStandardOutput <- true
+      start.RedirectStandardError <- true
+      start.ArgumentList.Add host
+      start.ArgumentList.Add "not-a-session"
+      start.ArgumentList.Add "not-a-port"
+      let proc = Process.Start start
+      let stdout = proc.StandardOutput.ReadToEndAsync()
+      let stderr = proc.StandardError.ReadToEndAsync()
+      let deadline = new CancellationTokenSource(TimeSpan.FromSeconds 10.0)
+      try
+        do! proc.WaitForExitAsync(deadline.Token)
+        let! _ = stdout
+        let! (error: string) = stderr
+        proc.ExitCode |> Expect.equal "removed host cannot serve" 2
+        error.Trim() |> Expect.equal "one actionable refusal" ExternalFSharpService.message
+      finally
+        if not proc.HasExited then proc.Kill(true)
+        deadline.Dispose()
+        proc.Dispose()
     }
   ]

@@ -8,6 +8,16 @@ The working foundation today is an explicit Clef/Composer project session: human
 
 [Development horizons](docs/Bozzetto_Development_Horizons.md) · [Fidelity component contracts](docs/Bozzetto_Fidelity_Component_Contracts.md) · [Get started](#get-started) · [Documentation](docs/README.md)
 
+## The Name
+
+A *bozzetto* (Italian, pronounced bot-SET-oh) is the small model a sculptor shapes in clay or wax before starting the full work. The word is the diminutive of *bozzo*, which means "sketch" or "rough stone" ([Merriam-Webster](https://www.merriam-webster.com/dictionary/bozzetto), [Britannica](https://www.britannica.com/art/bozzetto)). A patron sees the bozzetto and asks for changes while a change still costs little.
+
+The model gives an idea enough substance to be judged. Proportion, movement and the relationship between parts become visible before the sculptor commits to the finished material. We chose the name for that exchange between making and examining: trying a definition or a change against a real project, seeing its consequences, and revising it while the work is still open. Compiler evidence and interactive execution should make that process available to developers, with people and agents able to inspect the same work.
+
+The connection to **Atelier** is deliberate. An *atelier* is an artist's workshop, the place where sketches, models, tools and unfinished pieces can be brought together. Fidelity's planned Atelier editing and workbench interface should give developers that kind of working space: source beside compiler graphs, proof evidence, execution results and debugging views. Bozzetto is the companion that coordinates the shared compiler workspace and execution behind those views, through Composer's contracts. Atelier provides the place to arrange, edit and inspect the work; Bozzetto keeps the sessions and execution that people and agents are working on coordinated.
+
+That relationship is a design direction, with the current Composer foundation described below. It allows Atelier, other editors, the browser and MCP clients to participate in the same development process without making a particular interface the owner of compiler meaning. As the workbench grows from local CPU experiments toward the broader horizons, the name continues to describe its purpose: give an idea a form that can be examined and changed before committing it to the finished application.
+
 ## The Working Foundation
 
 Bozzetto's daemon owns one Composer supervisor shared by MCP tools, the `composer://sessions` resource and the `/composer` browser page. Each project is opened explicitly from an absolute `.fidproj` path. Operations carry host, session and compiler epoch identity.
@@ -124,7 +134,7 @@ flowchart LR
 
 The host and compiler worker use .NET today. Their public contracts should support the native hosting horizon without making CLR types, a particular editor or a transport the source of compiler authority.
 
-`Bozzetto/` contains daemon supervision, CLI, MCP and browser routes; `Bozzetto.Composer/` contains the worker and adapter. `Bozzetto.Core/` and the retained F# hosts hold shared and compatibility implementation. Tests live in `Bozzetto.Tests/` and `Bozzetto.Composer.Tests/`.
+`Bozzetto/` contains daemon supervision, CLI, MCP and browser routes; `Bozzetto.Composer/` contains the worker and adapter. `Bozzetto.Core/` holds shared and inherited implementation. Tests live in `Bozzetto.Tests/` and `Bozzetto.Composer.Tests/`. The [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md) removes embedded production FSI hosting from this checkout and directs F# work to separate SageFS; a real Clef interactive host remains future work.
 
 The [documentation index](docs/README.md) retains implementation and compatibility guides, editor references and application samples, including the Raylib window and game demos.
 
@@ -138,8 +148,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for repositor
 <a id="hard-fork-lineage"></a>
 <a id="acknowledgments"></a>
 
-Bozzetto began as a SageFs fork, with Fable.SageFs providing a compiler-residency reference. [Upstream heritage](UPSTREAM_HERITAGE.md) preserves authorship, fork history and dependency credits. Retained F#/.NET development uses the separate SageFS service on `37749`/`37750`; Bozzetto uses `47749`/`47750`.
+Bozzetto is a hard fork of [SageFs](https://github.com/WillEhrendreich/SageFs), Will Ehrendreich's live F# development daemon. Its persistent REPL, daemon architecture and hot reload engine supplied the working foundation: keep a project alive, try a change and see its effect through shared tools. [Fable.SageFs](https://github.com/shayanhabibi/Fable.SageFs), by Shayan Habibi, brought the Fable compiler into that live session and allowed its own transforms to be revised from the REPL. That example helped inspire Bozzetto's compiler workbench direction.
 
-A *bozzetto* is a sculptor's working model: a place to try an idea while changing it is still inexpensive. The name describes the interactive development relationship we want across Fidelity.
+Bozzetto carries those ideas into Fidelity's broader compiler, device and workbench remit. Today's Composer integration uses explicit worker retirement and replacement; live compiler patching and Clef ORC execution remain separate work. F#/.NET development uses the independent SageFS service on `37749`/`37750`, alongside Bozzetto on `47749`/`47750`. [Upstream heritage](UPSTREAM_HERITAGE.md) records the fork history, original authorship and wider dependency credits.
 
 [MIT license](LICENSE), with the original copyright notice preserved.

@@ -6,6 +6,8 @@ This plan incorporates the [provider handoff](Clef_Composer_Provider_Handoff.md)
 
 ## Outcome and ownership
 
+The [October 1 Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md) removes embedded production FSI hosting from the checkout. Earlier milestone descriptions below preserve their historical acceptance scope; they do not promise continued embedded F# execution. Clefx/ORC implementation and deployment remain separate gates.
+
 Bozzetto's broader destination is coordinated Fidelity development across application code, compilers, runtimes and target devices. This plan delivers its first-horizon compiler and workspace foundation, including a Clef/Composer CPU REPL backed by LLVM ORC JIT. Incremental compilation and explicit session authority establish the foundation for that experience. F#/.NET development can use the separate SageFS daemon and MCP connection on ports 37749/37750, alongside Bozzetto on 47749/47750; expanding Bozzetto’s inherited F# REPL is not a delivery priority.
 
 An editor user and an agent attached to the same session must operate on the same compiler generation and observe the same diagnostics, build results, cancellations and execution refusals. Composer must also be usable through MCP without requiring an editor or Bozzetto's dashboard.

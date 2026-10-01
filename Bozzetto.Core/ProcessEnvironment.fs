@@ -12,9 +12,8 @@
 /// MSBuild loaded on a net10 runtime); and Bozzetto's own FSI host build ignored a
 /// repo-local SDK pin for the same reason.
 ///
-/// `FsiHostBuild.fs` carried its own private copy of this list before this module
-/// existed. Every process Bozzetto spawns — the worker, the isolated FSI host the
-/// user's own code runs in, a session's `dotnet build` — uses this one instead.
+/// Every remaining process launch uses this shared sanitization boundary.
+/// The former embedded FSI host also used it before F# execution moved to SageFS.
 module Bozzetto.ProcessEnvironment
 
 open System
@@ -38,8 +37,8 @@ let poisonedVariables : string list =
 /// Pure: what a child process's environment should be, given the parent's own
 /// environment and whatever explicit overrides this particular child needs.
 /// Poisoned keys are dropped first, then overrides are applied on top — so a
-/// caller that genuinely wants one of them back for this one child (the FSI
-/// host build pointing `DOTNET_ROOT` at a repo-local SDK) still can.
+/// caller that needs one of them for this child (for example, `DOTNET_ROOT`
+/// pointing at a repo-local SDK) still can.
 let sanitize (parentEnvironment: Map<string, string>) (overrides: (string * string) list) : Map<string, string> =
   let cleaned = poisonedVariables |> List.fold (fun env key -> Map.remove key env) parentEnvironment
   overrides |> List.fold (fun env (key, value) -> Map.add key value env) cleaned

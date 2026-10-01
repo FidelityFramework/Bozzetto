@@ -41,7 +41,7 @@ let private rssMB (proc: Process) =
 
 [<Tests>]
 let tests =
-  Integration.hostList "Daemon RSS returns to baseline after sessions are created and stopped" [
+  Integration.retiredFSharpList "Daemon RSS returns to baseline after sessions are created and stopped" [
 
     testTask "four sessions created, evaluated and stopped: daemon RSS returns near its own baseline" {
       let port = reserveLoopbackPort ()

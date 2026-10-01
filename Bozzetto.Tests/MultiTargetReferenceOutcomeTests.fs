@@ -129,7 +129,7 @@ let private execOutcome (body: string) : bool * string =
 [<Tests>]
 let multiTargetReferenceOutcomeTests =
   testSequenced
-  <| Integration.hostList "Multi-targeted project reference outcome" [
+  <| Integration.retiredFSharpList "Multi-targeted project reference outcome" [
 
     testTask "WHY: a session on a net11.0 project that references a net10.0;net11.0 library reaches Ready and runs the library's net11.0 build" {
       let root = Directory.CreateTempSubdirectory("bozzetto-multitfm-").FullName

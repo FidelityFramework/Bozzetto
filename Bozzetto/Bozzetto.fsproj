@@ -10,9 +10,9 @@
         <!-- NuGet config -->
         <PackageId>Bozzetto</PackageId>
         <Authors>Will Ehrendreich</Authors>
-        <Description>Bozzetto — a functional F# REPL, MCP server, and live web development environment.</Description>
+        <Description>Bozzetto — interactive development coordination for Clef/Composer and the Fidelity Framework.</Description>
         <Copyright>Copyright © 2025-2026 Will Ehrendreich</Copyright>
-        <PackageTags>fsharp;functional;repl;interactive;shell;asp.net core;mcp;dashboard;bozzetto</PackageTags>
+        <PackageTags>clef;composer;fidelity;incremental;interactive;mcp;dashboard;bozzetto</PackageTags>
         <PackageProjectUrl>https://forge.spkez.dev/FidelityFramework/Bozzetto</PackageProjectUrl>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageReadmeFile>Readme.md</PackageReadmeFile>
@@ -29,10 +29,6 @@
              TargetFramework/TargetFrameworks cannot both be set. -->
         <TargetFramework></TargetFramework>
         <TargetFrameworks>$(BozzettoTargetFrameworks)</TargetFrameworks>
-        <!-- The FSI host must match the CURRENT inner build's own TFM (host
-             and daemon multi-target the identical list) — not a fixed literal,
-             or every inner build would (re)build and pack the same host TFM. -->
-        <HostTargetFramework>$(TargetFramework)</HostTargetFramework>
     </PropertyGroup>
 
     <ItemGroup>
@@ -195,14 +191,6 @@
               CopyToOutputDirectory="PreserveNewest"
               Link="runtimes\linux-arm64\native\libtree-sitter-fsharp.so" />
 
-        <!-- The FSI host is a build-time dependency: the daemon spawns
-             Bozzetto.Host.exe from its own dir (Args.hostExePath). Reference
-             with PrivateAssets so the host exe + its DLLs ride in the tool's
-             normal tools/<tfm>/any/ payload (no subdir, no installer tricks). -->
-        <ProjectReference Include="..\Bozzetto.Host\Bozzetto.Host.fsproj"
-                          PrivateAssets="all"
-                          ReferenceOutputAssembly="false" />
-
         <!-- PackAsTool drops the daemon's own apphost when a referenced project
              also produces one (the pack mis-identifies the host's apphost as
              the tool). Explicitly include the daemon apphost in the payload —
@@ -220,85 +208,11 @@
               Pack="true"
               PackagePath="tools\$(TargetFramework)\any" />
 
-        <!-- The FSI host runs from its OWN host/ subdir (the whole point of
-             isolation — the host must not share a dir with the daemon's files,
-             or its fail-closed manifest check rightly refuses). The host's
-             output is packed under tools/<tfm>/any/host/ via the
-             PackHostForDaemon target below (NOT a static None item: on a fresh
-             CI checkout the host bin dir does not exist at evaluation time, so
-             a static item with an Exists() condition would silently pack
-             nothing and the installed tool would have no host/ dir). -->
     </ItemGroup>
 
-    <!--
-      Ship the FSI host alongside the daemon. The daemon spawns
-      Bozzetto.Host.exe relative to its own base dir (Args.hostExePath), so the
-      host's build output must land in the daemon's output dir (dev) AND in
-      the tool package under tools/<tfm>/any/host/ (installed tool).
-    -->
-    <!-- Guarded to the inner build only: for a multi-targeted (crosstargeting)
-         project, MSBuild also evaluates an OUTER build with $(TargetFramework)
-         empty (it just dispatches Build/Pack to one inner build per TFM). Without
-         this guard, the outer pass would also fire, calling out to the host
-         project with TargetFramework= (empty) — wrong target, doubled work. -->
-    <Target Name="BuildHostForDaemon" BeforeTargets="Build;Pack" Condition="'$(TargetFramework)' != ''">
-        <MSBuild Projects="..\Bozzetto.Host\Bozzetto.Host.fsproj"
-                 Targets="Build"
-                 Properties="Configuration=$(Configuration);TargetFramework=$(HostTargetFramework)" />
-    </Target>
-
-    <!-- Pack the host's full output into tools/<tfm>/any/host/ for BOTH
-         shipped TFMs in one pass. Has to happen in the OUTER build, not either
-         inner one — I only found this out by cracking the nupkg open with
-         `unzip -l` after a green pack and seeing no host/ folder at all. Traced
-         it with `dotnet pack -v:diag`: a multi-targeted PackAsTool project's
-         REAL, decisive `_GetPackageFiles` (the one whose items land in the
-         final combined .nuspec) runs with $(TargetFramework) empty. Whatever I
-         add from inside a per-TFM inner build's own `_GetPackageFiles` — and
-         it does fire, once per TFM — never makes it into that final list. So
-         don't read $(TargetFramework) here, walk $(BozzettoTargetFrameworks)
-         myself. By the time the outer Pack gets to this point both inner
-         builds (each of which already ran BuildHostForDaemon) are done, so the
-         glob finds real files for both on a clean checkout. -->
-    <Target Name="PackHostForDaemon" BeforeTargets="_GetPackageFiles" Condition="'$(TargetFramework)' == ''">
-        <ItemGroup>
-            <BozzettoPackTfm Include="$(BozzettoTargetFrameworks.Split(';'))" />
-        </ItemGroup>
-        <ItemGroup>
-            <HostPackFiles Include="..\Bozzetto.Host\bin\$(Configuration)\%(BozzettoPackTfm.Identity)\**\*"
-                           Exclude="..\Bozzetto.Host\bin\$(Configuration)\%(BozzettoPackTfm.Identity)\**\*.runtimeconfig.dev.json"
-                           Condition="Exists('..\Bozzetto.Host\bin\$(Configuration)\%(BozzettoPackTfm.Identity)\Bozzetto.Host.dll')">
-                <DestTfm>%(BozzettoPackTfm.Identity)</DestTfm>
-            </HostPackFiles>
-        </ItemGroup>
-        <ItemGroup>
-            <None Include="@(HostPackFiles)"
-                  Pack="true"
-                  PackagePath="tools\%(HostPackFiles.DestTfm)\any\host\%(RecursiveDir)"
-                  LinkBase="hostout" />
-        </ItemGroup>
-    </Target>
-
-    <Target Name="CopyHostOutput" AfterTargets="Build" Condition="'$(TargetFramework)' != ''">
-        <ItemGroup>
-            <!-- Exclude the Debug-only *.runtimeconfig.dev.json — it is not in
-                 the vetted manifest and the host's fail-closed check would
-                 refuse to start with it present. -->
-            <HostFiles Include="..\Bozzetto.Host\bin\$(Configuration)\$(HostTargetFramework)\**\*"
-                        Exclude="..\Bozzetto.Host\bin\$(Configuration)\$(HostTargetFramework)\**\*.runtimeconfig.dev.json"
-                        Condition="Exists('..\Bozzetto.Host\bin\$(Configuration)\$(HostTargetFramework)')" />
-        </ItemGroup>
-        <!-- Start from an empty host/ dir every build. The host's startup check
-             is fail-closed against its vetted manifest, so a file that a
-             PREVIOUS build put here and this build no longer ships (e.g. the
-             SQLite DLLs after friction storage moved out of the host closure)
-             would make the host refuse to start on every incrementally-built
-             tree — CI, on a clean checkout, would never see it. -->
-        <RemoveDir Directories="$(TargetDir)host" />
-        <!-- Copy the host's FULL output into the daemon's host/ subdir so the
-             daemon spawns host/Bozzetto.Host.exe with its isolated closure. -->
-        <Copy SourceFiles="@(HostFiles)"
-              DestinationFiles="@(HostFiles->'$(TargetDir)host\%(RecursiveDir)%(Filename)%(Extension)')" />
-    </Target>
+  <!-- Remove only generated legacy host output left by an earlier local build. -->
+  <Target Name="RemoveRetiredFSharpHostOutput" AfterTargets="Build" Condition="'$(TargetFramework)' != ''">
+    <RemoveDir Directories="$(TargetDir)host" />
+  </Target>
 
 </Project>

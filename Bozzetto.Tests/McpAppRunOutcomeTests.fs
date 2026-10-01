@@ -100,7 +100,7 @@ let private callTool (client: McpClient) (name: string) (args: (string * obj) li
 
 [<Tests>]
 let mcpAppRunOutcomeTests =
-  Integration.hostList "MCP run_app / stop_app outcome gates" [
+  Integration.retiredFSharpList "MCP run_app / stop_app outcome gates" [
     testTask "WHY — run_app starts the console ticker as the same live instance across repeated calls, and stop_app is honest about the app it cannot stop in place (Gap K)" {
       let port = Http.reserveLoopbackPort ()
       let! proc, httpClient = Http.startDaemonWithArgs port consoleTickerDir [ "--no-resume" ]

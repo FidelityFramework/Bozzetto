@@ -457,129 +457,19 @@ let private checkMemoryAdmission (readSnapshot: unit -> SessionManager.QuerySnap
        Result.Error(BozzettoError.MemoryPressureRefused reason)
      | None -> Result.Ok ()
 
-let private productionBuildRecovery
-  (targets: SessionProjectTarget list)
-  (workingDir: string)
-  : Task<Result<unit, BozzettoError>> =
-  task {
-    let projects = SessionProjectTarget.projects targets
-    let holder = "create:" + (System.IO.Path.GetFullPath workingDir).ToLowerInvariant() + ":" + String.concat "|" (projects |> List.map (fun p -> p.ToLowerInvariant()) |> List.sort)
-    match Features.LeaseWatch.request holder ExpensiveWorkLease.Kind.Rebuild with
-    | ExpensiveWorkLease.Decision.Granted(leaseId, _) ->
-      try
-        let! built = SessionBuild.runBuildAsync projects workingDir |> Async.StartAsTask
-        match built with
-        | Error err -> return Result.Error err
-        | Ok _ ->
-          let missing =
-            targets
-            |> List.collect (fun target ->
-              match BuildPreflight.checkIn System.IO.File.Exists System.IO.File.ReadAllText workingDir target with
-              | BuildPreflight.NeedsRebuild missing -> missing
-              | BuildPreflight.Ready
-              | BuildPreflight.Unknown _ -> [])
-            |> List.distinct
-          return
-            match missing with
-            | [] -> Result.Ok ()
-            | missing -> Result.Error (BozzettoError.NeedsRebuild missing)
-      finally
-        Features.LeaseWatch.release leaseId |> ignore
-    | ExpensiveWorkLease.Decision.Wait(_, reason)
-    | ExpensiveWorkLease.Decision.Refused reason -> return Result.Error (BozzettoError.NeedsRebuild [ reason ])
-  }
-
-let private sessionManifestRecord (info: WorkerProtocol.SessionInfo) : Features.DaemonManifest.DaemonSessionRecord =
-  { SessionId = WorkerProtocol.SessionId.value info.Id
-    Projects = info.Projects
-    WorkingDir = info.WorkingDirectory
-    CreatedAt = DateTimeOffset(info.CreatedAt, TimeSpan.Zero)
-    StoppedAt = None }
-
-/// Build SessionManagementOps record from mailbox + snapshot reader.
-/// Session lifecycle events are recorded directly in the daemon.bozzettofm binary
-/// manifest (the sole source of truth for session resume) — there is no
-/// separate event-append step or per-session event stream.
+/// Retain session observation and cleanup while directing new F# execution
+/// to separate SageFS. Refusal happens before recovery, configuration or state.
 let createSessionOpsWithRecovery
   (sessionManager: MailboxProcessor<SessionManager.SessionCommand>)
   (readSnapshot: unit -> SessionManager.QuerySnapshot)
   (manifestOwner: Features.ManifestOwner.Handle)
-  (recover: (SessionProjectTarget list -> string -> Task<Result<unit, BozzettoError>>) option)
+  (_recover: (SessionProjectTarget list -> string -> Task<Result<unit, BozzettoError>>) option)
   : SessionManagementOps =
-  let recordCreated
-    (info: WorkerProtocol.SessionInfo)
-    : Task<Result<WorkerProtocol.SessionId, BozzettoError>> = task {
-    let! committed =
-      manifestOwner.Commit (
-        Features.DaemonManifest.ManifestMutation.RecordCreated (sessionManifestRecord info))
-    match committed with
-    | Ok _ -> return Ok info.Id
-    | Error err ->
-      let sessionId = WorkerProtocol.SessionId.value info.Id
-      let! stopResult = sessionManager.PostAndAsyncReply(fun reply -> SessionManager.SessionCommand.StopSession(info.Id, reply)) |> Async.StartAsTask
-      match stopResult with
-      | Ok () -> ()
-      | Error stopError -> Log.warn "[manifest] rollback stop failed for %s: %s" sessionId (BozzettoError.describe stopError)
-      return Error (BozzettoError.SessionCreationFailed(Features.ManifestOwner.CommitError.describe err))
-  }
   {
-    CreateSession = fun targets workingDir workflow ->
+    CreateSession = fun _targets _workingDir _workflow ->
       task {
-        match checkMailboxAdmission sessionManager with
-        | Result.Error busy -> return Result.Error busy
-        | Result.Ok () ->
-        match checkMemoryAdmission readSnapshot with
-        | Result.Error refused -> return Result.Error refused
-        | Result.Ok () ->
-          let missing =
-            targets
-            |> List.collect (fun target ->
-              match BuildPreflight.checkIn System.IO.File.Exists System.IO.File.ReadAllText workingDir target with
-              | BuildPreflight.NeedsRebuild missing -> missing
-              | BuildPreflight.Ready
-              | BuildPreflight.Unknown _ -> [])
-            |> List.distinct
-          match missing with
-          | _ :: _ ->
-            match recover with
-            | None -> return Result.Error (BozzettoError.NeedsRebuild missing)
-            | Some recover ->
-              let! recovered = recover targets workingDir
-              match recovered with
-              | Error err -> return Result.Error err
-              | Ok () ->
-                let stillMissing =
-                  targets
-                  |> List.collect (fun target ->
-                    match BuildPreflight.checkIn System.IO.File.Exists System.IO.File.ReadAllText workingDir target with
-                    | BuildPreflight.NeedsRebuild missing -> missing
-                    | BuildPreflight.Ready
-                    | BuildPreflight.Unknown _ -> [])
-                  |> List.distinct
-                match stillMissing with
-                | _ :: _ -> return Result.Error (BozzettoError.NeedsRebuild stillMissing)
-                | [] ->
-                  let autoOpenNamespaces = DirectoryConfig.autoOpenNamespacesForDirectory workingDir
-                  let! result =
-                    sessionManager.PostAndAsyncReply(fun reply ->
-                      SessionManager.SessionCommand.CreateSession(targets, workingDir, autoOpenNamespaces, workflow, reply))
-                    |> Async.StartAsTask
-                  match result with
-                  | Error err -> return Result.Error err
-                  | Ok info ->
-                    let! recorded = recordCreated info
-                    return Result.map WorkerProtocol.SessionId.value recorded
-          | [] ->
-            let autoOpenNamespaces = DirectoryConfig.autoOpenNamespacesForDirectory workingDir
-            let! result =
-              sessionManager.PostAndAsyncReply(fun reply ->
-                SessionManager.SessionCommand.CreateSession(targets, workingDir, autoOpenNamespaces, workflow, reply))
-              |> Async.StartAsTask
-            match result with
-            | Error err -> return Result.Error err
-            | Ok info ->
-              let! recorded = recordCreated info
-              return Result.map WorkerProtocol.SessionId.value recorded
+        return
+          ExternalFSharpService.refuse ()
       }
     ListSessions = fun () ->
       task {
@@ -638,16 +528,10 @@ let createSessionOpsWithRecovery
           |> Result.map (fun () ->
             sprintf "Session '%s' purged — manifest entry removed." sessionId)
       }
-    RestartSession = fun sessionId rebuild ->
+    RestartSession = fun _sessionId _rebuild ->
       task {
-        match checkMailboxAdmission sessionManager with
-        | Result.Error busy -> return Result.Error busy
-        | Result.Ok () ->
-        let! result =
-          sessionManager.PostAndAsyncReply(fun reply ->
-            SessionManager.SessionCommand.RestartSession(sessionId, rebuild, reply))
-          |> Async.StartAsTask
-        return result
+        return
+          ExternalFSharpService.refuse ()
       }
     GetProxy = fun sessionId ->
       // The one place SessionManagementOps hands out a session's proxy —
@@ -717,7 +601,7 @@ let createSessionOpsWithRecovery
       }
   }
 
-/// Test/public adapter: preflight only; it never starts a build implicitly.
+/// Public adapter with the same production F# refusal boundary.
 let createSessionOps
   (sessionManager: MailboxProcessor<SessionManager.SessionCommand>)
   (readSnapshot: unit -> SessionManager.QuerySnapshot)
@@ -1577,189 +1461,16 @@ let startDashboardServer
     log.LogWarning("Dashboard failed to start: {Error}", ex.Message)
 }
 
-/// Resume previous sessions from binary manifest.
-/// Creates new sessions for each alive-but-deduplicated entry, or
-/// starts bare if no previous sessions exist.
+/// Preserve old F# session manifests without reading, rewriting or resuming
+/// them. A separate SageFS daemon owns F# execution and its session lifecycle.
 let resumePreviousSessions
   (infra: DaemonInfra)
-  (sessionOps: SessionManagementOps)
-  (manifestOwner: Features.ManifestOwner.Handle)
-  (workingDir: string)
-  (onSessionResumed: unit -> unit)
+  (_sessionOps: SessionManagementOps)
+  (_manifestOwner: Features.ManifestOwner.Handle)
+  (_workingDir: string)
+  (_onSessionResumed: unit -> unit)
   = task {
-  let log = infra.Log
-  let startupSw = System.Diagnostics.Stopwatch.StartNew()
-  let startupSpan = Instrumentation.startSpan Instrumentation.sessionSource "bozzetto.daemon.startup" []
-
-  // Load session manifest from binary — the sole source of truth
-  let binarySpan = Instrumentation.startSpan Instrumentation.sessionSource "bozzetto.daemon.binary_manifest_load" []
-  let binarySw = System.Diagnostics.Stopwatch.StartNew()
-  let! manifestResult = manifestOwner.Read()
-  binarySw.Stop()
-  match isNull binarySpan with
-  | false -> binarySpan.SetTag("binary_load_ms", binarySw.Elapsed.TotalMilliseconds) |> ignore
-  | true -> ()
-  // W35(R14): a corrupt manifest is renamed aside — by its owner, the only
-  // component that touches the file — so saves are not blocked for this run.
-  let! quarantined =
-    match manifestResult with
-    | Error (Features.ManifestTypes.ManifestLoadError.CorruptData _) -> manifestOwner.QuarantineCorrupt()
-    | _ -> System.Threading.Tasks.Task.FromResult false
-
-  let daemonState =
-    match manifestResult with
-    | Ok state ->
-      log.LogInformation("Loaded session manifest from binary ({Count} sessions, {Ms:F1}ms)",
-        state.Sessions.Count, binarySw.Elapsed.TotalMilliseconds)
-      match isNull binarySpan with
-      | false -> binarySpan.SetTag("source", "binary") |> ignore
-      | true -> ()
-      Instrumentation.succeedSpan binarySpan
-      state
-    | Error Features.ManifestTypes.ManifestLoadError.NotFound ->
-      // W32(R13): NotFound is an expected first-run condition → Info + succeedSpan.
-      log.LogInformation("No binary manifest found — starting fresh")
-      match isNull binarySpan with
-      | false -> binarySpan.SetTag("source", "none") |> ignore
-      | true -> ()
-      Instrumentation.succeedSpan binarySpan
-      Features.DaemonManifest.DaemonManifestState.empty
-    | Error (Features.ManifestTypes.ManifestLoadError.IoError err) ->
-      // W32(R13): File EXISTS but can't be read (lock/permissions) → Warning + failSpan.
-      // Old code used LogInformation+succeedSpan for ALL error cases — wrong severity.
-      log.LogWarning("Binary manifest unreadable — starting fresh (HISTORY NOT RESTORED): {Error}", err)
-      match isNull binarySpan with
-      | false -> binarySpan.SetTag("source", "error_io") |> ignore
-      | true -> ()
-      Instrumentation.failSpan binarySpan err
-      Features.DaemonManifest.DaemonManifestState.empty
-    | Error (Features.ManifestTypes.ManifestLoadError.CorruptData err) ->
-      // W32(R13): File is permanently corrupt → Error + failSpan.
-      // W35(R14): Rename the corrupt file so periodic saves are unblocked for this run.
-      // Without rename: mergeManifestWithExisting reads daemon.bozzettofm → CorruptData → Error →
-      // skips write → ALL new sessions lost for the daemon's entire lifetime.
-      // IoError is NOT renamed (transient lock; file may recover on its own).
-      log.LogError("Binary manifest corrupt — starting fresh (HISTORY NOT RESTORED): {Error}", err)
-      match quarantined with
-      | true -> log.LogWarning("Corrupt manifest renamed — periodic saves unblocked for this run")
-      | false -> log.LogWarning("Could not rename corrupt manifest — periodic saves may be blocked")
-      match isNull binarySpan with
-      | false -> binarySpan.SetTag("source", "error_corrupt") |> ignore
-      | true -> ()
-      Instrumentation.failSpan binarySpan err
-      Features.DaemonManifest.DaemonManifestState.empty
-
-  let aliveSessions = Features.DaemonManifest.DaemonManifestState.aliveSessions daemonState
-
-  match aliveSessions.IsEmpty with
-  | false ->
-    // Dedup phase
-    let dedupSpan = Instrumentation.startSpan Instrumentation.sessionSource "bozzetto.daemon.session_dedup" []
-    // Deduplicate by working directory + projects — resume one session per (dir, projects) pair
-    let uniqueByDir =
-      aliveSessions
-      |> List.groupBy (fun r -> r.WorkingDir, r.Projects |> List.sort)
-      |> List.map (fun (_, group) ->
-        // Pick the most recently created session for each (dir, projects) pair
-        group |> List.maxBy (fun r -> r.CreatedAt))
-    // Mark all stale duplicates as stopped
-    let staleIds =
-      aliveSessions
-      |> List.map (fun r -> r.SessionId)
-      |> Set.ofList
-    let keptIds =
-      uniqueByDir |> List.map (fun r -> r.SessionId) |> Set.ofList
-    let prunedCount = (Set.difference staleIds keptIds).Count
-    // W14(R10): Session dedup stop-event persistence removed — binary manifest is sole source of truth.
-    // Pruned sessions are no longer recorded as events.
-    match prunedCount > 0 with
-    | true -> Instrumentation.daemonDuplicatesPruned.Add(int64 prunedCount)
-    | false -> ()
-    match isNull dedupSpan with
-    | false ->
-      dedupSpan.SetTag("alive_count", aliveSessions.Length) |> ignore
-      dedupSpan.SetTag("dedup_removed", prunedCount) |> ignore
-    | true -> ()
-    Instrumentation.succeedSpan dedupSpan
-
-    log.LogInformation("Resuming {Count} previous session(s) ({Stale} stale duplicates cleaned)",
-      uniqueByDir.Length, (aliveSessions.Length - uniqueByDir.Length))
-    // A session whose directory or every project is gone can never start again:
-    // forget it once rather than retrying (and warning) on every start. One
-    // deleted project among several drops just that project.
-    let decisions =
-      uniqueByDir
-      |> List.map (fun prev ->
-        prev, Features.DaemonManifest.ResumeDecision.decide IO.Directory.Exists IO.File.Exists prev)
-    for prev, decision in decisions do
-      match decision with
-      | Features.DaemonManifest.ResumeDecision.Forget reason ->
-        log.LogWarning("Forgetting session {SessionId} for {WorkingDir}: {Reason}", prev.SessionId, prev.WorkingDir, reason)
-      | Features.DaemonManifest.ResumeDecision.Resume projects when projects.Length < prev.Projects.Length ->
-        let dropped = prev.Projects |> List.filter (fun p -> not (List.contains p projects))
-        log.LogWarning("Resuming session for {WorkingDir} without deleted project(s): {Dropped}", prev.WorkingDir, String.concat ", " dropped)
-      | Features.DaemonManifest.ResumeDecision.Resume _ -> ()
-    let! forgotten =
-      decisions
-      |> List.choose (fun (prev, decision) ->
-        match decision with
-        | Features.DaemonManifest.ResumeDecision.Forget _ -> Some prev.SessionId
-        | Features.DaemonManifest.ResumeDecision.Resume _ -> None)
-      |> List.map (fun sessionId -> task {
-        let! committed = manifestOwner.Commit (Features.DaemonManifest.ManifestMutation.Remove sessionId)
-        return sessionId, committed })
-      |> System.Threading.Tasks.Task.WhenAll
-    for sessionId, committed in forgotten do
-      match committed with
-      | Ok _ -> ()
-      | Error err ->
-        log.LogWarning("Could not remove session {SessionId} from the manifest: {Error}", sessionId, Features.ManifestOwner.CommitError.describe err)
-    let relevant =
-      decisions
-      |> List.choose (fun (prev, decision) ->
-        match decision with
-        | Features.DaemonManifest.ResumeDecision.Resume projects -> Some { prev with Projects = projects }
-        | Features.DaemonManifest.ResumeDecision.Forget _ -> None)
-    // Resume all valid sessions in parallel — each is an independent worker process
-    let resumeSpan = Instrumentation.startSpan Instrumentation.sessionSource "bozzetto.daemon.session_resume" []
-    let resumeTasks =
-      relevant
-      |> List.map (fun prev -> task {
-        log.LogInformation("Resuming session for {WorkingDir}", prev.WorkingDir)
-        let targetResult = SessionProjectTarget.tryCreateMany prev.Projects
-        let! result =
-          match targetResult with
-          | Ok targets -> sessionOps.CreateSession targets prev.WorkingDir WorkflowTypes.SessionWorkflow.Interactive
-          | Error reason ->
-            log.LogWarning("Forgetting invalid resumed session target for {WorkingDir}: {Reason}", prev.WorkingDir, reason)
-            Task.FromResult (Result.Error (BozzettoError.SessionCreationFailed reason))
-        match result with
-        | Ok info ->
-          Instrumentation.daemonSessionsResumed.Add(1L)
-          // W32(R13): Stop-event persistence removed — no longer tracking session stop in events.
-          // Binary manifest is the sole source of truth for session state.
-          log.LogInformation("Resumed session {Info} (retired old id {OldSessionId})", info, prev.SessionId)
-          onSessionResumed ()
-        | Error err ->
-          log.LogWarning("Failed to resume session for {WorkingDir}: {Error}", prev.WorkingDir, err)
-      })
-    do! System.Threading.Tasks.Task.WhenAll(resumeTasks) :> System.Threading.Tasks.Task
-    match isNull resumeSpan with
-    | false -> resumeSpan.SetTag("resumed_count", relevant.Length) |> ignore
-    | true -> ()
-    Instrumentation.succeedSpan resumeSpan
-
-    // Sessions restored — clients will discover them via listing
-    // No global "active session" to restore; each client picks its own
-    match daemonState.ActiveSessionId with
-    | Some _ -> () // Previously tracked active session — clients resolve on connect
-    | None -> ()
-  | true ->
-    log.LogInformation("No previous sessions to resume. Waiting for clients to create sessions")
-
-  startupSw.Stop()
-  Instrumentation.daemonStartupMs.Record(startupSw.Elapsed.TotalMilliseconds)
-  Instrumentation.succeedSpan startupSpan
+  infra.Log.LogInformation("F# session resume disabled. {Reason}", ExternalFSharpService.message)
 }
 
 /// Create the Elm runtime with warmup context, streaming test proxy, and SSE dedup.
@@ -2080,7 +1791,7 @@ let run
       (fun sid line -> onAppOutputCallback (WorkerProtocol.SessionId.value sid) line)
 
   let sessionOps =
-    createSessionOpsWithRecovery sessionManager readSnapshot manifestOwner (Some productionBuildRecovery)
+    createSessionOps sessionManager readSnapshot manifestOwner
   // String-to-SessionId adapters for proxyToSession (which takes string callbacks)
   let getProxyStr s = sessionOps.GetProxy (toSessionId s)
   let notifyWorkerDiedStr s = sessionOps.NotifyWorkerDied (toSessionId s)

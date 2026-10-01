@@ -3032,23 +3032,10 @@ let createEndpoints
         ctx.Response.StatusCode <- 400
         do! ctx.Response.WriteAsJsonAsync({| error = "Request failed" |})
     })
-    // Create session in temp directory
+    // Preserve the legacy route without allocating an unusable F# workspace.
     yield post "/dashboard/session/create-temp" (fun ctx -> task {
-      let tempDir = Path.Combine(Path.GetTempPath(), sprintf "bozzetto-%s" (Guid.NewGuid().ToString("N").[..7]))
-      Directory.CreateDirectory(tempDir) |> ignore
       Response.sseStartResponse ctx |> ignore
-      let! result = a.CreateSession [ SessionProjectTarget.Bare ] tempDir
-      match result with
-      | Ok sessionId ->
-        a.Dispatch (BozzettoMsg.Editor EditorAction.ListSessions)
-        do! ssePatchNode ctx (
-          Elem.div [ Attr.id DomIds.EvalResult ] [
-            Elem.pre [ Attr.class' "output-line output-result"; Attr.style "margin-top: 0.5rem; white-space: pre-wrap;" ] [
-              textEnc (sprintf "Session '%s' created." (WorkerProtocol.SessionId.value sessionId))
-            ]
-          ])
-      | Error err ->
-        do! ssePatchNode ctx (evalResultError err)
+      do! ssePatchNode ctx (evalResultError ExternalFSharpService.message)
     })
     // Resume previous session (re-creates in same working dir)
     yield mapPostRaw "/dashboard/session/resume/{id}"

@@ -374,7 +374,7 @@ let private keepTieringLapsesAndFailsClosed (runtime: HostRuntime) =
 
 [<Tests>]
 let hotReloadStateOutcomeTests =
-  Integration.hostList "hot reload keeps live state across a save" [
+  Integration.retiredFSharpList "hot reload keeps live state across a save" [
     for runtime in HostRuntime.all do
       publicStateSurvives runtime
       privateStateSurvives runtime

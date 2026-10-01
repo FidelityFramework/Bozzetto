@@ -112,7 +112,7 @@ let private workerPidOf (workingDir: string) = task {
 [<Tests>]
 let sessionBindingIsolationOutcomeTests =
   testSequenced
-  <| Integration.hostList "Session binding isolation outcome" [
+  <| Integration.retiredFSharpList "Session binding isolation outcome" [
 
     testTask "a binding made in one session is not resolvable in another" {
       do! createBareSession dirA

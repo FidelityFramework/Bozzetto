@@ -174,7 +174,7 @@ let private execOutcome (body: string) : bool * string =
 [<Tests>]
 let daemonResumeOutcomeTests =
   testSequenced
-  <| Integration.hostList "Daemon resume outcome" [
+  <| Integration.retiredFSharpList "Daemon resume outcome" [
 
     testTask "a session created in one daemon comes back in the next daemon started on the same data dir" {
       // One data directory shared by both daemons; one working directory for

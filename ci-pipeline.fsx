@@ -245,9 +245,6 @@ let suiteDurationsFile =
   | null | "" -> Path.Combine(tierWork, "suite-durations.json")
   | path -> path
 
-/// One FSI host cache for every tier, prebuilt once before any tier starts.
-let sharedHostCache = Path.Combine(tierWork, "fsihost-cache")
-
 let readJsonMap (path: string) : Map<string, float> =
   try JsonSerializer.Deserialize<Map<string, float>>(File.ReadAllText path)
   with _ -> Map.empty
@@ -355,7 +352,6 @@ let runTier (isolation: TierPlan.Isolation) (slots: int) (slotIndex: int) (t: Ti
       [ "BOZZETTO_TRUST_LEDGER", ledger
         "BOZZETTO_DATA_DIR", dataDir
         "TMPDIR", tmpDir
-        "BOZZETTO_HOST_CACHE_DIR", sharedHostCache
         // A build node that outlives its tier could serve the next tier's build
         // from the wrong filesystem view; the private /tmp already hides it, and
         // this stops tiers leaving nodes behind at all.
@@ -407,13 +403,6 @@ let runTier (isolation: TierPlan.Isolation) (slots: int) (slotIndex: int) (t: Ti
 let runTiers (tiers: TierPlan.Tier list) =
   async {
     let isolation = detectIsolation ()
-    // Build the FSI host ONCE into the shared cache, before any tier starts, so
-    // no shard pays a cold host build inside its own time.
-    Directory.CreateDirectory sharedHostCache |> ignore
-    let! prebuilt =
-      execToLog (TimeSpan.FromMinutes 30.0) rootDir [ "BOZZETTO_HOST_CACHE_DIR", sharedHostCache ] (Path.Combine(tierWork, "prebuild-host.log"))
-        [ "dotnet"; testDll; "--prebuild-host" ]
-    printfn "FSI host prebuild: exit %d" prebuilt
     let requested =
       match Int32.TryParse(Environment.GetEnvironmentVariable "BOZZETTO_TIER_PARALLEL") with
       | true, n -> Some n
@@ -639,8 +628,10 @@ pipeline "bozzetto" {
     // "trust report" stage below, not by this step's exit: a red tier must
     // never hide the tiers after it.
     //
-    //   always:   the default suite and the integration-host suites (real FSI
-    //             sessions, real hosts, real daemons, the VS Code command-proof).
+    //   always:   the default suite and retained integration-host suites
+    //             (component FSI, real daemons, provider-refusal boundaries).
+    //             Retired F# product journeys are reported separately by the
+    //             test registry and never count as passed or ignored evidence.
     //   `ci`:     the mutation-score gate and every real-browser journey —
     //             CI-gated so the fast local loop never fetches a browser.
     timeoutForStep 5400
@@ -660,8 +651,6 @@ pipeline "bozzetto" {
         let ciOnly =
           [ testTier "--mutation-score"
             testTier "--integration-browser --summary"
-            testTier "--integration-hr --summary"
-            testTier "--integration-lt --summary"
             testTier "--integration-disconnect --summary" ]
         let browserTiers = ciOnly |> List.filter (fun t -> t.Name <> "--mutation-score")
         // Chromium is installed ONCE, before any browser tier starts (they run

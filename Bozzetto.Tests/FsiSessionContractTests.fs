@@ -6,20 +6,9 @@ open System.Threading
 open Expecto
 open Expecto.Flip
 open FSharp.Compiler.Interactive.Shell
-open Bozzetto.FsiHostBuild
-open Bozzetto.FsiHostClient
 open Bozzetto.FsiSession
 open Bozzetto.HostAgent
-open Bozzetto.RemoteFsiSession
 open Bozzetto.Tests.TestInfrastructure
-
-let private repoRoot = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, ".."))
-
-let private dotnet =
-  match Environment.GetEnvironmentVariable "DOTNET_HOST_PATH" with
-  | null
-  | "" -> "dotnet"
-  | path -> path
 
 // --multiemit- is what a hot-reload session runs with: every eval lands in ONE assembly, so redefinitions can be paired.
 let private fsiArgs = [ "fsi"; "--noninteractive"; "--nologo"; "--readline-"; "--multiemit-" ]
@@ -38,35 +27,6 @@ let private newInProcess () : Async<IFsiSession> =
         collectible = true
       )
     return new InProcessFsiSession(session, { Projects = []; ResolveFrom = []; ValueReads = Bozzetto.Middleware.ValueReadTracking.ValueReadWatch.IgnoreValueReads }) :> IFsiSession
-  }
-
-/// One host build shared by every remote test (keyed by SDK + sources).
-let private hostDll : Lazy<string> =
-  lazy
-    (let cache = Path.Combine(Path.GetTempPath(), "bozzetto-fsihost-test-cache")
-     match resolveSdkVersion dotnet repoRoot |> Result.bind (fun sdk -> ensureBuilt dotnet sdk cache) with
-     | Result.Ok(Built dll)
-     | Result.Ok(Reused dll) -> dll
-     | Result.Error reason -> failwith (describeBuildError reason))
-
-/// A fresh session backed by an isolated FSI host process.
-let private newRemote () : Async<IFsiSession> =
-  async {
-    let options =
-      { HostDll = hostDll.Force()
-        Dotnet = dotnet
-        FsiArgs = fsiArgs
-        WorkingDir = repoRoot
-        Environment = []
-        OnOutput = fun _ _ -> ()
-        OnLog = ignore
-        StartupTimeoutMs = 60_000 }
-    match! start options with
-    | Result.Ok host ->
-      match! attach host { Projects = []; ResolveFrom = []; ValueReads = Bozzetto.Middleware.ValueReadTracking.ValueReadWatch.IgnoreValueReads } with
-      | Result.Ok session -> return session :> IFsiSession
-      | Result.Error reason -> return failtest (describeAttachError reason)
-    | Result.Error reason -> return failtest (describeStartError reason)
   }
 
 /// The things an IFsiSession can do that the contract specifies. Each contract case is tagged with one, so an
@@ -123,9 +83,9 @@ let private afterEval (session: IFsiSession) (code: string) (detours: DetourPoli
   | AgentAnswered report -> report
   | AgentUnavailable reason -> failtestf "the agent was unavailable: %s" reason
 
-/// The behaviour EVERY IFsiSession implementation must have. Instantiated for each implementation, so the
-/// in-process and isolated-host sessions are held to one specification. `notYet` lists the capabilities an
-/// implementation does not have yet: those cases are pending (ignored, and counted as such), never skipped silently.
+/// Component contract for the retained test-only in-process implementation.
+/// Production F# sessions moved to SageFS; this does not establish a Bozzetto
+/// F# product capability. `notYet` keeps any unsupported component cases explicit.
 let contract (label: string) (create: unit -> Async<IFsiSession>) (notYet: Capability list) : Test =
   let caseAsync (capability: Capability) (name: string) (body: IFsiSession -> Async<unit>) =
     match List.contains capability notYet with
@@ -268,45 +228,6 @@ let contract (label: string) (create: unit -> Async<IFsiSession>) (notYet: Capab
 
 [<Tests>]
 let tests =
-  testList "FsiSession port" [
-    Integration.hostList "in-process session" [
-      contract "InProcessFsiSession" newInProcess []
-
-    ]
-
-    Integration.hostList "isolated host session: isolation from Bozzetto" [
-      testAsync "the host process loads no Bozzetto assembly and no 0Harmony" {
-        do!
-          withSession newRemote (fun session ->
-            mustSucceed session "let loaded = System.AppDomain.CurrentDomain.GetAssemblies() |> Array.map (fun a -> a.GetName().Name) |> Array.sort |> String.concat \",\""
-            let names = (string (session.BoundValue "loaded")).Split ','
-            Expect.isFalse "no 0Harmony" (names |> Array.contains "0Harmony")
-            let bozzetto = names |> Array.filter (fun n -> n.StartsWith "Bozzetto" && n <> Bozzetto.FsiHostBuild.HostHarmonyName)
-            Expect.isEmpty "no Bozzetto assembly" bozzetto)
-      }
-
-      testAsync "a project's Harmony assembly loads beside the agent's isolated copy, and the agent still works" {
-        do!
-          withSessionAsync newRemote (fun session ->
-            async {
-              // Load the package's distinct Bozzetto.Harmony identity beside Bozzetto.HostHarmony.
-              // This tests two independent Harmony copies; upstream 0Harmony coexistence is a separate fixture.
-              mustSucceed session (sprintf "#r @\"%s\"" (typeof<HarmonyLib.Harmony>.Assembly.Location))
-              mustSucceed session "let ownHarmonyId = HarmonyLib.Harmony(\"the-projects-own\").Id"
-              Expect.equal "the user's Harmony works" "the-projects-own" (string (session.BoundValue "ownHarmonyId"))
-              let version (delta: int) = sprintf "module Reload =\n  let addOne (x: int) = x + %d" delta
-              mustSucceed session (version 1)
-              afterEval session (version 1) DetourPolicy.ApplyDetours DiscoveryPolicy.WhenChanged |> ignore
-              mustSucceed session (version 100)
-              let report = afterEval session (version 100) DetourPolicy.ApplyDetours DiscoveryPolicy.WhenChanged
-              Expect.isTrue "the agent detoured beside it" (report.UpdatedMethods |> List.exists (fun name -> name.EndsWith "addOne"))
-            })
-      }
-    ]
-
-    Integration.hostList "isolated host session" [
-      // Capabilities the isolated host does not have yet would be listed here (each becomes a running case when
-      // implemented). The list is empty: the whole contract runs, agent included.
-      contract "RemoteFsiSession" newRemote []
-    ]
+  Integration.hostList "in-process FSI compatibility component" [
+    contract "InProcessFsiSession" newInProcess []
   ]

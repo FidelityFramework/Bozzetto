@@ -33,7 +33,7 @@ let private cleanupSession (mgr: MailboxProcessor<Bozzetto.SessionManager.Sessio
 
 [<Tests>]
 let tests =
-  Integration.hostList "Warmup outcome — unresolvable project" [
+  Integration.retiredFSharpList "Warmup outcome — unresolvable project" [
 
     testTask "create against an unresolvable project reaches a stated failure, and stop_session then returns promptly" {
       // A REAL .fsproj on disk (so it isn't silently skipped in favor of

@@ -109,7 +109,7 @@ let private withDogfoodSession (run: SessionProxy -> unit) =
 [<Tests>]
 let dogfoodReplTests =
   testSequenced
-  <| Integration.hostList "Dogfood REPL: Bozzetto developing Bozzetto" [
+  <| Integration.retiredFSharpList "Dogfood REPL: Bozzetto developing Bozzetto" [
     // roast-4 #0(a). Bozzetto.Host statically links Bozzetto.Core, and —
     // empirically confirmed via AppDomain.CurrentDomain.GetAssemblies() at
     // process start and via direct /eval probes of a live host process —
@@ -308,7 +308,7 @@ let private fsharpCoreFixtureOutputDir () : string option =
 [<Tests>]
 let fsharpCoreIdentityOutcomeTests =
   testSequenced
-  <| Integration.hostList "#141/#142 outcome gate: a project with no package references (the config every normal user is in)" [
+  <| Integration.retiredFSharpList "#141/#142 outcome gate: a project with no package references (the config every normal user is in)" [
     // #142, FIXED: AppContext.BaseDirectory is overridden from BOZZETTO_PROJECT_OUTPUT at host startup
     // (Bozzetto.FsiHost/Program.fs's applyProjectBaseDirectory), set by IsolatedFsiSession.start from
     // primaryProjectOutputDir. This is a complete fix, not a detection — it changes what the project's own
@@ -358,7 +358,7 @@ let fsharpCoreIdentityOutcomeTests =
             | Error err -> failtestf "eval failed: %s" (BozzettoError.describe err)
             | Ok output ->
               let normalized = output.Replace('\\', '/')
-              let hostCache = (Bozzetto.IsolatedFsiSession.hostCacheRoot ()).Replace('\\', '/').TrimEnd('/')
+              let hostCache = (Path.Combine(Bozzetto.DaemonState.BozzettoDir, "hosts")).Replace('\\', '/').TrimEnd('/')
               normalized.Contains (hostCache + "/")
               |> Expect.isTrue (sprintf "a host-present generic FSharp.Core call is expected to stay in %s, got: %s" hostCache output)
           })

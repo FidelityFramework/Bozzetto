@@ -49,39 +49,15 @@ let tests = testSequenced <| testList "Session Creation" [
 
   testList "resolveSessionProjects" [
 
-    // These four cases write a real `.bozzetto/config.fsx` and call
-    // `resolveSessionProjects dir ""` (empty manual input) — which, per
-    // `DashboardTypes.fs:1237`, falls through to `DirectoryConfig.load dir`
-    // whenever a config file exists, which evaluates it via
-    // `ConfigHost.evaluate`: a REAL isolated FSI host, exactly like every
-    // other DirectoryConfig-evaluating case in this file. They were the only
-    // `resolveSessionProjects` cases not tagged/registered as `[Integration]`,
-    // so they silently ran inside the "fast" default `--summary` suite —
-    // found 2026-09-21 while auditing this file for Target 2 duplication:
-    // "respects NoLoad strategy" alone measured 10.4s in a full `--summary`
-    // run. `Integration.hostCase` moves just these four (the ones with a real
-    // config file AND empty manual input); the rest of this list never
-    // reaches `DirectoryConfig.load` at all (either no config is written, or
-    // manual input is non-empty and takes the manual-path branch that never
-    // calls `load`), so they stay ordinary fast `testCase`s.
-    Integration.hostCase "respects NoLoad strategy" (fun _ ->
+    testCase "legacy NoLoad script is preserved but no longer controls discovery" (fun _ ->
       withTempDir
         (fun dir ->
           addFakeProject dir "Fake.fsproj"
-          addConfig dir """{ DirectoryConfig.empty with Load = NoLoad }""")
+          addConfig dir "{ DirectoryConfig.empty with Load = NoLoad }")
         (fun dir ->
           resolveSessionProjects dir ""
-          |> Expect.equal "should return no projects with NoLoad" (Ok [])))
-
-    Integration.hostCase "auto-discovers with AutoDetect config" (fun _ ->
-      withTempDir
-        (fun dir ->
-          addFakeProject dir "Fake.fsproj"
-          addConfig dir """{ DirectoryConfig.empty with Load = AutoDetect }""")
-        (fun dir ->
-          resolveSessionProjects dir ""
-          |> okProjects "AutoDetect"
-          |> Expect.isNonEmpty "should auto-discover with AutoDetect"))
+          |> okProjects "retired config"
+          |> Expect.isNonEmpty "discovery is independent of FSharp script evaluation"))
 
     testCase "auto-discovers when no config exists" <| fun _ ->
       withTempDir
@@ -91,17 +67,15 @@ let tests = testSequenced <| testList "Session Creation" [
           |> okProjects "no config"
           |> Expect.isNonEmpty "should auto-discover when no config file")
 
-    Integration.hostCase "uses config Projects over auto-discovery" (fun _ ->
+    testCase "legacy project selection is not evaluated during filesystem discovery" (fun _ ->
       withTempDir
         (fun dir ->
           addFakeProject dir "Fake.fsproj"
           addFakeProject dir "Other.fsproj"
-          addConfig dir """{ DirectoryConfig.empty with Load = Projects ["Other.fsproj"] }""")
+          addConfig dir "{ DirectoryConfig.empty with Load = Projects [\"Other.fsproj\"] }")
         (fun dir ->
-          let result = resolveSessionProjects dir "" |> okProjects "config Projects"
-          result |> Expect.hasLength "should use config Projects" 1
-          result.[0]
-          |> Expect.stringContains "should be config project" "Other.fsproj"))
+          let result = resolveSessionProjects dir "" |> okProjects "retired config Projects"
+          result |> Expect.hasLength "both filesystem projects are discovered" 2))
 
     testCase "returns empty for empty directory" <| fun _ ->
       withTempDir
@@ -133,7 +107,7 @@ let tests = testSequenced <| testList "Session Creation" [
           result.[0]
           |> Expect.stringContains "should prefer solution" "Fake.sln")
 
-    Integration.hostCase "config solution strategy returns solution path" (fun _ ->
+    testCase "solution discovery works without evaluating a legacy config" (fun _ ->
       withTempDir
         (fun dir ->
           addSolution dir "MyApp.sln"
@@ -192,40 +166,15 @@ let tests = testSequenced <| testList "Session Creation" [
           |> Expect.stringContains "should be the inside project" "Inside.fsproj")
   ]
 
-  // The "DirectoryConfig.evaluate" cases that used to live here (NoLoad,
-  // AutoDetect-default, AutoOpenNamespaces override, AutoOpenNamespaces
-  // default) were deleted 2026-09-21: each was the exact same script text
-  // AND the exact same assertion as a case already in DirectoryConfigTests.fs
-  // (`evaluateTests`, `:18-79`) — "evaluates NoLoad"/"loads NoLoad strategy",
-  // "evaluates AutoOpenNamespaces override"/"loads autoOpenNamespaces
-  // override" (byte-identical scripts), and both "(default)" cases were
-  // already fully subsumed by "empty expression returns defaults" (same
-  // script text `"DirectoryConfig.empty"`, which asserts `.Load = AutoDetect`
-  // AND `.AutoOpenNamespaces = true` together). Each of those four cases
-  // started its own real isolated FSI host (`ConfigHost.evaluate`,
-  // `StartupTimeoutMs = 120_000`) to prove a claim DirectoryConfigTests.fs
-  // already proves — see fsi-mechanism-extraction.md §2 R3. Nothing here was
-  // unique; deleting them loses no coverage.
+  testList "DirectoryConfig.autoOpenNamespacesForDirectory compatibility default" [
 
-  // `DirectoryConfig.autoOpenNamespacesForDirectory` is unique to this file —
-  // DirectoryConfigTests.fs never calls it — so both cases stay. Moved under
-  // `Integration.hostList` here (2026-09-21): "reads false from config"
-  // writes a config.fsx and calls `load`, which calls `ConfigHost.evaluate`
-  // and so starts a real isolated FSI host exactly like every other
-  // DirectoryConfig case in this file — it was the one case in this module
-  // NOT tagged/registered as `[Integration]`, so it silently ran inside the
-  // "fast" default `--summary` suite. Measured cold, unfiltered by any other
-  // case's cache warmth: `--filter-test-case "reads false from config"`
-  // alone took 10.5s — an isolated FSI host boot, not a fast unit test.
-  Integration.hostList "DirectoryConfig.autoOpenNamespacesForDirectory" [
-
-    testCase "reads false from config" <| fun _ ->
+    testCase "retired config is not applied to the compatibility default" <| fun _ ->
       withTempDir
         (fun dir ->
           addConfig dir """{ DirectoryConfig.empty with AutoOpenNamespaces = false }""")
         (fun dir ->
           DirectoryConfig.autoOpenNamespacesForDirectory dir
-          |> Expect.isFalse "should use config override")
+          |> Expect.isTrue "retired FSharp configuration is not evaluated")
 
     testCase "defaults to true when no config exists" <| fun _ ->
       withTempDir

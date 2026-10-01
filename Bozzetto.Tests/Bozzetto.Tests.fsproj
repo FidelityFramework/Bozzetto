@@ -202,11 +202,6 @@
         <Compile Include="ProjectLoadProgressTests.fs" />
         <Compile Include="ReferenceFrameworkTests.fs" />
         <Compile Include="RuntimeCompatTests.fs" />
-        <Compile Include="FsiProtocolTests.fs" />
-        <Compile Include="FsiHostBuildTests.fs" />
-        <Compile Include="FsiHostSdkRootTests.fs" />
-        <Compile Include="FsiHostClientTests.fs" />
-        <Compile Include="IsolatedFsiSessionTests.fs" />
         <Compile Include="FsiSessionContractTests.fs" />
         <Compile Include="McpWireProtocolTests.fs" />
          <Compile Include="LiveTestingWorkerSuites.fs" />
@@ -664,22 +659,7 @@
                           ReferenceOutputAssembly="false" />
     </ItemGroup>
 
-    <!-- The [Integration] SessionManager lifecycle suite drives the REAL
-         SessionManager in-process, which spawns the FSI host from
-         AppContext.BaseDirectory/host/ (Args.hostExePath) — the daemon's
-         layout. Mirror that layout in the test output so the suite spawns the
-         freshly built host instead of failing on a missing host/ dir. -->
-    <Target Name="CopyHostForInProcessSessionManager" AfterTargets="Build">
-        <ItemGroup>
-            <TestHostFiles Include="..\Bozzetto.Host\bin\$(Configuration)\$(TargetFramework)\**\*"
-                           Exclude="..\Bozzetto.Host\bin\$(Configuration)\$(TargetFramework)\**\*.runtimeconfig.dev.json" />
-        </ItemGroup>
-        <!-- Empty host/ first: the host refuses to start (fail-closed manifest
-             check) if a retired file from a previous build is still here. -->
-        <RemoveDir Directories="$(OutDir)host" />
-        <Copy SourceFiles="@(TestHostFiles)"
-              DestinationFiles="@(TestHostFiles->'$(OutDir)host\%(RecursiveDir)%(Filename)%(Extension)')"
-              SkipUnchangedFiles="true" />
-    </Target>
-
+  <Target Name="RemoveRetiredFSharpHostOutput" AfterTargets="Build">
+    <RemoveDir Directories="$(TargetDir)host" />
+  </Target>
 </Project>

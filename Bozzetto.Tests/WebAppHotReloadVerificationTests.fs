@@ -377,7 +377,7 @@ module ShapeMatrix =
 let webAppHotReloadVerificationTests =
   testList "WebApp hot-reload verification" [
 
-    Integration.hostCase "real file save hot-reloads a running module-declared app (save-driven, no restart)" <| fun () ->
+    Integration.retiredFSharpCase "real file save hot-reloads a running module-declared app (save-driven, no restart)" <| fun () ->
       let fDir = fixtureDir ()
       let appSource = Path.Combine(fDir, "Greeting.fs")
       Expect.isTrue "fixture Greeting.fs should exist" (File.Exists appSource)
@@ -444,7 +444,7 @@ let webAppHotReloadVerificationTests =
       finally
         try proc.Kill(entireProcessTree = true) with _ -> ()
         try proc.Dispose() with _ -> ()
-    Integration.hostCase "compile-error save keeps last valid behavior and repair hot-reloads it" <| fun () ->
+    Integration.retiredFSharpCase "compile-error save keeps last valid behavior and repair hot-reloads it" <| fun () ->
       let fDir = fixtureDir ()
       let appSource = Path.Combine(fDir, "Greeting.fs")
       let original = File.ReadAllText(appSource)
@@ -539,7 +539,7 @@ let webAppHotReloadVerificationTests =
     // app still served the old body). All 7 now hold, so it runs in the main
     // pipeline under --integration-host like every other host suite. Every
     // assertion is exactly as first written; none was relaxed to get here.
-    Integration.hostCase "hot-reload shape matrix: a startup-captured handler table, one cell per F# binding shape" <| fun () ->
+    Integration.retiredFSharpCase "hot-reload shape matrix: a startup-captured handler table, one cell per F# binding shape" <| fun () ->
       buildFixtureAsBozzettoDoes ()
       let fDir = fixtureDir ()
       let shapesSource = Path.Combine(fDir, "Shapes.fs")
@@ -675,7 +675,7 @@ let webAppHotReloadVerificationTests =
     // proves the WIRE a client actually reads (the `/__bozzetto__/reload` SSE
     // payload) carries the difference — same real host, same real file save,
     // no synthetic ReloadOutcome values anywhere in this test.
-    Integration.hostCase "a real reload and a real no-op save produce SSE payloads a client can tell apart" <| fun () ->
+    Integration.retiredFSharpCase "a real reload and a real no-op save produce SSE payloads a client can tell apart" <| fun () ->
       let fDir = fixtureDir ()
       let appSource = Path.Combine(fDir, "Greeting.fs")
       let original = File.ReadAllText(appSource)

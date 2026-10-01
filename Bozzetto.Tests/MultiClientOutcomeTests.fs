@@ -109,7 +109,7 @@ let private sessionIdsVia (client: HttpClient) = task {
 [<Tests>]
 let multiClientOutcomeTests =
   testSequenced
-  <| Integration.hostList "Multi-client shared session outcome" [
+  <| Integration.retiredFSharpList "Multi-client shared session outcome" [
 
     testTask "a session created by one client is the same live session another client evaluates in" {
       let a = clientA.Value

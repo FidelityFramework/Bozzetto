@@ -451,7 +451,7 @@ let mcpToolOutcomeTests =
   // that wait. The group is shared with HttpApiIntegrationTests' live-testing
   // suite so the two never overlap each other.
   testSequencedGroup LiveTestingWorkerSuites.groupName <|
-    Integration.hostList "MCP tool outcome gates" [
+    Integration.retiredFSharpList "MCP tool outcome gates" [
       testTask "WHY — list_tests, explain_test_failure and diagnose report what live testing actually found (Gap D: the documented agent read-path had zero tool-level callers)" {
         do! runToolOutcomeGate ()
       }

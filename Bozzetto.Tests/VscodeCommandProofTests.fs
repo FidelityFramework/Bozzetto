@@ -491,4 +491,4 @@ let vscodeCommandProofTests =
         finally
           stopFixture fixture
       }
-  Integration.hostList "VS Code command proof" [ proofTest ]
+  Integration.retiredFSharpList "VS Code command proof" [ proofTest ]

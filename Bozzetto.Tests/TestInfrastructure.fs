@@ -219,6 +219,9 @@ module Integration =
     /// Needs infrastructure a dedicated entry point provisions (a browser, VS
     /// Code, a daemon that runner owns); the payload names that entry point.
     | Dedicated of entryPoint: string
+    /// Historical evidence for a deliberately removed product capability.
+    /// Retired bodies never execute or count as passed/ignored acceptance.
+    | RetiredFSharp of reason: string
 
   let private registry = System.Collections.Generic.List<Runner * Expecto.Test>()
 
@@ -236,6 +239,20 @@ module Integration =
   /// A self-contained integration test case inside an otherwise-unit list.
   let hostCase (name: string) (body: unit -> unit) =
     Expecto.Tests.testCase (tagged name) body |> register Host
+
+  let fsharpRetirementReason =
+    "2026-10-01: Bozzetto production F# hosting removed; F# sessions use the separate SageFS service."
+
+  /// Preserve the old behavioral assertion as history, without pretending it
+  /// passed or weakening its expectation to accommodate a removed capability.
+  let retireFSharp (test: Expecto.Test) =
+    test |> register (RetiredFSharp fsharpRetirementReason)
+
+  let retiredFSharpList (name: string) (tests: Expecto.Test list) =
+    Expecto.Tests.testList (tagged name) tests |> retireFSharp
+
+  let retiredFSharpCase (name: string) (body: unit -> unit) =
+    Expecto.Tests.testCase (tagged name) body |> retireFSharp
 
   /// An integration test case whose subject is a capability that does NOT work
   /// yet, so it cannot gate the main pipeline — but which must stay runnable,
@@ -256,14 +273,6 @@ module Integration =
   let registered () =
     discovery.Force()
     lock registry (fun () -> List.ofSeq registry)
-
-  /// Every suite registered as Host, in registration (compile) order.
-  let hostSuites () =
-    registered ()
-    |> List.choose (fun (runner, test) ->
-      match runner with
-      | Host -> Some test
-      | Dedicated _ -> None)
 
   let rec private leaves (t: Expecto.Test) : Expecto.TestCode list =
     match t with
@@ -305,6 +314,50 @@ module Integration =
   /// The default-suite tree: everything except the registered integration suites.
   let excludeRegistered (tree: Expecto.Test) =
     exclude (registered () |> List.map snd) tree
+
+  let retiredSuitesOf entries =
+    entries
+    |> List.choose (fun (runner, test) ->
+      match runner with
+      | RetiredFSharp reason -> Some (reason, test)
+      | Host | Dedicated _ -> None)
+
+  let retiredSuites () = retiredSuitesOf (registered ())
+
+  let excludeRetired tree =
+    exclude (retiredSuites () |> List.map snd) tree
+
+  /// Mixed host lists retain their active leaves; a retired nested leaf must
+  /// not re-enter acceptance through its enclosing Host registration.
+  let hostSuitesOf entries =
+    let retired = retiredSuitesOf entries |> List.map snd
+    entries
+    |> List.choose (fun (runner, test) ->
+      match runner with
+      | Host ->
+        let active = exclude retired test
+        if (leaves active).IsEmpty then None else Some active
+      | Dedicated _ | RetiredFSharp _ -> None)
+
+  let hostSuites () = hostSuitesOf (registered ())
+
+  /// Report retirement separately from the trust ledger's executable tests.
+  /// Counts come from discovered bodies, not source-text or test-name filters.
+  let reportRetirements () =
+    let all =
+      Expecto.Impl.testFromThisAssembly ()
+      |> Option.defaultValue (Expecto.Tests.testList "empty" [])
+    let active = excludeRetired all
+    let total = leaves all |> List.length
+    let executable = leaves active |> List.length
+    printfn "TEST_INVENTORY discovered=%d executable=%d retired_fsharp=%d" total executable (total - executable)
+    for reason, test in retiredSuites () do
+      let cases = Expecto.Test.toTestCodeList test
+      let name =
+        match test with
+        | Expecto.TestLabel (name, _, _) -> name
+        | _ -> "retired F# capability"
+      printfn "RETIRED_FSHARP cases=%d suite=%s reason=%s" cases.Length name reason
 
   /// Prune every leaf whose full accumulated name (every ancestor TestLabel,
   /// joined top-down with ".") satisfies `excludeName`, WITHOUT flattening the
@@ -358,7 +411,7 @@ module Integration =
   /// registration order).
   let dedicatedEntryPoints () =
     registered ()
-    |> List.choose (fun (runner, _) -> match runner with Dedicated ep -> Some ep | Host -> None)
+    |> List.choose (fun (runner, _) -> match runner with Dedicated ep -> Some ep | Host | RetiredFSharp _ -> None)
     |> List.distinct
 
   /// A `Dedicated` payload that names a real, single-token CLI flag (e.g.
@@ -389,7 +442,7 @@ module Integration =
   /// "every tier is invoked by CI" structural test — so "dispatched" and
   /// "invoked" are checked against the same set rather than two hand copies.
   let dispatchedEntryPoints =
-    [ "--integration-composer"; "--integration-browser"; "--integration-hr"; "--integration-lt"; "--integration-disconnect" ]
+    [ "--integration-composer"; "--integration-browser"; "--integration-disconnect" ]
 
   /// The tree a plain default run (`--summary`, no `--all`/`--integration`)
   /// actually executes: every [<Tests>] value in this assembly, minus the

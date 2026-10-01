@@ -515,8 +515,8 @@ let sdkMajorOf (version: string) : int option =
 /// at the resolved SDK's own directory (see `Init.setupForSdkVersion`) — and that handler is only ever
 /// swapped out by a LATER call to `Init.init`, never removed when the load it was installed for fails. A
 /// project whose ambient or global.json-pinned SDK major is NEWER than this process's own runtime major (a
-/// preview SDK installed alongside the stable one this daemon is pinned to, or an Arcade-style repo — see
-/// `FsiHostBuild.SdkSelection`) makes the subsequent MSBuild.dll load throw a `System.Runtime,
+/// preview SDK installed alongside the stable runtime, or an Arcade-style repo)
+/// makes the subsequent MSBuild.dll load throw a `System.Runtime,
 /// Version=N.0.0.0` bind failure inside THIS already-running process. That failure is caught and the caller
 /// falls back to the manual fsproj parse — but by then the resolving handler for the wrong SDK is already
 /// attached and stays attached, so it can intercept and corrupt assembly resolution for anything this SAME

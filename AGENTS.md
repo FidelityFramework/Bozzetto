@@ -1,8 +1,16 @@
 # Bozzetto — Coding Agent Guidelines
 
+**October 1 source transition:** embedded production FSI hosting is retired in
+this checkout. Use separate SageFS on 37749/37750 for the F# implementation
+loop; Bozzetto on 47749/47750 serves Composer. Older installed releases may
+still contain the inherited host. See the
+[Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md).
+Clefx/ORC execution is not implemented by this removal. The daemon lifecycle
+rules below still apply to both services.
+
 ## STOP — Read This Before Anything Else
 
-**The Bozzetto daemon is a long-running process that never exits on its own.** It hosts the FSI session, MCP server, and dashboard on ports 47749/47750. You will be tempted to wait for it. DO NOT.
+**The Bozzetto daemon is a long-running process.** It hosts Composer coordination, the MCP server and dashboard on ports 47749/47750. You will be tempted to wait for it. DO NOT.
 
 **The cardinal rule, stated three times because it is the only thing you keep getting wrong:**
 
@@ -62,7 +70,7 @@ Working on Bozzetto itself has two extra catches:
 
 ## Project Overview
 
-Bozzetto accelerates Clef/Composer development through shared MCP and browser interfaces over incremental compiler sessions. LLVM ORC JIT is the intended future Clef REPL backend. F#/.NET work can use a separate SageFS daemon/MCP connection on ports 37749/37750; Bozzetto uses 47749/47750. The inherited F# host and editor integrations remain implementation/compatibility code, not a priority for new REPL work. Read the current deployment and acceptance instructions in `docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md` before assuming an agent is connected.
+Bozzetto accelerates Clef/Composer development through shared MCP and browser interfaces over incremental compiler sessions. LLVM ORC JIT is the intended future Clef REPL backend. F#/.NET work uses a separate SageFS daemon/MCP connection on ports 37749/37750; Bozzetto uses 47749/47750. The in-process F# engine and editor integrations remain implementation/compatibility code; embedded production FSI hosting is retired. Read the current deployment and acceptance instructions in `docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md` before assuming an agent is connected.
 
 The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are deprecated. Do not treat them as current product surfaces or add new product documentation for them. Preserve Raylib application and game demos because they demonstrate Bozzetto support for game projects and are independent of the deprecated GUI frontend.
 
@@ -71,7 +79,7 @@ The Visual Studio extension (`bozzetto-vs/`) is deprecated and no longer built, 
 ## Language & Stack
 
 - **Primary language**: F# (functional programming)
-- **Target framework**: `net11.0` (the shipped tool closure — Bozzetto, Bozzetto.Core, Bozzetto.Host — multi-targets `net10.0;net11.0`; see `Directory.Build.props`)
+- **Target framework**: `net11.0` (the shipped tool closure — Bozzetto and Bozzetto.Core — multi-targets `net10.0;net11.0`; the retained test/compatibility Bozzetto.Host project also multi-targets, but is not packaged with the daemon)
 - **Solution format**: `.slnx` (not `.sln`)
 - **Web framework**: Falco (functional web framework for ASP.NET Core)
 - **HTML rendering**: Falco.Markup
@@ -197,7 +205,7 @@ dotnet pack Bozzetto -o nupkg  # Package the CLI tool
 
 ## Owned Harmony dependency
 
-- `Bozzetto.Harmony` is built from the separately controlled Harmony fork. Keep package and CLR assembly identity `Bozzetto.Harmony`; the compatible API namespace is still `HarmonyLib`. The isolated FSI host deliberately uses its own `Bozzetto.HostHarmony` identity.
+- `Bozzetto.Harmony` is built from the separately controlled Harmony fork. Keep package and CLR assembly identity `Bozzetto.Harmony`; the compatible API namespace is still `HarmonyLib`. The removed isolated FSI host used its own `Bozzetto.HostHarmony` identity; preserve that distinction in historical records.
 - `vendor/Bozzetto.Harmony/` contains the reviewed package plus provenance/hash manifest. CI validates it; it must never silently clone or rebuild the former upstream dependency. Refresh only through `scripts/update-harmony /absolute/path/to/Bozzetto.Harmony` and review the artifact, manifest and regenerated locks together.
 - Package versions are immutable. Increment the fork's `BozzettoBuild` and central package version before distributing changed package contents. Generated packaging output belongs in the external cache, not in a repository sibling. The controlled `Bozzetto.Harmony` Git checkout is source code, not a scratch cache.
 
@@ -208,7 +216,7 @@ dotnet pack Bozzetto -o nupkg  # Package the CLI tool
 - **Binary persistence**: Session/test state via CRC-validated binary manifest (.bozzettofm)
 - **CQRS**: Separate read/write models
 - **Vertical slices**: Features as single files for locality of behavior
-- **Daemon architecture**: Long-running FSI session with MCP server for editor communication
+- **Daemon architecture**: Long-running Composer supervision with shared MCP and browser contracts; F# execution uses separate SageFS
 
 ## Things to Avoid
 

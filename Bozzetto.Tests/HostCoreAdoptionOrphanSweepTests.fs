@@ -34,7 +34,7 @@ let private testsDir =
 
 [<Tests>]
 let tests =
-  Integration.hostList "Host core adoption: orphan sweep (real worker)" [
+  Integration.retiredFSharpList "Host core adoption: orphan sweep (real worker)" [
     testCaseAsync
       "WHY — a real adoption's private launch root disappears once its worker exits, proven against a fixture that actually adopts a Core rather than one that passes vacuously (roast: 13 orphaned bozzetto-host-adopt-* dirs, ~9.5GB)"
       (async {

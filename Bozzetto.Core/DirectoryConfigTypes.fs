@@ -13,10 +13,8 @@ type LoadStrategy =
 
 /// Per-directory configuration via .bozzetto/config.fsx: load strategy, init script, default args.
 ///
-/// Dependency-free by design: this file is compiled into Bozzetto.Core AND into the isolated FSI host, because a
-/// user's config.fsx is arbitrary F# and is evaluated in the host (never in the daemon), which hands the value back
-/// over the wire protocol. (The old Keybindings/ThemeOverrides fields belonged to the deprecated TUI and were
-/// dropped from the config surface.)
+/// Retained data model for inherited F# UI and component tests. Embedded
+/// config.fsx evaluation is retired; separate SageFS owns F# execution.
 type DirectoryConfig =
   { Load: LoadStrategy
     InitScript: string option
@@ -28,8 +26,7 @@ type DirectoryConfig =
     /// Optional friendly name for auto-created sessions. Defaults to the directory name.
     SessionName: string option }
 
-/// The default configuration, independent of any module named DirectoryConfig (the daemon and the host each have
-/// their own, and both point at this single definition).
+/// The historical default value shared by inherited UI and component tests.
 module DirectoryConfigDefaults =
   let empty : DirectoryConfig =
     { Load = AutoDetect

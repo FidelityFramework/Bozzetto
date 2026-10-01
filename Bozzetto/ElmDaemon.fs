@@ -8,7 +8,7 @@ open System.Threading
 let createEffectDeps
   (sessionManager: MailboxProcessor<SessionManager.SessionCommand>)
   (readSnapshot: unit -> SessionManager.QuerySnapshot)
-  (autoOpenNamespacesForDirectory: string -> bool)
+  (_autoOpenNamespacesForDirectory: string -> bool)
   (configureWarmupAutoOpen: string -> Result<OutputLine, string>)
   : EffectDeps =
   {
@@ -27,14 +27,10 @@ let createEffectDeps
       HttpWorkerClient.proxyFromUrls (WorkerProtocol.SessionId.value sessionId) urls
       |> Option.map (WorkerProtocol.SessionProxy.touching (fun () ->
         sessionManager.Post(SessionManager.SessionCommand.TouchSession sessionId)))
-    CreateSession = fun targets workingDir workflow ->
+    CreateSession = fun _targets _workingDir _workflow ->
       async {
-        let autoOpenNamespaces = autoOpenNamespacesForDirectory workingDir
-        let! result =
-          sessionManager.PostAndAsyncReply(fun reply ->
-            SessionManager.SessionCommand.CreateSession(
-              targets, workingDir, autoOpenNamespaces, workflow, reply))
-        return result
+        return
+          ExternalFSharpService.refuse ()
       }
     ConfigureWarmupAutoOpen = fun workingDir ->
       async { return configureWarmupAutoOpen workingDir }
@@ -46,13 +42,10 @@ let createEffectDeps
               sessionId, reply))
         return result
       }
-    RestartSession = fun sessionId rebuild ->
+    RestartSession = fun _sessionId _rebuild ->
       async {
-        let! result =
-          sessionManager.PostAndAsyncReply(fun reply ->
-            SessionManager.SessionCommand.RestartSession(
-              sessionId, rebuild, reply))
-        return result
+        return
+          ExternalFSharpService.refuse ()
       }
     ListSessions = fun () ->
       // CQRS read path — lock-free snapshot, no mailbox blocking

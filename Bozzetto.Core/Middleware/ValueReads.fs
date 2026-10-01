@@ -21,8 +21,7 @@
 /// and it's why a `lazy` forced after startup is caught: the thunk returned the
 /// value to the Lazy that cached it, and the thunk ran.
 ///
-/// BCL + FSharp.Core only: this file is compiled into the isolated FSI host too
-/// (FsiHost.fsproj), and its evidence types travel over FsiProtocol.
+/// BCL + FSharp.Core only; retained for the in-process component-test engine.
 module Bozzetto.Middleware.ValueReads
 
 open System

@@ -484,7 +484,6 @@ let main args =
     printfn "Usage: boz [options]                Start daemon (default mode)"
     printfn "       boz check                    Check retained F#/.NET environment"
     printfn "       boz --supervised [options]   Start with watchdog auto-restart"
-    printfn "       boz --jupyter <conn.json>    Run retained F# Jupyter kernel"
     printfn "       boz mcp                      Speak MCP over stdio (spawns the daemon if needed)"
     printfn "       boz stop                     Stop running daemon"
     printfn "       boz status                   Show daemon info"
@@ -495,7 +494,6 @@ let main args =
     printfn "  --version, -v          Show version information"
     printfn "  --help, -h             Show this help message"
     printfn "  --mcp-port PORT        Set custom MCP server port (default: 47749)"
-    printfn "  --jupyter FILE         Run retained F# Jupyter kernel with given connection file"
     printfn "  --supervised           Run under watchdog supervisor (auto-restart on crash)"
     printfn "  --no-resume            Skip restoring previous sessions on daemon startup"
     printfn "  --prune                Mark all stale sessions as stopped and exit"
@@ -544,16 +542,15 @@ let main args =
     printfn "     with that reservation. The browser provides the same reserve/build workflow."
     printfn "  5. Run through composer_run_current or the page's Run action."
     printfn ""
-    printfn "Retained F# compatibility:"
+    printfn "F# implementation development:"
     printfn "  boz check probes SDK, ports and FSI; it does not validate the Composer provider."
-    printfn "  FSI sessions, .fs/.fsx reload and Jupyter remain available for compatibility."
-    printfn "  For F#/.NET development, use the separate SageFS service."
+    printfn "  Embedded FSI sessions, config.fsx evaluation and Jupyter execution are retired."
+    printfn "  Use separate SageFS on MCP 37749/dashboard 37750; Clefx execution is planned."
     printfn ""
     printfn "Examples:"
     printfn "  boz                              Start from a dedicated daemon workspace"
     printfn "  boz --mcp-port 47700             Start daemon on custom port"
     printfn "  boz --supervised                 Start with auto-restart"
-    printfn "  boz --jupyter conn.json          Run retained F# Jupyter kernel"
     printfn "  boz status                       Show daemon status"
     printfn "  boz check                        Check retained F#/.NET environment"
     printfn ""
@@ -604,55 +601,9 @@ let main args =
     eprintfn "%s" (deprecatedClientMessage name)
     2
 
-  | Jupyter connectionFile ->
-    match File.Exists connectionFile with
-    | false ->
-      eprintfn "Connection file not found: %s" connectionFile
-      1
-    | true ->
-      let json = File.ReadAllText connectionFile
-      match JupyterKernel.ConnectionInfo.parse json with
-      | Error msg ->
-        eprintfn "Invalid connection file: %s" msg
-        1
-      | Ok connInfo ->
-        let mcpPort = parseMcpPort args
-        match DaemonState.readOnPort mcpPort with
-        | None ->
-          eprintfn "Bozzetto daemon is not running on port %d." mcpPort
-          eprintfn "Start it first with 'boz' (or 'boz --mcp-port %d' if you passed a custom port), then reconnect the Jupyter kernel." mcpPort
-          1
-        | Some _ ->
-          printfn "Bozzetto Jupyter kernel starting (transport=%s, ip=%s)" connInfo.Transport connInfo.Ip
-          printfn "  Shell:   %d" connInfo.ShellPort
-          printfn "  IOPub:   %d" connInfo.IoPubPort
-          printfn "  Stdin:   %d" connInfo.StdinPort
-          printfn "  Control: %d" connInfo.ControlPort
-          printfn "  HB:      %d" connInfo.HbPort
-          printfn "  Daemon:  http://localhost:%d (working directory %s)" mcpPort Environment.CurrentDirectory
-
-          // Route EvalCode to the running daemon over the same /exec
-          // contract every editor integration already uses
-          // (McpServer.fs's mapExecutionRoutes). See JupyterDaemonBridge
-          // for session selection and the no-daemon/no-session error paths.
-          let httpClient =
-            new System.Net.Http.HttpClient(
-              BaseAddress = Uri(sprintf "http://localhost:%d" mcpPort),
-              Timeout = Timeouts.workerHttpRequest)
-          let proxy =
-            JupyterDaemonBridge.makeSessionProxy
-              (JupyterDaemonBridge.httpPostJson httpClient "/exec")
-              (JupyterDaemonBridge.httpPostJson httpClient "/api/sessions/create")
-              Environment.CurrentDirectory
-          let exec, complete, isComplete = JupyterKernel.FsiBridge.fromProxy proxy
-
-          use cts = new System.Threading.CancellationTokenSource()
-          Console.CancelKeyPress.Add(fun e ->
-            e.Cancel <- true
-            cts.Cancel())
-          printfn "Kernel running. Press Ctrl+C to stop."
-          JupyterTransport.run connInfo exec complete isComplete cts.Token
-          0
+  | Jupyter _ ->
+    eprintfn "%s" ExternalFSharpService.message
+    2
 
   | Daemon _ ->
     match unimplementedFlagRejection args with

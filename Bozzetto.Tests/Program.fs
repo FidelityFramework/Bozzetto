@@ -158,35 +158,18 @@ let main argv =
       1
   | false ->
 
-  // Build the FSI host into the shared host cache and exit. The pipeline runs
-  // this ONCE before the test tiers start, then points every tier (every host
-  // shard, every browser runner's daemon) at the same cache, so no shard pays
-  // a cold host build. Concurrent readers are safe: FsiHostBuild.ensureBuilt
-  // builds under a file lock and re-checks after waiting.
-  let ensureHostPrebuilt () =
-    let sharedHostCache = Path.Combine(Path.GetTempPath(), "bozzetto-fsihost-test-cache")
-    match Environment.GetEnvironmentVariable Bozzetto.IsolatedFsiSession.HostCacheEnvironmentVariable with
-    | null | "" -> Environment.SetEnvironmentVariable(Bozzetto.IsolatedFsiSession.HostCacheEnvironmentVariable, sharedHostCache)
-    | _ -> ()
-    let cache = Bozzetto.IsolatedFsiSession.hostCacheRoot ()
-    let dotnet = Bozzetto.IsolatedFsiSession.dotnetPath ()
-    let repoRoot = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, ".."))
-    Bozzetto.FsiHostBuild.resolveSdkVersion dotnet repoRoot
-    |> Result.bind (fun sdk -> Bozzetto.FsiHostBuild.ensureBuilt dotnet sdk cache)
-    |> Result.mapError Bozzetto.FsiHostBuild.describeBuildError
+  // Removed production capabilities stay visible as retired evidence and never
+  // inflate passing or ignored counts in any executable tier.
+  Bozzetto.Tests.TestInfrastructure.Integration.reportRetirements ()
 
-  match argv |> Array.contains "--prebuild-host" with
-  | true ->
-    match ensureHostPrebuilt () with
-    | Result.Ok _ ->
-      printfn "FSI host prebuilt into %s" (Bozzetto.IsolatedFsiSession.hostCacheRoot ())
-      Environment.Exit 0
-      0
-    | Result.Error reason ->
-      eprintfn "could not pre-build the FSI host: %s" reason
-      Environment.Exit 1
-      1
-  | false ->
+  let retiredEntryPoint =
+    argv |> Array.tryFind (fun arg -> arg = "--prebuild-host" || arg = "--integration-hr" || arg = "--integration-lt")
+  match retiredEntryPoint with
+  | Some entryPoint ->
+    eprintfn "%s is retired: %s" entryPoint Bozzetto.Tests.TestInfrastructure.Integration.fsharpRetirementReason
+    Environment.Exit 3
+    3
+  | None ->
 
   // Run EVERY self-contained [Integration] suite — real FSI sessions, real
   // Bozzetto.Host spawns, Harmony detours, real daemons on reserved ports with
@@ -211,9 +194,6 @@ let main argv =
       match shard with
       | Some s -> argv |> Array.filter (fun a -> a <> "--integration-host" && a <> "--shard" && a <> sprintf "%d/%d" s.Index s.Count)
       | None -> argv |> Array.filter (fun a -> a <> "--integration-host")
-    match ensureHostPrebuilt () with
-    | Result.Ok _ -> ()
-    | Result.Error reason -> eprintfn "warning: could not pre-build the FSI host: %s" reason
     let suiteName (i: int) (t: Expecto.Test) =
       match t with
       | Expecto.TestLabel (name, _, _) -> name
@@ -285,32 +265,6 @@ let main argv =
   match isIntegrationBrowser with
   | true ->
     let result = Bozzetto.Tests.DashboardBrowserRunner.runBrowserJourneys argv
-    Environment.Exit result
-    result
-  | false ->
-
-  // Run the [Integration] hot-reload dashboard browser journeys (Playwright.NET)
-  // against a HotReload session on the WebAppFixture: real file save -> the SAME
-  // running app serves the new value, observed from the dashboard page. CI
-  // invokes this with --integration-hr after a Release build (same shape as
-  // --integration-host / --integration-browser).
-  let isIntegrationHr = argv |> Array.exists (fun a -> a = "--integration-hr")
-  match isIntegrationHr with
-  | true ->
-    let result = Bozzetto.Tests.DashboardBrowserRunner.runHotReloadBrowserJourneys argv
-    Environment.Exit result
-    result
-  | false ->
-
-  // Run the [Integration] live-testing dashboard browser journeys
-  // (Playwright.NET) against a session on the FromCSharp sample: enable live
-  // testing through the panel -> 11 tests discovered/passing -> edit Hello.fs
-  // on disk -> the panel shows the failing test -> revert -> all green again.
-  // CI invokes this with --integration-lt after a Release build.
-  let isIntegrationLt = argv |> Array.exists (fun a -> a = "--integration-lt")
-  match isIntegrationLt with
-  | true ->
-    let result = Bozzetto.Tests.DashboardBrowserRunner.runLiveTestingBrowserJourneys argv
     Environment.Exit result
     result
   | false ->
@@ -396,7 +350,11 @@ let main argv =
     | false ->
     match includeAll with
     | true ->
-      Tests.runTestsInAssemblyWithCLIArgs [] filteredArgv
+      let executable =
+        Expecto.Impl.testFromThisAssembly ()
+        |> Option.defaultValue (testList "empty" [])
+        |> Bozzetto.Tests.TestInfrastructure.Integration.excludeRetired
+      Bozzetto.Tests.TestInfrastructure.TrustSignal.run "all-active" filteredArgv executable
     | false ->
       // Default: exclude the registered [Integration] suites (structurally, by
       // the identity of their test bodies — see TestInfrastructure.Integration)

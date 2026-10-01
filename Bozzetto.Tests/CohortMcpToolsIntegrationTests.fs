@@ -201,7 +201,7 @@ let cohortMcpToolsTests =
       })
     }
 
-    testTask "WHY — join_cohort with working_directory binds the member to the matching session (item 13c)" {
+    Integration.retireFSharp <| testTask "WHY — join_cohort with working_directory binds the member to the matching session (item 13c)" {
       do! withDaemon (fun port -> task {
         use! client = connect port
         let projectFile = System.IO.Path.GetFileName Bozzetto.Tests.HttpApiIntegrationTests.smokeSampleProject

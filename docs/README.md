@@ -7,6 +7,7 @@ Bozzetto coordinates Fidelity development across compilers, editors, application
 - **[Development horizons](Bozzetto_Development_Horizons.md)**: first-horizon compiler/workspace and CPU REPL work, later heterogeneous development and federated sites; cross-target evaluation is research gated by demonstrated demand, feasibility and proof cost
 - **[Fidelity component contracts](Bozzetto_Fidelity_Component_Contracts.md)**: proposed interfaces, component ownership and acceptance requirements; these are requests for agreement, not delivered APIs
 - **[Clef/Composer development plan](Clef_Composer_Development_Plan.md)**: the concrete first-horizon delivery plan, implemented foundations and remaining integration work
+- **[Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md)**: removal of embedded production FSI hosting, separate SageFS development and the future Clef execution boundary
 
 ## Start here
 
@@ -20,7 +21,7 @@ Bozzetto coordinates Fidelity development across compilers, editors, application
 
 ## Retained F# engine and editor references
 
-F#/.NET development uses a separate SageFS service. These guides describe the inherited F# implementation and compatibility surface. They are not prerequisites for opening a Composer `.fidproj`.
+F#/.NET development uses a separate SageFS service. These guides preserve the inherited F# implementation and its historical behavior. The [Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md) retires embedded production FSI hosting in the checkout; these references do not promise F# execution through current Bozzetto source. They are not prerequisites for opening a Composer `.fidproj`.
 
 - **[Workflow Modes](workflow-modes.md)**: REPL, Live Testing and Hot Reload
 - **[Hot Reload](hot-reload.md)**: file watching, FSI evaluation, Harmony patching and current limits

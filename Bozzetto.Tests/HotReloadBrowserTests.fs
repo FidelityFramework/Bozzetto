@@ -31,20 +31,9 @@ let private watchAllButton (panel: ILocator) =
     AriaRole.Button,
     LocatorGetByRoleOptions(NameRegex = System.Text.RegularExpressions.Regex("^Watch All\\b")))
 
-/// HR-DASH browser journeys — real save -> changed running app through the
-/// live dashboard. These run under `--integration-hr` (HotReloadBrowserRunner
-/// owns the daemon + a HotReload session on a temp WebAppFixture copy whose app
-/// serves `Greeting.greeting()`).
-///
-/// The runner sets:
-///   BOZZETTO_DASHBOARD_PORT — dashboard URL for the page
-///   BOZZETTO_HR_APP_URL     — base URL of the running fixture app (value A)
-///   BOZZETTO_HR_FIXTURE_DIR — the temp fixture dir (Greeting.fs lives here)
-///
-/// The env is read LAZILY (per access, not at module load): the module is
-/// always linked into the test assembly, so a static throw would break
-/// Expecto's discovery of every other suite on machines where the env is
-/// unset. Only a journey that actually runs touches these.
+/// Historical production F# hot-reload journeys. Their original assertions
+/// remain registered as retired evidence; no active runner provisions these
+/// fixture variables or executes the bodies.
 module HrEnv =
   let appUrl =
     lazy
@@ -161,13 +150,13 @@ let private hrPlaywrightTest name (body: IPage -> Task<unit>) =
       let! page = PlaywrightFixture.newPage ()
       try
         let! _ = page.GotoAsync(
-          sprintf "%s/dashboard" PlaywrightFixture.dashboardUrl)
+          sprintf "%s/dashboard" (PlaywrightFixture.dashboardUrl ()))
         do! body page
       finally
         PlaywrightFixture.closePage(page).GetAwaiter().GetResult()
     }
     t.GetAwaiter().GetResult())
-  |> Integration.register (Integration.Dedicated "--integration-hr")
+  |> Integration.retireFSharp
 
 [<Tests>]
 let tests =

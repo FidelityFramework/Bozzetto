@@ -46,6 +46,24 @@ let integrationRegistryTests =
       |> Integration.unregisteredTagged
       |> Expect.equal "the rogue tag is reported" [ "root/[Integration] rogue" ]
 
+    testCase "retired FSharp leaves cannot execute through their mixed Host parent" <| fun _ ->
+      let retired = testCase "old production FSharp session" (fun () -> failtest "retired body executed")
+      let kept = testCase "daemon health" ignore
+      let mixed = testList "mixed" [ retired; kept ]
+      let entries = [ Integration.RetiredFSharp "product removed", retired; Integration.Host, mixed ]
+      entries
+      |> Integration.hostSuitesOf
+      |> List.collect names
+      |> Expect.equal "the genuine daemon assertion remains" [ "mixed/daemon health" ]
+      entries |> Integration.retiredSuitesOf |> List.map fst
+      |> Expect.equal "retirement retains its stated reason" [ "product removed" ]
+
+    testCase "a completely retired Host registration does not create an empty green tier" <| fun _ ->
+      let retired = testList "removed host" [ testCase "old execution" ignore ]
+      [ Integration.RetiredFSharp "product removed", retired; Integration.Host, retired ]
+      |> Integration.hostSuitesOf
+      |> Expect.isEmpty "no executable suite remains; the tier's NothingRan guard still applies"
+
     testCase "every registered Host suite carries the integration tag" <| fun _ ->
       Integration.hostSuites ()
       |> List.collect names
@@ -60,7 +78,7 @@ let integrationRegistryTests =
       // "MCP session isolation" and "Reset isolation" left this list too: every
       // op they route through is a stub, and the shared FSI actor they forced
       // was only ever borrowed for an event handle. They run in the default suite.
-      [ "Daemon CLI subcommands"; "Daemon lifecycle"; "SessionManager lifecycle"
+      [ "Daemon CLI subcommands"; "Daemon lifecycle"
         "HTTP API"; "MCP Server Integration tests"
         "Session reset"; "Falco web application tests"
         "Package/Namespace Explorer"; "checkFSharpCode backing function" ]
