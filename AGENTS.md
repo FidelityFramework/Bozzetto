@@ -195,6 +195,19 @@ dotnet test            # CI only — locally run the built test DLL unfiltered u
 dotnet pack Bozzetto -o nupkg  # Package the CLI tool
 ```
 
+If the scheduler blocks a build for memory, immediately investigate the consumers
+with `btop`, `ps`, or equivalent tools instead of repeatedly polling for a lease.
+Capture available RAM and swap, process RSS and parent processes, cgroup memory
+usage and limits including file cache, and GPU use of shared system memory where
+applicable. Distinguish the daemon, compiler workers, and unrelated builds. Report
+the measurements in plain software engineering terms; a scheduling threshold is
+not a measurement of Bozzetto's memory usage. Raise architectural questions early,
+and ask before changing the scheduling policy or stopping processes you do not own.
+
+Commit and push useful checkpoints promptly so work has a remote recovery point.
+If release checks are still pending, use an integration branch and record the
+outstanding checks; release checks must not block these checkpoint pushes.
+
 ## Multi-agent / worktree sessions
 
 - **Sessions are checkout-aware.** A session's working directory is classified against the filesystem (`Bozzetto.Checkout.classify`, no `git` subprocess): a plain repository, a git **worktree** (its own root and branch — worktrees have a `.git` FILE, not a directory, pointing at the main checkout's `.git/worktrees/<name>` admin dir), or not a git checkout at all. `list_sessions` and the dashboard show a worktree session's branch.
