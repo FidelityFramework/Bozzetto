@@ -46,10 +46,11 @@ explicit owner requirement; it is not a quotation from §5.
 | Stable bytes and mapping lifetime | BAREWire ByteSource and the separate PSG hosting assembly. |
 
 A correct payload distinguishes live occurrence bodies, settled imported boundary
-facts and historical identity references. The existing `Revision` integrity rule
-requires every named identity to have a resident body; its role-aware replacement
-is unfinished. Alex's scoped traversal migration is also incomplete. A filtered
-map wrapped in that type cannot establish a scoped contract. Whole-domain premise censuses remain source-owned analysis support,
+facts and historical identity references. `Revision` integrity now checks typed
+reference roles rather than requiring a body for every named identity. Mixed
+memory and spatial accounts are receiving additional controls. Alex's passive
+entry and traversal migration passes its whole suite. These local consumer gates
+do not establish a receiving socket contract. Whole-domain premise censuses remain source-owned analysis support,
 with complete conservative validation until precise support is implemented.
 Their retention inside CCS does not require delivery of their node bodies.
 
@@ -118,6 +119,95 @@ support inventories and analysis incidence stay source-private. Authorization
 metadata can still grow with resident scopes; byte-size invariance and continuity
 remain receiving acceptance requirements.
 
+## Source and consumer migration — October 2
+
+The current source boundary separates executable bodies, module context headers,
+settled declaration/representation facts, current propositions and source-private
+history. Alex reads exact source-authored paths and binding-use facts. Claim
+readers use `CurrentClaims` and its complete `ObligationSources` account; they do
+not require an executable obligation body. A proposition and its independent
+source/target discharge receipts remain separate.
+
+The aligned Composer baseline exposed 161 consumer-migration failures out of
+386 cases (225 passed). This is a new boundary mismatch, not the preceding single
+callable-`Result` failure. Repair work addresses explicit fixture platforms,
+source-authored occurrences, and typed memory/storage/spatial reference roles.
+Native probes distinguish executable actuals from body-free provenance. A
+reachable record type declaration remains available to Baker's nominal layout
+and mutable-field checks; its settled consequences are published separately from
+runtime record construction and access. Historical sequence yields and private
+lazy proof incidence remain checked at their source owner, without copying their
+inactive bodies or analytical edges into a revision.
+
+The matched October 2 anchor has these actual gates:
+
+| Gate | Result | Limit |
+| --- | --- | --- |
+| Fidelity.PSG | 270/270; focused Integrity 162/162 | Structural contract checks |
+| Alex | 271/271, including seven source-entry controls | Passive component composition |
+| Clef/Baker | Focused 228/228; full 2,205 passed, 99 failed, 2,304 total | The same 99 failing identities; two new passing controls, no regressions or removals |
+| Composer | 370 passed, 16 failed, 386 total | 145 exact identities recovered from the 161-failure migration baseline; no regressions, additions or removals |
+
+The source build has no errors and six existing warnings. Composer's final
+incremental build has no errors and two existing dependency warnings; the
+preceding compile also reported the existing Xtensa incomplete-pattern warning.
+A new reserved fixture-local name was corrected before the final run. Component
+DLL hashes match the assemblies copied into Composer's test output. Four fresh
+source programs (boundary, callback, hardware, kernel) pass structural Integrity
+checks and retain exact dedicated spatial plans without generic value/body
+promotion. Raw TRX, code hashes and identity comparisons remain external under
+`~/.codex/work/psg-scope-retool-2026-10-01/`.
+
+The 16 Composer failures are:
+
+- Eleven environment artifact-account cases, including native execution,
+  substitution refusal and selective closure-object reuse. They stop at
+  `Allocation lacks one current reservation relation`; their later checks have
+  not passed. Required typed source accounts are described below.
+- Two foreign-declaration cases. One fixture still requests an executable
+  zipper for a body-free boundary entry. The other exposes missing successful
+  import-header coverage accounting. Its lost-coverage negative oracle remains
+  required; an executable declaration body is not the repair.
+- `LocalFiniteCellProofTests.Ordinary local cell recurrence keeps paired solver
+  evidence and rejects a foreign revision receipt` and
+  `IntrinsicWriteWitnessTests.Published factory borrow premises name the moved
+  invocation` still inspect now-private analytical incidence. Their source
+  incidence and public current-premise checks must remain discriminating.
+- `IncrementalBuildTests.Result branch authority rebuilds its whole scope and
+  rejects another revisions proof receipt` still fails callable native transport
+  at occurrence 218. Preserved typed branch authority is not native transport.
+
+These are unresolved failures, not exclusions or receiving acceptance. The
+[matched roster](PSG_Scoped_Integration_Interim_2026-10-01.md) identifies the
+producer, contract and consumer commits; no deployment is included.
+
+The preceding Composer total of 387 included one now-absent control for the
+retired complete-revision read API: `published revision read refuses unreserved
+source changes and cannot restore withdrawn authority`. Four other identities
+were renamed around sparse ordinal/publication contracts. The absent case is
+not a recovery. Its unreserved-edit and withdrawn-authority checks must return
+at the scoped-delivery boundary before receiving acceptance.
+
+Two additional architectural debts are explicit:
+
+- Source identity continuity is unfinished. In the dormant-library control,
+  increasing unused declarations from 1 to 64 changed the unchanged entry's
+  identity from 117 to 684, despite equal published body counts and encoded
+  lengths. Source-owned origin/correspondence settlement must preserve unrelated
+  owners before unchanged-body delivery can be claimed. Fingerprints and similar
+  body counts cannot substitute for that account.
+- Composer's environment artifact checker still reads four analytical edge
+  roles. The public revision correctly has no such edges. Baker must author
+  typed reservation, rewritten factory-result, admitted residence and ordered
+  initialization accounts. Restoring analytical edges in publication would
+  violate the source/reader boundary. A read-only design identifies the exact
+  owning recipes and the required freshness and artifact-substitution controls;
+  those tables and their receiving integration remain unimplemented.
+
+The generated typed fact-delivery prototype remains external. Its type-check
+does not establish source ownership, stable row versions, coherent retirement,
+socket delivery or receiving proof/native acceptance.
+
 The installed workspace host remains the earlier validated distribution. Its
 private stdio control path has not been replaced by the unpromoted socket source.
 The source purge and the installed process are distinct evidence.
@@ -170,6 +260,17 @@ receiver to infer invalidation, or treated ABI refusal checks as absence depende
 Those suggestions were rejected. Model output is neither an executed gate nor
 independent compiler acceptance. SageFS became unavailable on port 37749 during
 the resumed source loop; individual .NET source probes record that limitation.
+
+The October 2 retrieval refresh confirmed snapshot
+`3f551c76a5961230ed2c63cdadb73f6d60ea17b7e83baa5c7c2e19a2fa0af926`,
+generation 19, with no stale or pending sources. Hydrated PHG, semantic-graph and
+conformance clauses informed the typed-reference and artifact-account work. LAN
+reviews received the fresh uncommitted code explicitly. Valid concerns were
+checked against the actual producer; invented APIs, execution claims and proposed
+consumer capacity inference were excluded. Two Lemonade replies discussed an
+unrelated fixture and were excluded; a subsequent bounded declaration-role
+review followed its supplied prompt but reached its token limit before a final
+answer. It is research input, not a passing gate.
 
 The [interim repository anchor](PSG_Scoped_Integration_Interim_2026-10-01.md)
 records the Schema 15 migration and its unfinished consumer boundaries separately
