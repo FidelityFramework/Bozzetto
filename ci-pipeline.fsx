@@ -76,16 +76,16 @@ type WorkLeaseScope = {
 let mutable activeWorkLease: WorkLeaseScope option = None
 
 let leaseControl arguments =
-  use process = new Diagnostics.Process()
-  process.StartInfo.FileName <- leaseRunner
-  arguments |> List.iter process.StartInfo.ArgumentList.Add
-  process.StartInfo.RedirectStandardOutput <- true
-  process.StartInfo.RedirectStandardError <- true
-  process.Start() |> ignore
-  let stdout = process.StandardOutput.ReadToEndAsync()
-  let stderr = process.StandardError.ReadToEndAsync()
-  process.WaitForExit()
-  process.ExitCode, stdout.GetAwaiter().GetResult(), stderr.GetAwaiter().GetResult()
+  use child = new Diagnostics.Process()
+  child.StartInfo.FileName <- leaseRunner
+  arguments |> List.iter child.StartInfo.ArgumentList.Add
+  child.StartInfo.RedirectStandardOutput <- true
+  child.StartInfo.RedirectStandardError <- true
+  child.Start() |> ignore
+  let stdout = child.StandardOutput.ReadToEndAsync()
+  let stderr = child.StandardError.ReadToEndAsync()
+  child.WaitForExit()
+  child.ExitCode, stdout.GetAwaiter().GetResult(), stderr.GetAwaiter().GetResult()
 
 let withTestSuiteLease (work: unit -> Async<Result<unit, string>>) =
   async {
@@ -727,8 +727,9 @@ pipeline "bozzetto" {
           | false -> async { return Ok() }
           | true ->
             async {
-              let! code = execToLog (TimeSpan.FromMinutes 5.) rootDir [] (Path.Combine(tierWork, "chromium-install.log"))
-                [ $"{testBinDir}/.playwright/node/linux-x64/node"; $"{testBinDir}/.playwright/package/cli.js"; "install"; "chromium" ]
+              let! code =
+                execToLog (TimeSpan.FromMinutes 5.) rootDir [] (Path.Combine(tierWork, "chromium-install.log"))
+                  [ $"{testBinDir}/.playwright/node/linux-x64/node"; $"{testBinDir}/.playwright/package/cli.js"; "install"; "chromium" ]
               return if code = 0 then Result.Ok() else Result.Error $"Chromium install exited {code}"
             }
         let runnable =
