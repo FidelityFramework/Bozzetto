@@ -33,11 +33,13 @@
   </Target>
   <ItemGroup>
     <ProjectReference Include="../Bozzetto.Composer.Protocol/Bozzetto.Composer.Protocol.fsproj" />
+    <ProjectReference Include="../Bozzetto.Diagnostics/Bozzetto.Diagnostics.fsproj" />
     <Reference Include="$(ComposerDistribution)/*.dll" />
     <Compile Include="ProviderContracts.fs" />
     <Compile Include="FormatterSession.fs" />
     <Compile Include="ProviderSession.fs" />
     <Compile Include="Worker.fs" />
+    <Compile Include="DiagnosticCapture.fs" />
     <Compile Include="ComposerAdapter.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

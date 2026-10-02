@@ -23,7 +23,7 @@ module ComposerAdapter =
         KeepIntermediates = false; PruneIntermediates = false
         EmitMLIROnly = false; EmitLLVMOnly = false
         Verbose = false; ShowTiming = false; TreatWarningsAsErrors = false; Deploy = false }
-    let session = new ProjectSession(options, directory, tools)
+    let session = new ProjectSession(options, directory, tools, ?capture = DiagnosticCapture.fromEnvironment ())
     { new IProjectBackend<Core.IncrementalBuild.Ticket> with
         member _.Reserve label = session.Reserve label
         member _.Current = session.Current |> Option.map accepted

@@ -1,5 +1,8 @@
 module Bozzetto.Composer.Tests.NativeProviderTests
 
+module DiagnosticCodec = Bozzetto.Diagnostics.CaptureCodec
+module DiagnosticClient = Bozzetto.Diagnostics.Client
+
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -317,6 +320,53 @@ let private objects directory label accepted =
 [<Tests>]
 let tests =
   testSequenced <| testList "Composer native provider process" [
+    testCaseAsync "failed native build retains its demanded PSG capture after worker exit" <| async {
+      let directory = evidenceRoot ()
+      let fixture = fixture directory
+      let store = Path.Combine(directory, "diagnostic-store")
+      let path = Environment.GetEnvironmentVariable "PATH"
+      let realTool =
+        path.Split Path.PathSeparator
+        |> Array.map (fun folder -> Path.Combine(folder, "mlir-opt"))
+        |> Array.tryFind File.Exists
+        |> Option.defaultWith (fun () -> failtest "Native acceptance requires mlir-opt")
+      let tools = Path.Combine(directory, "failing-tools")
+      Directory.CreateDirectory tools |> ignore
+      let wrapper = Path.Combine(tools, "mlir-opt")
+      let quote (value: string) = "'" + value.Replace("'", "'\"'\"'") + "'"
+      File.WriteAllText(wrapper,
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exec " + quote realTool + " \"$@\"; fi\n"
+        + "printf 'intentional diagnostic retention failure\\n' >&2\nexit 73\n")
+      File.SetUnixFileMode(wrapper, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+      do! Bozzetto.Tests.DiagnosticSinkTests.withSink store 8 120 (fun pipe sink -> async {
+        use client = new Client(directory, "failed-build-capture", environment = [
+          "PATH", tools + string Path.PathSeparator + path
+          "BOZZETTO_DIAGNOSTIC_PIPE", pipe
+        ])
+        client.Hello() |> succeeded |> ignore
+        let session = openProject client fixture.Project
+        let token = reserve client session "capture failed native work"
+        let! failed = Task.Run(fun () -> buildReserved client session token) |> Async.AwaitTask
+        failed |> refused "compiler_refused"
+        noCurrent client session
+        let images = Directory.GetFiles(store, "*.bare")
+        images.Length |> Expect.equal "the real compiler handed over one scoped capture before native failure" 1
+        let capture =
+          File.ReadAllBytes images[0] |> DiagnosticCodec.decode
+          |> Result.defaultWith failtest
+        capture.Metadata.Demand |> String.IsNullOrWhiteSpace |> Expect.isFalse "capture names the source demand"
+        capture.Metadata.SourceVersion |> String.IsNullOrWhiteSpace |> Expect.isFalse "capture names the checked source version"
+        capture.Metadata.ExpectedScopes.Length |> Expect.equal "source declared one demanded occurrence scope" 1
+        let bytes = File.ReadAllBytes images[0]
+        client.Disconnect()
+        do! client.WaitForExitAsync(TimeSpan.FromSeconds 15.) |> Async.AwaitTask
+        sink.HasExited |> Expect.isFalse "worker retirement cannot retire the independent sink"
+        File.ReadAllBytes images[0] |> Expect.equal "worker disposal does not erase retained evidence" bytes
+        let! replay = DiagnosticClient.capture pipe 5000 capture
+        replay |> Result.isOk |> Expect.isTrue "another observer can recover evidence after worker exit"
+      })
+    }
+
     testTask "socket loss retires a live native tool and its child without a daemon tree kill" {
       let directory = evidenceRoot ()
       let fixture = fixture directory

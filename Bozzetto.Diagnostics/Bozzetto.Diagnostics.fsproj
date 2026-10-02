@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../build/ComposerContract.props" />
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <ShouldUnsetParentConfigurationAndPlatform>false</ShouldUnsetParentConfigurationAndPlatform>
+    <FidelityDataProject Condition="'$(FidelityDataProject)' == ''">$(MSBuildThisFileDirectory)../../Fidelity.Data/src/Fidelity.Data/Fidelity.Data.fsproj</FidelityDataProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" VersionOverride="10.1.401" />
+    <ProjectReference Include="$(FidelityDataProject)" />
+    <Compile Include="Capture.fs" />
+    <Compile Include="CaptureCodec.fs" />
+    <Compile Include="ManagedHost.fs" />
+    <Compile Include="Client.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+</Project>

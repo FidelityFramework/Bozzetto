@@ -22,6 +22,22 @@ setup; follow-up recovery commits use `integration/audit-followup-20261002`.
 The next release still requires `scripts/ship` and its complete gate. See the
 [independent assessment](Incremental_Pipeline_Auditor_Assessment_2026-10-02.md).
 
+## October 2 independent diagnostic sink implementation
+
+The [diagnostic sink](Bozzetto_Diagnostic_Sink.md) is now implemented as a separate
+process with an explicit idle lifetime. CCS supplies an optional, frozen
+occurrence reading for the actual project demand; Composer hands it over before
+proof/native tools. The sink verifies the scoped binary envelope and persists it
+with a Fidelity.Data descriptor. Worker or Bozzetto retirement does not own this
+independently started process. Full semantic/proof payloads remain outside the
+explicit `occurrence-structure-v1` stage.
+
+The source, Composer, PSG and sink builds pass. Full suite and native process
+acceptance are in progress under
+`~/.codex/work/bozzetto-resumption-2026-10-02/validation/diagnostic-sink/`.
+This source recovery checkpoint is not a release or deployment. The installed
+daemon and worker remain unchanged.
+
 ## October 2 hosted-boundary repair checkpoint
 
 The follow-up review of `798dade9` identified worker self-termination, shutdown
@@ -114,13 +130,13 @@ anchors, not release approval; `scripts/ship` and its complete gate remain requi
 The compiler/editor baseline failures, prior unresolved audit findings and
 Windows/macOS execution coverage remain outside this checkpoint's passing claims.
 
-### Diagnostic retention: next ownership boundary
+### Diagnostic retention: original design direction
 
 The user clarified that prompt cancellation must preserve useful troubleshooting
 evidence. Process/I/O drain and durable evidence retention are different
 contracts; the repairs above establish drain, not a complete diagnostic sink.
 
-The proposed next boundary is a supervisor-owned diagnostic actor receiving
+The original proposed boundary was a supervisor-owned diagnostic actor receiving
 immutable, revision-tagged PSG snapshots and execution records. The producer
 hands over the PSG; the sink owns persistence encoding and any transliteration.
 Within one process this can be a typed immutable value handoff. A process boundary
@@ -133,11 +149,9 @@ worker retirement must not delete it. A killed worker cannot be relied upon to
 produce a final dump, so useful checkpoints must cross the boundary during work,
 with incomplete or truncated capture explicitly reported.
 
-PSG binary is a candidate capture format, with JSON projections through
-Fidelity.Data when needed. Encoding, retention policy and a separate OS process
-remain design decisions, not implemented features. An actor in the existing
-daemon could survive compiler-worker failure; surviving daemon failure would
-require a stronger storage/process boundary. This direction prioritizes useful
+The user subsequently selected the separate process so accepted evidence also
+outlives Bozzetto. The implementation above uses the scoped occurrence contract
+and sink-owned Fidelity.Data descriptors. This direction prioritizes useful
 failure evidence without making complete-history capture or minimum allocation
 an architectural requirement.
 

@@ -22,7 +22,9 @@
         <Compile Include="../Bozzetto.Composer.Tests/WorkerCancellationTests.fs" Link="Composer/WorkerCancellationTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/WorkerProtocolTests.fs" Link="Composer/WorkerProtocolTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/ProviderSessionTests.fs" Link="Composer/ProviderSessionTests.fs" />
-  <Compile Include="../Bozzetto.Composer.Tests/FormatPreviewTests.fs" Link="Composer/FormatPreviewTests.fs" />
+        <Compile Include="../Bozzetto.Composer.Tests/FormatPreviewTests.fs" Link="Composer/FormatPreviewTests.fs" />
+        <Compile Include="DiagnosticCaptureTests.fs" />
+        <Compile Include="DiagnosticSinkTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/NativeProviderTests.fs" Link="Composer/NativeProviderTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/LiveProviderTests.fs" Link="Composer/LiveProviderTests.fs" />
         <Compile Include="ComposerSupervisorTests.fs" />
@@ -594,6 +596,7 @@
         <ProjectReference Include="..\Bozzetto.Core\Bozzetto.Core.fsproj" />
         <ProjectReference Include="..\Bozzetto.Simulation\Bozzetto.Simulation.fsproj" />
         <ProjectReference Include="..\Bozzetto\Bozzetto.fsproj" />
+        <ProjectReference Include="../Bozzetto.Diagnostics/Bozzetto.Diagnostics.fsproj" />
         <!-- #141/#142's outcome gate needs a REAL compiled project with no package references (the SDK's
              implicit FSharp.Core — the config every normal user is in, and Bozzetto's own dogfood tests
              never exercise since Bozzetto.Tests.fsproj references Bozzetto.Core). Same

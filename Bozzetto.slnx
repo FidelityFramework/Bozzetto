@@ -6,6 +6,7 @@
   </Configurations>
   <Project Path="Bozzetto.Core/Bozzetto.Core.fsproj" />
   <Project Path="Bozzetto.Composer.Protocol/Bozzetto.Composer.Protocol.fsproj" />
+  <Project Path="Bozzetto.Diagnostics/Bozzetto.Diagnostics.fsproj" />
   <Project Path="Bozzetto.Simulation/Bozzetto.Simulation.fsproj" />
   <Project Path="Bozzetto/Bozzetto.fsproj" />
   <Project Path="Bozzetto.Tests/Bozzetto.Tests.fsproj" />
