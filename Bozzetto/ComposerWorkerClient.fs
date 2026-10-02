@@ -20,6 +20,9 @@ type WorkerLaunch = {
 type IComposerWorker =
   abstract Handshake: Reply
   abstract ProcessId: int
+  /// Physical child ownership, independent of whether its transport is usable.
+  abstract IsProcessAlive: bool
+  /// The worker is both physically alive and available for protocol requests.
   abstract IsAlive: bool
   abstract Exited: IEvent<string>
   abstract RequestAsync: body: RequestBody * cancellation: CancellationToken -> Task<Reply>
@@ -193,9 +196,10 @@ module ComposerWorkerClient =
           if finished.IsFaulted then invalidate (IOException("Composer diagnostic drain failed.", finished.Exception)) true), TaskScheduler.Default) |> ignore
 
     member _.Handshake = lock gate (fun () -> handshake |> Option.defaultWith (fun () -> invalidOp "Composer hello has not completed."))
-    member _.IsAlive =
-      lock gate (fun () -> failure.IsNone) &&
-        (try not worker.HasExited with :? InvalidOperationException -> false)
+    member _.IsProcessAlive =
+      try not worker.HasExited with :? InvalidOperationException -> false
+    member this.IsAlive =
+      lock gate (fun () -> failure.IsNone) && this.IsProcessAlive
 
     member private this.RequestAsyncCore(body: RequestBody, cancellation: CancellationToken, cancellationSlot: string option): Task<Reply> = task {
       cancellation.ThrowIfCancellationRequested()
@@ -336,6 +340,7 @@ module ComposerWorkerClient =
     interface IComposerWorker with
       member this.Handshake = this.Handshake
       member _.ProcessId = processId
+      member this.IsProcessAlive = this.IsProcessAlive
       member this.IsAlive = this.IsAlive
       member _.Exited = exited.Publish
       member this.RequestAsync(body, cancellation) = this.RequestAsync(body, cancellation)

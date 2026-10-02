@@ -22,6 +22,44 @@ setup; follow-up recovery commits use `integration/audit-followup-20261002`.
 The next release still requires `scripts/ship` and its complete gate. See the
 [independent assessment](Incremental_Pipeline_Auditor_Assessment_2026-10-02.md).
 
+## October 2 hosted-boundary repair checkpoint
+
+The follow-up review of `798dade9` identified worker self-termination, shutdown
+failure handling and public documentation defects. The subsequent implementation
+uses a portable `Composer.Hosting.ToolOwner` capability: explicit launch, sealing,
+and cold `Async` observations. The managed adapter owns real child processes and
+redirected I/O. Its retirement remains pending until physical drain, including
+after a failed termination request. Worker transport loss seals launches and
+joins native retirement before the five-second managed-worker fallback can exit.
+It no longer asks .NET to tree-kill the calling process.
+
+The supervisor now distinguishes transport availability from physical process
+liveness. A faulted stop retains the live worker and its terminal evidence, while
+daemon shutdown still joins the other cleanup phases. MCP status/tool documents
+describe bounded formatter evidence, exact busy/capacity behavior and autonomous
+worker retirement. The ordinary-descendant retirement regression is a Linux
+native fixture; portable APIs alone do not establish Windows/macOS validation or
+containment of arbitrary detached descendants.
+
+Composer's public JSON edge now uses Fidelity.Data with an explicit schema.
+Parsed numbers retain validated exact literals until callers select a numeric
+representation; protocol revision counters never pass through floating point.
+The legacy explicit float constructor remains available. Parsed fractional or
+exponent spellings are not accepted by strict integer projections. Parser depth
+and Unicode checks are library-owned. The only remaining System.Text.Json bridge
+in this adapter supplies the MCP SDK's required `JsonElement`; worker transport
+remains binary. This is a boundary migration, not a claim that all hosted CLR
+dependencies have been removed.
+
+Recovery source anchors on `integration/hosted-boundaries-20261002`:
+Fidelity.Data `7cc19d6`, Fidelity.PSG `f2adb18`, Composer `4482182`.
+Bozzetto continues on `integration/audit-followup-20261002`. Builds have passed;
+the final frozen candidate, full runtime suites and integrity receipts are still
+pending at this source checkpoint. Evidence is being recorded under
+`/home/hhh/.codex/work/bozzetto-resumption-2026-10-02/validation/hosted-boundaries/`.
+The installed daemon has not been replaced. These integration pushes are recovery
+anchors, not release approval; `scripts/ship` and its complete gate remain required.
+
 ## October 2 audit follow-up: cooperative formatting and owned retirement
 
 ### Subsequent review: bounded evidence and worker supervision

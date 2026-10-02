@@ -7,6 +7,8 @@ open System.Threading
 open System.Threading.Tasks
 open Expecto
 open Expecto.Flip
+open Fidelity.Data.JSON
+open Bozzetto.ComposerIntegration
 open BAREWire.Framing
 open Bozzetto.Providers
 open Bozzetto.Composer.Protocol
@@ -160,19 +162,125 @@ let tests = testList "Composer typed binary worker protocol" [
       |> Expect.equal "reply exact equality" (Result.Ok original)
 
   testCase "public status labels formatter evidence separately from compiler failure" <| fun _ ->
-    let projected = reply (Observed status) |> Bozzetto.ComposerIntegration.ComposerClientJson.wireReply
-    let body = projected.GetProperty "result"
-    body.GetProperty("backendError").GetString() |> Expect.equal "compiler evidence keeps its own label" "backend error"
-    body.GetProperty("formatterError").GetString() |> Expect.equal "formatter evidence has its own label" "formatter host error"
-    body.GetProperty("formatterCleanupPending").GetBoolean() |> Expect.isTrue "physical cleanup remains independently visible"
-    body.GetProperty("workerRetirementRequired").GetString() |> Expect.equal "supervision has an explicit typed reason" "formatter cleanup deadline"
+    let property name value = JsonValue.prop name value |> Option.defaultWith (fun () -> failtestf "Missing JSON property %s" name)
+    let projected = reply (Observed status) |> ComposerClientJson.wireReply
+    let body = property "result" projected
+    property "backendError" body |> Expect.equal "compiler evidence keeps its own label" (JsonValue.String "backend error")
+    property "formatterError" body |> Expect.equal "formatter evidence has its own label" (JsonValue.String "formatter host error")
+    property "formatterCleanupPending" body |> Expect.equal "physical cleanup remains independently visible" (JsonValue.Bool true)
+    property "workerRetirementRequired" body |> Expect.equal "supervision has an explicit typed reason" (JsonValue.String "formatter cleanup deadline")
     let clear = { status with BackendError = None; FormatterError = None; FormatterCleanupPending = false; WorkerRetirementRequired = None }
-    let projected = reply (Observed clear) |> Bozzetto.ComposerIntegration.ComposerClientJson.wireReply
+    let projected = reply (Observed clear) |> ComposerClientJson.wireReply
     for field in [ "backendError"; "formatterError"; "workerRetirementRequired" ] do
-      projected.GetProperty("result").GetProperty(field).ValueKind
-      |> Expect.equal "absent diagnostic is a JSON null" System.Text.Json.JsonValueKind.Null
+      projected |> property "result" |> property field
+      |> Expect.equal "absent diagnostic is a JSON null" JsonValue.Null
     reply (Observed clear) |> BAREWireCodec.encodeReply |> mustSucceed |> BAREWireCodec.decodeReply
     |> Expect.equal "empty independent fields roundtrip over binary" (Result.Ok(reply (Observed clear)))
+
+  testCase "public JSON schema is explicit across every reply and preserves numeric authority" <| fun _ ->
+    let property name value = JsonValue.prop name value |> Option.defaultWith (fun () -> failtestf "Missing JSON property %s" name)
+    let expectedKeys = [
+      [ "compilerAssembly"; "compilerSha256"; "compilerVersion"; "operations"; "inMemoryPatchAllowed"; "transport"; "workerProtocolVersion"; "contractDigest"; "psg" ]
+      [ "observation"; "project"; "manifestPath" ]
+      [ "reservation" ]
+      [ "generation"; "sourceVersion"; "artifactPath"; "artifactSha256"; "objectManifest"; "changedWitnesses"; "retainedWitnesses"; "retiredWitnesses"; "witnessVisits"; "compiledObjects"; "reusedObjects"; "retiredObjects" ]
+      [ "observation"; "project"; "manifestPath"; "closed"; "busy"; "current"; "revocationPending"; "backendError"; "formatterError"; "formatterCleanupPending"; "workerRetirementRequired"; "cleanupPending"; "cleanupError"; "statusFresh"; "statusError"; "workerAvailable"; "workerError"; "executionRequiresRevalidation" ]
+      [ "generation"; "sourceVersion"; "exitCode"; "standardOutput"; "standardError" ]
+      []
+      [ "targetRequestId"; "cancellationRequested" ]
+      [ "observation"; "closed"; "cleanupPending"; "cleanupError" ]
+      [ "restartRequired"; "inMemoryPatchAllowed" ]
+      [ "document"; "incarnation"; "revision"; "sourceSha256"; "configuration"; "formatterIdentity"; "formatted" ]
+    ]
+    for body, keys in List.zip replies expectedKeys do
+      let original = { reply body with Authority = { authority with Generation = Int64.MinValue } }
+      let encoded = original |> ComposerClientJson.wireReply |> Json.serialize
+      let projected = Json.parse encoded |> mustSucceed
+      projected |> JsonValue.keys |> List.sort
+      |> Expect.equal "public envelope fields stay stable" (List.sort [ "protocolVersion"; "requestId"; "authority"; "success"; "result"; "error" ])
+      projected |> property "result" |> JsonValue.keys |> List.sort
+      |> Expect.equal "each closed reply has the existing explicit fields" (List.sort keys)
+      projected |> property "authority" |> property "generation" |> JsonValue.tryAsInt64
+      |> Expect.equal "signed authority never passes through float" (Some Int64.MinValue)
+      projected |> property "error" |> Expect.equal "successful error envelope stays empty" (JsonValue.Object [])
+      match body with
+      | Formatted _ ->
+        encoded.Contains("18446744073709551615") |> Expect.isTrue "unsigned revision is emitted in full"
+        projected |> property "result" |> property "revision" |> JsonValue.tryAsUInt64
+        |> Expect.equal "unsigned revision survives actual parse/write" (Some UInt64.MaxValue)
+      | Built _ ->
+        projected |> property "result" |> property "witnessVisits" |> JsonValue.items |> List.head |> JsonValue.keys |> List.sort
+        |> Expect.equal "tuple projection stays compatible" [ "item1"; "item2" ]
+      | Ran _ ->
+        projected |> property "result" |> property "standardOutput"
+        |> Expect.equal "Unicode and escaped control characters roundtrip" (JsonValue.String "α\n\000")
+      | _ -> ()
+
+  testCase "MCP host bridge retains structured content and exact Fidelity JSON text" <| fun _ ->
+    let original = { reply Canceled with Authority = { authority with Generation = Int64.MaxValue }; Outcome = Result.Error { Code = RefusalCode.Busy; Message = "retry λ\n" } }
+    let projected = ComposerClientJson.wireReply original
+    let result = Bozzetto.Server.ComposerTools.toolResult projected
+    result.StructuredContent.HasValue |> Expect.isTrue "SDK structured envelope is retained"
+    (result.IsError.HasValue && result.IsError.Value) |> Expect.isTrue "refusal remains an MCP error"
+    let structured = result.StructuredContent.Value.GetRawText() |> Json.parse |> mustSucceed
+    structured |> JsonValue.prop "authority" |> Option.bind (JsonValue.prop "generation") |> Option.bind JsonValue.tryAsInt64
+    |> Expect.equal "SDK bridge retains signed maximum" (Some Int64.MaxValue)
+    match result.Content[0] with
+    | :? ModelContextProtocol.Protocol.TextContentBlock as content ->
+      content.Text |> Expect.equal "Fidelity.Data supplies exact MCP text payload" (Json.serialize projected)
+    | _ -> failtest "Expected MCP text content"
+
+  testCase "public format requests require exact integer tokens and explicit source strings" <| fun _ ->
+    let parse generation revision extra =
+      let payload = sprintf """{"generation":%s,"revision":%s,"source":"module Sample",%s"document":"buffer","incarnation":"owner"}""" generation revision extra
+      payload |> Json.parse |> mustSucceed |> ComposerClientJson.request "format"
+    match parse "-9223372036854775808" "18446744073709551615" "" with
+    | Result.Ok(Format(_, generation, buffer)) ->
+      generation |> Expect.equal "signed authority is exact" Int64.MinValue
+      buffer.Revision |> Expect.equal "unsigned revision is exact" UInt64.MaxValue
+    | other -> failtestf "Exact extrema were refused: %A" other
+    for literal in [ "1.0"; "1e0"; "9223372036854775808"; "-9223372036854775809"; "null"; "\"1\"" ] do
+      parse literal "1" "" |> Result.isError |> Expect.isTrue ("generation refuses " + literal)
+    for literal in [ "1.0"; "1e0"; "-1"; "18446744073709551616"; "null"; "\"1\"" ] do
+      parse "1" literal "" |> Result.isError |> Expect.isTrue ("revision refuses " + literal)
+    parse "1" "1" "\"source\":null," |> Result.isError |> Expect.isTrue "explicit null cannot become an empty buffer"
+    // JsonElement.TryGetProperty previously selected the final occurrence.
+    match parse "1" "1" "\"revision\":2," with
+    | Result.Ok(Format(_, _, buffer)) -> buffer.Revision |> Expect.equal "duplicate request field preserves last occurrence" 2UL
+    | other -> failtestf "Duplicate field contract changed: %A" other
+    JsonValue.Object [ "generation", JsonValue.Number 1.; "revision", JsonValue.ofUInt64 1UL; "source", JsonValue.String "" ]
+    |> ComposerClientJson.request "format" |> Result.isError |> Expect.isTrue "explicit float construction cannot grant integer authority"
+
+  testTask "public HTTP JSON retains byte depth and UTF8 bounds with Fidelity parsing" {
+    let read (bytes: byte array) declaredLength = task {
+      use stream = new MemoryStream(bytes)
+      let context = Microsoft.AspNetCore.Http.DefaultHttpContext()
+      context.Request.Body <- stream
+      declaredLength |> Option.iter (fun length -> context.Request.ContentLength <- Nullable length)
+      return! Bozzetto.Server.ComposerRoutes.readBody context
+    }
+    let maximum = 1024 * 1024
+    let exact = Encoding.UTF8.GetBytes("{}" + String(' ', maximum - 2))
+    let! accepted = read exact None
+    accepted |> Expect.equal "chunked request accepts exactly 1 MiB" (Result.Ok(JsonValue.Object []))
+    for declaredLength in [ None; Some(int64 (maximum + 1)) ] do
+      let! refused = task {
+        try
+          let! _ = read (Array.append exact [| 32uy |]) declaredLength
+          return false
+        with :? InvalidDataException -> return true
+      }
+      refused |> Expect.isTrue "both declared and actual byte counts enforce 1 MiB"
+    let! malformedUtf8 = read [| 34uy; 255uy; 34uy |] None
+    malformedUtf8 |> Result.isError |> Expect.isTrue "invalid UTF8 does not become replacement text"
+    let nested depth = String('[', depth) + "0" + String(']', depth)
+    let! depth64 = read (Encoding.UTF8.GetBytes(nested 64)) None
+    depth64 |> Result.isOk |> Expect.isTrue "existing maximum depth is accepted"
+    let! depth65 = read (Encoding.UTF8.GetBytes(nested 65)) None
+    depth65 |> Result.isError |> Expect.isTrue "deeper payload is refused without stack growth"
+    let! invalidEscape = read (Encoding.UTF8.GetBytes "\"\\uD800\\u0000\"") None
+    invalidEscape |> Result.isError |> Expect.isTrue "invalid surrogate pair is a parse refusal"
+  }
 
   testCase "all refusal codes preserve typed identity and stable explicit tags" <| fun _ ->
     refusals.Length |> Expect.equal "all closed refusals covered" (Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<RefusalCode>).Length)

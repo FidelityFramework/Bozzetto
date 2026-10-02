@@ -51,9 +51,14 @@ let private refused code response =
 let private stringArray name value =
   (field name value).EnumerateArray() |> Seq.map (fun item -> item.GetString()) |> Seq.toList
 
+// Read the public JSON through an independent consumer, as the browser does.
+let private clientJson reply =
+  use document = JsonDocument.Parse(reply |> ComposerClientJson.wireReply |> Fidelity.Data.JSON.Json.serialize)
+  document.RootElement.Clone()
+
 /// Independent read/drain loops prevent compiler logging from blocking protocol
 /// responses. Each request has its own correlation slot and bounded lifetime.
-type private Client(directory: string, name: string) =
+type private Client(directory: string, name: string, ?environment: (string * string) list) =
   let wireGate = obj ()
   let writeGate = new SemaphoreSlim(1, 1)
   let pending = ConcurrentDictionary<string, TaskCompletionSource<Bozzetto.Composer.Protocol.Reply>>()
@@ -87,6 +92,7 @@ type private Client(directory: string, name: string) =
     info.RedirectStandardOutput <- true
     info.RedirectStandardError <- true
     info.WorkingDirectory <- directory
+    for key, value in defaultArg environment [] do info.Environment[key] <- value
   let workerProcess = Process.Start info
   let record direction requestId operation =
     lock wireGate (fun () ->
@@ -154,6 +160,9 @@ type private Client(directory: string, name: string) =
 
   member _.Host = host
   member _.Epoch = epoch
+  member _.ProcessId = workerProcess.Id
+  member _.Disconnect() = socket.Shutdown SocketShutdown.Both
+  member _.WaitForExit milliseconds = workerProcess.WaitForExit(milliseconds: int)
   /// Test-only prediction used by a single-threaded self-cancellation probe.
   member _.NextRequestId = string (Volatile.Read(&sequence) + 1)
   member _.CallTyped(body: RequestBody) = call body
@@ -186,7 +195,7 @@ type private Client(directory: string, name: string) =
           Document = text "document" ""; Incarnation = text "incarnation" ""; Revision = requiredValue "revision" |> unbox<uint64>
           Source = text "source" ""; Configuration = text "configuration" "" })
       | _ -> failtestf "Operation has no binary request case: %s" operation
-    call body |> ComposerClientJson.wireReply
+    call body |> clientJson
 
   member this.Hello() =
     let response = this.Call("hello", "", [])
@@ -199,7 +208,7 @@ type private Client(directory: string, name: string) =
   interface IDisposable with
     member _.Dispose() =
       try
-        socket.Shutdown SocketShutdown.Both
+        try socket.Shutdown SocketShutdown.Both with :? SocketException -> ()
         stream.Dispose()
         if not (workerProcess.WaitForExit 5000) then
           workerProcess.Kill true
@@ -308,6 +317,64 @@ let private objects directory label accepted =
 [<Tests>]
 let tests =
   testSequenced <| testList "Composer native provider process" [
+    testCase "socket loss retires a live native tool and its child without a daemon tree kill" <| fun _ ->
+      let directory = evidenceRoot ()
+      let fixture = fixture directory
+      let path = Environment.GetEnvironmentVariable "PATH"
+      let realTool =
+        path.Split Path.PathSeparator
+        |> Array.map (fun folder -> Path.Combine(folder, "mlir-opt"))
+        |> Array.tryFind File.Exists
+        |> Option.defaultWith (fun () -> failtest "Native acceptance requires mlir-opt")
+      let tools = Path.Combine(directory, "held-tools")
+      Directory.CreateDirectory tools |> ignore
+      let wrapper = Path.Combine(tools, "mlir-opt")
+      let rootPid = Path.Combine(directory, "tool.pid")
+      let childPid = Path.Combine(directory, "tool-child.pid")
+      let quote (value: string) = "'" + value.Replace("'", "'\"'\"'") + "'"
+      File.WriteAllText(wrapper,
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exec " + quote realTool + " \"$@\"; fi\n"
+        + "sleep 120 &\nchild=$!\nprintf '%s\\n' \"$child\" > \"$BOZZETTO_TEST_TOOL_CHILD_PID\"\n"
+        + "printf '%s\\n' \"$$\" > \"$BOZZETTO_TEST_TOOL_PID\"\nwait \"$child\"\n")
+      File.SetUnixFileMode(wrapper, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+      use client = new Client(directory, "owned-native-child", environment = [
+        "PATH", tools + string Path.PathSeparator + path
+        "BOZZETTO_TEST_TOOL_PID", rootPid; "BOZZETTO_TEST_TOOL_CHILD_PID", childPid
+      ])
+      client.Hello() |> succeeded |> ignore
+      let session = openProject client fixture.Project
+      let token = reserve client session "hold actual native tool"
+      let building = Task.Run(fun () -> buildReserved client session token)
+      let mutable toolProcess: Process option = None
+      let mutable childProcess: Process option = None
+      try
+        SpinWait.SpinUntil((fun () -> File.Exists rootPid && File.Exists childPid), TimeSpan.FromSeconds 90.)
+        |> Expect.isTrue "real compiler build launched the held tool and its ordinary child"
+        let tool = Process.GetProcessById(Int32.Parse(File.ReadAllText rootPid))
+        let child = Process.GetProcessById(Int32.Parse(File.ReadAllText childPid))
+        toolProcess <- Some tool
+        childProcess <- Some child
+        tool.HasExited |> Expect.isFalse "native tool is physically live before owner retirement"
+        child.HasExited |> Expect.isFalse "tool child is physically live before owner retirement"
+        // Only close transport. Client.Dispose's rescue kill runs after these
+        // assertions, so a daemon-side kill cannot conceal a worker defect.
+        client.Disconnect()
+        client.WaitForExit 15000 |> Expect.isTrue "worker exits after its own native cleanup"
+        tool.WaitForExit 5000 |> Expect.isTrue "worker's native owner joined the tool"
+        child.WaitForExit 5000 |> Expect.isTrue "ordinary native descendant did not outlive retirement"
+        let refused =
+          try building.WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult() |> ignore; false
+          with :? EndOfStreamException -> true
+        refused |> Expect.isTrue "disconnected build cannot publish an accepted artifact"
+      finally
+        // Exact captured handles only; emergency cleanup never counts as the
+        // retirement proof above and cannot target another session's process.
+        for owned in [ toolProcess; childProcess ] |> List.choose id do
+          try
+            if not owned.HasExited then owned.Kill true
+            owned.WaitForExit 5000 |> ignore
+          finally owned.Dispose()
+
     testCase "Calque preview reserves exact base apply before build and current native run" <| fun _ ->
       let directory = evidenceRoot ()
       let fixture = fixture directory
@@ -360,7 +427,7 @@ let tests =
         match changedReply.Outcome with
         | Ok(Built artifact) -> artifact
         | other -> failtestf "Expected accepted native incremental build, got %A" other
-      let editedObjects = objects directory "formatted-edit" (changedReply |> ComposerClientJson.wireReply |> succeeded)
+      let editedObjects = objects directory "formatted-edit" (changedReply |> clientJson |> succeeded)
       let stable = "callable:IncrementalScalarRegions:stable"
       let changeable = "callable:IncrementalScalarRegions:changeable"
       editedObjects[stable] |> Expect.equal "formatted edit retains actual unchanged object path and digest" baseObjects[stable]

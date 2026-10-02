@@ -841,6 +841,18 @@ let createWorkerReadEndpoints
     proxyGetRoute "/warmup-context"
   ]
 
+/// A Composer termination failure must not skip manifest and session cleanup.
+let internal completeShutdown
+  (stopComposer: unit -> Task)
+  (gracefulShutdown: unit -> Task)
+  (reportFailure: string -> exn -> unit)
+  = task {
+  try do! stopComposer ()
+  with error -> reportFailure "Composer shutdown" error
+  try do! gracefulShutdown ()
+  with error -> reportFailure "Daemon shutdown" error
+}
+
 /// Graceful shutdown: save caches, persist manifest, stop all workers.
 let performGracefulShutdown
   (log: ILogger)
@@ -1684,7 +1696,10 @@ let run
 
   use cts = infra.Cts
   let composer = Bozzetto.ComposerIntegration.ComposerSupervisor.fromEnvironment ()
-  let stopComposer () = composer.StopAsync() :> Task
+  // Cancellation starts cleanup; the final shutdown path joins that same work
+  // and observes its failure instead of leaving a discarded faulted task.
+  let composerShutdown = lazy (composer.StopAsync() :> Task)
+  let stopComposer () = composerShutdown.Value
   use _composerShutdown = cts.Token.Register(fun () -> stopComposer () |> ignore)
 
   // Ownership rule 2 (§3.1): an externally-spawned daemon with --owner-pid
@@ -3615,9 +3630,8 @@ let run
     DaemonOwnership.unregisterSpawned (DaemonOwnership.realHomeBozzettoDir ()) Environment.ProcessId
   with ex ->
     log.LogWarning("Could not clean up daemon-info file: {Error}", ex.Message)
-  try
-    do! composer.StopAsync()
-    do! performGracefulShutdown log readSnapshot elmRuntime.GetModel sessionManager manifestOwner
-  with ex ->
-    log.LogWarning("Shutdown cleanup error: {Error}", ex.Message)
+  do!
+    completeShutdown stopComposer
+      (fun () -> performGracefulShutdown log readSnapshot elmRuntime.GetModel sessionManager manifestOwner :> Task)
+      (fun phase error -> log.LogWarning("{Phase} cleanup error: {Error}", phase, error.Message))
 }

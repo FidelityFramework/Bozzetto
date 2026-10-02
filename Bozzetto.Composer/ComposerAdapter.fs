@@ -16,14 +16,14 @@ module ComposerAdapter =
       ReusedObjects = List.toArray value.ReusedObjects
       RetiredObjects = List.toArray value.RetiredObjects }
 
-  let create project directory : IProjectBackend<Core.IncrementalBuild.Ticket> =
+  let create (tools: global.Composer.Hosting.ToolOwner) project directory : IProjectBackend<Core.IncrementalBuild.Ticket> =
     let options =
       { ProjectPath = project; OutputPath = None; ArtifactsDirectory = None
         TargetTriple = None; NativeLink = Core.Types.Pipeline.NativeLinkOptions.Empty
         KeepIntermediates = false; PruneIntermediates = false
         EmitMLIROnly = false; EmitLLVMOnly = false
         Verbose = false; ShowTiming = false; TreatWarningsAsErrors = false; Deploy = false }
-    let session = new ProjectSession(options, directory)
+    let session = new ProjectSession(options, directory, tools)
     { new IProjectBackend<Core.IncrementalBuild.Ticket> with
         member _.Reserve label = session.Reserve label
         member _.Current = session.Current |> Option.map accepted

@@ -7,6 +7,9 @@
         <GenerateProgramFile>false</GenerateProgramFile>
         <LangVersion>preview</LangVersion>
         <NoWarn>$(NoWarn);FS3511</NoWarn>
+        <!-- Keep transitive external project references in this test build's
+             configuration, matching the daemon payload under test. -->
+        <ShouldUnsetParentConfigurationAndPlatform>false</ShouldUnsetParentConfigurationAndPlatform>
     </PropertyGroup>
 
     <ItemGroup>

@@ -104,12 +104,14 @@ to the existing `origin/main` branch. The inherited `master` target is refused.
 The GitHub workflows remain upstream release infrastructure; a Forgejo push is
 not evidence that they ran.
 
-Select immutable compiler and formatter closures and the native fixture before
-shipping. These explicit paths also supply the detached gate's MSBuild references:
+Select immutable compiler and formatter closures, the Fidelity.Data project, and
+the native fixture before shipping. These explicit paths also supply the detached
+gate's MSBuild references:
 
 ```bash
 export BOZZETTO_COMPOSER_DISTRIBUTION=/absolute/path/to/reviewed/compiler/closure
 export BOZZETTO_CALQUE_DISTRIBUTION=/absolute/path/to/reviewed/formatter/closure
+export BOZZETTO_FIDELITY_DATA_PROJECT=/absolute/path/to/Fidelity.Data/src/Fidelity.Data/Fidelity.Data.fsproj
 export BOZZETTO_COMPOSER_FIXTURE=/absolute/path/to/IncrementalScalarRegions.fidproj
 scripts/ship
 ```
@@ -117,7 +119,11 @@ scripts/ship
 The release gate runs `ci composer release`, including the whole Composer tier.
 Build commands and the parallel test stage take their matching work leases;
 deferral or refusal stops the work. Closure identities are recorded with the
-receipt and rechecked before recording a pass. The current lease endpoint has
+receipt and rechecked before recording a pass. Fidelity.Data remains a project
+reference: the gate records its checkout's tracked and non-ignored source/build
+files, commit and tags, and refuses a pass if those inputs change during the run.
+The explicit project path is forwarded as `FidelityDataProject`; the development
+default remains the sibling Fidelity.Data checkout. The current lease endpoint has
 no renewal operation, so work ends before expiry and an overlong tier is reported
 as incomplete. Old receipts without the Composer tier cannot authorize a push.
 

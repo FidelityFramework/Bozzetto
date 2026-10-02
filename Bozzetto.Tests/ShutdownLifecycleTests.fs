@@ -2,6 +2,7 @@ module Bozzetto.Tests.ShutdownLifecycleTests
 
 open System
 open System.Diagnostics
+open System.IO
 open System.Threading.Tasks
 open Expecto
 open Expecto.Flip
@@ -109,6 +110,44 @@ let mkHangingSession (proc: Process) =
 [<Tests>]
 let shutdownLifecycleTests =
   testList "Shutdown lifecycle" [
+    testTask "a faulted Composer stop cannot skip or detach the remaining graceful shutdown" {
+      let failure = InvalidOperationException "Composer process remains alive"
+      let composerStop = Task.FromException failure
+      let gracefulEntered = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+      let gracefulReleased = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+      let failures = ResizeArray<string * exn>()
+      let shutdown =
+        Bozzetto.Server.DaemonMode.completeShutdown
+          (fun () -> composerStop)
+          (fun () -> gracefulEntered.TrySetResult() |> ignore; gracefulReleased.Task)
+          (fun phase error -> failures.Add(phase, error))
+      try
+        do! gracefulEntered.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+        shutdown.IsCompleted |> Expect.isFalse "manifest and session cleanup is joined despite the Composer fault"
+        failures.Count |> Expect.equal "Composer failure is reported independently" 1
+        fst failures[0] |> Expect.equal "the failed cleanup phase is identified" "Composer shutdown"
+        obj.ReferenceEquals(snd failures[0], failure) |> Expect.isTrue "the termination failure remains visible"
+        gracefulReleased.TrySetResult() |> ignore
+        do! shutdown.WaitAsync(TimeSpan.FromSeconds 5.)
+      finally
+        gracefulReleased.TrySetResult() |> ignore
+    }
+
+    testTask "synchronous Composer stop and graceful cleanup failures are both reported" {
+      let failures = ResizeArray<string * exn>()
+      let composerFailure = InvalidOperationException "Composer stop failed before returning"
+      let gracefulFailure = IOException "manifest cleanup failed"
+      do!
+        Bozzetto.Server.DaemonMode.completeShutdown
+          (fun () -> raise composerFailure)
+          (fun () -> Task.FromException gracefulFailure)
+          (fun phase error -> failures.Add(phase, error))
+      failures |> Seq.map fst |> Seq.toList
+      |> Expect.equal "both independent cleanup phases run and report their failure" [ "Composer shutdown"; "Daemon shutdown" ]
+      obj.ReferenceEquals(snd failures[0], composerFailure) |> Expect.isTrue "Composer error remains available"
+      obj.ReferenceEquals(snd failures[1], gracefulFailure) |> Expect.isTrue "graceful cleanup error remains available"
+    }
+
     testTask "stopWorker terminates a hung worker within a bounded time" {
       // Regression: HttpWorkerClient.httpProxy uses Timeout.InfiniteTimeSpan,
       // so a hung worker made stopWorker hang forever, StopAll timed out, and

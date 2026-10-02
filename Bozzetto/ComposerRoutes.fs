@@ -2,30 +2,21 @@ module Bozzetto.Server.ComposerRoutes
 
 open System
 open System.IO
-open System.Text.Json
+open Fidelity.Data.JSON
 open System.Threading.Channels
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Http
 open Bozzetto.ComposerIntegration
 
-let private field name (body: JsonElement) =
-  match body.TryGetProperty(name: string) with
-  | true, value when value.ValueKind = JsonValueKind.String -> value.GetString() |> Option.ofObj |> Option.defaultValue ""
-  | _ -> ""
+let private framingError = ComposerClientJson.framingError
 
-let private framingError code message =
-  JsonSerializer.SerializeToElement {|
-    protocolVersion = 1; requestId = ""; success = false
-    authority = {| host = ""; session = ""; provider = "clef-composer"; epoch = ""; generation = 0L |}
-    result = {| |}; error = {| code = code; message = message |} |}
-
-let private writeJson (ctx: HttpContext) status (response: JsonElement) = task {
+let private writeJson (ctx: HttpContext) status (response: JsonValue) = task {
   ctx.Response.StatusCode <- status
   ctx.Response.ContentType <- "application/json; charset=utf-8"
-  do! ctx.Response.WriteAsync(response.GetRawText(), ctx.RequestAborted)
+  do! ctx.Response.WriteAsync(Json.serialize response, ctx.RequestAborted)
 }
 
-let private readBody (ctx: HttpContext) = task {
+let internal readBody (ctx: HttpContext) = task {
   let maximum = 1024 * 1024
   if ctx.Request.ContentLength.HasValue && ctx.Request.ContentLength.Value > int64 maximum then
     raise (InvalidDataException "Composer request exceeds 1 MiB.")
@@ -38,7 +29,10 @@ let private readBody (ctx: HttpContext) = task {
     elif content.Length + int64 count > int64 maximum then
       raise (InvalidDataException "Composer request exceeds 1 MiB.")
     else content.Write(buffer, 0, count)
-  return JsonDocument.Parse(content.ToArray().AsMemory())
+  try
+    let utf8 = System.Text.UTF8Encoding(false, true)
+    return content.ToArray() |> utf8.GetString |> Json.parse
+  with :? System.Text.DecoderFallbackException as error -> return Result.Error error.Message
 }
 
 let private page = """<!doctype html>
@@ -105,22 +99,16 @@ let mapRoutes (app: WebApplication) (supervisor: ComposerSupervisor) =
 
   app.MapPost("/api/composer/{operation}", RequestDelegate(fun (ctx: HttpContext) -> task {
     try
-      use! document = readBody ctx
-      let body = document.RootElement
-      if body.ValueKind <> JsonValueKind.Object then
-        do! writeJson ctx 400 (framingError "invalid_request" "Composer request must be a JSON object.")
-      else
-        let provider =
-          match body.TryGetProperty "provider" with
-          | false, _ -> "clef-composer"
-          | _ -> field "provider" body
+      let! parsed = readBody ctx
+      match parsed with
+      | Result.Error message -> do! writeJson ctx 400 (framingError "invalid_json" message)
+      | Result.Ok body ->
         match ComposerClientJson.request (string ctx.Request.RouteValues["operation"]) body with
         | Result.Error(code, message) -> do! writeJson ctx 400 (framingError (ComposerClientJson.refusalCode code) message)
         | Result.Ok request ->
           let! response = supervisor.ExecuteAsync(request, ctx.RequestAborted)
           do! writeJson ctx 200 (ComposerClientJson.reply response)
     with
-    | :? JsonException as error -> do! writeJson ctx 400 (framingError "invalid_json" error.Message)
     | :? InvalidDataException as error -> do! writeJson ctx 413 (framingError "request_too_large" error.Message)
   })) |> ignore
 

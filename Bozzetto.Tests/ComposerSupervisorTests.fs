@@ -147,6 +147,7 @@ type private Worker(host: string, pid: int) =
                         Operation.Cancel; Operation.Close; Operation.PrepareCompilerChange |]
         InMemoryPatchAllowed = false }))
     member _.ProcessId = pid
+    member this.IsProcessAlive = this.Alive
     member this.IsAlive = this.Alive
     member _.Exited = exited.Publish
     member this.RequestAsync(body, cancellation) =
@@ -698,6 +699,69 @@ let tests =
         worker.StopThrows <- false
         worker.StopLeavesAlive <- false
         do! owner.StopAsync()
+    }
+
+    taskCase "shutdown joins monitors after a memoized termination failure and retains the live worker" <| fun () -> task {
+      let worker = Worker("memoized-stop-failure", 130)
+      let underlying = worker :> IComposerWorker
+      let failure = InvalidOperationException "owned process could not be terminated"
+      let failedStop = Task.FromException failure
+      let mutable transportAvailable = true
+      let connection =
+        { new IComposerWorker with
+            member _.Handshake = underlying.Handshake
+            member _.ProcessId = underlying.ProcessId
+            member _.IsProcessAlive = underlying.IsProcessAlive
+            member _.IsAlive = transportAvailable && underlying.IsAlive
+            member _.Exited = underlying.Exited
+            member _.RequestAsync(body, cancellation) = underlying.RequestAsync(body, cancellation)
+            member _.StopAsync() =
+              transportAvailable <- false
+              failedStop }
+      let owner = ComposerSupervisor((fun () -> Task.FromResult connection), true)
+      let readEntered = completion<unit> ()
+      let readReleased = completion<Reply> ()
+      try
+        let! session = openSession owner worker
+        worker.SetBusy(session, true)
+        let mutable reads = 0
+        worker.Intercept <- fun operation _ ->
+          if operation = Operation.Status && Interlocked.Increment(&reads) > 1 then
+            readEntered.TrySetResult() |> ignore
+            Some readReleased.Task
+          else None
+        let! status = execute owner (request Operation.Status worker session)
+        (observed status).Busy |> Expect.isTrue "busy work starts its owned status monitor"
+        do! readEntered.Task
+        let! retirement = execute owner (request Operation.PrepareCompilerChange worker "")
+        retirement |> refused RefusalCode.ProviderUnavailable
+        failedStop.IsFaulted |> Expect.isTrue "the previous retirement already settled as a fault"
+        let stopping = task {
+          try
+            do! owner.StopAsync()
+            return None
+          with error -> return Some error
+        }
+        stopping.IsCompleted |> Expect.isFalse "a failed stop cannot bypass a still-owned monitor read"
+        readReleased.TrySetResult(worker.Response(Operation.Status, session)) |> ignore
+        let! error = stopping
+        error |> Expect.isSome "shutdown reports the failed physical termination after joining"
+        obj.ReferenceEquals(error.Value, failure) |> Expect.isTrue "the original termination failure survives shutdown"
+        worker.Alive |> Expect.isTrue "settled fault is not process exit"
+        connection.IsAlive |> Expect.isFalse "failed termination leaves transport unavailable"
+        owner.WorkerPid |> Expect.equal "failed shutdown retains ownership of the live process" (Some 130)
+        let! directory = owner.SessionsAsync CancellationToken.None
+        directory.Worker |> Expect.isSome "directory retains the physical worker after transport withdrawal"
+        let terminal = snapshot session directory.Sessions
+        terminal |> assertWithdrawn
+        terminal.WorkerError.Value.Contains(failure.Message, StringComparison.Ordinal)
+        |> Expect.isTrue "failed shutdown remains observable in the session view"
+        let! opening = execute owner (request Operation.Open worker "")
+        opening |> refused RefusalCode.ProviderUnavailable
+      finally
+        readReleased.TrySetException(OperationCanceledException "test cleanup") |> ignore
+        try owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult()
+        with :? InvalidOperationException -> ()
     }
 
     taskCase "an opened session remains discoverable when its first status refresh fails" <| fun () -> task {

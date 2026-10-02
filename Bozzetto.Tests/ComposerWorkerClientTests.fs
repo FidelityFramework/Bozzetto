@@ -66,9 +66,14 @@ let runFixture socketPath =
     | Status target -> reply request (Observed(status target.Session 0))
     | _ -> failwith "Unexpected held fixture operation."
   let mutable reading = true
+  let mutable holdAfterClose = false
   while reading do
     match StreamFrames.readRequestAsync stream CancellationToken.None |> fun work -> work.GetAwaiter().GetResult() with
-    | Result.Ok None -> reading <- false
+    | Result.Ok None ->
+      // A real process that outlives socket withdrawal, for the ownership test.
+      // The parent fixture owns its exact PID and terminates it after assertions.
+      if holdAfterClose then Thread.Sleep Timeout.Infinite
+      reading <- false
     | Result.Error error -> failwithf "Fixture framing: %A" error
     | Result.Ok(Some request) ->
       match request.Body with
@@ -80,6 +85,9 @@ let runFixture socketPath =
           Operations = [|Operation.Hello; Operation.Status; Operation.Build; Operation.Run; Operation.Format; Operation.CancelRequest|]
           InMemoryPatchAllowed = false })
       | Status target when target.Session = "barrier" -> reply request (Observed(status target.Session held.Count))
+      | Status target when target.Session = "hold-after-close" ->
+        holdAfterClose <- true
+        reply request (Observed(status target.Session 0))
       | Status target when target.Session = "withdrawals" -> reply request (Observed(status target.Session withdrawn.Count))
       | Status target when target.Session = "format-requests" ->
         let retained =
@@ -305,6 +313,26 @@ let tests = testList "Composer worker socket client" [
       try use childProcess = System.Diagnostics.Process.GetProcessById pid in childProcess.HasExited
       with :? ArgumentException -> true
     exited |> Expect.isTrue "Close physically joins the child process."
+  }
+  testTask "transport withdrawal retains physical ownership until the actual child exits" {
+    let! (client: IComposerWorker) = start ignore (fun _ _ -> Task.CompletedTask)
+    let child = System.Diagnostics.Process.GetProcessById client.ProcessId
+    try
+      let! held = client.RequestAsync(request "hold-after-close", CancellationToken.None) |> bounded
+      succeeded held |> Expect.isTrue "child has acknowledged its physical hold"
+      let stopping = client.StopAsync()
+      client.IsAlive |> Expect.isFalse "transport authority is withdrawn immediately"
+      client.IsProcessAlive |> Expect.isTrue "unavailable transport still owns the live process"
+      child.HasExited |> Expect.isFalse "physical state comes from the actual child"
+      stopping.IsCompleted |> Expect.isFalse "shutdown has not mistaken withdrawal for exit"
+      child.Kill(true)
+      do! stopping.WaitAsync(TimeSpan.FromSeconds 10.)
+      client.IsProcessAlive |> Expect.isFalse "joined child no longer owns a live process"
+    finally
+      try
+        if not child.HasExited then child.Kill(true)
+        client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.).GetAwaiter().GetResult()
+      finally child.Dispose()
   }
   testTask "close retains ownership of a held cancellation callback after physical child exit" { do! closeRetainsCallback Operation.Build }
   testTask "close retains ownership of a held format cancellation callback after physical child exit" { do! closeRetainsCallback Operation.Format }

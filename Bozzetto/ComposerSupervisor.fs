@@ -136,7 +136,9 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
         | Some connection when connection.IsAlive -> return Result.Ok connection
         | _ ->
           match existing with
-          | Some connection -> do! connection.StopAsync()
+          | Some connection ->
+            do! connection.StopAsync()
+            if connection.IsProcessAlive then invalidOp "The unavailable Composer process did not exit."
           | None -> ()
           let! connection = factory ()
           let accepted = lock gate (fun () ->
@@ -178,7 +180,7 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
             return refusal request RefusalCode.ProviderRetiring reason
         }
         do! connection.StopAsync()
-        if connection.IsAlive then invalidOp "The retired Composer process did not exit."
+        if connection.IsProcessAlive then invalidOp "The retired Composer process did not exit."
         exited <- true
         lock gate (fun () -> if isOwner connection then worker <- None)
         return result
@@ -293,7 +295,7 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
 
   new(factory, configured) = ComposerSupervisor(factory, configured, fun () -> Task.CompletedTask)
   member _.Changed = changedEvent.Publish
-  member _.WorkerPid = lock gate (fun () -> worker |> Option.filter _.IsAlive |> Option.map _.ProcessId)
+  member _.WorkerPid = lock gate (fun () -> worker |> Option.filter _.IsProcessAlive |> Option.map _.ProcessId)
 
   member _.ExecuteAsync(request: RequestBody, cancellation: CancellationToken): Task<ComposerResponse> = task {
     let operation = BAREWireCodec.requestOperation request
@@ -400,10 +402,15 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
       let! _ = Task.WhenAll pending
       ()
     | _ -> ()
-    return lock gate (fun () -> { Configured = configured; Revision = revision; Worker = worker |> Option.filter _.IsAlive |> Option.map _.Handshake; Sessions = snapshots.Values |> Seq.toArray })
+    return lock gate (fun () -> { Configured = configured; Revision = revision; Worker = worker |> Option.filter _.IsProcessAlive |> Option.map _.Handshake; Sessions = snapshots.Values |> Seq.toArray })
   }
 
   member _.StopAsync() = task {
+    let failures = ResizeArray<exn>()
+    let settle (work: unit -> Task) = task {
+      try do! work ()
+      with error -> failures.Add error
+    }
     let connection, ownedRetirement = lock gate (fun () ->
       stopped <- true
       retiring <- true
@@ -414,17 +421,29 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
     do! lifecycle.WaitAsync()
     try
       match lock gate (fun () -> worker) with
-      | Some current -> do! current.StopAsync()
+      | Some current ->
+        try
+          do! current.StopAsync()
+          if current.IsProcessAlive then invalidOp "The stopped Composer process did not exit."
+          lock gate (fun () -> worker <- None)
+        with error ->
+          // A terminal stop task can still describe a live, fenced process.
+          // Keep its ownership and evidence while joining the other children.
+          failures.Add error
+          withdrawOwned current ("Daemon shutdown could not retire the Composer worker: " + error.Message)
       | None -> ()
-      let owned = lock gate (fun () -> monitors.Values |> Seq.map (fun value -> value.Task :> Task) |> Seq.toArray)
-      do! Task.WhenAll owned
-      lock gate (fun () -> worker <- None)
     finally lifecycle.Release() |> ignore
+    let owned = lock gate (fun () -> monitors.Values |> Seq.map (fun value -> value.Task :> Task) |> Seq.toArray)
+    do! settle (fun () -> Task.WhenAll owned)
     // A concurrent escalation may have queued for the same lifecycle fence.
     // Joining it while holding that fence would deadlock shutdown.
     match ownedRetirement with
-    | Some owned -> do! owned
+    | Some owned -> do! settle (fun () -> owned)
     | None -> ()
+    match failures.Count with
+    | 0 -> ()
+    | 1 -> return raise failures[0]
+    | _ -> return raise (AggregateException("Composer shutdown failed.", failures))
   }
 
 module ComposerSupervisor =

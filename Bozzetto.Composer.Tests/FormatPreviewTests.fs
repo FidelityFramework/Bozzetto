@@ -478,13 +478,18 @@ let tests = testList "Composer Calque preview" [
   }
   testCase "public JSON preserves full uint64 revisions and rejects absent immutable buffers" <| fun _ ->
     let snapshot = buffer UInt64.MaxValue "module Sample\nlet value=1\n"
-    let body = ComposerClientJson.value {|
-      host = "host"; session = "session"; epoch = "epoch"; generation = 17L
-      document = snapshot.Document; incarnation = snapshot.Incarnation; revision = snapshot.Revision
-      source = snapshot.Source; configuration = snapshot.Configuration
-    |}
+    let body = Fidelity.Data.JSON.JsonValue.Object [
+      "host", Fidelity.Data.JSON.JsonValue.String "host"; "session", Fidelity.Data.JSON.JsonValue.String "session"
+      "epoch", Fidelity.Data.JSON.JsonValue.String "epoch"; "generation", Fidelity.Data.JSON.JsonValue.ofInt64 17L
+      "document", Fidelity.Data.JSON.JsonValue.String snapshot.Document
+      "incarnation", Fidelity.Data.JSON.JsonValue.String snapshot.Incarnation
+      "revision", Fidelity.Data.JSON.JsonValue.ofUInt64 snapshot.Revision
+      "source", Fidelity.Data.JSON.JsonValue.String snapshot.Source
+      "configuration", Fidelity.Data.JSON.JsonValue.String snapshot.Configuration
+    ]
+    let body = body |> Fidelity.Data.JSON.Json.serialize |> Fidelity.Data.JSON.Json.parseOrFail
     let address = { Worker = { Host = "host"; Epoch = "epoch"; Provider = ProviderIdentity.ClefComposer }; Session = "session" }
     ComposerClientJson.request "format" body |> Expect.equal "exact buffer snapshot reaches the binary contract" (Ok(Format(address, 17L, snapshot)))
-    ComposerClientJson.request "format" (ComposerClientJson.value {| generation = 17L; revision = 1UL |})
+    ComposerClientJson.request "format" (Fidelity.Data.JSON.Json.parseOrFail """{"generation":17,"revision":1}""")
     |> Result.isError |> Expect.isTrue "missing source is refused at the external adapter"
 ]

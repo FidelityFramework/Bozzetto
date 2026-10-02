@@ -54,6 +54,7 @@ fi
 # sibling directories are not the developer's compiler/formatter checkouts.
 composer_distribution=${BOZZETTO_COMPOSER_DISTRIBUTION:-}
 calque_distribution=${BOZZETTO_CALQUE_DISTRIBUTION:-}
+fidelity_data_project=${BOZZETTO_FIDELITY_DATA_PROJECT:-}
 fixture=${BOZZETTO_COMPOSER_FIXTURE:-}
 for directory in "$composer_distribution" "$calque_distribution"; do
   if [[ "$directory" != /* || ! -d "$directory" ]]; then
@@ -70,7 +71,15 @@ require_input() {
 }
 require_input "$composer_distribution/Composer.dll" BOZZETTO_COMPOSER_DISTRIBUTION
 require_input "$calque_distribution/Calque.Incremental.dll" BOZZETTO_CALQUE_DISTRIBUTION
+require_input "$fidelity_data_project" BOZZETTO_FIDELITY_DATA_PROJECT
 require_input "$fixture" BOZZETTO_COMPOSER_FIXTURE
+# This is a normal project reference, so its source/build inputs must remain
+# identifiable outside the detached Bozzetto checkout as well.
+fidelity_data_project=$(realpath -- "$fidelity_data_project") || exit 1
+fidelity_data_root=$(git -C "$(dirname "$fidelity_data_project")" rev-parse --show-toplevel) || {
+  echo "local-gate: BOZZETTO_FIDELITY_DATA_PROJECT must belong to a Git checkout whose source inputs can be recorded." >&2
+  exit 1
+}
 for assembly in BAREWire Fidelity.PSG Fidelity.FSharp.Incremental Fidelity.FSharp.Incremental.Hosting; do
   require_input "$composer_distribution/$assembly.dll" "Composer closure: $assembly.dll"
 done
@@ -79,16 +88,26 @@ for assembly in Calque.Core Calque.Syntax Fidelity.FSharp.Incremental Fidelity.F
 done
 export ComposerDistribution="$composer_distribution"
 export CalqueDistribution="$calque_distribution"
+export FidelityDataProject="$fidelity_data_project"
 
 # Record all selected closure bytes. A previous pass against different inputs,
 # or an input changed while the gate ran, cannot certify this release.
 input_identity() {
   {
-    printf '%s\n' "$gate_kind" "$composer_distribution" "$calque_distribution" "$fixture"
+    printf '%s\n' "$gate_kind" "$composer_distribution" "$calque_distribution" "$fidelity_data_project" "$fidelity_data_root" "$fixture"
     for directory in "$composer_distribution" "$calque_distribution"; do
       (cd "$directory" && rg --files --hidden --no-ignore -0 \
         | LC_ALL=C sort -z | xargs -0 -r sha256sum --) || return 1
     done
+    # Include dirty/new source and imported build files, not generated bin/obj.
+    # MinVer also consumes repository identity and tags when building the library.
+    (
+      cd "$fidelity_data_root" || exit 1
+      git rev-parse HEAD || exit 1
+      git for-each-ref --format='%(objectname) %(refname)' refs/tags || exit 1
+      git ls-files --cached --others --exclude-standard -z \
+        | LC_ALL=C sort -z | xargs -0 -r sha256sum --
+    ) || return 1
     sha256sum -- "$fixture" || return 1
     (cd "$(dirname "$fixture")" && rg --files --hidden --no-ignore -0 -g '*.clef' -g '*.fidproj' \
       | LC_ALL=C sort -z | xargs -0 -r sha256sum --) || return 1
@@ -96,7 +115,7 @@ input_identity() {
 }
 expected_inputs=$(input_identity) || exit 1
 if [ "${1:-}" = "--check-inputs" ]; then
-  echo "local-gate: compiler, formatter and native fixture inputs are explicit"
+  echo "local-gate: compiler, formatter, Fidelity.Data project and native fixture inputs are explicit"
   exit 0
 fi
 

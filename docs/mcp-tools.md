@@ -80,11 +80,11 @@ ids or reuse them after worker replacement.
 | `composer_list_sessions` | No arguments. Lists shared Composer sessions, worker identity and cleanup failures. |
 | `composer_reserve_edit` | `label`: edit description. Withdraws old run authority and returns a reservation; only a successful response authorizes the source write. |
 | `composer_build` | `reservation`: opaque token from the successful reservation. Builds that revision and preserves compiler diagnostics and proof refusals. |
-| `composer_session_status` | No additional arguments. Reports accepted metadata, pending revocation and cleanup errors. Reading status grants no execution authority. |
+| `composer_session_status` | No additional arguments. Reports accepted metadata, pending revocation, `formatterError`, `formatterCleanupPending`, `workerRetirementRequired`, and session cleanup errors. See the formatter lifecycle contract below. Reading status grants no execution authority. |
 | `composer_format_preview` | `generation`, `document` (opaque buffer label), `incarnation` (GUID), `revision` (uint64), `source` (immutable text), `configuration` (`clef-two-space-lf-v1`). Returns formatted text, exact base `sourceSha256` and captured formatter deployment identity. Performs no file reads or writes and preserves accepted artifact authority. |
 | `composer_run_current` | `arguments`: string array. Runs the current accepted artifact through Composer's revalidation gates. |
 | `composer_cancel` | No additional arguments. Withdraws authority and cancels outstanding work; physical withdrawal can remain pending or fail. |
-| `composer_close_session` | No additional arguments. Closes the session and begins cleanup; inspect `cleanupPending` and `cleanupError`. |
+| `composer_close_session` | No additional arguments. Closes the session and begins cleanup; inspect `cleanupPending` and `cleanupError`, then use status to observe formatter cleanup and any worker-retirement requirement. |
 | `composer_retire_worker` | `host`, `epoch`. Retires every session and stops the worker before compiler replacement. Coordinate with other owners; cleanup errors remain explicit refusals, and replacement requires observed process exit and a new epoch. |
 
 The `composer://sessions` MCP resource exposes the same session directory as
@@ -97,10 +97,51 @@ a newer reservation, revision, incarnation or worker epoch. To apply a completed
 preview, obtain a new successful `composer_reserve_edit`, compare the current
 source with the preview's exact immutable base (and its SHA256), then save the
 formatted text and build with that reservation. The completed preview grants no
-write authority. Providers retain at most 32 document incarnations per session;
-capacity refuses rather than evicting their revision evidence. The formatter
-identity records deployment file paths and SHA256 captured when its owner was
-created; mutable development files do not prove the loaded assembly bytes.
+write authority. The formatter identity records deployment file paths and SHA256
+captured when its owner was created; mutable development files do not prove the
+loaded assembly bytes.
+
+Formatter status separates diagnostics from compiler errors:
+
+| Field | Meaning |
+|:---|:---|
+| `formatterError` | Nullable formatter diagnostic text, bounded to 16 KiB of UTF-8 including separators and `[formatter evidence truncated]` when older evidence is dropped or an oversized entry is clipped. Retains the newest evidence across reserve, cancel and close; it is separate from `backendError`. |
+| `formatterCleanupPending` | Physical formatter cleanup remains owned and has not finished. Authority may already have been withdrawn. |
+| `workerRetirementRequired` | Nullable reason for retiring the whole compiler worker. A formatter cleanup reaching 30 seconds sets this reason permanently for that worker epoch, even if cleanup later finishes. |
+
+The daemon monitors status every 100 ms while formatter cleanup is pending,
+including cleanup started by an outstanding request. No further client request
+is needed to observe the deadline. When retirement is required, the supervisor
+withdraws authority from every session in that worker and stops the worker.
+Replacement requires observed process exit and a fresh worker epoch; the
+deadline itself never counts as completed cleanup. After replacement, open a
+fresh session and obtain new handles and reservations. If retirement fails,
+the worker remains unavailable and clients must inspect the reported error
+instead of assuming that retrying an old operation can restore authority.
+
+Each session retains at most 32 live or closing formatter handles and remembers
+at most 8192 admitted document incarnations. Use a stable `document` label for a
+buffer and a fresh `incarnation` when reopening it. A new incarnation of the same
+label retires its previous incarnation, whose cleanup remains owned until it
+finishes. Retired identities stay rejected as `superseded`.
+
+- With spare handle capacity, the replacement and unrelated previews can start
+  while the previous incarnation closes.
+- At 32 handles, replacing an existing label initiates its old incarnation's
+  cleanup and returns `busy`. Any other new document also receives `busy` while
+  capacity is full and a close is pending. Existing live handles can still
+  serve previews. Retry a refused preview after cleanup releases capacity,
+  using the current generation and buffer snapshot; the refused request does
+  not schedule a later preview automatically.
+- A 33rd distinct label with no cleanup pending returns `session_capacity`.
+  No idle document is evicted to make room, so retrying alone cannot free a slot;
+  open a fresh session. The 8192-incarnation limit also returns
+  `session_capacity` and requires a fresh session.
+
+`busy` can also report temporary demand or provider-control queue pressure.
+It is distinct from `session_capacity`, which requires a new session. There is
+currently no per-buffer close tool: closing an editor view alone does not retire
+state shared by other consumers.
 
 Active compiler patching is unsupported. A newer compiler needs a validated,
 explicit distribution and its own provider acceptance; changing a compiler

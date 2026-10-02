@@ -2,6 +2,13 @@
     <Import Project="../build/ComposerContract.props" />
 
     <PropertyGroup>
+        <FidelityDataProject Condition="'$(FidelityDataProject)' == ''">$(MSBuildThisFileDirectory)../../Fidelity.Data/src/Fidelity.Data/Fidelity.Data.fsproj</FidelityDataProject>
+        <!-- Referenced projects outside the solution follow this consumer's
+             configuration rather than reverting to their default Debug build. -->
+        <ShouldUnsetParentConfigurationAndPlatform>false</ShouldUnsetParentConfigurationAndPlatform>
+    </PropertyGroup>
+
+    <PropertyGroup>
         <OutputType>Exe</OutputType>
         <PackAsTool>true</PackAsTool>
         <IsPackable>true</IsPackable>
@@ -127,6 +134,7 @@
 
     <ItemGroup>
         <ProjectReference Include="../Bozzetto.Composer.Protocol/Bozzetto.Composer.Protocol.fsproj" />
+        <ProjectReference Include="$(FidelityDataProject)" />
         <ProjectReference Include="..\Bozzetto.Core\Bozzetto.Core.fsproj" />
     </ItemGroup>
 

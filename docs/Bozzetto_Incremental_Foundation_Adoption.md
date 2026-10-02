@@ -97,11 +97,14 @@ Independent work can still run within the configured concurrency limit.
 `WorkCancellation` carries this request explicitly. The host runs owned workflows
 without ambient F# cancellation so that cleanup and its failures cannot be
 detached by a canceled observer. Evaluators must cooperate with the carried
-request and include their children and cleanup in completion. Currently Calque's
-full-document parser/printer does not inspect that signal mid-computation: its
-adapter withdraws obsolete output immediately and owns the parse/print until it
-returns. This establishes safe supersession, not prompt interruption inside every
-compiler or formatter phase.
+request and include their children and cleanup in completion. Calque checks this
+signal during parser token delivery, Oak/trivia/dialect walks, printer events and
+output/conditional merging. Withdrawing the last demand stops evaluation at the
+next checkpoint; a peer demand keeps shared work alive. Every started conditional
+branch still joins, and a sibling fault remains a fault. Single lexer tokens and
+intervening atomic helpers bound how promptly a checkpoint can run. Formatting
+still operates on full documents; these checkpoints do not establish incremental
+syntax reuse or prompt interruption throughout the compiler.
 
 Bozzetto's formatter adapter accepts `RequestPreview` under the provider's
 generation lock and returns a demand with a cold `Async` owner workflow and an
@@ -110,6 +113,28 @@ ordering. A new compiler generation withdraws registered formatting demands;
 request cancellation withdraws only that request. Accepted demands and their
 release controls remain owned through session close. Each observing consumer
 gets its own demand handle while Calque shares the underlying snapshot work.
+
+Formatter diagnostics remain separate from compiler failures in `formatterError`.
+Its rendered UTF-8 text is bounded to 16 KiB including separators and the
+truncation marker, retaining the newest evidence across reserve, cancel and close.
+`formatterCleanupPending` records owned physical cleanup. A cleanup reaching 30
+seconds sets a sticky `workerRetirementRequired` reason for that worker epoch,
+even if it subsequently joins. The daemon's existing status monitor checks every
+100 ms while cleanup is pending and escalates through the supervisor without
+further client traffic. The supervisor withdraws every session's authority and
+retires the whole compiler worker. A deadline never acknowledges physical drain;
+replacement requires observed process exit and a new worker epoch.
+
+The formatter retains at most 32 live or closing document handles per session.
+A new incarnation of a stable document label retires its predecessor. Spare
+capacity allows previews to proceed while that predecessor closes; at capacity,
+the replacement and other new documents receive `busy` until a physical close
+frees a handle. Existing live handles can continue serving previews. With no
+close pending, a 33rd distinct label receives `session_capacity`, as does the
+8192 admitted-incarnation limit; these require a fresh session. There is no idle
+eviction or implicit per-buffer release. Retired identities remain rejected.
+The [MCP contract](mcp-tools.md#clefcomposer-workflow) describes client retry and
+status handling.
 
 There is a specific migration hazard in Bozzetto's current
 [backend contract](../Bozzetto.Composer/ProviderContracts.fs): `RunCurrentAsync`
@@ -143,10 +168,12 @@ This follows the distinction in Composer's
 [Prospero demand contract](../../Composer/docs/PRDs/R-06-IncrementalIntegration.md#31-demand-and-prospero-by-contrast).
 The shared library orders declared dependencies and owns individual mailbox
 workflows; it does not implement the cross-project Prospero supervision,
-placement or notification hierarchy. A parent must retain child cleanup without
-serializing unrelated child results behind it. Session close seals new work and
-joins those children, retaining failures as evidence. Shared document release on
-editor close still needs an explicit ownership contract.
+placement or notification hierarchy. A parent must retain child cleanup while
+allowing unrelated child results to proceed within the available capacity;
+closing children still count against resource limits until they join. Session
+close seals new work and joins those children, retaining failures as evidence.
+Shared document release on editor close still needs an explicit ownership
+contract.
 
 HelloWayland already supplies native execution evidence for this separation.
 Its CPU renderer uses Fidelity.Platform's
@@ -363,14 +390,17 @@ must separately establish the adapter, compiler authority and real cleanup. A
 future native host must replay the portable cases and satisfy the same lifecycle
 requirements. The standalone
 [functional assessment](../../Fidelity.FSharp.Incremental/docs/Functional_Async_Auditor_Assessment_2026-10-01.md)
-records the completed library checks and any findings. The real Bozzetto/Composer
-integration audit remains pending.
+records the completed library checks and any findings. The
+[October 2 integration assessment](Incremental_Pipeline_Auditor_Assessment_2026-10-02.md)
+and [follow-up review](Incremental_Pipeline_Auditor_Followup_2026-10-02.md)
+record the completed, revision-scoped Bozzetto/Composer audits. Later changes
+still require their own acceptance evidence in the cross-project checkpoint.
 
-The user relayed two concrete Clef-agent findings during this audit: Composer and
+The user relayed two concrete Clef-agent findings during the initial audit: Composer and
 editor paths use separate locks around shared compiler state, and a Bozzetto
-cancellation path can retire a result before cleanup joins. The agent is working
-on shared whole-project checking and joined lifetimes. These are reported
-integration blockers, not independently reproduced library defects. Acceptance
+cancellation path can retire a result before cleanup joins. The shared
+whole-project checking and joined-lifetime repairs are recorded in the
+cross-project checkpoint; these historical findings are not new library defects. Acceptance
 must show one compiler-owned serialization boundary and separate observations
 for immediate authority withdrawal versus completed physical cleanup. Preserve
 the existing proof and artifact gates throughout those repairs.

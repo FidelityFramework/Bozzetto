@@ -43,7 +43,8 @@ let main argv =
           try source.Cancel(); true
           with :? ObjectDisposedException -> false
         | false, _ -> false
-      use worker = new Worker<Core.IncrementalBuild.Ticket>(cacheRoot (), ComposerAdapter.create, describeCompiler, cancelRequest = cancelRequest)
+      let tools = global.Composer.Hosting.ManagedTools.create()
+      use worker = new Worker<Core.IncrementalBuild.Ticket>(cacheRoot (), ComposerAdapter.create tools, describeCompiler, cancelRequest = cancelRequest)
       use writes = new SemaphoreSlim(1, 1)
       let running = Collections.Concurrent.ConcurrentDictionary<string, Task>()
       let mutable cleanupFailed = false
@@ -98,16 +99,27 @@ let main argv =
                   completion.SetResult()
               })) |> ignore
       finally
+        // Seal actual native launches before retiring compiler sessions. Native
+        // tools that do not observe compiler cancellation still have this owner.
+        tools.Seal()
+        let nativeRetirement = Async.StartAsTask(tools.RetireAsync(), cancellationToken = CancellationToken.None)
         let retirement = Task.Run(Func<Task>(fun () -> task {
           let! result = worker.RetireAsync()
           match result with
           | Result.Ok () -> ()
           | Result.Error error -> cleanupFailed <- true; eprintfn "%s: %s" error.Code error.Message
         }))
-        let pending = Task.WhenAll(Array.append [| retirement |] (running.Values |> Seq.toArray))
-        if not (pending.Wait(TimeSpan.FromSeconds 5.)) then
-          eprintfn "Provider socket shutdown exceeded five seconds; terminating its owned process tree."
-          Diagnostics.Process.GetCurrentProcess().Kill(true)
+        let pending = Task.WhenAll(Array.append [| retirement; nativeRetirement :> Task |] (running.Values |> Seq.toArray))
+        let joined = pending.Wait(TimeSpan.FromSeconds 5.)
+        // RetireAsync completes only after native process exit and redirected
+        // I/O join, including on failure. A deadline cannot authorize orphaning
+        // those children when the daemon is no longer present to supervise us.
+        match nativeRetirement.GetAwaiter().GetResult() with
+        | Result.Ok () -> ()
+        | Result.Error error -> cleanupFailed <- true; eprintfn "Native tool cleanup failed: %s" error
+        if not joined then
+          eprintfn "Provider socket shutdown exceeded five seconds; native children joined, terminating the managed worker."
+          Environment.Exit 1
       if cleanupFailed then 1 else 0
     with error ->
       eprintfn "Composer worker refused: %s" error.Message
