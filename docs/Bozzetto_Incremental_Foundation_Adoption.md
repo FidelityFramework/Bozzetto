@@ -132,6 +132,22 @@ evidence and cleanup failures must remain observable.
 
 ## Functional async authoring and native execution
 
+Demand and supervision answer different questions. Editors attach demand;
+closing a view withdraws that view's interest. The provider session owns document
+formatting lifetimes, and document hosts own their attempts. Retirement must
+preserve outstanding consumers, carry cancellation to owned work and join its
+cleanup before reclaiming state. A buffer-close notification has no implicit
+priority over another consumer's demand.
+
+This follows the distinction in Composer's
+[Prospero demand contract](../../Composer/docs/PRDs/R-06-IncrementalIntegration.md#31-demand-and-prospero-by-contrast).
+The shared library orders declared dependencies and owns individual mailbox
+workflows; it does not implement the cross-project Prospero supervision,
+placement or notification hierarchy. A parent must retain child cleanup without
+serializing unrelated child results behind it. Session close seals new work and
+joins those children, retaining failures as evidence. Shared document release on
+editor close still needs an explicit ownership contract.
+
 Prefer a quiet API of small module operations, typed data and pure F# `Async`
 workflows during interim .NET hosting. Necessary CLR interoperability belongs at
 explicit execution boundaries. Do not use boxed payloads, `:> obj`, unchecked
@@ -188,6 +204,13 @@ explicit async preference and the reviewed ownership contracts.
   host's `maxConcurrency` bounds evaluator lifetimes; it does not establish bounds
   for queued demand, event/diagnostic buffers, payload storage or identity
   tombstones. Drain observations and define retention/epoch-recycling policies.
+  Preview.6 retains terminal attempts, released demand IDs, input stamps and
+  definition stamps for its epoch. Terminal/demand history grows with attempts
+  and releases; stamp maps grow with distinct input/work identities, not each
+  replacement of the same key. These maps have no automatic library-wide bound.
+  Bozzetto's finite scope/demand/control limits are consumer policy. Other owners
+  must bound epoch lifetime or define safe retirement/replacement after physical
+  joins; a bounded mailbox queue alone does not bound retained history.
 - **Payload and recovery ownership:** specify who stores immutable values behind
   tokens, when those values can be released, and which observations survive a
   disconnect or process restart. Idle is a momentary observation, not a global

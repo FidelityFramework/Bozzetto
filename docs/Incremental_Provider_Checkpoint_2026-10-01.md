@@ -12,6 +12,16 @@ explicitly; earlier source anchors do not establish installed runtime behavior.
 The current [binary PSG transport handback](PSG_Transport_Integration_Auditor_Checkpoint_2026-10-01.md)
 records the still-unintegrated service boundary and the coordinated repair gates.
 
+**October 2 audit correction:** Forgejo `main` contains unreleased source.
+The audited `3d9ff09a` integration head reached `main` at version `0.6.834`
+without the release bump or complete local-gate receipt; the auditor assessment
+then reached `main` as `7d7fc308`. The checkout had no installed pre-push hook.
+Source publication is confirmed, but it does not establish a release or replace
+the installed daemon. `scripts/install-hooks` now provides explicit checkout
+setup; follow-up recovery commits use `integration/audit-followup-20261002`.
+The next release still requires `scripts/ship` and its complete gate. See the
+[independent assessment](Incremental_Pipeline_Auditor_Assessment_2026-10-02.md).
+
 ## October 2 resident formatting and editor preview
 
 Bozzetto `dcbe57a7`, pushed to `integration/calque-incremental-20261002`, removes
@@ -122,10 +132,10 @@ at the owner's request. License and upstream attribution remain; the former
 local Git metadata is archived outside the repository under the evidence root's
 `publication/calque-upstream-metadata/fantomas.git`. Its canonical remote is
 `ssh://hhh@forge.spkez.dev:2222/FidelityFramework/Calque.git`.
-Bozzetto source is being published from base `da1f3604` on
-`integration/calque-incremental-20261002`, preserving reviewable source while
-the required full `main` release pipeline remains separate. The branch is now
-`92e54246`, including the worker metadata correction and shipping/lease repairs.
+Bozzetto source was initially published from base `da1f3604` on
+`integration/calque-incremental-20261002`. The earlier `92e54246` checkpoint
+included worker metadata and shipping/lease repairs. Its successors through
+`3d9ff09a` later reached `main` without the release gate, as corrected above.
 Fresh builds and the default suite passed after the machine reboot; the Composer
 tier and installed replay are tracked below. Unchanged Alex and Incremental heads are
 `4e1f859d` and `d476aea2`.
@@ -246,8 +256,8 @@ Retrieval configuration has been published in speakez-lab
 adds Calque and Bozzetto within the unchanged 32 MiB budget; 97 checks passed.
 The live existing fifteen-source corpus already observes the published PSG,
 Clef and Composer heads with exact-commit citations. Seventeen-source activation
-remains pending Bozzetto `main` publication and the reviewed passworded operator
-step recorded in speakez-lab's current operations. The staged offline proof uses
+still requires the reviewed passworded operator step and a refreshed rollout
+check against the now-published Bozzetto source. The staged offline proof uses
 the prior Bozzetto `da1f3604` head, not this integration branch.
 
 The next callable `Result` observation plan is external under

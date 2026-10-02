@@ -32,6 +32,7 @@ unfiltered build/test gates below.
 ```bash
 git clone https://forge.spkez.dev/FidelityFramework/Bozzetto.git
 cd Bozzetto
+scripts/install-hooks
 dotnet fsi build.fsx
 ```
 
@@ -91,6 +92,11 @@ The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are 
 - `Bozzetto.Tests/` — the test project shows how every module is exercised
 
 ## Publishing the Forgejo checkout
+
+Run `scripts/install-hooks` after cloning. It installs the repository's pre-push
+checks without replacing an existing hook or custom hooks directory. Plain Git
+does not install tracked hooks automatically. Use integration branches for
+recovery checkpoints while release validation is pending.
 
 Commit the reviewed changes before running `scripts/ship`. It bumps the version
 once, gates that exact commit in a detached checkout, and pushes its pinned SHA
