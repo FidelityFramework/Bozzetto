@@ -42,7 +42,8 @@ reading and makes no sink connection.
 
 The compiler hands over the immutable capture after binding the checked source
 identity and before proof dispatch or native tools. The host uses a cold `Async`
-operation with a ten-second observation deadline. Diagnostic refusal is reported
+operation with a ten-second transport and acknowledgement deadline. Encoding
+precedes that deadline. Diagnostic refusal is reported
 to worker stderr and does not change compiler authority. Project close still
 seals and cancels native tools immediately; any admitted diagnostic handoff joins
 as owned work. A lost acknowledgment leaves persistence unconfirmed, even if the

@@ -238,18 +238,17 @@ module ManagedHost =
         let timer = Stopwatch.StartNew()
         let mutable lastCapture = 0L
         let mutable running = true
-        let mutable announced = false
+        // Keep the listening endpoint alive across requests. Recreating it
+        // can discard a producer already queued while the prior peer closes.
+        use pipe = new NamedPipeServerStream(options.PipeName, PipeDirection.InOut, 1,
+                                             PipeTransmissionMode.Byte,
+                                             PipeOptions.Asynchronous ||| PipeOptions.CurrentUserOnly)
+        Console.Out.WriteLine("DIAGNOSTIC_SINK_READY pipe=" + options.PipeName)
+        Console.Out.Flush()
         while running do
           let remaining = int64 options.IdleSeconds * 1000L - (timer.ElapsedMilliseconds - lastCapture)
           if remaining <= 0L then running <- false
           else
-            use pipe = new NamedPipeServerStream(options.PipeName, PipeDirection.InOut, 1,
-                                                 PipeTransmissionMode.Byte,
-                                                 PipeOptions.Asynchronous ||| PipeOptions.CurrentUserOnly)
-            if not announced then
-              Console.Out.WriteLine("DIAGNOSTIC_SINK_READY pipe=" + options.PipeName)
-              Console.Out.Flush()
-              announced <- true
             use idle = new CancellationTokenSource(TimeSpan.FromMilliseconds(float remaining))
             let! connected = async {
               try
@@ -260,6 +259,7 @@ module ManagedHost =
             if not connected then running <- false
             else
               let! persisted = serve options pipe
+              pipe.Disconnect()
               if persisted then lastCapture <- timer.ElapsedMilliseconds
         return Result.Ok ()
       with error ->

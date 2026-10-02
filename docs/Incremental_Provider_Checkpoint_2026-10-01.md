@@ -32,11 +32,31 @@ with a Fidelity.Data descriptor. Worker or Bozzetto retirement does not own this
 independently started process. Full semantic/proof payloads remain outside the
 explicit `occurrence-structure-v1` stage.
 
-The source, Composer, PSG and sink builds pass. Full suite and native process
-acceptance are in progress under
-`~/.codex/work/bozzetto-resumption-2026-10-02/validation/diagnostic-sink/`.
-This source recovery checkpoint is not a release or deployment. The installed
-daemon and worker remain unchanged.
+Source checkpoints are pushed: Bozzetto `8f5afc2f`, Composer `0f5a9af`,
+Clef `28f1c93`, and PSG `f153c75`. Validation receipts are under
+`~/.codex/work/bozzetto-resumption-2026-10-02/validation/diagnostic-sink/`:
+
+- PSG: **308/308 passed**, and regenerated named integrity code is byte-identical.
+- Composer: **397/398 passed**; the existing occurrence-218 callable-representation
+  failure remains. Both diagnostic capture ownership regressions passed.
+- Clef: **2,214/2,313 passed**. The 99 failing test identities exactly match the
+  previous full-suite receipt (`clef-baseline-comparison.log`: zero new failures).
+- Native provider: **48/48, Trusted**, including failure after accepted capture,
+  worker retirement, retained evidence, and replay from a surviving sink.
+- Bozzetto default: **9,005 ran, 9,001 passed, 1 failed, 3 ignored**. The new
+  partial-frame disconnect regression exposed listener recreation dropping an
+  already queued producer. The fix retains one listener across requests;
+  its full-suite rerun is pending alongside the JSON migration.
+
+The first default-suite binaries also contain the initial explicit daemon-file
+and settings JSON migration. These are intermediate integration results, not a
+final source-pinned release gate. Candidate processes alone were used; the
+installed daemon and worker remain unchanged.
+
+The subsequent JSON migration removes unused Jupyter/NetMQ, deprecated TUI JSON
+streaming, an unused friction JSON store codec, and the inherited public-NuGet
+update poller. Active schemas move to Fidelity.Data. Composer and Clef migration
+builds pass; their migrated full suites and the final Bozzetto gates are pending.
 
 ## October 2 hosted-boundary repair checkpoint
 
