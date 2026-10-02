@@ -600,25 +600,29 @@ let fileCacheTests =
 
 let perfMeasurementTests =
   testList "parseFileStructure perf" [
-    test "first parse vs cache hit latency" {
+    test "cache hit reuses the parsed structure and immutable cache" {
       let code = Fixtures.namespaceMultiModule
       let sw = System.Diagnostics.Stopwatch()
 
       // Cold parse
       sw.Start()
-      let _, cache = parseFsCached "Perf.fs" code Map.empty
+      let parsed, cache = parseFsCached "Perf.fs" code Map.empty
       sw.Stop()
       let coldMs = sw.Elapsed.TotalMilliseconds
 
       // Cache hit
       sw.Restart()
-      let _, _ = parseFsCached "Perf.fs" code cache
+      let cached, unchangedCache = parseFsCached "Perf.fs" code cache
       sw.Stop()
       let hotMs = sw.Elapsed.TotalMilliseconds
 
-      // Cache hit should be significantly faster
+      // Parallel tests, scheduling and GC can invert individual wall-clock
+      // samples. Keep timings as diagnostics; acceptance requires actual reuse.
       printfn "Cold parse: %.2fms, Cache hit: %.2fms, Speedup: %.1fx" coldMs hotMs (coldMs / hotMs)
-      (hotMs, coldMs) |> Expect.isLessThan "cache hit faster than cold parse"
+      obj.ReferenceEquals(parsed, cached)
+      |> Expect.isTrue "cache hit returns the exact parsed structure"
+      obj.ReferenceEquals(cache, unchangedCache)
+      |> Expect.isTrue "cache hit preserves the immutable cache instance"
     }
 
     test "parse scales linearly with file size" {
