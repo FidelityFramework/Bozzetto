@@ -83,7 +83,7 @@ let private afterEval (session: IFsiSession) (discovery: DiscoveryPolicy) : Afte
   | AgentUnavailable reason -> failtestf "the agent was unavailable: %s" reason
 
 /// Component contract for the retained test-only in-process implementation.
-/// Production F# sessions moved to SageFS; this does not establish a Bozzetto
+/// Embedded production FSI hosting is retired; this does not establish a Bozzetto
 /// F# product capability. `notYet` keeps any unsupported component cases explicit.
 let contract (label: string) (create: unit -> Async<IFsiSession>) (notYet: Capability list) : Test =
   let caseAsync (capability: Capability) (name: string) (body: IFsiSession -> Async<unit>) =

@@ -2,7 +2,7 @@
 
 October 1, 2026. Fidelity.FSharp.Incremental is the selected shared foundation for
 incremental dependency bookkeeping and explicitly started work during Fidelity's
-interim .NET hosting. Bozzetto is an intended consumer alongside Clef, CCS, Baker
+interim .NET hosting. Bozzetto and Calque are consumers alongside Clef, CCS, Baker
 and Composer's coordinated compilation pipeline. This is first-horizon engineering
 work toward self-hosting, independent of the exploratory cross-target horizons.
 
@@ -48,12 +48,24 @@ and its observable behavior while replacing the host machinery.
 | Baker | Track the dependency and lifetime conditions of semantic/proof work. | Complete premises, settlement, proof validity and permission to reuse evidence. |
 | Composer | Coordinate demanded stages, invalidation, reuse candidates and owned execution lifetimes. | Pipeline ordering, proof discharge, artifact correspondence, accepted publication and execution admission. |
 | Bozzetto | Coordinate workspace demand from clients, revision-bound observations, queued operations and supervised worker lifetimes. | Client/lease admission, routing, compiler epoch fences, external process ownership and faithful presentation of compiler evidence. |
+| Calque | Coordinate demanded formatting over immutable document incarnations, source revisions and configuration. | Source/trivia/layout preservation, supported-syntax refusals and exact preview identity. Formatting never grants source mutation, proof, artifact or execution authority. |
 
 Using one library does not mean sharing a mutable graph across process boundaries.
 Each owner must identify the state it owns and exchange versioned observations or
 requests with its peers. Bozzetto must not rebuild the compiler's semantic graph
 from paths, diagnostics or emitted artifacts. Application runtime scheduling keeps
 the ownership described in the [component contracts](Bozzetto_Fidelity_Component_Contracts.md).
+
+The October 2 integration adds Calque's explicitly started .NET-hosted document
+formatter and `composer_format_preview` on the existing provider protocol. A
+preview identifies its exact input and policy; applying it requires the client's
+current-buffer check and a successful Composer reservation before source mutation.
+Calque and Composer select the reviewed preview.6 foundation. Deployed formatter
+and compiler closures must contain identical foundation assembly bytes. Their
+owners remain separate, and Calque still parses and formats whole documents;
+incremental syntax/trivia reuse and editor latency budgets remain open work.
+Executed gates and deployment status belong to the
+[cross-project checkpoint](Incremental_Provider_Checkpoint_2026-10-01.md).
 
 An `Offer` means that the library's declared dependency and lifecycle conditions
 hold. It does not authorize proof reuse, PSG publication, native artifact

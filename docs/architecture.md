@@ -26,7 +26,7 @@ bozzetto-vscode/     — VS Code extension (Fable F#→JS)
 docs/              — GitHub Pages site
 ```
 
-The Neovim plugin lives in a separate repo: [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim).
+The separate upstream Neovim plugin, [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim), is not part of this repository; it is a client of the inherited F# session contracts, whose embedded production hosting the [Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md) retires in this checkout.
 
 ## Client Pipeline
 

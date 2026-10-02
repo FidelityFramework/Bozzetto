@@ -175,6 +175,7 @@ let private gatingDomain : Map<string, ToolGate> =
     "composer_reserve_edit", ToolGate.AlwaysAvailable
     "composer_build", ToolGate.AlwaysAvailable
     "composer_session_status", ToolGate.AlwaysAvailable
+    "composer_format_preview", ToolGate.AlwaysAvailable
     "composer_run_current", ToolGate.AlwaysAvailable
     "composer_cancel", ToolGate.AlwaysAvailable
     "composer_close_session", ToolGate.AlwaysAvailable

@@ -1,0 +1,32 @@
+<Project>
+  <!-- Explicit source selection, or an already built pinned formatter closure. -->
+  <PropertyGroup>
+    <CalqueProject Condition="'$(CalqueProject)' == ''">$(MSBuildThisFileDirectory)../../Calque/src/Calque.Incremental/Calque.Incremental.fsproj</CalqueProject>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(CalqueDistribution)' == ''">
+    <ProjectReference Include="$(CalqueProject)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(CalqueDistribution)' != ''">
+    <Reference Include="$(CalqueDistribution)/Calque.Incremental.dll" />
+    <Reference Include="$(CalqueDistribution)/Calque.Core.dll" />
+    <Reference Include="$(CalqueDistribution)/Calque.Syntax.dll" />
+  </ItemGroup>
+  <Target Name="RequireSelectedCalqueContract" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(CalqueDistribution)' == '' And (!$([System.IO.Path]::IsPathFullyQualified('$(CalqueProject)')) Or !Exists('$(CalqueProject)'))"
+      Text="CalqueProject must select the explicit Calque.Incremental project, or supply an absolute CalqueDistribution." />
+    <Error Condition="'$(CalqueDistribution)' != '' And (!$([System.IO.Path]::IsPathFullyQualified('$(CalqueDistribution)')) Or !Exists('$(CalqueDistribution)/Calque.Incremental.dll') Or !Exists('$(CalqueDistribution)/Calque.Core.dll') Or !Exists('$(CalqueDistribution)/Calque.Syntax.dll') Or !Exists('$(CalqueDistribution)/Fidelity.FSharp.Incremental.dll') Or !Exists('$(CalqueDistribution)/Fidelity.FSharp.Incremental.Hosting.dll'))"
+      Text="CalqueDistribution must select an absolute built formatter closure including Calque.Incremental, Core, Syntax and the pinned incremental assemblies." />
+    <Error Condition="'$(CalqueDistribution)' != '' And '$(ComposerDistribution)' == ''"
+      Text="A deployed CalqueDistribution requires the selected ComposerDistribution so their pinned incremental assembly bytes can be compared." />
+  </Target>
+  <Target Name="RequireMatchingCalqueFoundation" BeforeTargets="ResolveReferences" DependsOnTargets="RequireSelectedCalqueContract" Condition="'$(CalqueDistribution)' != '' And '$(ComposerDistribution)' != ''">
+    <GetFileHash Files="$(CalqueDistribution)/Fidelity.FSharp.Incremental.dll;$(CalqueDistribution)/Fidelity.FSharp.Incremental.Hosting.dll" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_CalqueFoundationHash" />
+    </GetFileHash>
+    <GetFileHash Files="$(ComposerDistribution)/Fidelity.FSharp.Incremental.dll;$(ComposerDistribution)/Fidelity.FSharp.Incremental.Hosting.dll" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_ComposerFoundationHash" />
+    </GetFileHash>
+    <Error Condition="'@(_CalqueFoundationHash->'%(FileHash)', ';')' != '@(_ComposerFoundationHash->'%(FileHash)', ';')'"
+      Text="The selected Calque and Composer distributions contain different incremental assembly bytes. Build and deploy one reviewed pinned closure." />
+  </Target>
+</Project>

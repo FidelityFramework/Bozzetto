@@ -55,7 +55,7 @@ type ActorArgs = {
   OnEvent: Features.Events.BozzettoEvent -> unit
   Workflow: WorkflowTypes.SessionWorkflow
   /// The retained in-process engine supports component tests. Isolated requests
-  /// are refused before loading; production F# work belongs to separate SageFS.
+  /// are refused before loading; embedded production F# hosting is retired.
   FsiKind: SessionKinds.FsiSessionKind
 }
 

@@ -40,6 +40,10 @@ let private requests = [
   Reserve(session, "before write"); Build(session, "opaque-reservation")
   Status session; RequestBody.Run(session, [| ""; "a\000b"; "λ" |]); Cancel session
   CancelRequest(worker, "full-target-id"); Close session; PrepareCompilerChange worker
+  Format(session, 17L, {
+    Document = "buffer://α"; Incarnation = "00000000-0000-0000-0000-000000000001"
+    Revision = UInt64.MaxValue; Source = "module Sample\nlet value=1\n"; Configuration = "clef-two-space-lf-v1"
+  })
 ]
 let private replies = [
   HelloAccepted {
@@ -48,7 +52,7 @@ let private replies = [
     Psg = { Schema = Fidelity.PSG.Revision.Schema; AssemblySha256 = "psg-hash"
             FormatVersion = Fidelity.PSG.Binary.FormatVersion; ContractFingerprint = Fidelity.PSG.Binary.ContractFingerprint }
     Operations = [| Operation.Hello; Operation.Open; Operation.Reserve; Operation.Build; Operation.Status
-                    Operation.Run; Operation.Cancel; Operation.CancelRequest; Operation.Close; Operation.PrepareCompilerChange |]
+                    Operation.Run; Operation.Cancel; Operation.CancelRequest; Operation.Close; Operation.PrepareCompilerChange; Operation.Format |]
     InMemoryPatchAllowed = false
   }
   Opened { Observation = 1UL; Project = "/project.fidproj"; ManifestPath = "/current.json" }
@@ -57,6 +61,10 @@ let private replies = [
   Canceled; RequestCanceled { TargetRequestId = "old/exact/id"; CancellationRequested = false }
   Closed { Observation = 20UL; Closed = true; CleanupPending = true; CleanupError = Some "held" }
   CompilerRetired { RestartRequired = true; InMemoryPatchAllowed = false }
+  Formatted {
+    Document = "buffer://α"; Incarnation = "00000000-0000-0000-0000-000000000001"; Revision = UInt64.MaxValue
+    SourceSha256 = "base-digest"; Configuration = "clef-two-space-lf-v1"; FormatterIdentity = "pinned-closure"; Formatted = "module Sample\n\nlet value = 1\n"
+  }
 ]
 let private refusals = [
   RefusalCode.InvalidRequest; RefusalCode.ProtocolVersion; RefusalCode.EncodingMismatch; RefusalCode.ContractMismatch

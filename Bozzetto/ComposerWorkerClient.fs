@@ -27,13 +27,13 @@ type IComposerWorker =
 
 module ComposerWire =
   let session = function
-    | Reserve(target, _) | Build(target, _) | Run(target, _)
+    | Reserve(target, _) | Build(target, _) | Run(target, _) | Format(target, _, _)
     | Status target | Cancel target | Close target -> target.Session
     | _ -> ""
   let target = function
     | Hello _ -> None
     | Open(target, _) | CancelRequest(target, _) | PrepareCompilerChange target -> Some target
-    | Reserve(target, _) | Build(target, _) | Run(target, _)
+    | Reserve(target, _) | Build(target, _) | Run(target, _) | Format(target, _, _)
     | Status target | Cancel target | Close target -> Some target.Worker
   let workerAddress (authority: Authority): WorkerAddress =
     { Host = authority.Host; Epoch = authority.Epoch; Provider = authority.Provider }

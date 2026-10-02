@@ -8,7 +8,7 @@
 //
 //   dotnet fsi ci-pipeline.fsx             # build, format, unit + integration
 //   dotnet fsi ci-pipeline.fsx -- ci       # + the mutation-score gate
-//   dotnet fsi ci-pipeline.fsx -- ci release # + VSIX + nupkg + release manifest
+//   dotnet fsi ci-pipeline.fsx -- ci composer release # + Composer and release bundle
 //
 // The design goal (the whole reason this replaces a page of YAML): build the
 // solution ONCE in Release, then run every downstream check --no-build off that
@@ -63,6 +63,67 @@ let vscodeDir = Path.Combine(rootDir, "bozzetto-vscode")
 // Every downstream check runs against this ONE Release build (see "build" stage).
 let testBinDir = "Bozzetto.Tests/bin/Release/net10.0"
 let testDll = $"{testBinDir}/Bozzetto.Tests.dll"
+let leaseRunner = Path.Combine(rootDir, "scripts/work-lease")
+let leasedCommand kind command = $"\"{leaseRunner}\" run {kind} {command}"
+
+type WorkLeaseScope = {
+  Deadline: DateTimeOffset
+  Cancellation: Threading.CancellationToken
+}
+
+// Pipeline stages are serial. The whole parallel tier stage shares one test
+// lease; its children do not acquire nested leases or release their parent.
+let mutable activeWorkLease: WorkLeaseScope option = None
+
+let leaseControl arguments =
+  use process = new Diagnostics.Process()
+  process.StartInfo.FileName <- leaseRunner
+  arguments |> List.iter process.StartInfo.ArgumentList.Add
+  process.StartInfo.RedirectStandardOutput <- true
+  process.StartInfo.RedirectStandardError <- true
+  process.Start() |> ignore
+  let stdout = process.StandardOutput.ReadToEndAsync()
+  let stderr = process.StandardError.ReadToEndAsync()
+  process.WaitForExit()
+  process.ExitCode, stdout.GetAwaiter().GetResult(), stderr.GetAwaiter().GetResult()
+
+let withTestSuiteLease (work: unit -> Async<Result<unit, string>>) =
+  async {
+    let! callerCancellation = Async.CancellationToken
+    let code, response, diagnostic =
+      leaseControl [ "acquire"; "test_suite_run"; $"gate-tiers-{Environment.ProcessId}" ]
+    if code <> 0 then
+      return Result.Error $"Test-suite admission stopped the stage: {diagnostic.Trim()}"
+    else
+      use document = JsonDocument.Parse response
+      let id = document.RootElement.GetProperty("leaseId").GetString()
+      let expires = document.RootElement.GetProperty("expiresAt").GetDateTimeOffset()
+      use ownedCancellation = new Threading.CancellationTokenSource()
+      let previous = activeWorkLease
+      activeWorkLease <- Some { Deadline = expires.AddMinutes(-1.); Cancellation = ownedCancellation.Token }
+      use registration = callerCancellation.Register(fun () -> ownedCancellation.Cancel())
+      // Independent observation retains the stage until every owned process
+      // has joined, including caller cancellation. Release follows that join.
+      let owned = Async.StartAsTask(work(), cancellationToken = Threading.CancellationToken.None)
+      let mutable releaseFailure = None
+      let! result =
+        async {
+          try
+            return! owned |> Async.AwaitTask
+          finally
+            ownedCancellation.Cancel()
+            try owned.GetAwaiter().GetResult() |> ignore with _ -> ()
+            activeWorkLease <- previous
+            let releaseCode, _, releaseDiagnostic = leaseControl [ "release"; id ]
+            if releaseCode <> 0 then
+              let message = $"Owned test-suite lease release failed: {releaseDiagnostic.Trim()}"
+              eprintfn "%s" message
+              releaseFailure <- Some message
+        }
+      match releaseFailure with
+      | Some message -> return Result.Error message
+      | None -> return result
+  }
 
 // ---- release helpers (faithful F# translations of the old pwsh steps) --------
 
@@ -253,34 +314,51 @@ let killedExitCode = 124
 let execToLog (timeout: TimeSpan) (workingDir: string) (env: (string * string) list) (log: string) (argv: string list) =
   async {
     let! ct = Async.CancellationToken
-    let psi = Diagnostics.ProcessStartInfo(List.head argv)
-    List.tail argv |> List.iter psi.ArgumentList.Add
-    psi.WorkingDirectory <- workingDir
-    psi.RedirectStandardOutput <- true
-    psi.RedirectStandardError <- true
-    for (k, v) in env do psi.Environment[k] <- v
-    use writer = new StreamWriter(log, false)
-    let gate = obj ()
-    let write (line: string) = if not (isNull line) then lock gate (fun () -> writer.WriteLine line)
-    use p = new Diagnostics.Process(StartInfo = psi)
-    p.OutputDataReceived.Add(fun e -> write e.Data)
-    p.ErrorDataReceived.Add(fun e -> write e.Data)
-    p.Start() |> ignore
-    p.BeginOutputReadLine()
-    p.BeginErrorReadLine()
-    let killTree () = try p.Kill(entireProcessTree = true) with _ -> ()
-    use _ = ct.Register(fun () -> killTree ())
-    let exited = p.WaitForExitAsync()
-    let! finished = Threading.Tasks.Task.WhenAny(exited, Threading.Tasks.Task.Delay timeout) |> Async.AwaitTask
-    match obj.ReferenceEquals(finished, exited) with
-    | true ->
-      p.WaitForExit() // flush the async readers
-      return p.ExitCode
-    | false ->
-      killTree ()
-      p.WaitForExit()
-      write (sprintf "KILLED: no exit after %.0fs. Timed out, not failed; see the log above for where it stopped." timeout.TotalSeconds)
+    let scope = activeWorkLease
+    let timeout =
+      match scope with
+      | Some lease -> min timeout (lease.Deadline - DateTimeOffset.UtcNow)
+      | None -> timeout
+    if timeout <= TimeSpan.Zero || (scope |> Option.exists (fun lease -> lease.Cancellation.IsCancellationRequested)) then
+      File.WriteAllText(log, "KILLED: the owning work lease has no admitted time remaining.\n")
       return killedExitCode
+    else
+      let psi = Diagnostics.ProcessStartInfo(List.head argv)
+      List.tail argv |> List.iter psi.ArgumentList.Add
+      psi.WorkingDirectory <- workingDir
+      psi.RedirectStandardOutput <- true
+      psi.RedirectStandardError <- true
+      for (k, v) in env do psi.Environment[k] <- v
+      use writer = new StreamWriter(log, false)
+      let gate = obj ()
+      let write (line: string) = if not (isNull line) then lock gate (fun () -> writer.WriteLine line)
+      use p = new Diagnostics.Process(StartInfo = psi)
+      p.OutputDataReceived.Add(fun e -> write e.Data)
+      p.ErrorDataReceived.Add(fun e -> write e.Data)
+      p.Start() |> ignore
+      p.BeginOutputReadLine()
+      p.BeginErrorReadLine()
+      let killTree () = try p.Kill(entireProcessTree = true) with _ -> ()
+      use _ = ct.Register(fun () -> killTree ())
+      use _ =
+        match scope with
+        | Some lease -> lease.Cancellation.Register(fun () -> killTree ())
+        | None -> Unchecked.defaultof<Threading.CancellationTokenRegistration>
+      try
+        let exited = p.WaitForExitAsync()
+        let! finished = Threading.Tasks.Task.WhenAny(exited, Threading.Tasks.Task.Delay timeout) |> Async.AwaitTask
+        match obj.ReferenceEquals(finished, exited) with
+        | true ->
+          p.WaitForExit() // flush the async readers
+          return p.ExitCode
+        | false ->
+          killTree ()
+          p.WaitForExit()
+          write (sprintf "KILLED: no exit after %.0fs. Timed out, not failed; see the log above for where it stopped." timeout.TotalSeconds)
+          return killedExitCode
+      finally
+        if not p.HasExited then killTree ()
+        p.WaitForExit()
   }
 
 let private exitOf (argv: string list) =
@@ -290,8 +368,11 @@ let private exitOf (argv: string list) =
     psi.RedirectStandardOutput <- true
     psi.RedirectStandardError <- true
     use p = Diagnostics.Process.Start psi
-    p.WaitForExit()
-    p.ExitCode
+    if p.WaitForExit(5000) then p.ExitCode
+    else
+      p.Kill(entireProcessTree = true)
+      p.WaitForExit()
+      killedExitCode
   with _ -> -1
 
 /// CopyOnWrite only when BOTH a reflink clone and a rootless mount namespace
@@ -418,7 +499,10 @@ let runTiers (tiers: TierPlan.Tier list) =
           results.Add r
         return List.ofSeq results
       }
-    let! measured = List.init slots worker |> Async.Parallel
+    // Catch each worker independently and join all of them before returning
+    // a failure. Async.Parallel must not abandon a sibling's owned process.
+    let! outcomes = List.init slots worker |> List.map Async.Catch |> Async.Parallel
+    let measured = outcomes |> Array.choose (function Choice1Of2 value -> Some value | Choice2Of2 _ -> None)
     // Merge ledgers (per-tier files: separate processes never share a writer).
     for t in tiers do
       let ledger = Path.Combine(tierWork, TierPlan.fileNameOf t.Name + ".jsonl")
@@ -437,6 +521,9 @@ let runTiers (tiers: TierPlan.Tier list) =
       Directory.CreateDirectory(Path.GetDirectoryName durationsFile) |> ignore
       File.WriteAllText(durationsFile, JsonSerializer.Serialize updated)
     with _ -> ()
+    match outcomes |> Array.tryPick (function Choice2Of2 error -> Some error | Choice1Of2 _ -> None) with
+    | Some error -> return raise error
+    | None -> return ()
   }
 
 type TrustLine =
@@ -532,7 +619,7 @@ pipeline "bozzetto" {
     // Build the whole solution ONCE, in Release. Every downstream stage runs
     // --no-build against this exact output — the single build that used to be
     // repeated in build/integration-host/extensions/release-artifacts.
-    run "dotnet build -c Release"
+    run (leasedCommand "full_build" "dotnet build -c Release")
   }
 
   stage "build composer provider" {
@@ -548,12 +635,12 @@ pipeline "bozzetto" {
           return Error "composer requires BOZZETTO_COMPOSER_FIXTURE pointing to IncrementalScalarRegions.fidproj"
         else
           Environment.SetEnvironmentVariable("BOZZETTO_COMPOSER_WORKER", Path.Combine(rootDir, "Bozzetto.Composer/bin/Release/net10.0/Bozzetto.Composer.dll"))
-          return! ctx.RunCommand $"dotnet build Bozzetto.Composer/Bozzetto.Composer.fsproj -c Release -p:ComposerDistribution=\"{distribution}\""
+          return! ctx.RunCommand (leasedCommand "full_build" $"dotnet build Bozzetto.Composer/Bozzetto.Composer.fsproj -c Release -p:ComposerDistribution=\"{distribution}\"")
       })
   }
 
   stage "format" {
-    run "dotnet format --verify-no-changes --verbosity minimal"
+    run (leasedCommand "full_build" "dotnet format --verify-no-changes --verbosity minimal")
   }
 
   stage "build samples for integration suites" {
@@ -566,17 +653,17 @@ pipeline "bozzetto" {
     // McpAppRunOutcomeTests started sessioning on ConsoleTicker without one.
     // `Architecture — every sample an integration suite sessions on is built
     // by CI` now fails the fast local suite instead of waiting for CI.
-    run "dotnet build samples/demos/Bozzetto.Samples.WebappDatastar/Bozzetto.Samples.WebappDatastar.fsproj -c Release --nologo"
-    run "dotnet build samples/from-csharp/Bozzetto.Samples.FromCSharp/Bozzetto.Samples.FromCSharp.fsproj -c Release --nologo"
-    run "dotnet build samples/demos/Bozzetto.Samples.ConsoleTicker/Bozzetto.Samples.ConsoleTicker.fsproj -c Release --nologo"
+    run (leasedCommand "full_build" "dotnet build samples/demos/Bozzetto.Samples.WebappDatastar/Bozzetto.Samples.WebappDatastar.fsproj -c Release --nologo")
+    run (leasedCommand "full_build" "dotnet build samples/from-csharp/Bozzetto.Samples.FromCSharp/Bozzetto.Samples.FromCSharp.fsproj -c Release --nologo")
+    run (leasedCommand "full_build" "dotnet build samples/demos/Bozzetto.Samples.ConsoleTicker/Bozzetto.Samples.ConsoleTicker.fsproj -c Release --nologo")
   }
 
   stage "vscode extension compile" {
     // Build the extension for client contracts and the VSIX package step.
     workingDir vscodeDir
-    run "dotnet tool restore"
-    run "npm ci --include=dev"
-    run "npm run compile"
+    run (leasedCommand "full_build" "dotnet tool restore")
+    run (leasedCommand "full_build" "npm ci --include=dev")
+    run (leasedCommand "full_build" "npm run compile")
   }
 
   stage "vscode client contract tests" {
@@ -590,13 +677,13 @@ pipeline "bozzetto" {
     // Integration.hostList applies on the .NET side.
     workingDir vscodeDir
     timeoutForStep 300
-    run "npm run test:golden"
+    run (leasedCommand "test_suite_run" "npm run test:golden")
     run (fun ctx ->
       async {
         let fsxFiles =
           Directory.GetFiles(Path.Combine(vscodeDir, "tests"), "*.fsx")
           |> Array.sort
-        return! runSteps ctx.RunCommand [ for f in fsxFiles -> $"dotnet fsi \"{f}\"" ]
+        return! runSteps ctx.RunCommand [ for f in fsxFiles -> leasedCommand "test_suite_run" $"dotnet fsi \"{f}\"" ]
       })
   }
 
@@ -614,8 +701,8 @@ pipeline "bozzetto" {
     //   `ci`:     the mutation-score gate and every real-browser journey —
     //             CI-gated so the fast local loop never fetches a browser.
     timeoutForStep 5400
-    run (fun ctx ->
-      async {
+    run (fun _ ->
+      withTestSuiteLease (fun () -> async {
         let ci = fsi.CommandLineArgs |> Array.contains "ci"
         // The host tier is sharded: its suites are sequenced WITHIN a process
         // (shared in-process state), not across processes, so each shard is its
@@ -639,7 +726,11 @@ pipeline "bozzetto" {
           match ci with
           | false -> async { return Ok() }
           | true ->
-            ctx.RunCommand $"{testBinDir}/.playwright/node/linux-x64/node {testBinDir}/.playwright/package/cli.js install chromium"
+            async {
+              let! code = execToLog (TimeSpan.FromMinutes 5.) rootDir [] (Path.Combine(tierWork, "chromium-install.log"))
+                [ $"{testBinDir}/.playwright/node/linux-x64/node"; $"{testBinDir}/.playwright/package/cli.js"; "install"; "chromium" ]
+              return if code = 0 then Result.Ok() else Result.Error $"Chromium install exited {code}"
+            }
         let runnable =
           match ci, chromium with
           | false, _ -> always
@@ -655,7 +746,7 @@ pipeline "bozzetto" {
           else []
         do! runTiers (runnable @ composerTiers)
         return Ok()
-      })
+      }))
   }
 
   stage "trust report" {
@@ -698,7 +789,7 @@ pipeline "bozzetto" {
         if Directory.Exists releaseDir then Directory.Delete(releaseDir, true)
         Directory.CreateDirectory releaseDir |> ignore
         let vsixOut = Path.Combine(releaseDir, $"bozzetto-vscode-{pkgJsonVersion ()}.vsix")
-        return! ctx.RunCommand $"npx @vscode/vsce package -o \"{vsixOut}\""
+        return! ctx.RunCommand (leasedCommand "full_build" $"npx @vscode/vsce package -o \"{vsixOut}\"")
       })
   }
 
@@ -713,7 +804,7 @@ pipeline "bozzetto" {
         Directory.CreateDirectory releaseDir |> ignore
         return Ok()
       })
-    run "dotnet pack Bozzetto -c Release -o release"
+    run (leasedCommand "full_build" "dotnet pack Bozzetto -c Release -o release")
     run (fun _ -> async { verifyToolInstallable (); return Ok() })
     run (fun _ -> async { writeReleaseManifest (); return Ok() })
   }
@@ -725,7 +816,7 @@ pipeline "bozzetto" {
     // Linux, cross-platform (no pwsh). Installs to a throwaway --tool-path so it
     // never touches a developer's global tools, then runs `--version`. Runs
     // after "pack release bundle", so it is gated on "release" (present on a
-    // master push). This preserves the packaging-regression guard
+    // main release gate). This preserves the packaging-regression guard
     // (uninstallable / unlaunchable tool) that verifyToolInstallable's
     // nupkg-structure check alone cannot catch.
     //
@@ -748,7 +839,7 @@ pipeline "bozzetto" {
             let log = Path.Combine(workDir, "smoke.log")
             let! installExit =
               execToLog (TimeSpan.FromMinutes 10.0) workDir [] log
-                [ "dotnet"; "tool"; "install"; "Bozzetto"; "--tool-path"; toolPath
+                [ leaseRunner; "run"; "full_build"; "dotnet"; "tool"; "install"; "Bozzetto"; "--tool-path"; toolPath
                   "--version"; pkgJsonVersion ()
                   "--add-source"; releaseDir; "--no-cache" ]
             match installExit with
@@ -760,7 +851,7 @@ pipeline "bozzetto" {
               // semantics on a clean runner are not pinned, and a smoke stage
               // must never be the flaky one.
               let exe = Path.Combine(toolPath, "boz")
-              let! versionExit = execToLog (TimeSpan.FromMinutes 2.0) workDir [] log [ exe; "--version" ]
+              let! versionExit = execToLog (TimeSpan.FromMinutes 2.0) workDir [] log [ leaseRunner; "run"; "full_build"; exe; "--version" ]
               match versionExit with
               | 0 ->
                 printfn "OK: Bozzetto installs and runs under .NET SDK %s (%s build)" sdkVersion tfm

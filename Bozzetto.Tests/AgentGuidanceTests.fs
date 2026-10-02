@@ -1,9 +1,7 @@
 module Bozzetto.Tests.AgentGuidanceTests
 
-/// What Bozzetto tells agents on connect (the MCP ServerInstructions) and the
-/// back_to_the_repl / bozzetto_loop prompts. The rules are pinned as data, one
-/// rule per assertion, so rewording a sentence doesn't break a snapshot but
-/// dropping a rule does.
+/// The connected client and compatibility prompts must teach the current
+/// provider workflow without sending agents back to retired FSI hosting.
 
 open System
 open System.Reflection
@@ -18,6 +16,19 @@ let private contains (needle: string) (text: string) =
 let private sentences (text: string) =
   text.Split([| '.'; '\n' |], StringSplitOptions.RemoveEmptyEntries) |> List.ofArray
 
+let private guidanceSurfaces () =
+  [ "server instructions", serverInstructions
+    "back_to_the_repl", BozzettoPrompts.BackToTheRepl()
+    "bozzetto_loop", BozzettoPrompts.BozzettoLoop() ]
+
+let private expectOrdered label (needles: string list) (text: string) =
+  needles
+  |> List.fold (fun start needle ->
+    let index = text.IndexOf(needle, start, StringComparison.OrdinalIgnoreCase)
+    (index, start) |> Expect.isGreaterThanOrEqual (sprintf "%s must name %s in workflow order" label needle)
+    index + needle.Length) 0
+  |> ignore
+
 let private promptMethods =
   typeof<BozzettoPrompts>.GetMethods(BindingFlags.Public ||| BindingFlags.Static)
   |> Array.choose (fun m ->
@@ -29,33 +40,51 @@ let private promptMethods =
 [<Tests>]
 let serverInstructionsTests = testList "MCP server instructions" [
 
-  testCase "WHY — they state the REPL loop, so an agent knows the loop from the first connection" <| fun _ ->
-    [ "send_fsharp_code"; "create_project_session"; "create_solution_session"; "create_bare_session"
-      "get_daemon_status"; "get_session_status"; "hard_reset_fsi_session"; "rebuild=true"; "final gate"
-      "acquire_full_build_lease"; "acquire_test_suite_lease"; "release_work_lease" ]
-    |> List.filter (fun needle -> not (contains needle serverInstructions))
-    |> Expect.isEmpty "the loop's tools and the final gate should all be named"
+  testCase "Composer guidance reserves the explicit project before writes, builds that reservation, then runs accepted work" <| fun _ ->
+    for label, text in guidanceSurfaces () do
+      text |> expectOrdered label [ "composer_open_project"; ".fidproj"; "composer_reserve_edit"; "composer_build"; "composer_run_current" ]
+      [ "before source writes"; "only on success"; "with that reservation"; "accepted build"; "execute only" ]
+      |> List.filter (fun needle -> not (contains needle text))
+      |> Expect.isEmpty (sprintf "%s must state reservation and execution admission" label)
 
-  testCase "WHY — retired tool names never reappear in the always-on guidance" <| fun _ ->
-    [ "get_fsi_status"; "get_startup_info"; "create_session" ]
-    |> List.filter (fun needle -> contains needle serverInstructions)
-    |> Expect.isEmpty "retired tools must not be advertised to a new connection"
+  testCase "FSharp implementation guidance requires leased build and unfiltered trusted tests in every prompt" <| fun _ ->
+    for label, text in guidanceSurfaces () do
+      text |> expectOrdered label [ "RED:"; "GREEN:"; "acquire_full_build_lease"; "dotnet build"; "release_work_lease"; "acquire_test_suite_lease"; "Bozzetto.Tests.dll --summary"; "verdict=Trusted"; "release_work_lease" ]
+      [ "grant"; "unfiltered"; "lease_id=<granted leaseId>"; "including failure" ]
+      |> List.filter (fun needle -> not (contains needle text))
+      |> Expect.isEmpty (sprintf "%s must state lease admission, trust and cleanup" label)
+
+  testCase "retired FSI provider calls cannot be advertised by connected guidance or compatibility prompts" <| fun _ ->
+    for label, text in guidanceSurfaces () do
+      [ "get_fsi_status"; "get_startup_info"; "create_session"; "send_fsharp_code"; "check_fsharp_code"
+        "create_project_session"; "create_solution_session"; "create_bare_session"; "hard_reset_fsi_session"
+        "reset_fsi_session"; "get_session_status"; "cancel_eval"; "targeted_verify"; "Resume from the REPL"; "separate SageFS" ]
+      |> List.filter (fun needle -> contains needle text)
+      |> Expect.isEmpty (sprintf "%s must not prescribe a retired execution provider" label)
 
   testCase "WHY — every loop step is in them, so the instructions and the prompts can't drift apart" <| fun _ ->
     loopSteps
     |> List.filter (fun step -> not (serverInstructions.Contains step))
     |> Expect.isEmpty "each step of the loop should appear"
 
-  testCase "WHY — a worktree is called out as its own session boundary" <| fun _ ->
-    serverInstructions |> contains "worktree" |> Expect.isTrue "the worktree rule should be there"
+  testCase "provider identity and checkout routing remain explicit in every guidance surface" <| fun _ ->
+    for label, text in guidanceSurfaces () do
+      [ "get_daemon_status"; "identity"; "version"; "composer_list_sessions"; "list_sessions"; "working directory"
+        "worktree"; "host/session/epoch"; "source revision"; "composer://sessions"; "/composer"; "composer_retire_worker" ]
+      |> List.filter (fun needle -> not (contains needle text))
+      |> Expect.isEmpty (sprintf "%s must retain provider and checkout authority" label)
 
-  testCase "WHY — the gotchas are there: earlier error, Result.Ok shadowing, #r, filtered runs" <| fun _ ->
-    [ "earlier error"; "Result.Ok"; "#r"; "filtered test run" ]
+  testCase "FSharp and acceptance gotchas remain useful without an FSI session" <| fun _ ->
+    [ "Result.Ok"; "Result.Error"; "filtered test run" ]
     |> List.filter (fun needle -> not (contains needle serverInstructions))
     |> Expect.isEmpty "each gotcha should be named"
 
-  testCase "WHY — REPL friction gets reported instead of silently worked around" <| fun _ ->
-    serverInstructions |> contains "don't fall back silently" |> Expect.isTrue "the report-friction rule should be there"
+  testCase "BUSY leases are retried without unaccounted work and actual friction is reported" <| fun _ ->
+    for label, text in guidanceSurfaces () do
+      [ "wait/refused"; "BUSY"; "wait the named time"; "retry the identical request"; "never bypass"
+        "another daemon"; "tool, input and exact error"; "don't fall back silently" ]
+      |> List.filter (fun needle -> not (contains needle text))
+      |> Expect.isEmpty (sprintf "%s must distinguish admission delay from provider failure" label)
 
   testCase "WHY — they never tell the agent to stop, restart or reinstall the user's daemon on its own" <| fun _ ->
     serverInstructions
@@ -95,9 +124,21 @@ let promptTests = testList "MCP prompts" [
     let prompt = McpServerPrompt.Create(promptMethods[BackToTheReplPromptName], (null: obj))
     prompt.ProtocolPrompt.Name |> Expect.equal "the protocol name is what the slash command uses" BackToTheReplPromptName
 
-  testCase "WHY — back_to_the_repl says the agent left, asks where, restates the loop and says resume" <| fun _ ->
+  testCase "the compatibility prompt title and description advertise the current working loop" <| fun _ ->
+    let method = promptMethods[BackToTheReplPromptName]
+    let title = method.GetCustomAttribute<McpServerPromptAttribute>().Title
+    let description = method.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>().Description
+    title |> contains "Bozzetto loop" |> Expect.isTrue "the listed title names the working loop"
+    [ "Composer"; "leased F#"; "work-lease loop" ]
+    |> List.filter (fun needle -> not (contains needle description))
+    |> Expect.isEmpty "the listed description must teach the current providers"
+    [ title; description ]
+    |> List.filter (contains "REPL")
+    |> Expect.isEmpty "metadata must not advertise the retired REPL workflow"
+
+  testCase "the compatibility prompt asks where work drifted and resumes the current provider loop" <| fun _ ->
     let text = BozzettoPrompts.BackToTheRepl()
-    [ "You left the Bozzetto REPL loop"; "Name the step where you left"; "Resume from the REPL now" ]
+    [ "You left the Bozzetto working loop"; "Name the step where you left"; "Resume the provider and work-lease loop" ]
     |> List.filter (fun needle -> not (text.Contains needle))
     |> Expect.isEmpty "each part of the nudge should be there"
     loopSteps

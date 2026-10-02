@@ -55,7 +55,7 @@
         "commit": "200e88b6",
         "summary": "Real Chromium against a real daemon on the FromCSharp sample: enabling live testing discovers the tests, a real edit to Hello.fs shows the failing test live in the panel, and reverting returns it to green. The --integration-lt tier ran 2 of 2 registered, 2 passed (TRUST verdict Trusted) in the gate for commit 200e88b6, whose result main build run 35656311515 promoted and published in its job summary's trust report. Closes #128."
       },
-      "reason": "2026-10-01: this row describes the retired embedded F# provider. F# hot reload and live testing now belong to separate SageFS. Future Clef/ORC and heterogeneous HMR require their own compiler contracts and acceptance; the preserved historical evidence does not verify those capabilities. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
+      "reason": "2026-10-01: this row describes the retired embedded F# provider. F# hot reload and live testing are retired coverage, not a current Bozzetto capability; the inherited F# host code is retained but is not a product surface. Future Clef/ORC and heterogeneous HMR require their own compiler contracts and acceptance; the preserved historical evidence does not verify those capabilities. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
     },
     {
       "id": "LT-VSC-E2E",
@@ -63,7 +63,7 @@
       "layer": "real-client-e2e",
       "client": "vscode",
       "status": "not-applicable",
-      "reason": "2026-10-01: the embedded F# command-proof fixture was retired with its worker. Separate SageFS owns F# live testing; no current Bozzetto client gate is claimed. Historical receipts remain in git history. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
+      "reason": "2026-10-01: the embedded F# command-proof fixture was retired with its worker. F# live testing is retired coverage; no current Bozzetto client gate is claimed. Historical receipts remain in git history. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
     },
     {
       "id": "LT-NVIM-E2E",
@@ -81,7 +81,7 @@
         "attestedAt": "2026-09-04",
         "summary": "13/13 real-daemon journeys passing in sagefs.nvim at the pinned commit. ATTESTATION, NOT VERIFICATION: this repository cannot execute the plugin, so nothing here re-runs it."
       },
-      "reason": "2026-10-01: this row describes the retired embedded F# provider. F# hot reload and live testing now belong to separate SageFS. Future Clef/ORC and heterogeneous HMR require their own compiler contracts and acceptance; the preserved historical evidence does not verify those capabilities. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
+      "reason": "2026-10-01: this row describes the retired embedded F# provider. F# hot reload and live testing are retired coverage, not a current Bozzetto capability; the inherited F# host code is retained but is not a product surface. Future Clef/ORC and heterogeneous HMR require their own compiler contracts and acceptance; the preserved historical evidence does not verify those capabilities. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
     },
     {
       "id": "FR-DASH-E2E",

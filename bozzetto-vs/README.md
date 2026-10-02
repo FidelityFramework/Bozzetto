@@ -12,7 +12,7 @@ A Visual Studio extension for [Bozzetto](../Readme.md) — the live F# developme
 ## ⚡ Quick Start
 
 1. **Install Bozzetto CLI**: `dotnet tool install --global Bozzetto`
-2. **Install the VSIX**: Download from [Releases](https://github.com/WillEhrendreich/SageFs/releases) → double-click to install
+2. **Install the VSIX**: there is no published Bozzetto VSIX — this extension is deprecated and is not built or published, so use the retained [Installing from Source](#installing-from-source) steps below. Anything on the upstream SageFs [Releases](https://github.com/WillEhrendreich/SageFs/releases) page is an upstream build, not a Bozzetto release.
 3. **Open an F# project** in Visual Studio 2022
 4. **Press `Alt+Enter`** on any expression — the daemon starts automatically
 5. **Enable live testing, then save a file** — test state and gutter markers update

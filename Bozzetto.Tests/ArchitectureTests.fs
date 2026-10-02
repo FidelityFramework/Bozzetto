@@ -525,7 +525,7 @@ let architectureTests =
         offenders
         |> Expect.isEmpty
           (sprintf
-            "these tracked files link to the retired GitHub Pages docs site — use https://sagetech.dev/sagefs instead: %s"
+            "these tracked files link to the retired GitHub Pages docs site — use https://sagetech.dev/bozzetto instead: %s"
             (String.concat ", " offenders))
 
       testCase "WHY — the site's own HTML is gone, so it cannot be republished by re-enabling Pages" <| fun _ ->

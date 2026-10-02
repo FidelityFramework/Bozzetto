@@ -38,8 +38,10 @@ dotnet run
 
 Then open `http://localhost:5000` in your browser.
 
-F# implementation experiments can use the separate SageFS service. Composer
-projects use Bozzetto’s explicit compiler sessions and artifact authority.
+These demos are standalone .NET applications: edit them, then rebuild and
+rerun with `dotnet run`. Bozzetto’s embedded production FSI hosting is
+retired, so they run without a Bozzetto session. Composer projects use
+Bozzetto’s explicit compiler sessions and artifact authority.
 
 ## Requirements
 

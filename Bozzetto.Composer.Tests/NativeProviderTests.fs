@@ -156,6 +156,7 @@ type private Client(directory: string, name: string) =
   member _.Epoch = epoch
   /// Test-only prediction used by a single-threaded self-cancellation probe.
   member _.NextRequestId = string (Volatile.Read(&sequence) + 1)
+  member _.CallTyped(body: RequestBody) = call body
   member _.Call(operation: string, session: string, extra: (string * obj) list) =
     // Test conveniences construct closed requests; JSON is only the external
     // client projection used by these existing acceptance assertions.
@@ -179,6 +180,11 @@ type private Client(directory: string, name: string) =
       | "cancel_request" -> CancelRequest(target, text "targetRequestId" "")
       | "close" -> Close address
       | "prepare_compiler_change" -> PrepareCompilerChange target
+      | "format" ->
+        let requiredValue name = extra |> List.find (fst >> (=) name) |> snd
+        Format(address, requiredValue "generation" |> unbox<int64>, {
+          Document = text "document" ""; Incarnation = text "incarnation" ""; Revision = requiredValue "revision" |> unbox<uint64>
+          Source = text "source" ""; Configuration = text "configuration" "" })
       | _ -> failtestf "Operation has no binary request case: %s" operation
     call body |> ComposerClientJson.wireReply
 
@@ -302,6 +308,69 @@ let private objects directory label accepted =
 [<Tests>]
 let tests =
   testSequenced <| testList "Composer native provider process" [
+    testCase "Calque preview reserves exact base apply before build and current native run" <| fun _ ->
+      let directory = evidenceRoot ()
+      let fixture = fixture directory
+      use client = new Client(directory, "format-preview")
+      let hello = client.Hello() |> succeeded
+      stringArray "operations" hello |> List.contains "format" |> Expect.isTrue "real worker advertises formatting"
+      let session = openProject client fixture.Project
+      let source = fixture.OriginalSource
+      let incarnation = Guid.NewGuid().ToString("D")
+      let previewRequest generation revision source = [
+        "generation", box generation; "document", box ("buffer://" + Path.GetFileName fixture.Source)
+        "incarnation", box incarnation; "revision", box revision; "source", box source
+        "configuration", box FormatPolicy.Configuration
+      ]
+      let formattedResponse = client.Call("format", session, previewRequest 0L 1UL source)
+      expectAuthority client session 0L formattedResponse
+      let preview = succeeded formattedResponse
+      stringField "sourceSha256" preview |> Expect.equal "preview identifies exact supplied base" (FormatPolicy.sourceSha256 source)
+      stringField "formatterIdentity" preview |> fun identity -> identity.Contains "Calque.Incremental:" |> Expect.isTrue "preview identifies the captured formatter deployment files"
+      File.ReadAllText fixture.Source |> Expect.equal "preview performs no source write" source
+      noCurrent client session
+      let token = reserve client session "apply completed formatting preview"
+      // A completed preview is immutable data. A new successful reservation,
+      // plus an exact base comparison, supplies the write/build authority.
+      File.ReadAllText fixture.Source |> Expect.equal "compare exact base after successful reservation" source
+      File.ReadAllText fixture.Source |> FormatPolicy.sourceSha256 |> Expect.equal "base digest is still exact before apply" (stringField "sourceSha256" preview)
+      File.WriteAllText(fixture.Source, stringField "formatted" preview)
+      let accepted = buildReserved client session token |> succeeded
+      let baseObjects = objects directory "formatted-base" accepted
+      run client session "stable\nbefore\n"
+      let beforeEdit = File.ReadAllText fixture.Source
+      let changed = beforeEdit.Replace("let changeable () = false", "let changeable () = true")
+      changed.Contains "let changeable () = true" |> Expect.isTrue "known fixture edit is concrete"
+      // This immutable edited buffer is previewed before its source is saved.
+      let changedPreview = client.Call("format", session, previewRequest 1L 2UL changed) |> succeeded
+      stringField "sourceSha256" changedPreview |> Expect.equal "new snapshot identifies edited buffer" (FormatPolicy.sourceSha256 changed)
+      File.ReadAllText fixture.Source |> Expect.equal "preview has not saved the buffer edit" beforeEdit
+      let next = reserve client session "save edited buffer and apply its completed formatting preview"
+      File.WriteAllText(fixture.Source, changed)
+      File.ReadAllText fixture.Source |> Expect.equal "exact preview base matches the saved buffer under reservation" changed
+      File.ReadAllText fixture.Source |> FormatPolicy.sourceSha256 |> Expect.equal "edited base digest matches before formatting apply" (stringField "sourceSha256" changedPreview)
+      File.WriteAllText(fixture.Source, stringField "formatted" changedPreview)
+      // Reserve fenced the original generation. Even this real buffer snapshot
+      // cannot reenter preview publication with its withdrawn authority.
+      client.Call("format", session, previewRequest 1L 2UL changed) |> refused "superseded"
+      noCurrent client session
+      let address = { Worker = { Host = client.Host; Epoch = client.Epoch; Provider = ProviderIdentity.ClefComposer }; Session = session }
+      let changedReply = client.CallTyped(Build(address, next))
+      let changedAccepted =
+        match changedReply.Outcome with
+        | Ok(Built artifact) -> artifact
+        | other -> failtestf "Expected accepted native incremental build, got %A" other
+      let editedObjects = objects directory "formatted-edit" (changedReply |> ComposerClientJson.wireReply |> succeeded)
+      let stable = "callable:IncrementalScalarRegions:stable"
+      let changeable = "callable:IncrementalScalarRegions:changeable"
+      editedObjects[stable] |> Expect.equal "formatted edit retains actual unchanged object path and digest" baseObjects[stable]
+      editedObjects[changeable] |> Expect.notEqual "formatted semantic edit produces a new changed object" baseObjects[changeable]
+      changedAccepted.ReusedObjects |> Array.contains stable |> Expect.isTrue "unchanged scalar native object is reused"
+      changedAccepted.CompiledObjects |> Array.contains changeable |> Expect.isTrue "changed scalar native object is compiled"
+      changedAccepted.RetainedWitnesses |> Array.contains stable |> Expect.isTrue "unchanged scalar retains its witness"
+      (Map.ofArray changedAccepted.WitnessVisits)[stable] |> Expect.equal "unchanged scalar has zero witness visits" 0
+      run client session "stable\nafter\n"
+
     testCase "wire authority rejects wrong provider, host, epoch and cross-session reservations" <| fun _ ->
       let directory = evidenceRoot ()
       let fixture = fixture directory

@@ -46,6 +46,7 @@ let mcpToolRegistrationTests = testList "MCP tool registration" [
       "composer_build"
       "composer_cancel"
       "composer_close_session"
+      "composer_format_preview"
       "composer_list_sessions"
       "composer_open_project"
       "composer_reserve_edit"

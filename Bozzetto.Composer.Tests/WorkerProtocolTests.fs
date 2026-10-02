@@ -62,7 +62,7 @@ let tests = testList "Composer worker binary authority" [
     hello.Psg.ContractFingerprint |> Expect.equal "generated semantic shape" Fidelity.PSG.Binary.ContractFingerprint
     hello.Operations |> Expect.equal "only supported workspace operations are advertised"
       [| Operation.Hello; Operation.Open; Operation.Reserve; Operation.Build; Operation.Status
-         Operation.Run; Operation.Cancel; Operation.CancelRequest; Operation.Close; Operation.PrepareCompilerChange |]
+         Operation.Run; Operation.Cancel; Operation.CancelRequest; Operation.Close; Operation.PrepareCompilerChange; Operation.Format |]
     let! cancellation = worker.Handle(request "enabled" (CancelRequest(target accepted.Authority, "unknown")))
     match success cancellation with
     | RequestCanceled result -> result.CancellationRequested |> Expect.isFalse "unknown target is not invented"
@@ -97,6 +97,25 @@ let tests = testList "Composer worker binary authority" [
       current.SourceVersion |> Expect.equal "exact accepted input stamp" accepted.SourceVersion
       let encoded = BAREWireCodec.encodeReply read |> Result.defaultWith (fun error -> failtestf "Encode: %A" error)
       BAREWireCodec.decodeReply encoded |> Expect.equal "the status reply uses the shared binary contract" (Result.Ok read)
+      let buffer: FormatBuffer = {
+        Document = "buffer://opaque/never-opened.clef"; Incarnation = Guid.NewGuid().ToString("D"); Revision = 1UL
+        Source = "module Quoted\nlet law = <@ 19 % 7 @>\n"; Configuration = FormatPolicy.Configuration
+      }
+      let! foreignPreview = worker.Handle(request "foreign-preview" (Format({ address with Worker = { address.Worker with Epoch = "foreign" } }, read.Authority.Generation, buffer)))
+      refused RefusalCode.WrongAuthority foreignPreview
+      let! stalePreview = worker.Handle(request "stale-preview" (Format(address, read.Authority.Generation - 1L, buffer)))
+      refused RefusalCode.Superseded stalePreview
+      let! preview = worker.Handle(request "preview" (Format(address, read.Authority.Generation, buffer)))
+      match success preview with
+      | Formatted formatted ->
+        formatted.SourceSha256 |> Expect.equal "wire result names the exact immutable supplied buffer" (FormatPolicy.sourceSha256 buffer.Source)
+        formatted.Formatted.Contains "<@ 19 % 7 @>" |> Expect.isTrue "real quotation/modulo formatting reaches the worker reply"
+      | body -> failtestf "Expected formatting preview: %A" body
+      preview.Authority |> Expect.equal "format preserves provider authority" read.Authority
+      let! afterPreview = worker.Handle(request "status-after-preview" (Status address))
+      match success afterPreview with
+      | Observed value -> value.Current |> Expect.equal "format preview preserves the accepted native artifact" (Some accepted)
+      | body -> failtestf "Expected status: %A" body
       let! changed = worker.Handle(request "next-reserve" (Reserve(address, "before-source-write")))
       success changed |> ignore
       let! withdrawn = worker.Handle(request "withdrawn" (Status address))

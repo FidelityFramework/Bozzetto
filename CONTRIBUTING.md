@@ -19,9 +19,11 @@ Welcome! Bozzetto is an open-source project and we genuinely appreciate contribu
 - Git
 - An editor — VS Code with Ionide, Neovim, Rider, or your preference
 
-Use separate SageFS on `37749`/`37750` for the F# REPL implementation loop;
-Bozzetto on `47749`/`47750` serves Clef/Composer. Embedded production FSI hosting
-is retired by the [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md).
+Bozzetto on `47749`/`47750` is the only daemon surface; it serves Clef/Composer
+through the `composer_*` tools and the `/composer` browser page. Embedded
+production FSI hosting is retired by the [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md),
+and no separate F# REPL service is part of the workflow. Changes to Bozzetto's
+own F# code are validated with `dotnet build` and the unfiltered test suite.
 Follow [the implementation skill](skills/bozzetto/SKILL.md) and retain the
 unfiltered build/test gates below.
 
@@ -78,7 +80,7 @@ bozzetto-vs/         — Deprecated Visual Studio extension (C# + F#), retained 
 docs/              — GitHub Pages documentation site
 ```
 
-The Neovim plugin lives in a separate repo: [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim).
+The separate upstream Neovim plugin, [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim), is not part of this repository; it is a client of the inherited F# session contracts, whose embedded production hosting the [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md) retires in this checkout.
 
 The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are deprecated. Do not extend them as current product surfaces. Raylib application and game demos remain valuable examples of Bozzetto game-project support and should be preserved.
 
@@ -88,49 +90,68 @@ The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are 
 - `Bozzetto/McpServer.fs` and `Bozzetto/McpTools.fs` — MCP transport and tools
 - `Bozzetto.Tests/` — the test project shows how every module is exercised
 
+## Publishing the Forgejo checkout
+
+Commit the reviewed changes before running `scripts/ship`. It bumps the version
+once, gates that exact commit in a detached checkout, and pushes its pinned SHA
+to the existing `origin/main` branch. The inherited `master` target is refused.
+The GitHub workflows remain upstream release infrastructure; a Forgejo push is
+not evidence that they ran.
+
+Select immutable compiler and formatter closures and the native fixture before
+shipping. These explicit paths also supply the detached gate's MSBuild references:
+
+```bash
+export BOZZETTO_COMPOSER_DISTRIBUTION=/absolute/path/to/reviewed/compiler/closure
+export BOZZETTO_CALQUE_DISTRIBUTION=/absolute/path/to/reviewed/formatter/closure
+export BOZZETTO_COMPOSER_FIXTURE=/absolute/path/to/IncrementalScalarRegions.fidproj
+scripts/ship
+```
+
+The release gate runs `ci composer release`, including the whole Composer tier.
+Build commands and the parallel test stage take their matching work leases;
+deferral or refusal stops the work. Closure identities are recorded with the
+receipt and rechecked before recording a pass. The current lease endpoint has
+no renewal operation, so work ends before expiry and an overlong tier is reported
+as incomplete. Old receipts without the Composer tier cannot authorize a push.
+
 ## Debugging Bozzetto
 
 This is the section your friend probably wants. Here's how to actually debug and develop Bozzetto day-to-day.
 
 ### The Development Loop
 
-Bozzetto is its own development environment. The recommended workflow is:
+Bozzetto's daemon accounts for the machine memory that every contributor and agent on it spends, so the loop is lease-gated:
 
 ```
-1. Run Bozzetto against the test project
-2. Use the live FSI session to iterate on code
-3. Write tests in the REPL, see them fail, make them pass
-4. Save proven code to .fs files
-5. Rebuild and verify
+1. Write the failing Expecto test in Bozzetto.Tests
+2. Make it pass in the .fs file
+3. acquire_full_build_lease -> dotnet build -> release_work_lease
+4. acquire_test_suite_lease -> unfiltered Bozzetto.Tests run -> release_work_lease
+5. Read the TRUST line: only verdict=Trusted is acceptance
 ```
 
 ### Step-by-Step: Your First Debugging Session
 
-**1. Start Bozzetto against its own test project:**
+**1. Connect to the shared daemon.** If none is running, start it with `scripts/start-shared-daemon`, which launches the reviewed installed `boz` from the dedicated external workspace (see [AGENTS.md](AGENTS.md) for the daemon lifecycle rules). Never stop or restart a daemon that other people or agents may be on. Bozzetto exposes an MCP server at `http://localhost:47749/sse`. If you're using VS Code with the Bozzetto extension, it auto-connects. For other editors, see the [README](Readme.md) for setup.
+
+**2. Write the test first.** Add the failing case to the right module under `Bozzetto.Tests/` (Expecto.Flip, message first), then make it pass in the `.fs` file.
+
+**3. Build under a lease.** Call `acquire_full_build_lease`, run `dotnet build` (warnings are errors), then call `release_work_lease` with the `leaseId` it returned.
+
+**4. Run the suite unfiltered under a lease** (not `dotnet test`):
 
 ```bash
-boz
+# acquire_test_suite_lease first; release_work_lease when it exits.
+# <cfg> is Debug after a plain `dotnet build`; CI uses Release.
+dotnet Bozzetto.Tests/bin/<cfg>/net10.0/Bozzetto.Tests.dll --summary
 ```
 
-Then create a session for `Bozzetto.Tests/Bozzetto.Tests.fsproj` from your editor, MCP client, or the dashboard. That session loads the project into a live F# Interactive session with hot reload.
+A filtered run (`--filter`, `--filter-test-list`, `--filter-test-case`) is fine while you iterate, but it narrows the run and is never the acceptance check. If a lease request answers `wait` or `refused`, the daemon is busy, not broken: wait the time it names and retry the identical request rather than building around its accounting.
 
-**2. Connect your editor.** Bozzetto exposes an MCP server at `http://localhost:47749/sse`. If you're using VS Code with the Bozzetto extension, it auto-connects. For other editors, see the [README](Readme.md) for setup.
+**5. Read the TRUST line.** Every tier prints one `TRUST tier=… registered=N ran=N … verdict=…` line. `Trusted` is the only accepted verdict; `NarrowedRun` means a filter was on, and `NothingRan` or `CountMismatch` exit 3. Exit code 0 only means that nothing which ran failed.
 
-**3. Edit a `.fs` file and save.** Bozzetto detects the change (~500ms debounce), reloads the file via `#load` (~100ms), and if you have live testing enabled, affected tests re-run automatically.
-
-**4. Run tests from the Bozzetto REPL** (not `dotnet test`):
-
-```fsharp
-// Run a specific test module
-Expecto.Tests.runTestsWithCLIArgs [] [||] Bozzetto.Tests.SomeModule.tests;;
-
-// Run all tests
-Expecto.Tests.runTestsWithCLIArgs [] [||] Bozzetto.Tests.AllTests.tests;;
-```
-
-> **Signature note:** `runTestsWithCLIArgs` takes `(cliArguments: string list, argv: string[], test: Test)` — the **third argument is a single `Test` value**, not an array. A `[<Tests>]` module binding like `SomeModule.tests` is already a single combined `Test`; do NOT wrap it in `[| ... |]`. Passing an array lands it in the `argv` slot and produces the confusing error `expected string but got Test`.
-
-**5. Check test output** in the Bozzetto console window. Exit code 0 = all passed. Exit code 2 = passed but no TTY detected (cosmetic, ignore it). Exit code 1 = actual failures.
+The inherited F# session steps that used to live here — creating a session for `Bozzetto.Tests/Bozzetto.Tests.fsproj`, `#load`-based hot reload, and running `Expecto.Tests.runTestsWithCLIArgs` inside the session — describe retained host code that is not a product surface. This checkout refuses to create, resume or rebuild an inherited F# session at the retired provider boundary ([Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md)).
 
 ### Debugging with Breakpoints
 
@@ -165,7 +186,8 @@ small one isolates the algorithm's growth and is independent of how fast or busy
 the machine is, so the check is meaningful locally and never flakes. The current
 guard proves `recordEval` stays sub-linear as the eval history grows (the O(n^2)
 regression the roast flagged). Add a new guard the same way when you touch a
-genuine hot path; do heavier one-off profiling ad hoc in the REPL.
+genuine hot path; do heavier one-off profiling ad hoc, outside the suite and
+under the matching work lease.
 
 ### The Pack/Reinstall Cycle
 
@@ -201,7 +223,7 @@ dotnet run --project Bozzetto.Tests -- --summary
 dotnet run --project Bozzetto.Tests -- --filter "CellGrid"
 ```
 
-For local development, prefer running tests inside Bozzetto's own REPL for instant feedback.
+For local development, run the built test DLL directly (`dotnet Bozzetto.Tests/bin/<cfg>/net10.0/Bozzetto.Tests.dll --summary`) under `acquire_test_suite_lease` / `release_work_lease`. Filters are for iterating only; the unfiltered run whose TRUST line says `Trusted` is the acceptance check.
 
 ### Test Categories
 
@@ -306,11 +328,11 @@ Bozzetto is **daemon-first** — one long-running server, many clients:
                 ┌───────────────┐
                 │  Bozzetto Daemon│
                 │  ┌─────────┐  │
-                │  │ FSI Actor│  │  ← F# Interactive session
+                │  │ Composer│  │  ← .fidproj sessions, reservations, build and run
                 │  └─────────┘  │
                 │  ┌─────────┐  │
-                │  │  File    │  │  ← watches .fs/.fsx changes
-                │  │ Watcher  │  │
+                │  │  File    │  │
+                │  │ Watcher  │  │  ← source changes revoke affected work
                 │  └─────────┘  │
                 │  ┌─────────┐  │
                 │  │  MCP     │  │  ← AI + editor communication
@@ -327,7 +349,7 @@ Bozzetto is **daemon-first** — one long-running server, many clients:
 Key architectural concepts:
 - **Thin clients** — editors, dashboard tabs, and MCP clients use the same session-scoped daemon contracts
 - **Web dashboard** — browser operations and state updates use Falco.Datastar and SSE
-- **Worker isolation** — each FSI session runs in an isolated sub-process (Erlang-style)
+- **Worker isolation** — Composer supervises an isolated compiler worker for native build and accepted-artifact execution
 - **SSE for reads** — all state changes push to clients via Server-Sent Events
 - **POST for commands** — write operations are POST-only, return acknowledgment only
 

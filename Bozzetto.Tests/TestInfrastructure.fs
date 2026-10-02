@@ -241,7 +241,7 @@ module Integration =
     Expecto.Tests.testCase (tagged name) body |> register Host
 
   let fsharpRetirementReason =
-    "2026-10-01: Bozzetto production F# hosting removed; F# sessions use the separate SageFS service."
+    "2026-10-01: Bozzetto production F# hosting removed; the retained in-process F# adapter is host code for component tests, not a product surface."
 
   /// Preserve the old behavioral assertion as history, without pretending it
   /// passed or weakening its expectation to accommodate a removed capability.

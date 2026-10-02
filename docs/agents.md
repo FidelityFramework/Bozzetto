@@ -2,7 +2,7 @@
 
 Use Bozzetto's `composer_*` tools for Clef/Composer development. The tools and the human-facing Composer page share one daemon-owned supervisor, so both observe the same session, compiler epoch, revision and accepted-artifact evidence.
 
-The [October 1 host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md) removes embedded production FSI hosting from the checkout. F# implementation work requires a separate SageFS connection on `37749`; Clefx/ORC remains future work. Check the installed release separately from source status.
+The [October 1 host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md) removes embedded production FSI hosting from the checkout. Bozzetto on `47749`/`47750` is the only daemon surface; no separate F# REPL service is part of any workflow, and Clefx/ORC remains future work. Check the installed release separately from source status.
 
 ## Connect to the shared provider
 
@@ -47,6 +47,6 @@ A project can include this in its `AGENTS.md`:
 
 ## F#/.NET implementation work
 
-Use the separate SageFS MCP service at `http://127.0.0.1:37749/` for F#/.NET work; its dashboard uses port `37750`. Keep its server entry, sessions and lifecycle separate from Bozzetto. A Composer project does not need an FSI session.
+Bozzetto no longer hosts F# sessions or evaluates F# configuration, and no separate F# REPL service is part of its workflow. The retained F# tools in its MCP catalog are inherited host code, not a product surface; creation, resume and rebuild requests refuse. A Composer project does not need an FSI session.
 
-Contributors changing Bozzetto's retained F# implementation must read the repository's [agent guidelines](../AGENTS.md) and [F# implementation skill](../skills/bozzetto/SKILL.md). An available F# REPL, normally SageFS, is that implementation workflow's inner loop; the full build/test run is its final gate. Report exact REPL errors and self-hosting version skew instead of silently falling back to builds. That guidance applies to F# implementation work, while Clef projects use the Composer loop above.
+Contributors changing Bozzetto's retained F# implementation must read the repository's [agent guidelines](../AGENTS.md) and [F# implementation skill](../skills/bozzetto/SKILL.md). Validate those changes with `dotnet build` and the unfiltered test suite, started only after the matching `acquire_full_build_lease` or `acquire_test_suite_lease` and ended with `release_work_lease`; a filtered test run is never the acceptance check. Report exact tool errors and self-hosting version skew instead of shelling around the daemon's lease accounting. That guidance applies to F# implementation work, while Clef projects use the Composer loop above.

@@ -10,7 +10,7 @@ Bozzetto coordinates Fidelity development across compilers, editors, application
 - **[Incremental foundation adoption](Bozzetto_Incremental_Foundation_Adoption.md)**: Fidelity.FSharp.Incremental across Bozzetto and the compiler pipeline, cold work, shared demand and the path from .NET hosting to self-hosting
 - **[Minimal host auditor checkpoint](Bozzetto_Minimal_Host_Auditor_Checkpoint_2026-10-01.md)**: architectural correction, purge scope, exact validation and deployment evidence
 - **[Binary PSG integration auditor handback](PSG_Transport_Integration_Auditor_Checkpoint_2026-10-01.md)**: current source and deployed transport gap, cross-project ownership, repair sequence and acceptance controls
-- **[Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md)**: removal of embedded production FSI hosting, separate SageFS development and the future Clef execution boundary
+- **[Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md)**: removal of embedded production FSI hosting, retained inherited host code and the future Clef execution boundary
 
 ## Start here
 
@@ -24,7 +24,7 @@ Bozzetto coordinates Fidelity development across compilers, editors, application
 
 ## Retained F# engine and editor references
 
-F#/.NET development uses a separate SageFS service. These guides preserve the inherited F# implementation and its historical behavior. The [Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md) retires embedded production FSI hosting in the checkout; these references do not promise F# execution through current Bozzetto source. They are not prerequisites for opening a Composer `.fidproj`.
+The F# engine described here is retained host code, not a current product surface. These guides preserve the inherited F# implementation and its historical behavior. The [Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md) retires embedded production FSI hosting in the checkout; these references do not promise F# execution through current Bozzetto source. They are not prerequisites for opening a Composer `.fidproj`.
 
 - **[Workflow Modes](workflow-modes.md)**: retained F# REPL and Live Testing contracts
 - **[Hot Reload](hot-reload.md)**: change admission and compiler-owned execution

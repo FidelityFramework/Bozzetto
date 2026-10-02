@@ -5,6 +5,14 @@ assigned the outgoing implementor to audit. Implementation is stopped. Preserve
 the current working changes; they are unfinished work, not an accepted release.
 No compiler or Bozzetto deployment was performed in this tranche.
 
+The incoming implementation resumed on October 2 and added Calque to the
+.NET-hosted provider path. Its generated schema-16 artifact accounts, aligned
+candidate, unfiltered gates and remaining boundaries are recorded in the
+[current cross-project checkpoint](Incremental_Provider_Checkpoint_2026-10-01.md#october-2-source-integration-calque-and-artifact-accounts).
+The stopped draft inventory and failure observations below remain the outgoing
+handoff's historical evidence; they do not describe the newly gated candidate.
+Scoped PSG service delivery remains unfinished and no shared runtime is promoted.
+
 ## Governing direction
 
 The remit is one coherent incremental compiler architecture across
@@ -269,8 +277,11 @@ Use local and LAN inference and retrieval throughout the continuation:
   `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF`; observed context 32K, one inference
   slot. Use bounded tasks; do not reconfigure it just to avoid using it.
 - Bozzetto remains on 47749/47750. Separate SageFS probes on 37749/37750 were
-  refused, so earlier .NET probes recorded that limitation. Preserve the shared
-  deployment and read its skill/provider instructions before using it.
+  refused, as earlier .NET probe records note; no separate F# REPL service is
+  part of the continuation, so validate Bozzetto F# changes with
+  `dotnet build` and its unfiltered test suite under the Bozzetto leases.
+  Preserve the shared deployment and read its skill/provider instructions
+  before using it.
 
 Fresh retrieval generation 21, snapshot
 `43ca44172cb94e31012327c192c89f471959cbf04f8ccc394cfafbe07f5a4883`, confirmed

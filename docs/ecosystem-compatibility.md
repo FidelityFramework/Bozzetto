@@ -235,8 +235,8 @@ assemblies. Bozzetto refuses the session up front with a message naming the proj
 framework, and why, rather than letting warmup fail with a misleading "project has not been
 built".
 
-Follow or push on it at [issue #135](https://github.com/WillEhrendreich/SageFs/issues/135) if
-you need it. I'm not against it, it just needs a second host and I haven't built one.
+Upstream tracked this gap as [issue #135](https://github.com/WillEhrendreich/SageFs/issues/135).
+I'm not against it, it just needs a second host and I haven't built one.
 
 ---
 

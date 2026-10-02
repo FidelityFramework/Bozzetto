@@ -42,7 +42,7 @@ let private consoleTicker = { Sample = Sample.ConsoleTicker; RelativePath = "Tic
 /// ...`). Never the unscoped `body:has-text("Ready")` `Scenarios.fs`'s own
 /// dashboard scenarios deliberately use for a DIFFERENT, unrelated reason
 /// (that file's own doc) — an unscoped check here would false-positive on
-/// the cmdline area's idle `"SageFs -- ready"` label the instant the SSE
+/// the cmdline area's idle `"Bozzetto -- ready"` label the instant the SSE
 /// connection comes up, well before the SESSION itself is actually Ready
 /// (`DashboardTypes.fs`'s `cmdlineLabel`).
 let private sessionStatusSelector = "#session-status .status"

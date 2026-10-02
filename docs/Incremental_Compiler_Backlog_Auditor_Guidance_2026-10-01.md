@@ -281,7 +281,7 @@ Migration scope:
    running daemon's runtime. Coordinate its eventual replacement and repeat the
    provider journey using the exact staged compiler closure.
 
-Separate SageFS can retain its own runtime independently. Bozzetto need not
+The imported baseline's runtime choice is upstream history. Bozzetto need not
 inherit that choice. The short self-hosting horizon strengthens the case for a
 stable host and explicit CLR seams, not for carrying an unnecessary preview
 runtime migration.

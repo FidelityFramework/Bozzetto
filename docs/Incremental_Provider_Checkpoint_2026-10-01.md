@@ -1,7 +1,7 @@
 # Cross-project incremental integration — 2026-10-01
 
 This is the primary audit entry for the integration across
-**Fidelity.FSharp.Incremental, Clef/CCS, Fidelity.PSG, Composer and Bozzetto**.
+**Fidelity.FSharp.Incremental, Clef/CCS, Fidelity.PSG, Composer, Bozzetto and Calque**.
 The auditor's remit covers these repositories and their ownership boundaries,
 including Alex as a reader of the changed PSG contract. The retained
 filename preserves links to the original provider checkpoint; detailed compiler
@@ -11,6 +11,141 @@ explicitly; earlier source anchors do not establish installed runtime behavior.
 
 The current [binary PSG transport handback](PSG_Transport_Integration_Auditor_Checkpoint_2026-10-01.md)
 records the still-unintegrated service boundary and the coordinated repair gates.
+
+## October 2 source integration: Calque and artifact accounts
+
+The resumed .NET-hosted path now includes `Calque.Incremental` and the public
+`composer_format_preview` operation on the existing versioned binary provider
+protocol. Calque retains exact document incarnation, revision, source and policy
+inputs through the shared preview.6 functional mailbox. Formatting is immutable
+preview data: it does not reserve an edit, withdraw an accepted artifact or grant
+proof/execution authority. Clients reserve successfully before saving/applying
+source, compare current source with the exact buffer supplied for preview and
+verify its digest. The client retains that immutable base text; the wire result
+returns its digest rather than another copy of the source.
+
+Provider generation checks now cover both actual formatter invocation and reply
+publication. A controlled regression holds a queued generation-0 revision-4
+preview, reserves generation 1 and admits revision 3, then proves the obsolete
+request never enters Calque or displaces the valid lower revision. Provider close
+seals admission, joins retained preview tasks and document hosts, and preserves
+late diagnostics. The native and public MCP journeys exercise preview, successful
+reservation, exact-base apply, build and `run_current`; their gate receipts below
+distinguish compiled tests from executed acceptance.
+
+The PSG artifact-account draft is now generated as **schema 16**, binary format 2,
+with 251 named types and fingerprint
+`7D92113F623A60402739AE33757DD07F6CB54191BBE9B4A6231A1DF3D7FF1638`.
+Reservation, factory-result, residence and initialization-order maps are carried
+through final Clef codata and read passively by Composer. Integrity validates the
+canonical residence and its alias participants against their owning published
+instances. These typed source facts do not contain controller/runtime handles.
+Full PSG transport across the service boundary and controller realization remain
+the separately identified work in the transport handback.
+
+Published source heads are Calque `48c77a607f111e7ec698ee5668f2d06e029fde4f`,
+PSG `e99010e631d196d23aa7d303a22bf06e10466a35`,
+Clef `f1dc69ac7a711c4dc3eeb81e9034e07ddf465eb3` and
+Composer `0287b744d3dd8af4dc67a6f101dd0d9bf50d6f84` on Forgejo `main`.
+Calque starts with one parentless commit of its thin retained implementation,
+at the owner's request. License and upstream attribution remain; the former
+local Git metadata is archived outside the repository under the evidence root's
+`publication/calque-upstream-metadata/fantomas.git`. Its canonical remote is
+`ssh://hhh@forge.spkez.dev:2222/FidelityFramework/Calque.git`.
+Bozzetto source is being published from base `da1f3604` on
+`integration/calque-incremental-20261002`, preserving reviewable source while
+the required `main` release gate is deferred by the daemon's memory guard.
+That branch contains the worker metadata correction and shipping/lease repairs;
+their fresh .NET gates remain pending. Existing earlier test receipts below do
+not certify those subsequent changes. Unchanged Alex and Incremental heads are
+`4e1f859d` and `d476aea2`.
+The pre-publication candidate was built before these commits and Calque's
+repository-metadata correction; publication is not a fresh binary receipt.
+No shared deployment promotion is claimed. Stable SDK **10.0.401** built the
+`net10.0` candidate. Both selected closures contain foundation core SHA-256
+`27b7a4d6449387529d0f415d13d3e656ef598697261868751f893de9dce44c81`
+and Hosting SHA-256
+`179f724c381241e4a102a32c92d5984ba60835b921a4c90c66f5f8263c528c11`.
+The build rejects unequal foundation bytes.
+
+Evidence is external under
+`~/.codex/work/bozzetto-resumption-2026-10-02/validation/`:
+
+| Whole gate | Executed result |
+| --- | --- |
+| PSG schema-16 Release suite | **307/307 passed**, including 37 new artifact-account controls (`psg-schema16-tests.log`). |
+| Clef official mapper generation check | **218 structural mappers checked** against the fresh compiler and schema-16 contract (`clef-schema16-mappers.log`). |
+| Calque Release build and unfiltered suite | **83/83 passed**, zero skipped (`calque-incremental-final-tests.log`). The first 82/83 run exposed a splice fixture that failed parsing before its intended dialect check; fixture spacing was corrected, retaining both refusal assertions. |
+| Bozzetto solution and optional worker Release builds | **Zero warnings/errors**, using Composer's product distribution and the complete published formatter closure (`bozzetto-calque-build-product.log`, `bozzetto-calque-worker-build-product.log`). |
+| Bozzetto default suite | **8,950 registered/ran, 8,947 passed, three performance-budget ignores, zero failed/errored; Trusted** (`bozzetto-calque-default.log`, `calque-provider-trust.jsonl`). All seven preview controls and the bounded retired CLI refusal ran. Retirement changes registration; this is not identical historical suite coverage. |
+| Composer schema-16 Release suite | **385/386 passed**, zero skipped (`composer-schema16-tests.log`). Exact failed-case comparison recovered eleven environment failures and introduced none. Callable `Result` transport at occurrence 218 remains refused; its exact node kind is not yet established. |
+| Whole Bozzetto Composer tier | **41/41 passed, zero ignored/failed/errored; Trusted** (`bozzetto-calque-native.log`, `calque-provider-trust.jsonl`). The new real worker journey retained the unchanged callable's actual object path/digest and witness with zero visits, compiled the changed callable and ran changed output. The public MCP/HTTP journey used the staged candidate and exercised formatting, reservation, exact-base apply, cancellation/recovery and native execution. |
+| Unchanged Alex reader Release suite over schema 16 | **278/278 passed**, zero skipped (`alex-schema16-tests.log`). |
+| Clef final unfiltered Release suite | **2,212/2,311 passed, 99 failed, zero skipped** (`clef-schema16-final-tests.log`). The class/display/outcome comparison preserves all 2,304 baseline cases with their multiplicities and the same 99 failed identities; all seven additions passed, zero missing cases/new failures/recoveries (`clef-schema16-final-case-preservation.log`, `clef-schema16-final-comparison.log`). Full compiler acceptance remains red. The first run's added alias-use test had an incorrect premise-owner oracle; it was corrected to require exactly the removed and added target owners. |
+
+The staged candidate is under the same evidence root's `candidate/daemon` and
+`candidate/worker-product`; the latter contains the compiler product closure,
+Calque and the shared foundation, with no test-runner assemblies in that
+directory. A subsequent deployment audit found that its dependency metadata
+still named 18 absent test runtime assemblies and 65 absent localized resources
+inherited from the earlier selected test distribution. The SDK omitted external reference selection from its
+incremental dependency-file inputs. `RecordSelectedWorkerClosure` now records
+the selected distribution paths and resolved-reference hashes as an explicit
+input; its rebuild, distribution-switch regression and fresh native gate are
+pending a full-build lease. The daemon currently queues that request at critical
+memory pressure with zero allowed builds. This candidate must not be installed
+until the metadata correction passes. Publication must follow a successful
+build against those same selected distributions: ordinary `--no-build` publish
+copies the build dependency file rather than regenerating it. The regression
+must switch from the test distribution to older product DLLs in the same output
+directories, validate every published runtime/resource asset, and retain stamp
+and dependency-file timestamps on an unchanged product rebuild. Its original exact
+files are recorded in `calque-candidate-before.sha256`; all **211 files** matched
+after the complete Composer tier (`calque-candidate-after.log`). Live public
+evidence is in
+`~/.cache/bozzetto/live-provider-tests/25657804b4f14d14b0cbbefb9d9aad7e/`, including
+`017-mcp-composer_format_preview.json` and the subsequent native run replies.
+The owned live daemon was PID **1813858**, API 4, with a ten-minute TTL and
+reserved ports; it exited after the test. All build/test leases were released.
+The shared daemon remains
+PID **215237** with its previously installed closure; that deployment has no
+Format operation. Fresh source/owned test daemons do not establish installed
+behavior. Full-document parsing remains current; incremental syntax/trivia reuse,
+markup, cooperative parser interruption and measured editor latency are open.
+
+Candidate primary assembly SHA-256 values:
+
+| Assembly | SHA-256 |
+| --- | --- |
+| Bozzetto | `9b5450294b8019ea6056add027f107b2e956bd5277879ba019e0060fbf586f5a` |
+| Bozzetto.Composer | `552d6ee27735da2bdc4364339edc57fe6e7142c86d79eb07700cabee5b091365` |
+| Composer | `7437b5ac7f55e90763e22b981c843d5b256a227a380ede8106e21baaa5774df4` |
+| Clef.Compiler.Service | `6c16e09c9e6fc9b5c03dba0bcbf4c3200bef79f5c7f20ae61a257b28a9698e34` |
+| Fidelity.PSG | `3ade77a33fa6b5466d575d5803de735d0860922a35f586f2b55fb016bdf80c52` |
+| Calque.Incremental | `ca072d98ce152f6ea6b0da2b969b6384c02e2cdea2d7c3e515f7ee88246f1a92` |
+| Calque.Core | `51fef0d48c9530073b9cdc88384b38df2918d30d4b798dca3ce6a9b49b5f68cc` |
+| Calque.Syntax | `c57012bd41a5c6039e038e7efb1b2d320896a6946b4c6931e3955513846b4a9b` |
+
+The daemon and worker's protocol assembly also matches byte-for-byte:
+`8bd4efc33885f410363bbdc1698c8ad7ac01b6af1c31b361fd7fbc25f7b250ad`.
+This is a reviewable source/candidate checkpoint over the named existing compiler
+failures, not a clean full-language acceptance or a deployed formatter service.
+
+Retrieval configuration has been published in speakez-lab
+`0b5dde1cd44195f00b483fd749159e122302ed45`. Its scoped seventeen-source rollout
+adds Calque and Bozzetto within the unchanged 32 MiB budget; 97 checks passed.
+The live existing fifteen-source corpus already observes the published PSG,
+Clef and Composer heads with exact-commit citations. Seventeen-source activation
+remains pending Bozzetto `main` publication and the reviewed passworded operator
+step recorded in speakez-lab's current operations. The staged offline proof uses
+the prior Bozzetto `da1f3604` head, not this integration branch.
+
+The next callable `Result` observation plan is external under
+`validation/callable-result-observation-plan.md`. Source review identifies
+callable DU payload extraction and conditional transport candidates, but the
+actual kind and witness caller for occurrence 218 remain unobserved. The next
+probe must retain that exact source/published occurrence and the direct selective
+witness exception; a generic pointer representation is not a repair.
 
 ## Minimal host and aligned compiler checkpoint
 
@@ -22,8 +157,8 @@ The [minimal hosting architecture](Minimal_Hosting_Architecture.md) defines the
 remaining host responsibilities and the obligations a native implementation
 must preserve. Runtime method patching, its owned fork, package, production
 host, browser injection, client controls and patch-only tests are removed.
-There is no optional patching mode. F# implementation work uses separate SageFS;
-Composer retains native artifact and launch authority.
+There is no optional patching mode. F# implementation work uses `dotnet build` and
+the unfiltered test suite; Composer retains native artifact and launch authority.
 
 The default gate registered and ran **8,957 tests: 8,954 passed, three ignored,
 zero failed or errored**, with a `Trusted` receipt. The three ignores are
@@ -377,7 +512,7 @@ pending the coordinating run.
 
 ## Validation and promotion recipe
 
-Use the existing SageFS build/test leases. Set these inputs to the reviewed
+Use the existing Bozzetto build/test work leases. Set these inputs to the reviewed
 closure and an external evidence directory; the fixture must be the real
 `IncrementalScalarRegions.fidproj` with its explicit absolute platform dependency.
 The commands below are a recipe, not additional recorded results.
@@ -385,27 +520,30 @@ The commands below are a recipe, not additional recorded results.
 ```bash
 export DOTNET_HOST_PATH=/absolute/path/to/reviewed/dotnet
 export COMPOSER_DISTRIBUTION=/absolute/path/to/rebuilt/Composer/distribution
+export CALQUE_DISTRIBUTION=/absolute/path/to/reviewed/Calque/publish/closure
 export BOZZETTO_COMPOSER_FIXTURE=/absolute/path/to/04d_IncrementalScalarRegions/IncrementalScalarRegions.fidproj
 export BOZZETTO_COMPOSER_EVIDENCE=/absolute/external/evidence/native-provider
 export BOZZETTO_TRUST_LEDGER=/absolute/external/evidence/trust.jsonl
 
 "$DOTNET_HOST_PATH" build Bozzetto.Composer/Bozzetto.Composer.fsproj -c Release \
-  -p:ComposerDistribution="$COMPOSER_DISTRIBUTION"
-"$DOTNET_HOST_PATH" build Bozzetto.Tests/Bozzetto.Tests.fsproj -c Release
+  -p:ComposerDistribution="$COMPOSER_DISTRIBUTION" \
+  -p:CalqueDistribution="$CALQUE_DISTRIBUTION"
+"$DOTNET_HOST_PATH" build Bozzetto.Tests/Bozzetto.Tests.fsproj -c Release \
+  -p:ComposerDistribution="$COMPOSER_DISTRIBUTION" \
+  -p:CalqueDistribution="$CALQUE_DISTRIBUTION"
 
 export BOZZETTO_COMPOSER_WORKER="$PWD/Bozzetto.Composer/bin/Release/net10.0/Bozzetto.Composer.dll"
 export BOZZETTO_DAEMON_DLL="$PWD/Bozzetto/bin/Release/net10.0/Bozzetto.dll"
 
 "$DOTNET_HOST_PATH" Bozzetto.Tests/bin/Release/net10.0/Bozzetto.Tests.dll --summary
-"$DOTNET_HOST_PATH" Bozzetto.Tests/bin/Release/net10.0/Bozzetto.Tests.dll \
-  --integration-composer --filter-test-list 'Composer native provider process' --summary
 ```
 
 The first test command is the unfiltered default gate and must report `Trusted`.
-The second selects the complete native process test list, launches only its owned
-workers, and reports `NarrowedRun`. It is useful focused evidence for the rebuilt
-worker, including real artifact receipts, shared-ticket replay and native output;
-it does not complete the dedicated Composer tier.
+The formatter closure must include Calque.Incremental, Core and Syntax and the
+reviewed foundation assemblies. The build compares both foundation assembly
+hashes with the selected compiler closure. A library build directory can omit
+package dependencies; use the complete `dotnet publish` output for deployed
+selection. Filtered runs are inner-loop evidence only.
 
 Once the rebuilt daemon closure is available, run the entire dedicated tier:
 

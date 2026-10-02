@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-# Refuse to push master to a commit that has not passed scripts/local-gate on
+# Refuse to push main to a commit that has not passed scripts/local-gate on
 # this machine. The check is only a file lookup, so pushing a gated commit is
 # instant. To gate and push in one step, run scripts/ship.
 #
-# A master push must also RAISE the version. Publishing is keyed on it, and
+# A main push must also RAISE the version. Publishing is keyed on it, and
 # NuGet's --skip-duplicate means a repeated version ships nothing at all while
 # the pipeline stays green. Nothing bumps on commit any more (scripts/ship
 # owns it), so this is where the rule is enforced.
 #
 # Emergency override (logged, never silent): BOZZETTO_SKIP_GATE=1 git push ...
-# The self-hosted "main build" job still runs the full gate on an ungated
-# commit before promoting anything, so the override skips only the local wait.
+# The override does not certify the commit or its compiler/formatter closures.
 STATE=${BOZZETTO_GATE_HOME:-$HOME/.local/share/bozzetto-gate}
+REPO=$(git -C "$(dirname "$(realpath -- "${BASH_SOURCE[0]}")")" rev-parse --show-toplevel) || exit 1
 zero=0000000000000000000000000000000000000000
 status=0
+gate_kind=ci-composer-release-v1
 
 # The <Version> a commit carries, or empty if it can't be read.
 version_at() {
-  git show "$1:Directory.Build.props" 2>/dev/null | grep -oP '(?<=<Version>)[^<]+' || true
+  git -C "$REPO" show "$1:Directory.Build.props" 2>/dev/null | grep -oP '(?<=<Version>)[^<]+' || true
 }
 
 # 0 when $1 is a higher version than $2, comparing numerically per part.
@@ -27,14 +28,30 @@ raises_version() {
 }
 
 while read -r local_ref local_sha remote_ref remote_sha; do
-  [ "$remote_ref" = "refs/heads/master" ] || continue
   [ "$local_sha" = "$zero" ] && continue
+  if [ "$remote_ref" = "refs/heads/master" ]; then
+    echo "pre-push: the release branch is main; refusing the inherited master target." >&2
+    status=1
+    continue
+  fi
+  [ "$remote_ref" = "refs/heads/main" ] || continue
+
+  if [ "$remote_sha" = "$zero" ]; then
+    echo "pre-push: main must already exist; scripts/ship never creates the release branch." >&2
+    status=1
+    continue
+  fi
 
   if [ "$remote_sha" != "$zero" ]; then
     pushed=$(version_at "$local_sha")
     published=$(version_at "$remote_sha")
-    if [ -n "$pushed" ] && [ -n "$published" ] && ! raises_version "$pushed" "$published"; then
-      echo "pre-push: ${local_sha:0:8} is version $pushed, and master already has $published." >&2
+    if [ -z "$pushed" ] || [ -z "$published" ]; then
+      echo "pre-push: cannot read both local and published main versions; fetch origin/main first." >&2
+      status=1
+      continue
+    fi
+    if ! raises_version "$pushed" "$published"; then
+      echo "pre-push: ${local_sha:0:8} is version $pushed, and main already has $published." >&2
       echo "          a repeated version publishes nothing (NuGet --skip-duplicate) and still goes green." >&2
       echo "          run: scripts/ship       (bump + gate + push)" >&2
       echo "          or:  scripts/bump-version && git commit -- Directory.Build.props bozzetto-vscode/package.json" >&2
@@ -43,9 +60,14 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     fi
   fi
 
-  [ -f "$STATE/passed/$local_sha/ok" ] && continue
+  if [ -f "$STATE/passed/$local_sha/ok" ] \
+     && [ "$(cat "$STATE/passed/$local_sha/gate-kind" 2>/dev/null)" = "$gate_kind" ] \
+     && [ -s "$STATE/passed/$local_sha/inputs.sha256" ]; then
+    continue
+  fi
   if [ "${BOZZETTO_SKIP_GATE:-}" = "1" ]; then
-    echo "pre-push: WARNING pushing ungated ${local_sha:0:8} (BOZZETTO_SKIP_GATE=1); the runner will gate it" >&2
+    echo "pre-push: WARNING pushing ungated ${local_sha:0:8} (BOZZETTO_SKIP_GATE=1)" >&2
+    mkdir -p "$STATE"
     echo "$(date -Iseconds) skip-gate ${local_sha}" >> "$STATE/overrides.log"
     continue
   fi

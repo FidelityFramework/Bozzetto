@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <Import Project="../build/ComposerContract.props" />
+  <Import Project="../build/CalqueContract.props" />
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
@@ -12,11 +13,13 @@
         <Compile Include="LiveTestingBudgets.fs" />
         <Compile Include="TestInfrastructure.fs" />
         <Compile Include="../Bozzetto.Composer/ProviderContracts.fs" Link="Composer/ProviderContracts.fs" />
+  <Compile Include="../Bozzetto.Composer/FormatterSession.fs" Link="Composer/FormatterSession.fs" />
         <Compile Include="../Bozzetto.Composer/ProviderSession.fs" Link="Composer/ProviderSession.fs" />
         <Compile Include="../Bozzetto.Composer/Worker.fs" Link="Composer/Worker.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/WorkerCancellationTests.fs" Link="Composer/WorkerCancellationTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/WorkerProtocolTests.fs" Link="Composer/WorkerProtocolTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/ProviderSessionTests.fs" Link="Composer/ProviderSessionTests.fs" />
+  <Compile Include="../Bozzetto.Composer.Tests/FormatPreviewTests.fs" Link="Composer/FormatPreviewTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/NativeProviderTests.fs" Link="Composer/NativeProviderTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/LiveProviderTests.fs" Link="Composer/LiveProviderTests.fs" />
         <Compile Include="ComposerSupervisorTests.fs" />

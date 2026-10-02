@@ -212,7 +212,7 @@ let classifyProjectFile (path: string) : ProjectHostability =
 /// Bozzetto will never target the framework in question.
 let describeUnhostable (project: string) (targetFrameworks: string list) (reason: UnsupportedTfmReason) : string =
   sprintf
-    "%s targets %s. %s, so Bozzetto cannot host this project yet — support is tracked at %s."
+    "%s targets %s. %s, so Bozzetto cannot host this project yet — the inherited FSI host's upstream issue on .NET Framework support is %s."
     project
     (targetFrameworks |> String.concat ", ")
     (describeUnsupportedReason reason)

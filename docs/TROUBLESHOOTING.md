@@ -1,7 +1,7 @@
 # Troubleshooting Bozzetto
 
 Quick fixes for common issues. If your problem isn't listed here, check the
-[GitHub Issues](https://github.com/WillEhrendreich/SageFs/issues) or run the
+[project issues](https://forge.spkez.dev/FidelityFramework/Bozzetto/issues) or run the
 health check in your editor. If it's genuinely broken, file it. I'd
 rather hear about it than have you quietly work around it.
 
@@ -309,7 +309,7 @@ must be sent as `Content-Type: application/json`.
 
 ## Still Stuck?
 
-1. Check [GitHub Issues](https://github.com/WillEhrendreich/SageFs/issues) for
+1. Check [project issues](https://forge.spkez.dev/FidelityFramework/Bozzetto/issues) for
    known problems
 2. Run the health check for your editor (see table at top)
 3. File a new issue with: editor name + version, Bozzetto version (`boz --version`),

@@ -10,7 +10,7 @@ The retained F# implementation model has two workflow values:
 - **LiveTesting**: observe affected managed tests while developing that implementation.
 
 These are compatibility contracts for F# tooling. They are not Clef execution
-backends. F# execution uses the separate SageFS service; the Composer provider
+backends. Embedded production FSI hosting is retired; the Composer provider
 never converts a Clef request into an FSI evaluation.
 
 The parser accepts explicit supported names and returns an error for unsupported

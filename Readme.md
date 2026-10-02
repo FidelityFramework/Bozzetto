@@ -136,7 +136,7 @@ The host and compiler worker use .NET today. Their public contracts should suppo
 
 Fidelity.FSharp.Incremental is the selected shared foundation for incremental dependencies and explicitly started work across Bozzetto and the Clef/CCS/Baker/Composer pipeline. Its [planned adoption](docs/Bozzetto_Incremental_Foundation_Adoption.md) connects interim .NET hosting to self-hosting through portable ownership and lifetime contracts. Integration is still ahead.
 
-`Bozzetto/` contains daemon supervision, CLI, MCP and browser routes; `Bozzetto.Composer/` contains the worker and adapter. `Bozzetto.Core/` holds shared and inherited implementation. Tests live in `Bozzetto.Tests/` and `Bozzetto.Composer.Tests/`. The [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md) removes embedded production FSI hosting from this checkout and directs F# work to separate SageFS; a real Clef interactive host remains future work.
+`Bozzetto/` contains daemon supervision, CLI, MCP and browser routes; `Bozzetto.Composer/` contains the worker and adapter. `Bozzetto.Core/` holds shared and inherited implementation. Tests live in `Bozzetto.Tests/` and `Bozzetto.Composer.Tests/`. The [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md) removes embedded production FSI hosting from this checkout; a real Clef interactive host remains future work.
 
 The [documentation index](docs/README.md) retains implementation and compatibility guides, editor references and application samples, including the Raylib window and game demos.
 
@@ -152,6 +152,6 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for repositor
 
 Bozzetto is a hard fork of [SageFs](https://github.com/WillEhrendreich/SageFs), Will Ehrendreich's live F# development daemon. Its persistent REPL, daemon architecture and hot reload engine supplied the working foundation: keep a project alive, try a change and see its effect through shared tools. [Fable.SageFs](https://github.com/shayanhabibi/Fable.SageFs), by Shayan Habibi, brought the Fable compiler into that live session and allowed its own transforms to be revised from the REPL. That example helped inspire Bozzetto's compiler workbench direction.
 
-Bozzetto carries those ideas into Fidelity's broader compiler, device and workbench remit. Today's Composer integration uses explicit worker retirement and replacement; live compiler patching and Clef ORC execution remain separate work. F#/.NET development uses the independent SageFS service on `37749`/`37750`, alongside Bozzetto on `47749`/`47750`. [Upstream heritage](UPSTREAM_HERITAGE.md) records the fork history, original authorship and wider dependency credits.
+Bozzetto carries those ideas into Fidelity's broader compiler, device and workbench remit. Today's Composer integration uses explicit worker retirement and replacement; live compiler patching and Clef ORC execution remain separate work. [Upstream heritage](UPSTREAM_HERITAGE.md) records the fork history, original authorship and wider dependency credits.
 
 [MIT license](LICENSE), with the original copyright notice preserved.

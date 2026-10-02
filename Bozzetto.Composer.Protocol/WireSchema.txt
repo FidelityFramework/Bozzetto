@@ -6,12 +6,14 @@ string=bare-data(strict-utf8);array=bare-uint(count),elements;option=bare-u8(0|1
 integer32=i32le;integer64=i64le;observation=u64le;bool=bare-bool;union=bare-uint(tag)
 provider=0:FSharp,1:ClefComposer
 encoding=0:BAREWire1
-operation=0:Hello,1:Open,2:Reserve,3:Build,4:Status,5:Run,6:Cancel,7:CancelRequest,8:Close,9:PrepareCompilerChange
+operation=0:Hello,1:Open,2:Reserve,3:Build,4:Status,5:Run,6:Cancel,7:CancelRequest,8:Close,9:PrepareCompilerChange,10:Format
 worker=host,epoch,provider;session=worker,sessionId
 authority=host,sessionId,provider,epoch,generation
 agreement=u16le(version),encoding,contractDigest
 compiler=assemblyPath,sha256,version;psg=i32le(schema),assemblySha256,u32le(formatVersion),contractFingerprint
-requestUnion=0:Hello(agreement),1:Open(worker,project),2:Reserve(session,label),3:Build(session,reservation),4:Status(session),5:Run(session,string[]arguments),6:Cancel(session),7:CancelRequest(worker,targetRequestId),8:Close(session),9:PrepareCompilerChange(worker)
+requestUnion=0:Hello(agreement),1:Open(worker,project),2:Reserve(session,label),3:Build(session,reservation),4:Status(session),5:Run(session,string[]arguments),6:Cancel(session),7:CancelRequest(worker,targetRequestId),8:Close(session),9:PrepareCompilerChange(worker),10:Format(session,i64le(expectedGeneration),formatBuffer)
+formatBuffer=document,incarnation,u64le(revision),source,configuration
+formatPreview=document,incarnation,u64le(revision),sourceSha256,configuration,formatterIdentity,formatted
 hello=agreement,compiler,psg,operation[]operations,bool(inMemoryPatchAllowed)
 open=u64le(observation),project,manifestPath;reserve=reservation
 artifact=i64le(generation),sourceVersion,artifactPath,artifactSha256,objectManifest,string[]changedWitnesses,string[]retainedWitnesses,string[]retiredWitnesses,(string,i32le)[]witnessVisits,string[]compiledObjects,string[]reusedObjects,string[]retiredObjects
@@ -20,7 +22,7 @@ run=i64le(generation),sourceVersion,i32le(exitCode),standardOutput,standardError
 requestCanceled=targetRequestId,bool(cancellationRequested)
 close=u64le(observation),bool(closed),bool(cleanupPending),option(string)cleanupError
 retirement=bool(restartRequired),bool(inMemoryPatchAllowed)
-successUnion=0:HelloAccepted(hello),1:Opened(open),2:Reserved(reserve),3:Built(artifact),4:Observed(status),5:Ran(run),6:Canceled,7:RequestCanceled(requestCanceled),8:Closed(close),9:CompilerRetired(retirement)
+successUnion=0:HelloAccepted(hello),1:Opened(open),2:Reserved(reserve),3:Built(artifact),4:Observed(status),5:Ran(run),6:Canceled,7:RequestCanceled(requestCanceled),8:Closed(close),9:CompilerRetired(retirement),10:Formatted(formatPreview)
 refusal=refusalCode,string(message)
 refusalCode=0:InvalidRequest,1:ProtocolVersion,2:EncodingMismatch,3:ContractMismatch,4:WrongAuthority,5:WrongProvider,6:InvalidProject,7:InvalidCache,8:CompilerRetired,9:UnknownSession,10:Closed,11:UnsupportedOperation,12:RequestRefused,13:DuplicateRequest,14:CleanupFailed,15:Superseded,16:CompilerRefused,17:Canceled,18:ObservationCapacity,19:Busy,20:SessionCapacity,21:BackendFailed,22:InvalidReservation,23:NotAccepted,24:FrameTooLarge,25:MalformedPayload,26:ProviderRetiring,27:ProviderUnavailable,28:RetirementFailed,29:Timeout
 controlProfile=frameBodyMax1048576;stringsMax1048571;arrayCountMax1048571
@@ -32,16 +34,18 @@ Bozzetto.Composer.Protocol.CancellationResult=record TargetRequestId:System.Stri
 Bozzetto.Composer.Protocol.CloseResult=record Observation:System.UInt64;Closed:System.Boolean;CleanupPending:System.Boolean;CleanupError:Microsoft.FSharp.Core.FSharpOption`1<System.String>
 Bozzetto.Composer.Protocol.CompilerIdentity=record AssemblyPath:System.String;Sha256:System.String;Version:System.String
 Bozzetto.Composer.Protocol.EncodingId=0:BAREWire1()
+Bozzetto.Composer.Protocol.FormatBuffer=record Document:System.String;Incarnation:System.String;Revision:System.UInt64;Source:System.String;Configuration:System.String
+Bozzetto.Composer.Protocol.FormatPreview=record Document:System.String;Incarnation:System.String;Revision:System.UInt64;SourceSha256:System.String;Configuration:System.String;FormatterIdentity:System.String;Formatted:System.String
 Bozzetto.Composer.Protocol.HelloResult=record Agreement:Bozzetto.Composer.Protocol.Agreement;Compiler:Bozzetto.Composer.Protocol.CompilerIdentity;Psg:Bozzetto.Composer.Protocol.PsgIdentity;Operations:array<Bozzetto.Composer.Protocol.Operation>;InMemoryPatchAllowed:System.Boolean
 Bozzetto.Composer.Protocol.OpenResult=record Observation:System.UInt64;Project:System.String;ManifestPath:System.String
-Bozzetto.Composer.Protocol.Operation=0:Hello()|1:Open()|2:Reserve()|3:Build()|4:Status()|5:Run()|6:Cancel()|7:CancelRequest()|8:Close()|9:PrepareCompilerChange()
+Bozzetto.Composer.Protocol.Operation=0:Hello()|1:Open()|2:Reserve()|3:Build()|4:Status()|5:Run()|6:Cancel()|7:CancelRequest()|8:Close()|9:PrepareCompilerChange()|10:Format()
 Bozzetto.Composer.Protocol.PsgIdentity=record Schema:System.Int32;AssemblySha256:System.String;FormatVersion:System.UInt32;ContractFingerprint:System.String
 Bozzetto.Composer.Protocol.Refusal=record Code:Bozzetto.Composer.Protocol.RefusalCode;Message:System.String
 Bozzetto.Composer.Protocol.RefusalCode=0:InvalidRequest()|1:ProtocolVersion()|2:EncodingMismatch()|3:ContractMismatch()|4:WrongAuthority()|5:WrongProvider()|6:InvalidProject()|7:InvalidCache()|8:CompilerRetired()|9:UnknownSession()|10:Closed()|11:UnsupportedOperation()|12:RequestRefused()|13:DuplicateRequest()|14:CleanupFailed()|15:Superseded()|16:CompilerRefused()|17:Canceled()|18:ObservationCapacity()|19:Busy()|20:SessionCapacity()|21:BackendFailed()|22:InvalidReservation()|23:NotAccepted()|24:FrameTooLarge()|25:MalformedPayload()|26:ProviderRetiring()|27:ProviderUnavailable()|28:RetirementFailed()|29:Timeout()
 Bozzetto.Composer.Protocol.Reply=record ProtocolVersion:System.UInt16;RequestId:System.String;Authority:Bozzetto.Providers.Authority;Outcome:Microsoft.FSharp.Core.FSharpResult`2<Bozzetto.Composer.Protocol.ReplyBody,Bozzetto.Composer.Protocol.Refusal>
-Bozzetto.Composer.Protocol.ReplyBody=0:HelloAccepted(Item:Bozzetto.Composer.Protocol.HelloResult)|1:Opened(Item:Bozzetto.Composer.Protocol.OpenResult)|2:Reserved(Item:Bozzetto.Composer.Protocol.ReserveResult)|3:Built(Item:Bozzetto.Providers.AcceptedArtifact)|4:Observed(Item:Bozzetto.Providers.SessionSnapshot)|5:Ran(Item:Bozzetto.Providers.RunResult)|6:Canceled()|7:RequestCanceled(Item:Bozzetto.Composer.Protocol.CancellationResult)|8:Closed(Item:Bozzetto.Composer.Protocol.CloseResult)|9:CompilerRetired(Item:Bozzetto.Composer.Protocol.RetirementResult)
+Bozzetto.Composer.Protocol.ReplyBody=0:HelloAccepted(Item:Bozzetto.Composer.Protocol.HelloResult)|1:Opened(Item:Bozzetto.Composer.Protocol.OpenResult)|2:Reserved(Item:Bozzetto.Composer.Protocol.ReserveResult)|3:Built(Item:Bozzetto.Providers.AcceptedArtifact)|4:Observed(Item:Bozzetto.Providers.SessionSnapshot)|5:Ran(Item:Bozzetto.Providers.RunResult)|6:Canceled()|7:RequestCanceled(Item:Bozzetto.Composer.Protocol.CancellationResult)|8:Closed(Item:Bozzetto.Composer.Protocol.CloseResult)|9:CompilerRetired(Item:Bozzetto.Composer.Protocol.RetirementResult)|10:Formatted(Item:Bozzetto.Composer.Protocol.FormatPreview)
 Bozzetto.Composer.Protocol.Request=record ProtocolVersion:System.UInt16;RequestId:System.String;Body:Bozzetto.Composer.Protocol.RequestBody
-Bozzetto.Composer.Protocol.RequestBody=0:Hello(expected:Bozzetto.Composer.Protocol.Agreement)|1:Open(target:Bozzetto.Composer.Protocol.WorkerAddress;project:System.String)|2:Reserve(target:Bozzetto.Composer.Protocol.SessionAddress;label:System.String)|3:Build(target:Bozzetto.Composer.Protocol.SessionAddress;reservation:System.String)|4:Status(target:Bozzetto.Composer.Protocol.SessionAddress)|5:Run(target:Bozzetto.Composer.Protocol.SessionAddress;arguments:array<System.String>)|6:Cancel(target:Bozzetto.Composer.Protocol.SessionAddress)|7:CancelRequest(target:Bozzetto.Composer.Protocol.WorkerAddress;targetRequestId:System.String)|8:Close(target:Bozzetto.Composer.Protocol.SessionAddress)|9:PrepareCompilerChange(target:Bozzetto.Composer.Protocol.WorkerAddress)
+Bozzetto.Composer.Protocol.RequestBody=0:Hello(expected:Bozzetto.Composer.Protocol.Agreement)|1:Open(target:Bozzetto.Composer.Protocol.WorkerAddress;project:System.String)|2:Reserve(target:Bozzetto.Composer.Protocol.SessionAddress;label:System.String)|3:Build(target:Bozzetto.Composer.Protocol.SessionAddress;reservation:System.String)|4:Status(target:Bozzetto.Composer.Protocol.SessionAddress)|5:Run(target:Bozzetto.Composer.Protocol.SessionAddress;arguments:array<System.String>)|6:Cancel(target:Bozzetto.Composer.Protocol.SessionAddress)|7:CancelRequest(target:Bozzetto.Composer.Protocol.WorkerAddress;targetRequestId:System.String)|8:Close(target:Bozzetto.Composer.Protocol.SessionAddress)|9:PrepareCompilerChange(target:Bozzetto.Composer.Protocol.WorkerAddress)|10:Format(target:Bozzetto.Composer.Protocol.SessionAddress;expectedGeneration:System.Int64;buffer:Bozzetto.Composer.Protocol.FormatBuffer)
 Bozzetto.Composer.Protocol.ReserveResult=record Reservation:System.String
 Bozzetto.Composer.Protocol.RetirementResult=record RestartRequired:System.Boolean;InMemoryPatchAllowed:System.Boolean
 Bozzetto.Composer.Protocol.SessionAddress=record Worker:Bozzetto.Composer.Protocol.WorkerAddress;Session:System.String

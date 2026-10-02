@@ -8,7 +8,7 @@ This plan incorporates the [provider handoff](Clef_Composer_Provider_Handoff.md)
 
 The [October 1 Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md) removes embedded production FSI hosting from the checkout. Earlier milestone descriptions below preserve their historical acceptance scope; they do not promise continued embedded F# execution. Clefx/ORC implementation and deployment remain separate gates.
 
-Bozzetto's broader destination is coordinated Fidelity development across application code, compilers, runtimes and target devices. This plan delivers its first-horizon compiler and workspace foundation, including a Clef/Composer CPU REPL backed by LLVM ORC JIT. Incremental compilation and explicit session authority establish the foundation for that experience. F#/.NET development can use the separate SageFS daemon and MCP connection on ports 37749/37750, alongside Bozzetto on 47749/47750; expanding Bozzetto’s inherited F# REPL is not a delivery priority.
+Bozzetto's broader destination is coordinated Fidelity development across application code, compilers, runtimes and target devices. This plan delivers its first-horizon compiler and workspace foundation, including a Clef/Composer CPU REPL backed by LLVM ORC JIT. Incremental compilation and explicit session authority establish the foundation for that experience. Bozzetto on 47749/47750 is the only daemon surface; embedded production FSI hosting is retired and no separate F# REPL service is part of this plan. Changes to Bozzetto's own F# implementation are validated with `dotnet build` and the unfiltered test suite; expanding Bozzetto’s inherited F# REPL is not a delivery priority.
 
 An editor user and an agent attached to the same session must operate on the same compiler generation and observe the same diagnostics, build results, cancellations and execution refusals. Composer must also be usable through MCP without requiring an editor or Bozzetto's dashboard.
 
@@ -86,7 +86,7 @@ generations are distinct and must not be compared as if they were one counter.
 Retirement fences every session before attempting any cleanup, aggregates every
 failure, and preserves errors across repeated retirement attempts.
 
-The full handoff acceptance cases are mandatory: simultaneous independent sessions; cold/unchanged/edited scalar compilation and actual retained object hashes; invalid, stale and corrupted inputs/artifacts; barrier-controlled cancellation and supersession; and compiler epoch replacement during work and after acceptance. Clef identities must never execute through inherited FSI routes. F#/.NET work may use the separate SageFS MCP service.
+The full handoff acceptance cases are mandatory: simultaneous independent sessions; cold/unchanged/edited scalar compilation and actual retained object hashes; invalid, stale and corrupted inputs/artifacts; barrier-controlled cancellation and supersession; and compiler epoch replacement during work and after acceptance. Clef identities must never execute through inherited FSI routes. No separate F# REPL service is part of these cases.
 
 **Audit boundary:** deliver the bounded worker, contracts, tests and reproducible evidence to the coordinating compiler agent before proceeding with broad daemon/UI integration. Record findings and fixes against the exact patch. An implementation self-check is not the independent audit.
 
@@ -108,7 +108,7 @@ Follow the [integrated editor workspace checkpoint](Bozzetto_Editor_Workspace_Di
 
 Add editor/dashboard actions for explicit Clef project open, reservation before save, build progress, diagnostics, evidence inspection, cancellation and gated run. Present provider and current generation clearly. Automatic rebuilds must preserve reservation, supersession and epoch rules; a filesystem change notification alone cannot authorize execution.
 
-Show source diagnostics, proof outcomes and artifact admission as separate states. Preserve refusals and diagnostic provenance. Use the separate SageFS MCP service for F#/.NET compiler-host investigation. Apply compiler replacement through the provider epoch fence, with an observable withdrawal/restart for every affected session.
+Show source diagnostics, proof outcomes and artifact admission as separate states. Preserve refusals and diagnostic provenance. Investigate and validate F#/.NET compiler-host changes through `dotnet build` and the unfiltered test suite; no separate F# REPL service is part of that work. Apply compiler replacement through the provider epoch fence, with an observable withdrawal/restart for every affected session.
 
 Acceptance: one reproducible editor-plus-agent workflow opens the real scalar fixture, builds/runs it, changes `changeable`, observes reuse and updated native output, then demonstrates invalid-edit and compiler-replacement refusals without stale execution being offered by either interface.
 
@@ -187,12 +187,12 @@ physical cleanup with proof/artifact gates intact.
 
 ### Host dependency boundaries
 
-Self-hosting is a near-term design constraint. F#/.NET workflows can remain on the separate SageFS service; expanding Bozzetto's inherited engine is not required. Add no FSI, Harmony, FCS, MSBuild or reflection requirement to Clef session contracts. A package with an upstream name is a current implementation dependency to evaluate for removal, not a retained architectural requirement.
+Self-hosting is a near-term design constraint. No separate F# REPL service is part of the self-hosting path; the inherited F# engine is retained host code, not a product surface, and expanding it is not required. Add no FSI, Harmony, FCS, MSBuild or reflection requirement to Clef session contracts. A package with an upstream name is a current implementation dependency to evaluate for removal, not a retained architectural requirement.
 
 | Current dependency | Why present now | Exit boundary / acceptance |
 |---|---|---|
 | Fidelity.FSharp.Incremental and its .NET host (selected; not yet referenced) | Planned common incremental bookkeeping and work-lifetime foundation | Preserve the portable protocol and consumer admission rules while replacing .NET hosting; replay and real lifecycle conformance must pass on the native host. |
-| FSharp.Compiler.Service / FSI, Fantomas, Ionide project loading, Harmony, Cecil | Existing F# evaluation, project resolution and patching in Bozzetto.Core | Isolate and remove from the Clef-only host, which must not reference or load these assemblies. Hybrid projects can use a separate SageFS service for F# support. |
+| FSharp.Compiler.Service / FSI, Fantomas, Ionide project loading, Harmony, Cecil | Existing F# evaluation, project resolution and patching in Bozzetto.Core | Isolate and remove from the Clef-only host, which must not reference or load these assemblies. Until then they remain retained host code, not a product surface; no separate F# REPL service is part of this boundary. |
 | Composer managed DLL closure and .NET worker | Today's compiler is managed | Replace worker implementation with a native/self-hosted compiler process using the same versioned JSON authority contract; native build/run/refusal tests must pass without dotnet installed. |
 | ModelContextProtocol .NET SDK / ASP.NET Core | Current MCP transport/hosting | Keep protocol schemas independent of SDK types. A native transport implementation must pass the same tool/resource and lifecycle conformance tests; SDK-specific code remains at the hosting edge. |
 | Falco, adaptive state and .NET logging/telemetry/storage bindings | Current dashboard and daemon implementation | Extract session state transitions and projections from framework types before replacing host infrastructure; prove human/MCP views retain identical authority. |
@@ -200,7 +200,7 @@ Self-hosting is a near-term design constraint. F#/.NET workflows can remain on t
 
 The current source has not yet achieved these separations: Core directly references FCS and Harmony and the daemon references Core. The new Composer worker already avoids a reference to Bozzetto.Core and serializes explicit data, not CLR type names or opaque compiler objects. Its build currently copies the compiler distribution's full DLL directory; narrow that to a compiler-owned deployment manifest rather than maintaining a guessed allowlist in Bozzetto.
 
-Make the reusable worker boundary language-neutral and introduce a selectable native worker launcher as the compiler becomes ready, alongside shared workspace integration. Native migration does not depend on completing standalone MCP packaging. Both integrated and standalone hosts must launch the compiler without loading the F# host; run the same native acceptance suite against each delivered implementation. A Clef-only installation with no .NET runtime is the exit criterion; a separate SageFS service may still serve the F#/Fable side of hybrid projects.
+Make the reusable worker boundary language-neutral and introduce a selectable native worker launcher as the compiler becomes ready, alongside shared workspace integration. Native migration does not depend on completing standalone MCP packaging. Both integrated and standalone hosts must launch the compiler without loading the F# host; run the same native acceptance suite against each delivered implementation. A Clef-only installation with no .NET runtime is the exit criterion; it does not depend on any separate F# REPL service.
 
 Historical attribution and actual upstream URLs remain accurate even after runtime dependencies disappear. The formerly inherited `SageFs.Harmony` package is now replaced by the source-built, owned `Bozzetto.Harmony` fork; see the [Harmony checkpoint](Bozzetto_Harmony_Checkpoint_2026-09-30.md). This removes the old package/build identity. Its Harmony/MonoMod functionality still requires .NET until isolated or replaced.
 

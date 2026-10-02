@@ -8,61 +8,48 @@ open Expecto.Flip
 open Bozzetto.Server.McpTools
 open Bozzetto.McpTools
 
-/// F5b Phase 2 (design: f5b-self-hosting-design.md §4) — a blessed,
-/// discoverable "reload the self-host build" path so an agent developing
-/// Bozzetto.Core inside a Bozzetto.Core session can rebuild + respawn +
-/// re-adopt the fresh build in one call, and see confirmation it landed.
-///
-/// The design's own §3-4 conclusion — confirmed here by reading
-/// Bozzetto/McpTools.fs's hard_reset_fsi_session description,
-/// Bozzetto/Mcp.fs's hard_reset handler, and
-/// Bozzetto.Core/HostCoreAdoption.fs's resolveLaunchRoot before writing a
-/// single line of this file — is that the mechanism already exists
-/// end-to-end: hard_reset_fsi_session rebuild=true drives
-/// SessionManager's restart path (SessionManager.fs:313, NOT modified by
-/// this island), which calls HostCoreAdoption.resolveLaunchRoot (also NOT
-/// modified by this island) to rebuild, respawn, and re-adopt the
-/// session project's own Bozzetto.Core build. F5b Phase 2 is therefore
-/// documentation + confirmation UX layered over that proven path, not new
-/// isolation machinery — the design explicitly rejects in-process ALC
-/// isolation for Bozzetto.Core (§3: the native TPA binder wins before any
-/// managed ALC identity check runs, and Bozzetto.Core's FSI-exchanged types
-/// can't be split across ALCs without breaking the live-object
-/// FSI<->plumbing boundary).
-///
-/// CONCLUSION: hard_reset_fsi_session rebuild=true is confirmed
-/// SUFFICIENT for the self-host reload — this island only had to make it
-/// DISCOVERABLE (the tool description now names the self-hosting use
-/// case explicitly) and CONFIRMED (RebuildOutcome.describe's Succeeded
-/// line — surfaced via get_fsi_status, Mcp.fs:2101-2105 — now names the
-/// loaded Bozzetto.Core version so an agent can see the adopted build
-/// actually changed).
-///
-/// SCOPE: this is a CONTRACT test, not the full rebuild-mid-test
-/// integration test the design's own RED spec calls for (§4 Phase 2:
-/// build Bozzetto.Core at vN, start a session, assert loaded=vN; rebuild at
-/// vN+1 with a bumped marker, invoke the reload, assert loaded=vN+1 —
-/// mirroring DogfoodReplTests.fs:102-113's "bozzetto-host-adopt-" assertion
-/// pattern via SessionManager.create + AwaitReady, with any poll loop
-/// written ITERATIVELY, not as `task { return! self }` recursion, per
-/// [[project_task_recursion_not_stacksafe]]). That full integration test
-/// is intentionally deferred — too slow/complex for this island; the
-/// coordinating agent owns adding it during integration.
-let private hardResetDescription : string =
+/// The October 1 host transition retires production F# session rebuilds.
+/// MCP guidance must expose that boundary while lifecycle formatters remain
+/// testable through injected component runtimes.
+let private hardResetMethod =
   typeof<BozzettoTools>.GetMethods(BindingFlags.Instance ||| BindingFlags.Public)
   |> Array.find (fun m -> m.Name = "hard_reset_fsi_session")
-  |> fun m -> m.GetCustomAttribute<DescriptionAttribute>().Description
+
+let private hardResetDescription : string =
+  hardResetMethod.GetCustomAttribute<DescriptionAttribute>().Description
 
 [<Tests>]
 let tests =
-  testList "HostCoreAdoption self-host reload (F5b Phase 2)" [
-    test "WHY — hard_reset_fsi_session's description names the self-host reload path, because a self-hosting agent must discover the ONE blessed call without ever reading HostCoreAdoption.fs" {
+  testList "HostCoreAdoption compatibility guidance and retained lifecycle" [
+    test "WHY — hard reset guidance exposes provider retirement and leased validation because an agent cannot reload a production F# session in this checkout" {
       hardResetDescription
-      |> Expect.stringContains "the description calls out the self-hosting Bozzetto.Core use case" "SELF-HOSTING Bozzetto.Core"
+      |> Expect.stringContains "the description states the production provider is retired" "Embedded production FSI hosting is retired"
       hardResetDescription
-      |> Expect.stringContains "the description states rebuild=true IS the reload mechanism, not a separate tool" "rebuild=true rebuilds"
+      |> Expect.stringContains "session recreation and rebuild are refused" "refused at the retired provider boundary"
+      for lease in [ "acquire_full_build_lease"; "acquire_test_suite_lease"; "release_work_lease" ] do
+        hardResetDescription |> Expect.stringContains "validation uses the daemon's work leases" lease
       hardResetDescription
-      |> Expect.stringContains "the description promises a post-reload version confirmation, matching RebuildOutcome.describe's Succeeded line" "confirms which"
+      |> Expect.stringContains "the acceptance command runs the compiled test DLL" "Bozzetto.Tests.dll --summary"
+      hardResetDescription
+      |> Expect.stringContains "the acceptance command requires trusted coverage" "TRUST verdict=Trusted"
+      for step in [ "composer_open_project"; "composer_reserve_edit"; "composer_build"; "composer_run_current" ] do
+        hardResetDescription |> Expect.stringContains "Composer uses its explicit provider contract" step
+      for promise in [ "rebuild=true rebuilds"; "poll get_session_status"; "ONE blessed reload path" ] do
+        hardResetDescription.Contains promise
+        |> Expect.isFalse "the description must not promise a retired production reload"
+    }
+
+    test "WHY — the rebuild parameter describes the same retired provider boundary because parameter guidance must not advertise unavailable session rebuilds" {
+      let parameterDescription =
+        hardResetMethod.GetParameters()
+        |> Array.find (fun parameter -> parameter.Name = "rebuild")
+        |> fun parameter -> parameter.GetCustomAttribute<DescriptionAttribute>().Description
+      parameterDescription
+      |> Expect.stringContains "the compatibility flag cannot restore session rebuilds" "cannot rebuild an inherited F# session"
+      parameterDescription
+      |> Expect.stringContains "caller-owned builds must acquire their work lease" "acquire_full_build_lease"
+      parameterDescription
+      |> Expect.stringContains "caller-owned builds must release their work lease" "release_work_lease"
     }
 
     test "WHY — a successful rebuild's get_fsi_status line names the WORKER's actually-loaded Bozzetto.Core version, not the daemon's own, because those two can legitimately differ and conflating them sent an agent comparing versions down the wrong path" {

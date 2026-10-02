@@ -20,9 +20,11 @@ type private Producer<'a> = {
 /// One mailbox owns this explicit compiler session. Tasks here are projections
 /// for the CLR worker protocol; evaluator and callback lifetime belongs to the
 /// functional host. A producer's scope also identifies its physical drain.
-type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend<'Ticket>) =
+type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend<'Ticket>, ?formatter: IFormatBackend, ?beforeFormatInvocation: (unit -> Task)) =
   let gate = obj ()
   let invocation = new SemaphoreSlim(1, 1)
+  let formatter = match formatter with Some supplied -> supplied | None -> new FormatterSession() :> IFormatBackend
+  let beforeFormatInvocation = defaultArg beforeFormatInvocation (fun () -> Task.CompletedTask)
   let manifestPath = backend.ManifestPath
   let evaluators = Dictionary<WorkId, WorkCancellation -> Async<StepOutcome>>()
   let liveScopes = HashSet<ScopeId>()
@@ -53,6 +55,10 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
       Epoch = epoch; Generation = generation }
   let refuse code message : Result<'a, Refusal> = Result.Error { Code = code; Message = message }
   let reply outcome = { Authority = authority (); Outcome = outcome }
+  let recordFormatterDiagnostics diagnostics =
+    if not (List.isEmpty diagnostics) then
+      let evidence = diagnostics |> List.map (sprintf "%A") |> String.concat "; "
+      backendError <- Some(match backendError with None -> evidence | Some previous -> previous + "; " + evidence)
   let obsolete (expected: Authority) =
     if closed then Some(refuse "closed" "Open a fresh provider session after compiler replacement.")
     elif generation <> expected.Generation then Some(refuse "superseded" "A newer reservation withdrew this operation's authority.")
@@ -274,19 +280,24 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
 
   member _.Identity = lock gate authority
 
-  member _.Status() = lock gate (fun () ->
-    if observationSerial = UInt64.MaxValue then
-      reply (refuse "observation_capacity" "Session observation capacity reached; open a fresh session.")
-    else
-      drainObservations ()
-      // Number the captured value, not a caller's dispatch or reply order.
-      observationSerial <- observationSerial + 1UL
-      reply (Result.Ok {
-        Observation = observationSerial
-        Project = project; ManifestPath = manifestPath; Closed = closed
-        Busy = active.Count > 0; Current = current
-        RevocationPending = revocation.IsSome; BackendError = backendError
-        CleanupPending = closed && not cleanupComplete; CleanupError = cleanupError }))
+  member _.Status() =
+    // Retired formatting attempts can fail after their preview projection has
+    // settled. Drain their typed evidence on ordinary observation as well.
+    let diagnostics = formatter.DrainDiagnostics()
+    lock gate (fun () ->
+      if observationSerial = UInt64.MaxValue then
+        reply (refuse "observation_capacity" "Session observation capacity reached; open a fresh session.")
+      else
+        drainObservations ()
+        recordFormatterDiagnostics diagnostics
+        // Number the captured value, not a caller's dispatch or reply order.
+        observationSerial <- observationSerial + 1UL
+        reply (Result.Ok {
+          Observation = observationSerial
+          Project = project; ManifestPath = manifestPath; Closed = closed
+          Busy = active.Count > 0; Current = current
+          RevocationPending = revocation.IsSome; BackendError = backendError
+          CleanupPending = closed && not cleanupComplete; CleanupError = cleanupError }))
 
   member _.ReserveAsync(label: string) = lock gate (fun () ->
     if closed then Task.FromResult(reply (refuse "closed" "The provider session is closed."))
@@ -395,6 +406,37 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
       | Result.Error message -> Task.FromResult(reply (refuse "session_capacity" message))
       | Result.Ok(demand, observation) -> projectReply producer demand observation cancellation)
 
+  /// Preview is immutable buffer data. Admission and publication use the
+  /// provider generation fence, without reserving or withdrawing an artifact.
+  member _.FormatAsync(expectedGeneration, buffer, cancellation: CancellationToken) = lock gate (fun () ->
+    if closed then Task.FromResult(reply (refuse "closed" "The provider session is closed."))
+    elif expectedGeneration <> generation then Task.FromResult(reply (refuse "superseded" "Use the current provider generation for this preview."))
+    elif cancellation.IsCancellationRequested then Task.FromResult(reply (refuse "canceled" "This request was canceled before admission."))
+    elif controls.Count >= 128 then Task.FromResult(reply (refuse "busy" "The provider projection queue is full."))
+    elif controlSerial >= controlLimit then Task.FromResult(reply (refuse "session_capacity" "Session control capacity reached; open a fresh session."))
+    else
+      let expected = authority ()
+      startControl (async {
+        let! result = async {
+          try
+            do! beforeFormatInvocation() |> Async.AwaitTask
+            // The owned formatter's synchronous prefix admits the immutable
+            // snapshot before its first await. Order that actual admission
+            // with reservation; an obsolete queued request must not advance
+            // a document's revision high-water mark, even if its reply refuses.
+            let running = lock gate (fun () ->
+              match obsolete expected with
+              | Some refusal -> Task.FromResult refusal
+              | None -> formatter.PreviewAsync(buffer, cancellation))
+            return! running |> Async.AwaitTask
+          with error -> return refuse "backend_failed" error.Message
+        }
+        let diagnostics = formatter.DrainDiagnostics()
+        return lock gate (fun () ->
+          recordFormatterDiagnostics diagnostics
+          { Authority = expected; Outcome = match obsolete expected with Some refusal -> refusal | None -> result })
+      }))
+
   member _.BeginClose() = lock gate (fun () ->
     if not closed then
       closed <- true
@@ -403,6 +445,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
       current <- None
       revocation <- None
       liveScopes.Clear()
+      formatter.BeginClose()
       AsyncMailbox.beginClose mailbox |> ignore
     reply (Result.Ok ()))
 
@@ -418,15 +461,19 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
         let mutable projectionError = None
         try do! Task.WhenAll(Array.append ownedControls ownedObservations) |> Async.AwaitTask
         with error -> projectionError <- Some error.Message
+        let! formatterJoined = formatter.CloseAsync() |> Async.AwaitTask
+        let formatterDiagnostics = formatter.DrainDiagnostics()
         do! invocation.WaitAsync() |> Async.AwaitTask
         try
           let disposalError = try backend.Dispose(); None with error -> Some error.Message
           let error =
             [ (match joined with Result.Error error -> Some error.Message | _ -> None)
+              (match formatterJoined with Result.Error error -> Some error | _ -> None)
               projectionError; disposalError ]
             |> List.choose (fun value -> value)
             |> function [] -> None | messages -> Some(String.concat "; " messages)
           return lock gate (fun () ->
+            recordFormatterDiagnostics formatterDiagnostics
             cleanupError <- error
             cleanupComplete <- error.IsNone
             evaluators.Clear()

@@ -87,8 +87,9 @@ Further separation of that tooling closure remains a packaging responsibility.
 | Process and editor owners | Capture immutable inputs, serialize shared checker state, retain failures and join process, stream, lease and callback cleanup. |
 
 Ordinary file watching, controlled process lifetimes, real assembly test discovery,
-coverage and supported workflow transitions remain. Separate SageFS supplies the
-F# implementation loop; it was not purged or replaced. The earlier
+coverage and supported workflow transitions remain. Bozzetto's own F# code is
+validated by `dotnet build` and the unfiltered test suite under Bozzetto work
+leases; no separate F# REPL service is part of that loop. The earlier
 [FSI host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md) describes that
 distinct retirement. Native Clefx/ORC and actual binary PSG revision transport are
 not implemented by this purge. The unintegrated codec/control-channel drafts are

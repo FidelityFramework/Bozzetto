@@ -66,7 +66,7 @@ not establish that integration. Likewise, shared editor/build authority and
 native ORC hosting require consumer acceptance tests; this architecture does
 not claim those future gates have passed.
 
-> Provenance: Bozzetto builds on SageFS's F# tooling foundation. Its compiler
+> Provenance: Bozzetto inherited SageFS's F# tooling foundation. Its compiler
 > orchestration purpose led to a narrower execution surface: runtime method
 > detours and their source/browser injection machinery are excluded. This is a
 > targeted ownership decision; ordinary managed hosting remains useful where

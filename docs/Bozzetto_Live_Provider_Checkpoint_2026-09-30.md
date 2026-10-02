@@ -20,8 +20,8 @@ directly. Nine `composer_*` tools and the `composer://sessions` resource expose 
 same operations and state as `/composer` and `/api/composer/*`.
 
 Clef sessions are opened explicitly with a `.fidproj`; they do not pass through
-FSI. The intended F#/.NET workflow uses a separate SageFS daemon and MCP source
-(default MCP 37749, dashboard 37750). Bozzetto retains inherited F# code, but this
+FSI. F# changes to Bozzetto's own code are validated with `dotnet build` and the
+unfiltered test suite under work leases. Bozzetto retains inherited F# code, but this
 checkpoint does not expand or require its F# REPL. Composer’s incremental sessions
 are the foundation for a future Clef REPL backed by LLVM ORC JIT. Human reservations, cancellation
 and retirement withdraw the authority visible to agents. Cancellation of a single
@@ -119,10 +119,10 @@ startup_timeout_sec = 30
 tool_timeout_sec = 600
 ```
 
-For F#/.NET work, a separately running SageFS instance may be registered as a
-second MCP source named `sagefs`, with URL `http://127.0.0.1:37749/`. Keep the
-Bozzetto and SageFS server tables and session identities separate. This checkpoint
-does not install or start SageFS, and does not alter the user's global MCP config.
+Bozzetto on ports 47749/47750 is the only daemon and MCP source for this review;
+do not register a second MCP source for F#/.NET work. F# changes to Bozzetto's
+own code are validated with `dotnet build` and the unfiltered test suite under
+work leases. This checkpoint does not alter the user's global MCP config.
 
 Reconnect/restart the agent client as appropriate and confirm that it actually
 exposes `get_daemon_status`, `composer_list_sessions` and `composer_open_project`.
@@ -141,8 +141,8 @@ host/session/epoch/revision and accepted source/artifact hashes. Exercise a huma
 reservation and confirm that the agent no longer sees a runnable current artifact.
 
 Use `composer_retire_worker` before changing compiler binaries; then confirm
-old-session operations refuse and reopening yields a new epoch. Use the separate SageFS MCP connection if the review needs F#/.NET hosting.
-Its endpoint and lifecycle are independent of Bozzetto.
+old-session operations refuse and reopening yields a new epoch. No F#/.NET hosting is part of this review;
+the Bozzetto daemon on ports 47749/47750 is its only MCP connection.
 The independent assessment belongs in a new document under `docs/`; preserve prior
 assessments and evidence.
 

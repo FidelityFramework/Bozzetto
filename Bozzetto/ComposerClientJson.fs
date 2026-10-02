@@ -36,6 +36,7 @@ module ComposerClientJson =
     | Operation.Build -> "build" | Operation.Status -> "status" | Operation.Run -> "run"
     | Operation.Cancel -> "cancel" | Operation.CancelRequest -> "cancel_request"
     | Operation.Close -> "close" | Operation.PrepareCompilerChange -> "prepare_compiler_change"
+    | Operation.Format -> "format"
   let private resultBody (projection: ComposerResponse) body =
     match body with
     | HelloAccepted hello ->
@@ -61,6 +62,7 @@ module ComposerClientJson =
     | RequestCanceled item -> value item
     | Closed item -> value {| observation = item.Observation; closed = item.Closed; cleanupPending = item.CleanupPending; cleanupError = nullableString item.CleanupError |}
     | CompilerRetired item -> value item
+    | Formatted item -> value item
   let reply projection =
     let result, error =
       match projection.Reply.Outcome with
@@ -81,6 +83,16 @@ module ComposerClientJson =
       | true, item when item.ValueKind = JsonValueKind.String -> item.GetString() |> Option.ofObj |> Option.defaultValue ""
       | false, _ -> ""
       | _ -> invalidArg "body" (name + " must be a string.")
+    let signed name =
+      match body.TryGetProperty(name: string) with
+      | true, item when item.ValueKind = JsonValueKind.Number ->
+        match item.TryGetInt64() with true, value -> value | _ -> invalidArg "body" (name + " must be an int64.")
+      | _ -> invalidArg "body" (name + " must be an int64.")
+    let unsigned name =
+      match body.TryGetProperty(name: string) with
+      | true, item when item.ValueKind = JsonValueKind.Number ->
+        match item.TryGetUInt64() with true, value -> value | _ -> invalidArg "body" (name + " must be a uint64.")
+      | _ -> invalidArg "body" (name + " must be a uint64.")
     try
       if body.ValueKind <> JsonValueKind.Object then invalidArg "body" "Request must be an object."
       let provider = match text "provider" with "" | "clef-composer" -> ProviderIdentity.ClefComposer | _ -> ProviderIdentity.FSharp
@@ -106,5 +118,10 @@ module ComposerClientJson =
         | "cancel" -> Result.Ok(Cancel session)
         | "close" -> Result.Ok(Close session)
         | "prepare_compiler_change" -> Result.Ok(PrepareCompilerChange worker)
+        | "format" ->
+          if not (fst (body.TryGetProperty "source")) then invalidArg "body" "source is required."
+          Result.Ok(Format(session, signed "generation", {
+            Document = text "document"; Incarnation = text "incarnation"; Revision = unsigned "revision"
+            Source = text "source"; Configuration = text "configuration" }))
         | _ -> Result.Error(RefusalCode.UnsupportedOperation, "Unknown Composer operation.")
     with :? ArgumentException as error -> Result.Error(RefusalCode.InvalidRequest, error.Message)

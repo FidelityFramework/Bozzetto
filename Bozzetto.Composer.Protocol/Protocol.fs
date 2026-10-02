@@ -13,11 +13,31 @@ type SessionAddress = { Worker: WorkerAddress; Session: string }
 [<RequireQualifiedAccess>]
 type Operation =
   | Hello | Open | Reserve | Build | Status | Run | Cancel | CancelRequest
-  | Close | PrepareCompilerChange
+  | Close | PrepareCompilerChange | Format
 
 /// A closed, explicit wire schema. A binary v2 peer accepts exactly this
 /// agreement before admitting any request that carries a WorkerAddress.
 type Agreement = { ProtocolVersion: uint16; Encoding: EncodingId; ContractDigest: string }
+
+/// Immutable caller-supplied text. Document is an opaque identity, never a path
+/// the worker reads. A preview grants no edit, proof, artifact or run authority.
+type FormatBuffer = {
+  Document: string
+  Incarnation: string
+  Revision: uint64
+  Source: string
+  Configuration: string
+}
+
+type FormatPreview = {
+  Document: string
+  Incarnation: string
+  Revision: uint64
+  SourceSha256: string
+  Configuration: string
+  FormatterIdentity: string
+  Formatted: string
+}
 
 type RequestBody =
   | Hello of expected: Agreement
@@ -30,6 +50,7 @@ type RequestBody =
   | CancelRequest of target: WorkerAddress * targetRequestId: string
   | Close of target: SessionAddress
   | PrepareCompilerChange of target: WorkerAddress
+  | Format of target: SessionAddress * expectedGeneration: int64 * buffer: FormatBuffer
 
 /// Full string identity is preserved. No truncation/hash/uint32 recycling.
 /// ProtocolVersion is encoded before the request union and checked before it.
@@ -80,6 +101,7 @@ type ReplyBody =
   | RequestCanceled of CancellationResult
   | Closed of CloseResult
   | CompilerRetired of RetirementResult
+  | Formatted of FormatPreview
 
 type Reply = {
   ProtocolVersion: uint16

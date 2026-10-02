@@ -17,7 +17,7 @@ type AutoOpenNamespacesOptInResult =
   | RequiresManualEdit of path: string
 
 /// Compatibility entry points for retired .bozzetto/config.fsx evaluation.
-/// Existing files are preserved; F# execution belongs to the separate SageFS service.
+/// Existing files are preserved; Bozzetto neither evaluates them nor writes replacements.
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module DirectoryConfig =
   let empty = DirectoryConfigDefaults.empty

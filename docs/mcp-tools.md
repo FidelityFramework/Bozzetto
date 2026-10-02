@@ -6,14 +6,16 @@ share one daemon-owned supervisor, session authority and compiler worker.
 Open an explicit `.fidproj`, reserve before editing, build the reservation and
 run through `composer_run_current`.
 
-For F#/.NET work, use the separate SageFS service on ports **37749/37750**.
+No separate F# REPL service is part of the Bozzetto workflow. F# changes to
+Bozzetto's own code are validated with `dotnet build` and the unfiltered test
+suite under the [work leases](#daemon-status-and-external-work-leases).
 Bozzetto's [retained F# compatibility tools](#retained-f-compatibility-tools)
 are documented below; Composer does not require an FSI session.
 
 The [October 1 host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md)
 retires embedded production FSI hosting in this checkout. The inherited catalog
 below is a compatibility reference: creation, resume and rebuild requests now
-refuse and direct callers to SageFS. Installed releases retain their own
+refuse at the retired provider boundary. Installed releases retain their own
 deployment identity; a source change alone does not replace them.
 
 `tools/list` advertises the registered catalog. Calls validate availability and
@@ -79,6 +81,7 @@ ids or reuse them after worker replacement.
 | `composer_reserve_edit` | `label`: edit description. Withdraws old run authority and returns a reservation; only a successful response authorizes the source write. |
 | `composer_build` | `reservation`: opaque token from the successful reservation. Builds that revision and preserves compiler diagnostics and proof refusals. |
 | `composer_session_status` | No additional arguments. Reports accepted metadata, pending revocation and cleanup errors. Reading status grants no execution authority. |
+| `composer_format_preview` | `generation`, `document` (opaque buffer label), `incarnation` (GUID), `revision` (uint64), `source` (immutable text), `configuration` (`clef-two-space-lf-v1`). Returns formatted text, exact base `sourceSha256` and captured formatter deployment identity. Performs no file reads or writes and preserves accepted artifact authority. |
 | `composer_run_current` | `arguments`: string array. Runs the current accepted artifact through Composer's revalidation gates. |
 | `composer_cancel` | No additional arguments. Withdraws authority and cancels outstanding work; physical withdrawal can remain pending or fail. |
 | `composer_close_session` | No additional arguments. Closes the session and begins cleanup; inspect `cleanupPending` and `cleanupError`. |
@@ -87,6 +90,17 @@ ids or reuse them after worker replacement.
 The `composer://sessions` MCP resource exposes the same session directory as
 `composer_list_sessions` and the browser. Subscribe for updates after shared
 changes. Cached accepted metadata always requires execution revalidation.
+
+Formatting preview uses the existing Composer worker and Calque's explicitly
+started per-document incremental host. Pending previews refuse completion after
+a newer reservation, revision, incarnation or worker epoch. To apply a completed
+preview, obtain a new successful `composer_reserve_edit`, compare the current
+source with the preview's exact immutable base (and its SHA256), then save the
+formatted text and build with that reservation. The completed preview grants no
+write authority. Providers retain at most 32 document incarnations per session;
+capacity refuses rather than evicting their revision evidence. The formatter
+identity records deployment file paths and SHA256 captured when its owner was
+created; mutable development files do not prove the loaded assembly bytes.
 
 Active compiler patching is unsupported. A newer compiler needs a validated,
 explicit distribution and its own provider acceptance; changing a compiler
@@ -141,7 +155,7 @@ These tools read or write local diagnostic data.
 
 These tools document Bozzetto's inherited F# host and remain in the catalog for
 compatibility. Embedded production F# execution is retired in current source;
-F#/.NET work uses separate SageFS, and Clef/Composer uses the workflow above.
+no separate F# REPL service replaces it; Clef/Composer uses the workflow above.
 Listing a tool does not establish an available execution provider.
 
 <details>

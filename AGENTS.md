@@ -1,12 +1,12 @@
 # Bozzetto — Coding Agent Guidelines
 
 **October 1 source transition:** embedded production FSI hosting is retired in
-this checkout. Use separate SageFS on 37749/37750 for the F# implementation
-loop; Bozzetto on 47749/47750 serves Composer. Older installed releases may
-still contain the inherited host. See the
+this checkout. Bozzetto on 47749/47750 is the only daemon surface and serves
+Composer; no separate F# REPL service is part of any workflow. Older installed
+releases may still contain the inherited host. See the
 [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md).
 Clefx/ORC execution is not implemented by this removal. The daemon lifecycle
-rules below still apply to both services.
+rules below still apply.
 
 ## STOP — Read This Before Anything Else
 
@@ -35,9 +35,10 @@ rules below still apply to both services.
 
 Clef/Composer work uses Bozzetto's `composer_*` tools and `/composer` browser
 page on 47749. Open an explicit `.fidproj`, reserve before editing, and execute
-only through `composer_run_current`. F#/.NET development uses the separate
-SageFS MCP service on 37749; do not make a Bozzetto FSI session a prerequisite
-for Composer work. LLVM ORC JIT is a later Composer execution backend.
+only through `composer_run_current`. F# changes to Bozzetto's own code are
+validated with `dotnet build` and the unfiltered test suite under the work
+leases below; do not make any F# REPL session a prerequisite for Composer
+work. LLVM ORC JIT is a later Composer execution backend.
 
 Start the shared Bozzetto daemon with `scripts/start-shared-daemon` and the
 reviewed installed `boz`. Its working directory is the dedicated external
@@ -49,27 +50,32 @@ Preserve an existing daemon and follow the live checkpoint to connect MCP.
 ### Retained F# implementation work
 
 Load and follow [`skills/bozzetto/SKILL.md`](skills/bozzetto/SKILL.md) before
-touching F#. The short version: an available F# REPL (normally separate SageFS)
-is the inner loop for F# implementation work, and
-`dotnet build` / `dotnet test` is the final gate only. If you brief a
-sub-agent, put the loop in the brief. Sub-agents don't inherit it.
+touching F#. The short version: no F# REPL service is part of the loop. F#
+changes to Bozzetto's own code are validated with `dotnet build` and the
+unfiltered test suite, started only after `acquire_full_build_lease` /
+`acquire_test_suite_lease` and ended with `release_work_lease`; a filtered
+test run is never the acceptance check. If you brief a sub-agent, put the
+loop in the brief. Sub-agents don't inherit it.
 
 Working on Bozzetto itself has two extra catches:
-- **Build before `create_session`.** A session loads compiled output. If it
-  still fails with "Not all DLLs are found" after a build, treat it as a Bozzetto
-  bug and report the paths it names. Mixed-framework project references must resolve to the consumer's target,
+- **Inherited F# session tools refuse here.** Requests to create, resume or
+  rebuild an inherited F# session are refused at the retired provider boundary
+  in this checkout (see the
+  [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md));
+  that refusal is the documented boundary, not a bug to work around. If a
+  Bozzetto project-loading check still reports "Not all DLLs are found" after a
+  successful build, treat it as a Bozzetto bug and report the paths it names.
+  Mixed-framework project references must resolve to the consumer's target,
   not the first target listed in the referenced project.
 - **Self-hosting skew.** A worktree's `Bozzetto.Core` can be newer than the
-  installed daemon (the daemon is whatever was last published). A
-  session that loads Core can then refuse with a version mismatch, or a
-  "type not found, Version=..." error. That's a known Bozzetto bug. Report the
-  exact error, work in a session that doesn't load Core if you can (pure files
-  can be `#load`ed into any session), and only then fall back to `dotnet` for
-  that step. Never silently.
+  installed daemon (the daemon is whatever was last published). The daemon can
+  then refuse with a version mismatch, or a "type not found, Version=..."
+  error. That's a known Bozzetto bug. Report the exact error from the
+  installed daemon; do not restart it, and never work around it silently.
 
 ## Project Overview
 
-Bozzetto accelerates Clef/Composer development through shared MCP and browser interfaces over incremental compiler sessions. LLVM ORC JIT is the intended future Clef REPL backend. F#/.NET work uses a separate SageFS daemon/MCP connection on ports 37749/37750; Bozzetto uses 47749/47750. The in-process F# engine and editor integrations remain implementation/compatibility code; embedded production FSI hosting is retired. Read the current deployment and acceptance instructions in `docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md` before assuming an agent is connected.
+Bozzetto accelerates Clef/Composer development through shared MCP and browser interfaces over incremental compiler sessions. LLVM ORC JIT is the intended future Clef REPL backend. Bozzetto on 47749/47750 is the only daemon surface; no separate F# REPL service is part of any workflow or MCP connection. The in-process F# engine and editor integrations remain implementation/compatibility code; embedded production FSI hosting is retired. Read the current deployment and acceptance instructions in `docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md` before assuming an agent is connected.
 
 The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are deprecated. Do not treat them as current product surfaces or add new product documentation for them. Preserve Raylib application and game demos because they demonstrate Bozzetto support for game projects and are independent of the deprecated GUI frontend.
 
@@ -113,7 +119,7 @@ The Visual Studio extension (`bozzetto-vs/`) is deprecated and no longer built, 
   actual |> Expect.equal "should be 42" 42
   actual |> Expect.isTrue "should be true"
   ```
-- Run tests via the Bozzetto REPL, not `dotnet test`
+- Run the unfiltered Bozzetto.Tests suite (`dotnet {testDll} --summary`) under `acquire_test_suite_lease` / `release_work_lease`; `dotnet test` is CI-only
 - Property-based tests (FsCheck) are preferred over example-based tests
 
 #### Filters: `--filter-test-list` matches LISTS, `--filter-test-case` matches LEAVES
@@ -179,13 +185,13 @@ bozzetto-vs/         — Deprecated Visual Studio extension (C# + F#), retained 
 docs/              — GitHub Pages site
 ```
 
-The Neovim plugin lives in a separate repo: `WillEhrendreich/sagefs.nvim`.
+The separate upstream Neovim plugin, `WillEhrendreich/sagefs.nvim`, is not part of this repository; it is a client of the inherited F# session contracts, whose embedded production hosting the [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md) retires in this checkout.
 
 ## Build & Test
 
 ```bash
 dotnet build           # Build all projects
-dotnet test            # Run tests (CI only — prefer Bozzetto REPL locally)
+dotnet test            # CI only — locally run the built test DLL unfiltered under a test-suite lease
 dotnet pack Bozzetto -o nupkg  # Package the CLI tool
 ```
 
@@ -218,7 +224,7 @@ dotnet pack Bozzetto -o nupkg  # Package the CLI tool
 - **Binary persistence**: Session/test state via CRC-validated binary manifest (.bozzettofm)
 - **CQRS**: Separate read/write models
 - **Vertical slices**: Features as single files for locality of behavior
-- **Daemon architecture**: Long-running Composer supervision with shared MCP and browser contracts; F# execution uses separate SageFS
+- **Daemon architecture**: Long-running Composer supervision with shared MCP and browser contracts; embedded production FSI hosting is retired and Bozzetto is the only daemon surface
 
 ### Shared incremental foundation
 
@@ -239,6 +245,6 @@ portable host contracts. Record exact identities and acceptance evidence in the
 
 - Do not introduce new NuGet dependencies without discussion
 - Do not change the indentation style (2 spaces)
-- Do not use `dotnet test` for local development — use the Bozzetto REPL
-- Do not modify `Directory.Build.props` version numbers. Nothing bumps on commit: `scripts/ship` bumps once per push, and `scripts/pre-push` refuses a master push that doesn't raise the version
+- Do not use `dotnet test` for local development — run the built test DLL unfiltered under `acquire_test_suite_lease`, and read the TRUST line
+- Do not modify `Directory.Build.props` version numbers. Nothing bumps on commit: `scripts/ship` bumps once per push, and `scripts/pre-push` refuses a main push that doesn't raise the version
 - Do not add Version attributes to PackageReference elements

@@ -327,7 +327,7 @@ internal class StatusBarManager : ExtensionPart
         await _output.WriteLineAsync("    • Extensions → Bozzetto: Session Context — to view session details");
         await _output.WriteLineAsync("    • Extensions → Bozzetto: Live Testing Dashboard — for live test results");
         await _output.WriteLineAsync("");
-        await _output.WriteLineAsync("  Documentation: https://github.com/WillEhrendreich/SageFs");
+        await _output.WriteLineAsync("  Documentation: https://forge.spkez.dev/FidelityFramework/Bozzetto");
         await _output.WriteLineAsync("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       }
 

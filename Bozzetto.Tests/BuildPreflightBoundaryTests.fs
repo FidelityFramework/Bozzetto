@@ -56,7 +56,7 @@ let tests =
     testCase "raw worker creation refuses before resolving paths or starting a process" <| fun () ->
       match SessionManager.startWorkerProcess (SessionId.newId()) [ SessionProjectTarget.Bare ] null false WorkflowTypes.SessionWorkflow.Interactive (fun _ _ -> failwith "no worker can exit") with
       | Error (BozzettoError.WorkerSpawnFailed message) ->
-        message |> Expect.equal "the worker boundary directs callers to SageFS" ExternalFSharpService.message
+        message |> Expect.equal "the worker boundary reports the retired FSharp hosting refusal" ExternalFSharpService.message
       | other -> failtestf "expected the production worker refusal, got %A" other
 
     testTask "production build delegate refuses without examining projects or a working directory" {
@@ -98,34 +98,38 @@ let tests =
   ]
 
 [<Tests>]
-let hostEntryTests =
-  Bozzetto.Tests.TestInfrastructure.Integration.hostList "Retired FSharp host entry point" [
-    testTask "standalone Host exits 2 with the same refusal before processing worker arguments" {
-      let output = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)
-      let framework = Path.GetFileName output
-      let configuration = Directory.GetParent(output).Name
-      let host = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Bozzetto.Host", "bin", configuration, framework, "Bozzetto.Host.dll"))
-      File.Exists host |> Expect.isTrue (sprintf "the independently built Host output must exist: %s" host)
-      let start = ProcessStartInfo("dotnet")
-      start.UseShellExecute <- false
-      start.RedirectStandardOutput <- true
-      start.RedirectStandardError <- true
-      start.ArgumentList.Add host
-      start.ArgumentList.Add "not-a-session"
-      start.ArgumentList.Add "not-a-port"
-      let proc = Process.Start start
-      let stdout = proc.StandardOutput.ReadToEndAsync()
-      let stderr = proc.StandardError.ReadToEndAsync()
-      let deadline = new CancellationTokenSource(TimeSpan.FromSeconds 10.0)
-      try
-        do! proc.WaitForExitAsync(deadline.Token)
-        let! _ = stdout
-        let! (error: string) = stderr
-        proc.ExitCode |> Expect.equal "removed host cannot serve" 2
-        error.Trim() |> Expect.equal "one actionable refusal" ExternalFSharpService.message
-      finally
-        if not proc.HasExited then proc.Kill(true)
-        deadline.Dispose()
-        proc.Dispose()
+let cliEntryTests =
+  testList "Retired FSharp CLI entry point" [
+    testTask "Jupyter exits 2 with the provider refusal before inspecting a missing connection file" {
+      return! task {
+        let output = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)
+        let framework = Path.GetFileName output
+        let configuration = Directory.GetParent(output).Name
+        let cli = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Bozzetto", "bin", configuration, framework, "Bozzetto.dll"))
+        File.Exists cli |> Expect.isTrue (sprintf "the CLI output for this test configuration must exist: %s" cli)
+        let connectionFile = Path.Combine(output, sprintf "absent-jupyter-%s.json" (Guid.NewGuid().ToString("N")))
+        File.Exists connectionFile |> Expect.isFalse "the connection file deliberately does not exist"
+        let start = ProcessStartInfo("dotnet")
+        start.UseShellExecute <- false
+        start.RedirectStandardOutput <- true
+        start.RedirectStandardError <- true
+        start.ArgumentList.Add cli
+        start.ArgumentList.Add "--jupyter"
+        start.ArgumentList.Add connectionFile
+        use proc = Process.Start start
+        use deadline = new CancellationTokenSource(TimeSpan.FromSeconds 10.0)
+        let stdout = proc.StandardOutput.ReadToEndAsync(deadline.Token)
+        let stderr = proc.StandardError.ReadToEndAsync(deadline.Token)
+        try
+          do! proc.WaitForExitAsync(deadline.Token)
+          let! (out: string) = stdout
+          let! (error: string) = stderr
+          proc.ExitCode |> Expect.equal "retired Jupyter execution is refused" 2
+          error.Trim() |> Expect.equal "one actionable refusal" ExternalFSharpService.message
+          out |> Expect.equal "the retired entry point cannot start a kernel or daemon" ""
+          File.Exists connectionFile |> Expect.isFalse "the retired entry point preserves the absent connection file"
+        finally
+          if not proc.HasExited then proc.Kill(true)
+      }
     }
   ]

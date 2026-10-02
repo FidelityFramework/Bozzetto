@@ -114,7 +114,7 @@ line "### Downloads"
 line ""
 line "- **NuGet**: `dotnet tool install --global Bozzetto`"
 line (sprintf "- **VS Code extension**: `code --install-extension bozzetto-vscode-%s.vsix`" version)
-line "- **Neovim**: see [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim)"
+line "- **Neovim**: no Bozzetto plugin ships with this release; [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim) is the separate upstream SageFs plugin, not a Bozzetto plugin"
 
 File.WriteAllText(outputPath, notes.ToString(), UTF8Encoding false)
 

@@ -650,7 +650,7 @@ OUTPUT FORMAT: Each entry shows a timestamp, cell index, duration, whether it su
         Task.FromResult(acquireWorkLease "mcp" Bozzetto.ExpensiveWorkLease.Kind.FullBuild) |> withEcho ctx "acquire_full_build_lease"
 
     [<McpServerTool>]
-    [<Description("Acquire a lease for a caller-owned external test-suite run. Bozzetto runs built-in tests through run_project_tests instead.")>]
+    [<Description("Acquire a lease before a caller-owned unfiltered test-suite run. For Bozzetto F# changes, run the built Bozzetto.Tests DLL with --summary and require TRUST verdict=Trusted, then release_work_lease with the granted leaseId. Filters are for iteration only; follow wait/refused lease decisions without bypassing daemon accounting.")>]
     member _.acquire_test_suite_lease() : Task<string> =
         Task.FromResult(acquireWorkLease "mcp" Bozzetto.ExpensiveWorkLease.Kind.TestSuiteRun) |> withEcho ctx "acquire_test_suite_lease"
 
@@ -705,30 +705,9 @@ NOTE: This does NOT load anything — it only lists what is available on disk. P
         getAvailableProjects ctx "mcp" wd |> withEcho ctx "get_available_projects"
 
     [<McpServerTool>]
-    [<Description("""Soft-reset the FSI session. All user-defined types, values, and bindings are cleared. The session is re-warmed by re-executing the project's startup #load scripts to restore base namespaces.
+    [<Description("""Retained compatibility operation for resetting an existing F# adapter. Its in-process component-test behavior clears interactive definitions while retaining loaded project assemblies. Embedded production FSI hosting is retired in this checkout; creating, resuming or rebuilding an inherited F# session is refused at the retired provider boundary. A reset cannot restore that provider.
 
-WHAT GETS CLEARED:
-- Every `let`, `type`, `module`, `open`, and `do` binding you submitted via send_fsharp_code.
-- Any NuGet packages loaded via '#r nuget:' in your interactive code.
-
-WHAT SURVIVES:
-- The loaded project assemblies (DLLs are still referenced — no DLL unlock/reload).
-- The session's working directory and project association.
-
-AFTER RESET:
-- The session re-runs project warm-up scripts automatically (~1-3s for most projects).
-- Re-check get_session_status until it reports State='Ready' before sending new code. A temporary warming-up message before that is normal.
-
-WHEN TO USE (rare):
-- The session warm-up itself failed and you see cascade errors on EVERY submission, even trivial ones like '1+1;;'.
-- You intentionally want to clear all your interactive definitions and start fresh.
-
-WHEN NOT TO USE (common mistake):
-- You got an eval error — that means YOUR code has a bug. Fix your code and resubmit instead.
-- 'Operation could not be completed due to earlier error' — this is NOT session corruption. A previous submission failed. Fix and resubmit that code.
-- You're not sure what went wrong — read the error diagnostics first, they tell you exactly what's wrong.
-
-This is a SOFT reset — DLL locks are retained. Use hard_reset_fsi_session only if modules failed to load during warm-up.""")>]
+Validate Bozzetto F# changes with a caller-owned dotnet build under acquire_full_build_lease, then release_work_lease with the granted leaseId. Run the built Bozzetto.Tests DLL unfiltered with --summary under acquire_test_suite_lease, require TRUST verdict=Trusted, then release_work_lease. Follow wait/refused lease decisions without bypassing daemon accounting. Clef/Composer work uses composer_open_project, composer_reserve_edit, composer_build and composer_run_current.""")>]
     member _.reset_fsi_session(
         [<Description("Working directory of the MCP client. When provided, routes to the matching session if exactly one session uses this directory. If multiple sessions share the directory, you must call switch_session first (or pass session_id explicitly) — the daemon will not guess.")>]
         [<Optional; DefaultParameterValue("")>]
@@ -746,46 +725,18 @@ This is a SOFT reset — DLL locks are retained. Use hard_reset_fsi_session only
         |> withEchoOutcome ctx "reset_fsi_session"
 
     [<McpServerTool>]
-    [<Description("""Hard reset: dispose the FSI session, release DLL locks via shadow-copy refresh,
-optionally rebuild the project, and create a fresh session. ALL definitions are lost.
+    [<Description("""Compatibility operation for inherited F# sessions. Embedded production FSI hosting is retired in this checkout; requests to recreate or rebuild an inherited F# session are refused at the retired provider boundary. rebuild=true does not restore that provider. Injected lifecycle models remain component-test code.
 
-⚠️ THIS IS ALMOST NEVER WHAT YOU WANT. Before calling this, ask yourself:
-- "Did I get an eval error?" → That's YOUR code's bug. Fix your code. Do NOT hard reset.
-- "Did I get 'earlier error'?" → A previous submission failed. Fix and resubmit it. Do NOT hard reset.
-- "I want to pick up code changes in .fs files" → Use rebuild=true ONLY if you need the project rebuilt (e.g., new file added to .fsproj, package reference changed).
-- "The warm-up itself failed with module load errors on session start?" → Then yes, hard reset may help.
+F# IMPLEMENTATION VALIDATION:
+- Read get_daemon_status and compare the installed daemon version with the checkout. Report version skew and preserve the shared daemon; never restart or reinstall it yourself.
+- acquire_full_build_lease -> dotnet build -> release_work_lease with the granted leaseId.
+- acquire_test_suite_lease -> unfiltered dotnet Bozzetto.Tests/bin/<cfg>/net10.0/Bozzetto.Tests.dll --summary -> require TRUST verdict=Trusted -> release_work_lease.
+- Filters are for iteration only. Follow wait/refused lease decisions without bypassing daemon accounting.
 
-VALID REASONS (rare):
-- New files added to .fsproj or package references changed (rebuild=true needed)
-- Module opens failed during warm-up (cascade of errors on EVERY eval, even '1+1;;')
-- Soft reset (reset_fsi_session) didn't fix a genuine session-level problem
-
-INVALID REASONS (common mistakes):
-- Your code had a syntax error or type error → fix your code
-- You got 'Operation could not be completed due to earlier error' → fix the earlier code
-- You're 'not sure' what's wrong → read the diagnostics, they tell you
-- You want to 'start fresh' → soft reset is sufficient if truly needed
-
-Set rebuild=true to run 'dotnet build' before reloading.
-
-IMPORTANT:
-- rebuild=true returns immediately after scheduling the rebuild/restart.
-- During that restart window, get_session_status may temporarily report that the session is still warming up instead of returning a full status snapshot.
-
-WORKFLOW: For test-only changes, use this with rebuild=true instead of the full pack/reinstall cycle.
-The full pack/reinstall cycle is only needed when Bozzetto's own source code changes (Bozzetto\ or Bozzetto.Server\).
-
-SELF-HOSTING Bozzetto.Core (developing Bozzetto.Core inside a Bozzetto.Core session):
-This is the ONE blessed reload path — hard_reset_fsi_session with rebuild=true rebuilds
-the project, respawns the worker process, and re-adopts your freshly-built Bozzetto.Core
-into it, so the session runs the code you just edited instead of the copy loaded at
-worker spawn. There is no separate "self-host reload" tool — this IS it. After calling
-it, poll get_session_status until State='Ready'; once ready, the status text confirms which
-Bozzetto.Core version is now loaded so you can see the rebuild actually took effect.
-Managed runtime patching is retired. Retained F# development uses the separate
-SageFS service; native Composer uses explicit reservation and rebuilt artifacts.""")>]
+CLEF/COMPOSER:
+composer_open_project with an absolute .fidproj -> composer_reserve_edit before writing -> composer_build with the reservation -> execution only through composer_run_current. No F# session is required. Managed runtime patching remains retired.""")>]
     member _.hard_reset_fsi_session(
-        [<Description("Set rebuild=true to run 'dotnet build' before reloading (default false)")>]
+        [<Description("Retained compatibility flag (default false). rebuild=true cannot rebuild an inherited F# session in this checkout: embedded production FSI hosting is retired. Validate F# changes with a caller-owned dotnet build under acquire_full_build_lease and release_work_lease.")>]
         [<Optional; DefaultParameterValue(false)>]
         rebuild: bool,
         [<Description("Working directory of the MCP client. When provided, routes to the matching session if exactly one session uses this directory. If multiple sessions share the directory, you must call switch_session first (or pass session_id explicitly) — the daemon will not guess.")>]
@@ -808,21 +759,9 @@ SageFS service; native Composer uses explicit reservation and rebuilt artifacts.
         | false -> execute |> withEchoOutcome ctx "hard_reset_fsi_session"
 
     [<McpServerTool>]
-    [<Description("""Check F# code for errors without executing it. Returns diagnostics (errors, warnings) from the F# compiler.
+    [<Description("""Retained compatibility operation for checking an F# snippet against an existing in-process adapter without executing it. Diagnostics describe that adapter's snippet context rather than full project type-checking. Embedded production FSI hosting is retired in this checkout; creating, resuming or rebuilding an inherited F# session is refused at the retired provider boundary. This tool does not establish an available production F# execution provider.
 
-IMPORTANT SCOPE RULES — read before using:
-- Code is checked as a SNIPPET in the current FSI session context, NOT as a full project file.
-- Definitions you have previously sent via send_fsharp_code ARE in scope.
-- Project namespaces are NOT automatically opened. If your code uses types from a loaded module (e.g. MyModule.MyType), include the required `open` statement at the top of the snippet, OR send `open MyModule;;` via send_fsharp_code first.
-- Errors about "type X is not defined" usually mean you are missing an `open` statement — they do NOT indicate a real bug in the code.
-
-WHEN TO USE:
-- Validating pure F# logic, expressions, or helper functions that are self-contained or only depend on already-opened namespaces.
-- Catching syntax errors or type mismatches before executing.
-
-WHEN NOT TO USE:
-- Checking a whole file that imports project-specific types without explicit `open` directives in the snippet — you will get false "not defined" errors.
-- Full project type-checking: use hard_reset_fsi_session with rebuild=true for that.""")>]
+Validate Bozzetto F# changes with a caller-owned dotnet build under acquire_full_build_lease, then release_work_lease with the granted leaseId. Run the built Bozzetto.Tests DLL unfiltered with --summary under acquire_test_suite_lease, require TRUST verdict=Trusted, then release_work_lease. Follow wait/refused lease decisions without bypassing daemon accounting. Clef/Composer work uses composer_open_project, composer_reserve_edit, composer_build and composer_run_current.""")>]
     member _.check_fsharp_code(
         code: string,
         [<Description("Working directory of the MCP client. When provided, routes to the matching session if exactly one session uses this directory. If multiple sessions share the directory, you must call switch_session first (or pass session_id explicitly) — the daemon will not guess.")>]
@@ -1901,7 +1840,7 @@ OUTPUT: Plain-text summary of members, claims, the test matrix, AND the landing 
         |> withEchoOutcome ctx "get_cohort_status"
 
     [<McpServerTool>]
-    [<Description("""Retired embedded F# integration setup. This operation refuses before changing git worktrees, the cohort head or bindings, or starting a build. F# development uses separate SageFS; a Composer integration verification workflow is not implemented.
+    [<Description("""Retired embedded F# integration setup. This operation refuses before changing git worktrees, the cohort head or bindings, or starting a build. F# changes are validated with dotnet build and the unfiltered test suite under acquire_full_build_lease / acquire_test_suite_lease and release_work_lease; a Composer integration verification workflow is not implemented.
 
 OUTPUT: An actionable provider-retirement error. No integration session is created.""")>]
     member _.set_integration_ref(
@@ -1919,4 +1858,3 @@ OUTPUT: An actionable provider-retirement error. No integration session is creat
             | Error err -> sprintf "Error: %s" (Bozzetto.BozzettoError.describeForAgent err), Some err
         }
         |> withEchoOutcome ctx "set_integration_ref"
-

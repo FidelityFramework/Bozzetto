@@ -457,8 +457,8 @@ let private checkMemoryAdmission (readSnapshot: unit -> SessionManager.QuerySnap
        Result.Error(BozzettoError.MemoryPressureRefused reason)
      | None -> Result.Ok ()
 
-/// Retain session observation and cleanup while directing new F# execution
-/// to separate SageFS. Refusal happens before recovery, configuration or state.
+/// Retain session observation and cleanup; new F# execution is refused because embedded
+/// production FSI hosting is retired. Refusal happens before recovery, configuration or state.
 let createSessionOpsWithRecovery
   (sessionManager: MailboxProcessor<SessionManager.SessionCommand>)
   (readSnapshot: unit -> SessionManager.QuerySnapshot)
@@ -1417,7 +1417,7 @@ let startDashboardServer
 }
 
 /// Preserve old F# session manifests without reading, rewriting or resuming
-/// them. A separate SageFS daemon owns F# execution and its session lifecycle.
+/// them. Embedded production FSI hosting is retired; the daemon no longer launches an F# host.
 let resumePreviousSessions
   (infra: DaemonInfra)
   (_sessionOps: SessionManagementOps)

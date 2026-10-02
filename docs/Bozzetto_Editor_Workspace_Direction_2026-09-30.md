@@ -91,7 +91,7 @@ Show invalidated, running, source verdict, witnessed, object reused and accepted
 
 ## Atelier and the self-hosting path
 
-Atelier's [reflection direction](../../Atelier/docs/11_native_reflection.md) fits a resident, versioned compiler workspace. Its older SageFS bootstrap assumption should map to the Bozzetto/Composer boundary for Clef; separate SageFS remains available for F# implementation work. Reflection, a particular actor topology and a native shell are not prerequisites for the first integrated loop.
+Atelier's [reflection direction](../../Atelier/docs/11_native_reflection.md) fits a resident, versioned compiler workspace. Its older SageFS bootstrap assumption should map to the Bozzetto/Composer boundary for Clef; Bozzetto's own F# implementation work is validated with `dotnet build` and the unfiltered test suite under Bozzetto work leases, not through a separate F# REPL service. Reflection, a particular actor topology and a native shell are not prerequisites for the first integrated loop.
 
 The [agent-surface notes](../../Atelier/docs/knowledge-layer/08_agent_surface.md) describe MCP as optional and claim dimensional information cannot survive JSON. Those assumptions do not govern Bozzetto. Explicit structured fields can preserve dimensions, roles, identity and provenance. Native BAREWire transport can be evaluated when useful, while MCP remains supported. A typed binary format alone does not establish semantic or proof authority. Compiler facts, human-authored links, agent proposals and derived history retain distinct provenance.
 

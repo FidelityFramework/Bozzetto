@@ -2,9 +2,9 @@
 # scripts/bump-version   raise the patch version in Directory.Build.props and
 #                        sync it into bozzetto-vscode/package.json.
 #
-# Nothing bumps on commit any more: one push to master is one release, so
-# scripts/ship owns the bump and scripts/pre-push refuses a master push whose
-# version isn't higher than the one already on origin/master. Run this by hand
+# Nothing bumps on commit any more: one push to main is one release, so
+# scripts/ship owns the bump and scripts/pre-push refuses a main push whose
+# version isn't higher than the one already on origin/main. Run this by hand
 # only when you want the bump as its own step.
 #
 # Prints the new version on stdout, and stages neither file: the caller decides

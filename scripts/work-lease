@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Bounded HTTP control and command ownership for the local release gate.
+# work-lease acquire <kind> <holder> | release <id> | run <kind> <command>...
+set -euo pipefail
+endpoint="http://127.0.0.1:${BOZZETTO_MCP_PORT:-47749}/api/lease"
+
+acquire() {
+  local kind=$1 holder=$2 request reply decision
+  case "$kind" in full_build|test_suite_run) ;; *) echo "work-lease: unsupported kind $kind" >&2; return 64 ;; esac
+  request=$(jq -cn --arg kind "$kind" --arg holder "$holder" '{kind:$kind,holder:$holder}')
+  reply=$(curl --silent --show-error --fail --connect-timeout 1 --max-time 5 \
+    -H 'Content-Type: application/json' --data "$request" "$endpoint/request") || return 69
+  decision=$(jq -er '.decision' <<<"$reply") || return 69
+  case "$decision" in
+    granted) jq -ce 'select(.success == true) | select(.leaseId | type == "string" and length > 0) | select(.expiresAt | type == "string")' <<<"$reply" ;;
+    wait) echo "work-lease: deferred: $reply" >&2; return 75 ;;
+    refused) echo "work-lease: refused: $reply" >&2; return 69 ;;
+    *) echo "work-lease: invalid admission response" >&2; return 69 ;;
+  esac
+}
+
+release() {
+  local request
+  request=$(jq -cn --arg leaseId "$1" '{leaseId:$leaseId}')
+  curl --silent --show-error --fail --connect-timeout 1 --max-time 5 \
+    -H 'Content-Type: application/json' --data "$request" "$endpoint/release" \
+    | jq -ce 'select(.success == true)'
+}
+
+case "${1:-}" in
+  acquire) [ "$#" = 3 ] || exit 64; acquire "$2" "$3" ;;
+  release) [ "$#" = 2 ] || exit 64; release "$2" ;;
+  run)
+    [ "$#" -ge 3 ] || exit 64
+    kind=$2
+    shift 2
+    reply=$(acquire "$kind" "gate-command-$$") || exit "$?"
+    lease_id=$(jq -er '.leaseId' <<<"$reply")
+    child=""
+    cleanup() {
+      local status=$?
+      trap - EXIT INT TERM
+      if [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then
+        kill -TERM -- "-$child" 2>/dev/null || kill -TERM "$child" 2>/dev/null || true
+        wait "$child" 2>/dev/null || true
+      fi
+      if ! release "$lease_id" >/dev/null; then
+        echo "work-lease: release failed for owned lease $lease_id" >&2
+        [ "$status" -ne 0 ] || status=69
+      fi
+      exit "$status"
+    }
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    expires=$(date -d "$(jq -er '.expiresAt' <<<"$reply")" +%s)
+    # The endpoint has no renewal operation. End and join the command before
+    # expiry, leaving a minute for process cleanup and the release request.
+    duration=$((expires - $(date +%s) - 60))
+    if [ "$duration" -le 0 ]; then echo "work-lease: granted lease has insufficient remaining time" >&2; exit 75; fi
+    timeout --kill-after=10s "${duration}s" "$@" &
+    child=$!
+    status=0
+    wait "$child" || status=$?
+    child=""
+    exit "$status"
+    ;;
+  *) echo "usage: work-lease acquire <kind> <holder> | release <id> | run <kind> <command>..." >&2; exit 64 ;;
+esac

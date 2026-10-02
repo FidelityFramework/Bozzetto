@@ -13,7 +13,7 @@
 /// repo-local SDK pin for the same reason.
 ///
 /// Every remaining process launch uses this shared sanitization boundary.
-/// The former embedded FSI host also used it before F# execution moved to SageFS.
+/// The former embedded FSI host also used it before embedded FSI hosting was retired.
 module Bozzetto.ProcessEnvironment
 
 open System

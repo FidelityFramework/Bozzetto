@@ -45,10 +45,10 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
   let target = function
     | Hello _ -> None
     | Open(target, _) | CancelRequest(target, _) | PrepareCompilerChange target -> Some target
-    | Reserve(target, _) | Build(target, _) | Run(target, _)
+    | Reserve(target, _) | Build(target, _) | Run(target, _) | Format(target, _, _)
     | Status target | Cancel target | Close target -> Some target.Worker
   let sessionAddress = function
-    | Reserve(target, _) | Build(target, _) | Run(target, _)
+    | Reserve(target, _) | Build(target, _) | Run(target, _) | Format(target, _, _)
     | Status target | Cancel target | Close target -> Some target
     | _ -> None
 
@@ -103,7 +103,7 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
                       FormatVersion = Fidelity.PSG.Binary.FormatVersion; ContractFingerprint = Fidelity.PSG.Binary.ContractFingerprint }
               Operations = [| Operation.Hello; Operation.Open; Operation.Reserve; Operation.Build; Operation.Status
                               Operation.Run; Operation.Cancel; Operation.CancelRequest; Operation.Close
-                              Operation.PrepareCompilerChange |]
+                              Operation.PrepareCompilerChange; Operation.Format |]
               InMemoryPatchAllowed = false }))
             lock gate (fun () -> agreed <- true)
             return result
@@ -177,7 +177,7 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
               | Some session ->
                 resolvedAuthority <- session.Identity
                 match body with
-                | Reserve _ | Build _ | Run _ | Cancel _ when isRetired ->
+                | Reserve _ | Build _ | Run _ | Cancel _ | Format _ when isRetired ->
                   return rejectAt id session.Identity RefusalCode.Closed "The compiler worker is retired."
                 | Reserve(_, label) ->
                   let! reply = session.ReserveAsync label
@@ -188,6 +188,9 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
                 | Run(_, arguments) ->
                   let! reply = session.RunAsync(Array.toList arguments, cancellation)
                   return convert id Ran reply
+                | Format(_, generation, buffer) ->
+                  let! reply = session.FormatAsync(generation, buffer, cancellation)
+                  return convert id Formatted reply
                 | Status _ -> return session.Status() |> convert id Observed
                 | Cancel _ -> return session.Cancel() |> convert id (fun () -> Canceled)
                 | Close _ ->

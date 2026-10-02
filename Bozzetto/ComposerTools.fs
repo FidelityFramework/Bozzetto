@@ -38,7 +38,7 @@ type ComposerTools(supervisor: ComposerSupervisor) =
   }
 
   [<McpServerTool>]
-  [<Description("Open an absolute Clef .fidproj in the daemon's Composer provider. Returns explicit host, session and compiler epoch authority shared with the human Composer page. F# sessions remain separate.")>]
+  [<Description("Open an absolute Clef .fidproj in the daemon's Composer provider. Returns explicit host, session and compiler epoch authority shared with the human Composer page.")>]
   member _.composer_open_project(project: string, cancellationToken: CancellationToken) =
     execute (Open((address "" "" "").Worker, project)) cancellationToken
 
@@ -63,6 +63,13 @@ type ComposerTools(supervisor: ComposerSupervisor) =
   [<Description("Read one Composer session's authoritative status, cached accepted metadata, pending revocation and cleanup errors. This status read grants no execution permission; run through composer_run_current.")>]
   member _.composer_session_status(host: string, session: string, epoch: string, cancellationToken: CancellationToken) =
     execute (Status(address host session epoch)) cancellationToken
+
+  [<McpServerTool>]
+  [<Description("Preview Calque formatting of an immutable Clef source buffer in this Composer session. Supply its current generation, opaque document identity, GUID incarnation, uint64 revision and configuration clef-two-space-lf-v1. Returns exact base source SHA256 and formatted text; performs no file reads or writes and grants no edit or execution authority. Reserve successfully before applying, compare the exact base buffer again, then build with that reservation.")>]
+  member _.composer_format_preview(host: string, session: string, epoch: string, generation: int64, document: string, incarnation: string, revision: uint64, source: string, configuration: string, cancellationToken: CancellationToken) =
+    execute (Format(address host session epoch, generation, {
+      Document = document; Incarnation = incarnation; Revision = revision
+      Source = source; Configuration = configuration })) cancellationToken
 
   [<McpServerTool>]
   [<Description("Run the current accepted Clef artifact through Composer's input and executable revalidation gates. Arguments are individual strings. Never launch a returned artifact path directly; stale or corrupt artifacts are refused.")>]

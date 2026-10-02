@@ -503,7 +503,7 @@ let checkFsproj (dir: string) =
   match findFsproj dir with
   | [] ->
     warn ".fsproj files" (sprintf "None found directly in %s (this check does not search subdirectories)" dir)
-          "Use separate SageFS (MCP 37749, dashboard 37750) and create an F# project session there. If your .fsproj lives in a subdirectory, point the session at that subdirectory."
+          "Bozzetto no longer creates F# project sessions (embedded F# hosting is retired), so this row is informational. If your .fsproj lives in a subdirectory, run `boz check` from that subdirectory. Clef/Composer work opens an explicit .fidproj through composer_open_project or the /composer page."
   | files ->
     let names = files |> List.map Path.GetFileName |> String.concat ", "
     pass ".fsproj files" (sprintf "%d found directly in %s (not recursive): %s" files.Length dir names)

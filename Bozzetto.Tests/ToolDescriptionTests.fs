@@ -217,6 +217,34 @@ let descriptionPropertyTests =
       desc.Contains("get_live_test_status", StringComparison.OrdinalIgnoreCase)
       |> Expect.isFalse "get_session_status should not redirect MCP agents into live-testing tooling"
 
+    testCase "test-suite lease guidance names unfiltered compiled acceptance without the retired session runner"
+    <| fun _ ->
+      let desc =
+        toolDescriptions
+        |> List.find (fun (name, _) -> name = "acquire_test_suite_lease")
+        |> snd
+      desc |> Expect.stringContains "the caller runs the compiled tests" "built Bozzetto.Tests DLL"
+      desc |> Expect.stringContains "the suite must run unfiltered" "unfiltered"
+      desc |> Expect.stringContains "the suite reports its own trust result" "--summary"
+      desc |> Expect.stringContains "only complete passing coverage is accepted" "TRUST verdict=Trusted"
+      desc |> Expect.stringContains "the granted lease must be released" "release_work_lease"
+      desc.Contains "run_project_tests"
+      |> Expect.isFalse "the lease tool must not redirect acceptance to the retired session runner"
+
+    testCase "snippet check and soft reset guidance preserve the retired provider boundary rather than redirecting to a session rebuild"
+    <| fun _ ->
+      for tool in [ "check_fsharp_code"; "reset_fsi_session" ] do
+        let desc =
+          toolDescriptions
+          |> List.find (fun (name, _) -> name = tool)
+          |> snd
+        desc |> Expect.stringContains "the compatibility operation identifies provider retirement" "Embedded production FSI hosting is retired"
+        desc |> Expect.stringContains "project validation uses a caller-owned build" "dotnet build"
+        desc |> Expect.stringContains "project validation acquires its work lease" "acquire_full_build_lease"
+        desc |> Expect.stringContains "project validation releases its work lease" "release_work_lease"
+        desc.Contains "hard_reset_fsi_session"
+        |> Expect.isFalse "compatibility guidance must not redirect validation to a retired session rebuild"
+
     testCase "targeted_verify description teaches trust-first workflow"
     <| fun _ ->
       let desc =

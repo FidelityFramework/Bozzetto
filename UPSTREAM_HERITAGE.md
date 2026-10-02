@@ -29,7 +29,7 @@ Fable.SageFs supplied an early example of a compiler hosted and revised inside a
 
 We forked because the Fidelity Framework toolchain has requirements of its own:
 
-- **Independent implementation and application workflows.** Clef projects use explicit Composer sessions in Bozzetto. F#/.NET implementation work uses a separate SageFS service; native hosting remains a planned Fidelity objective.
+- **Independent implementation and application workflows.** Clef projects use explicit Composer sessions in Bozzetto. Embedded production FSI hosting is retired, and changes to Bozzetto's own F# implementation are validated with `dotnet build` and the unfiltered test suite; native hosting remains a planned Fidelity objective.
 - **One semantic authority.** For Clef, Bozzetto will read the Program Semantic Graph that the Clef Compiler Service publishes.
 - **Embedded storage.** SQLite and DuckDB remain the fork's intended storage direction. The updated SageFs engine already replaced PostgreSQL with binary session/test manifests and uses SQLite for friction reports.
 
@@ -37,9 +37,9 @@ We made the Clef Compiler Service from the F# compiler service, and Lattice from
 
 ## Coexistence with Upstream
 
-Bozzetto now uses package `Bozzetto`, command `boz`, state directory `~/.bozzetto`, MCP port `47749` and dashboard port `47750`. SageFs and Fable.SageFs retain their separate identities. The separate SageFS service uses MCP port `37749` and dashboard port `37750`. The [identity migration checkpoint](docs/Bozzetto_Identity_Migration_Inventory.md) records the implementation and validation scope.
+Bozzetto now uses package `Bozzetto`, command `boz`, state directory `~/.bozzetto`, MCP port `47749` and dashboard port `47750`. SageFs and Fable.SageFs retain their separate identities. Upstream SageFs keeps its own default MCP port `37749` and dashboard port `37750`, so the defaults do not collide; no SageFS service is part of Bozzetto's workflows. The [identity migration checkpoint](docs/Bozzetto_Identity_Migration_Inventory.md) records the implementation and validation scope.
 
-We track upstream SageFs and intend to take its later changes where they fit the fork.
+We no longer track upstream SageFs. The fork has moved on, and later upstream changes are not taken into Bozzetto.
 
 ## Upstream Updates
 

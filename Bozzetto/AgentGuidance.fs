@@ -1,6 +1,6 @@
 /// What Bozzetto tells agents about how to work: the MCP server instructions
 /// every client gets on connect, and the prompts a user can fire to put a
-/// drifting agent back on the REPL loop.
+/// drifting agent back on the provider and work-lease loop.
 ///
 /// This is the short, always-on version of skills/bozzetto/SKILL.md. Every
 /// client pays for the instructions in tokens on every connection, so keep
@@ -23,28 +23,24 @@ let BozzettoLoopPromptName = "bozzetto_loop"
 /// The loop, one line per step. The instructions and both prompts all
 /// render these same lines, so they can't drift apart.
 let loopSteps = [
-  "RED: send_fsharp_code the smallest thing that shows the problem, and watch it fail."
-  "GREEN: redefine it in the session until it passes. Small blocks, each statement ending in ;;."
-  "Persist the working code to the .fs file."
-  "hard_reset_fsi_session with rebuild=true, so the session runs the real file. Only after persisting or an .fsproj change, not after every eval."
-  "Re-verify in the session, then commit."
-  "Final gate: the full build and the unfiltered test suite, once, when you're done."
+  "Clef: composer_open_project with an absolute .fidproj. Retain the returned host/session/epoch and source revision."
+  "Call composer_reserve_edit before source writes; proceed only on success. Edit, then composer_build with that reservation."
+  "After an accepted build, execute only with composer_run_current. Observe composer://sessions or /composer. Use composer_retire_worker before compiler replacement, coordinating with other owners."
+  "F# implementation: RED: write the smallest failing Expecto test in Bozzetto.Tests. GREEN: fix the .fs file; use 2 spaces and Expecto.Flip messages first."
+  "Build: acquire_full_build_lease; after grant run dotnet build; release_work_lease with lease_id=<granted leaseId> when the process completes, including failure."
+  "Tests: acquire_test_suite_lease; after grant run unfiltered dotnet Bozzetto.Tests/bin/<cfg>/net10.0/Bozzetto.Tests.dll --summary; require TRUST verdict=Trusted; release_work_lease with lease_id=<granted leaseId> when the process completes, including failure."
 ]
 
 let firstMinute = [
-  "Call get_daemon_status and check the daemon's version against the repo. If it's behind, tell the user."
-  "Call list_sessions. A session belongs to a working directory, and a git worktree is its own boundary. Use your own session, and don't create a duplicate."
-  "Call get_available_projects, then choose one create_project_session, create_solution_session, or create_bare_session. Bozzetto builds missing generated state itself before creating the session."
-  "Call get_session_status for that exact session until Ready. If it Faults, fix or report the named reason rather than waiting for it to change."
+  "Call get_daemon_status; compare daemon identity/version with source and the installed checkpoint. Report skew and preserve the shared daemon."
+  "Call composer_list_sessions and list_sessions. Match the working directory, project and host/session/epoch. A git worktree is its own routing boundary; use its own session."
 ]
 
 let gotchas = [
-  "\"Operation could not be completed due to earlier error\" means an earlier statement failed. Fix that statement. Don't reset the session."
-  "If a bare Error or Ok in a Result match resolves to the wrong type (\"This union case does not take arguments\"), something in scope shadows it. Write Result.Error/Result.Ok."
-  "Never #r a DLL the session already loaded from the project. You get two copies of every type, and the lock blocks rebuilds."
-  "Before an external full build, test suite, or run-app process, acquire acquire_full_build_lease, acquire_test_suite_lease, or acquire_run_app_lease, then release_work_lease when done. Bozzetto's own recovery and built-in tools already account for their work."
+  "Lease wait/refused is BUSY: wait the named time and retry the identical request. Never bypass admission with shell work or another daemon."
+  "Before a caller-owned app process, acquire_run_app_lease; after grant run it, then release_work_lease with lease_id=<granted leaseId> when it completes, including failure. Composer execution stays in its provider loop."
   "A filtered test run is never the acceptance check. Only an unfiltered run counts."
-  "check_fsharp_code type-checks without running. cancel_eval stops a runaway eval, so don't reset for that either."
+  "If a library shadows Result cases, write Result.Error/Result.Ok. Read source and tests for API shapes."
 ]
 
 let private numbered (lines: string list) =
@@ -56,7 +52,7 @@ let private bulleted (lines: string list) =
 /// The MCP ServerInstructions text.
 let serverInstructions =
   String.concat "\n" [
-    "Bozzetto is the Clef/Composer MCP source. Use a separate SageFS MCP connection for F#/.NET work. Clef: composer_open_project; composer_reserve_edit before writes; composer_build; composer_run_current. Retain host/session/epoch; observe composer://sessions or /composer. Retire before compiler replacement. The inherited F# guidance below is for retained host development; dotnet build/test/run is the final gate."
+    "Bozzetto on 47749/47750 serves Clef/Composer. Embedded production FSI hosting is retired; no separate F# REPL service is part of this workflow. F# changes to Bozzetto itself use the work-lease loop below."
     ""
     "First minute:"
     yield! numbered firstMinute
@@ -67,24 +63,21 @@ let serverInstructions =
     "Things that bite:"
     yield! bulleted gotchas
     ""
-    "If the REPL fights you, don't fall back silently. Report the tool, the input and the exact error, then use dotnet for that one step only."
-    "Never stop, restart or reinstall the user's Bozzetto daemon without asking. It's theirs, and other agents may be using it. stop_session the sessions you created when you're done."
+    "Report friction with the tool, input and exact error; don't fall back silently."
+    "Never stop, restart or reinstall the user's Bozzetto daemon without asking. Other agents may be using it. Close only sessions you created."
     sprintf "The full rules are in %s in the Bozzetto repo. If you drift off the loop, the %s prompt puts you back on it." SkillPath BackToTheReplPromptName
   ]
 
-/// The back_to_the_repl prompt text.
+/// The compatibility name remains; the prompt teaches the current workflow.
 let backToTheRepl =
   String.concat "\n" [
-    "You left the Bozzetto REPL loop. Stop what you're doing, and don't finish it the slow way first."
+    "You left the Bozzetto working loop."
     ""
-    "Name the step where you left the loop, and what pulled you off it (a dotnet build or test, a throwaway script, a guess about an API)."
+    "Name the step where you left the loop and what pulled you off it."
     ""
-    "The loop:"
-    yield! numbered loopSteps
+    serverInstructions
     ""
-    "If the REPL was fighting you, report the tool, the input and the exact error instead of working around it."
-    ""
-    "Resume from the REPL now, at the step where you left."
+    "Resume the provider and work-lease loop at that step."
   ]
 
 /// The bozzetto_loop prompt text: the whole always-on guidance, on demand.
@@ -93,10 +86,10 @@ let bozzettoLoop = serverInstructions
 [<McpServerPromptType>]
 type BozzettoPrompts() =
 
-  [<McpServerPrompt(Name = BackToTheReplPromptName, Title = "Back to the REPL")>]
-  [<Description("Put a drifting agent back on the Bozzetto REPL loop: name where it left, restate the loop, resume from the REPL.")>]
+  [<McpServerPrompt(Name = BackToTheReplPromptName, Title = "Back to the Bozzetto loop")>]
+  [<Description("Resume the current Composer or leased F# implementation workflow: name where work drifted and restate the provider and work-lease loop.")>]
   static member BackToTheRepl() : string = backToTheRepl
 
   [<McpServerPrompt(Name = BozzettoLoopPromptName, Title = "The Bozzetto loop")>]
-  [<Description("The Bozzetto working loop in full: the first-minute checklist, the RED/GREEN/persist/rebuild loop, and the things that bite.")>]
+  [<Description("The current Bozzetto loop: provider identity, Composer reservation/build/run, leased F# build and unfiltered trusted tests, and daemon ownership.")>]
   static member BozzettoLoop() : string = bozzettoLoop

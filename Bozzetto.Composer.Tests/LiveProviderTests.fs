@@ -192,6 +192,7 @@ let tests =
           use ownedMcp = ownAsync mcp
           let! discovered = mcp.ListToolsAsync((null: RequestOptions), CancellationToken.None)
           discovered |> Seq.exists (fun tool -> tool.Name = "composer_open_project") |> Expect.isTrue "Composer tools are discoverable"
+          discovered |> Seq.exists (fun tool -> tool.Name = "composer_format_preview") |> Expect.isTrue "public formatting preview is discoverable"
           let! initialFsiStatus, initialFsi = httpJson http evidence "GET" "/api/sessions" None
           initialFsiStatus |> Expect.equal "FSI list is readable" 200
           (field "sessions" initialFsi).GetArrayLength() |> Expect.equal "Composer is callable before any FSI session exists" 0
@@ -265,11 +266,42 @@ let tests =
           text "standardOutput" result |> Expect.equal "HTTP execution uses accepted native artifact" "stable\nbefore\n"
           (field "exitCode" result).GetInt32() |> Expect.equal "native exit" 0
 
-          let! editing = providerHttp http evidence "reserve" first [ "label", box "changeable edit" ]
+          let unchangedSource = File.ReadAllText firstFixture.Source
+          let editedBuffer = unchangedSource.Replace("let changeable () = false", "let changeable () = true")
+          editedBuffer.Contains "let changeable () = true" |> Expect.isTrue "the immutable edited buffer contains the known semantic change"
+          let document = "buffer://live/IncrementalScalarRegions.clef"
+          let incarnation = Guid.NewGuid().ToString("D")
+          let policy = "clef-two-space-lf-v1"
+          let baseDigest = Encoding.UTF8.GetBytes editedBuffer |> Security.Cryptography.SHA256.HashData |> Convert.ToHexString
+          let! formatting = composer mcp evidence "composer_format_preview" (arguments first @ [
+            "generation", box ((field "generation" (authority afterMalformed)).GetInt64())
+            "document", box document; "incarnation", box incarnation; "revision", box 1UL
+            "source", box editedBuffer; "configuration", box policy
+          ])
+          let preview = success formatting
+          text "document" preview |> Expect.equal "public preview preserves the opaque document identity" document
+          text "incarnation" preview |> Expect.equal "public preview preserves the document incarnation" incarnation
+          (field "revision" preview).GetUInt64() |> Expect.equal "public preview preserves the immutable buffer revision" 1UL
+          text "configuration" preview |> Expect.equal "public preview preserves the selected formatting policy" policy
+          text "sourceSha256" preview |> Expect.equal "public preview identifies the exact supplied edited buffer" baseDigest
+          File.ReadAllText firstFixture.Source |> Expect.equal "public preview performs no source write" unchangedSource
+          (field "generation" (authority formatting)).GetInt64()
+          |> Expect.equal "public preview does not reserve an edit" ((field "generation" (authority afterMalformed)).GetInt64())
+          let! afterPreview = composer mcp evidence "composer_session_status" (arguments first)
+          text "artifactSha256" (afterPreview |> success |> field "current")
+          |> Expect.equal "public preview preserves accepted artifact authority" (text "artifactSha256" accepted)
+
+          let! editing = providerHttp http evidence "reserve" first [ "label", box "save edited buffer and apply completed preview" ]
           let editReservation = editing |> success |> text "reservation"
           let! withdrawn = composer mcp evidence "composer_session_status" (arguments first)
           (withdrawn |> success |> field "current").ValueKind |> Expect.equal "human reservation immediately withdraws MCP current" JsonValueKind.Null
-          File.WriteAllText(firstFixture.Source, firstFixture.OriginalSource.Replace("let changeable () = false", "let changeable () = true"))
+          // Saving and applying a completed preview use the new successful
+          // reservation. The preview itself grants no source write authority.
+          File.WriteAllText(firstFixture.Source, editedBuffer)
+          File.ReadAllText firstFixture.Source |> Expect.equal "saved buffer is the exact preview base before formatting apply" editedBuffer
+          File.ReadAllBytes firstFixture.Source |> Security.Cryptography.SHA256.HashData |> Convert.ToHexString
+          |> Expect.equal "saved base bytes match the public preview digest before apply" baseDigest
+          File.WriteAllText(firstFixture.Source, text "formatted" preview)
           // Streamable HTTP cancellation aborts a response stream; MCP work
           // cancellation is an explicit notification targeting its JSON-RPC id.
           let buildRequestId = "live-build-" + Guid.NewGuid().ToString("N")

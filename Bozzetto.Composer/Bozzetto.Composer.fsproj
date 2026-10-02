@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../build/CalqueContract.props" />
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -13,10 +14,28 @@
     <Error Condition="!Exists('$(ComposerDistribution)/Fidelity.FSharp.Incremental.dll') Or !Exists('$(ComposerDistribution)/Fidelity.FSharp.Incremental.Hosting.dll')"
       Text="The Composer distribution must include its pinned Fidelity.FSharp.Incremental core and Hosting assemblies. Rebuild the reviewed compiler closure before building this provider." />
   </Target>
+  <!-- The SDK's dependency-file inputs omit externally selected references.
+       A distribution switch must regenerate metadata even when its DLLs are
+       older than the previous dependency file. Keep that input explicit. -->
+  <Target Name="RecordSelectedWorkerClosure" BeforeTargets="GenerateBuildDependencyFile" DependsOnTargets="ResolveReferences">
+    <GetFileHash Files="@(ReferencePath)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_SelectedWorkerClosureHash" />
+    </GetFileHash>
+    <WriteLinesToFile File="$(IntermediateOutputPath)selected-worker-closure.txt"
+      Lines="ComposerDistribution=$(ComposerDistribution);CalqueDistribution=$(CalqueDistribution);@(_SelectedWorkerClosureHash->'%(FullPath)|%(FileHash)')"
+      Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <PropertyGroup>
+      <MSBuildAllProjects>$(MSBuildAllProjects);$(IntermediateOutputPath)selected-worker-closure.txt</MSBuildAllProjects>
+    </PropertyGroup>
+    <ItemGroup>
+      <FileWrites Include="$(IntermediateOutputPath)selected-worker-closure.txt" />
+    </ItemGroup>
+  </Target>
   <ItemGroup>
     <ProjectReference Include="../Bozzetto.Composer.Protocol/Bozzetto.Composer.Protocol.fsproj" />
     <Reference Include="$(ComposerDistribution)/*.dll" />
     <Compile Include="ProviderContracts.fs" />
+    <Compile Include="FormatterSession.fs" />
     <Compile Include="ProviderSession.fs" />
     <Compile Include="Worker.fs" />
     <Compile Include="ComposerAdapter.fs" />

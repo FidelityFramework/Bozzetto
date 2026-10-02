@@ -304,7 +304,7 @@ module SessionManager =
     | false, false -> sprintf "%s reported ready without a valid proxy" transportKind
     | false, true -> sprintf "%s reported ready with a valid transport" transportKind
 
-  /// Production F# workers belong to the separate SageFS service. Keep the
+  /// Embedded production FSI hosting is retired from the daemon. Keep the
   /// runtime injection seam for component tests, but never spawn a local host.
   let startWorkerProcess
     (_sessionId: SessionId)

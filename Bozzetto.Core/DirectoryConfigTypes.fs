@@ -14,7 +14,7 @@ type LoadStrategy =
 /// Per-directory configuration via .bozzetto/config.fsx: load strategy, init script, default args.
 ///
 /// Retained data model for inherited F# UI and component tests. Embedded
-/// config.fsx evaluation is retired; separate SageFS owns F# execution.
+/// config.fsx evaluation is retired; existing files are preserved, never evaluated.
 type DirectoryConfig =
   { Load: LoadStrategy
     InitScript: string option

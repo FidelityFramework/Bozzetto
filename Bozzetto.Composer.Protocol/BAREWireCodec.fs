@@ -14,7 +14,7 @@ module BAREWireCodec =
   [<Literal>]
   let MaximumPayload = MaximumBody - 5
   [<Literal>]
-  let ContractDigest = "3000EBA080E0E37E7A0A56AB7FABE804BA2272E93C86439749569C0EF9FCD441"
+  let ContractDigest = "D8EEDA37A67779C9E652501A7635F61212F5FE98C0B993FBB51DA5FBB96D6445"
 
   let agreement = { ProtocolVersion = ProtocolVersion; Encoding = EncodingId.BAREWire1; ContractDigest = ContractDigest }
   let private utf8 = UTF8Encoding(false, true)
@@ -111,14 +111,14 @@ module BAREWireCodec =
     | Operation.Hello -> 0 | Operation.Open -> 1 | Operation.Reserve -> 2
     | Operation.Build -> 3 | Operation.Status -> 4 | Operation.Run -> 5
     | Operation.Cancel -> 6 | Operation.CancelRequest -> 7 | Operation.Close -> 8
-    | Operation.PrepareCompilerChange -> 9
+    | Operation.PrepareCompilerChange -> 9 | Operation.Format -> 10
 
   let private readOperation (r: Reader) =
     match r.Tag() with
     | 0 -> Operation.Hello | 1 -> Operation.Open | 2 -> Operation.Reserve
     | 3 -> Operation.Build | 4 -> Operation.Status | 5 -> Operation.Run
     | 6 -> Operation.Cancel | 7 -> Operation.CancelRequest | 8 -> Operation.Close
-    | 9 -> Operation.PrepareCompilerChange | _ -> r.Invalid()
+    | 9 -> Operation.PrepareCompilerChange | 10 -> Operation.Format | _ -> r.Invalid()
 
   let refusalTag = function
     | RefusalCode.InvalidRequest -> 0 | RefusalCode.ProtocolVersion -> 1
@@ -192,11 +192,13 @@ module BAREWireCodec =
     | Build _ -> Operation.Build | Status _ -> Operation.Status | Run _ -> Operation.Run
     | Cancel _ -> Operation.Cancel | CancelRequest _ -> Operation.CancelRequest
     | Close _ -> Operation.Close | PrepareCompilerChange _ -> Operation.PrepareCompilerChange
+    | Format _ -> Operation.Format
   let replyOperation = function
     | HelloAccepted _ -> Operation.Hello | Opened _ -> Operation.Open | Reserved _ -> Operation.Reserve
     | Built _ -> Operation.Build | Observed _ -> Operation.Status | Ran _ -> Operation.Run
     | Canceled -> Operation.Cancel | RequestCanceled _ -> Operation.CancelRequest
     | Closed _ -> Operation.Close | CompilerRetired _ -> Operation.PrepareCompilerChange
+    | Formatted _ -> Operation.Format
 
   let private writeRequestBody (w: Writer) body =
     w.Tag(operationTag (requestOperation body))
@@ -209,6 +211,10 @@ module BAREWireCodec =
     | Run(target, arguments) -> writeSession w target; w.Array(w.String, arguments)
     | CancelRequest(target, id) -> writeWorker w target; w.String id
     | PrepareCompilerChange target -> writeWorker w target
+    | Format(target, generation, buffer) ->
+      writeSession w target; w.I64 generation
+      w.String buffer.Document; w.String buffer.Incarnation; w.U64 buffer.Revision
+      w.String buffer.Source; w.String buffer.Configuration
   let private readRequestBody (r: Reader) =
     match readOperation r with
     | Operation.Hello -> Hello(readAgreement r)
@@ -221,6 +227,19 @@ module BAREWireCodec =
     | Operation.CancelRequest -> let target = readWorker r in CancelRequest(target, r.String())
     | Operation.Close -> Close(readSession r)
     | Operation.PrepareCompilerChange -> PrepareCompilerChange(readWorker r)
+    | Operation.Format ->
+      let target = readSession r
+      let generation = r.I64()
+      let document = r.String()
+      let incarnation = r.String()
+      let revision = r.U64()
+      let source = r.String()
+      let configuration = r.String()
+      let buffer: FormatBuffer = {
+        Document = document; Incarnation = incarnation; Revision = revision
+        Source = source; Configuration = configuration
+      }
+      Format(target, generation, buffer)
 
   let private writeArtifact (w: Writer) (v: AcceptedArtifact) =
     w.I64 v.Generation; w.String v.SourceVersion; w.String v.ArtifactPath; w.String v.ArtifactSha256
@@ -280,6 +299,9 @@ module BAREWireCodec =
     | RequestCanceled v -> w.String v.TargetRequestId; w.Bool v.CancellationRequested
     | Closed v -> w.U64 v.Observation; w.Bool v.Closed; w.Bool v.CleanupPending; w.Optional(w.String, v.CleanupError)
     | CompilerRetired v -> w.Bool v.RestartRequired; w.Bool v.InMemoryPatchAllowed
+    | Formatted v ->
+      w.String v.Document; w.String v.Incarnation; w.U64 v.Revision
+      w.String v.SourceSha256; w.String v.Configuration; w.String v.FormatterIdentity; w.String v.Formatted
   let private readReplyBody (r: Reader) =
     match readOperation r with
     | Operation.Hello ->
@@ -324,6 +346,20 @@ module BAREWireCodec =
     | Operation.PrepareCompilerChange ->
       let restart = r.Bool()
       CompilerRetired { RestartRequired = restart; InMemoryPatchAllowed = r.Bool() }
+    | Operation.Format ->
+      let document = r.String()
+      let incarnation = r.String()
+      let revision = r.U64()
+      let source = r.String()
+      let configuration = r.String()
+      let formatter = r.String()
+      let formatted = r.String()
+      let preview: FormatPreview = {
+        Document = document; Incarnation = incarnation; Revision = revision
+        SourceSha256 = source; Configuration = configuration
+        FormatterIdentity = formatter; Formatted = formatted
+      }
+      Formatted preview
 
   let private encode maximum version write =
     if version <> ProtocolVersion then Result.Error(CodecFailure.UnsupportedVersion version)
