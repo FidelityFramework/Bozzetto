@@ -12,6 +12,75 @@ explicitly; earlier source anchors do not establish installed runtime behavior.
 The current [binary PSG transport handback](PSG_Transport_Integration_Auditor_Checkpoint_2026-10-01.md)
 records the still-unintegrated service boundary and the coordinated repair gates.
 
+## October 2 resident formatting and editor preview
+
+Bozzetto `dcbe57a7`, pushed to `integration/calque-incremental-20261002`, removes
+the formatter adapter's reliance on a task's eager prefix. `RequestPreview`
+accepts an exact demand under the provider generation lock; its owner then runs
+a cold F# `Async` observation. New generations withdraw registered demands.
+Transport cancellation now reaches the exact worker-side Format request, using
+the same cancellation path as Build and Run. It does not cancel a peer request
+for the same buffer. Release controls and physical document work remain owned
+through close, including demands never observed by their caller.
+
+The shared foundation already implements publication withdrawal, carried
+`WorkCancellation`, peer-demand preservation and evaluator/callback joins.
+Current Incremental `d476aea2` differs from the pinned preview.6 implementation
+`3b86e2d` only in documentation. A fresh stable-SDK build and unfiltered NUnit run
+passed **108/108**, zero skipped. This confirms the library contract, not
+cooperative interruption inside every consumer: Calque's active full-document
+parse/print currently runs to completion after its output is withdrawn.
+
+Lattice `5066006`, pushed to its `fidelity` branch, adds **Select Composer Session**
+and **Preview Calque Formatting**. An explicitly demanded preview captures the
+unsaved buffer, validates the full response identity and source digest, and
+presents immutable original/formatted documents. Source edits, editor changes,
+session changes and cancellation discard pending presentations. Expected
+supersession is quiet; genuine backend failures remain visible. The full client
+suite passed **90/90**, zero skipped. Real VS Code **1.139.1** acceptance against
+the installed 13:48 daemon passed unsaved formatting, delayed stale-response
+rejection and unchanged disk checks; disposal preserved the shared session, and
+the runner subsequently closed its own session with completed cleanup.
+
+The new Bozzetto candidate built without warnings/errors. Its complete Composer
+tier passed **42/42**, zero ignored/failed/errored, `Trusted`, including native
+build/run and owned live MCP/HTTP checks. The candidate daemon SHA-256 is
+`c6fcef3dca57cfaf2be38ad048dc1c27559dce257232b316b8cebc73cbcfdb82`;
+the worker is
+`f7939720ffee5be079bd01640b338f0cb431ebbe2fcdae7873c7409cd2cecace`.
+All candidate files remained unchanged through acceptance. This candidate has
+**not** replaced the shared daemon recorded below.
+
+The final unfiltered default suite ran all **8,962** registered cases:
+**8,959 passed**, three existing performance-budget ignores, zero failed/errored,
+`Trusted` (`bozzetto-resident-default-final.log`). The first run is preserved in
+`bozzetto-resident-default.log`: one unchanged cache test compared a single cold
+parse (0.474 ms) with a single hit (2.935 ms) during parallel execution and failed.
+Its test-only correction retains timing diagnostics and requires exact parsed
+object and immutable-cache reuse instead of one-sample wall-clock ordering.
+The test project was rebuilt without rebuilding dependencies, then the whole
+default suite ran again; the native candidate and its tested implementation
+remained byte-identical. Both the failure and the subsequent `Trusted` receipt
+remain in the ledger, with `resident-default-final-runner.sha256` identifying
+the corrected runner.
+
+Evidence is under `~/.codex/work/bozzetto-resumption-2026-10-02/validation/`:
+`resident-incremental-tests.log`, `resident-editor-unit.log`,
+`resident-editor-host-cleanup.log`, `bozzetto-resident-native.log` and
+`resident-provider-trust.jsonl`. The real editor receipt and joined session close
+are under `~/.cache/lattice-vscode/composer-host-dGKaEs/`. The native tier's exact
+test assembly identity is `resident-native-runner.sha256`; the later default
+runner differs only by the parser-cache test correction recorded with its run.
+
+The editor still uses a separate Lattice CCS connection for proof checking.
+Explicit Format/Save/Build remains the agreed next editor operation, with
+competing saves allowed to invalidate the build. This checkpoint adds preview
+and repairs its work ownership; it does not implement that command, automatic
+format-on-save or a compiler-owned unsaved-buffer save transaction. The
+[adoption contract](Bozzetto_Incremental_Foundation_Adoption.md#cold-work-and-incremental-reuse)
+and Calque's [design note](../../Calque/docs/design.md#incremental-formatting)
+record the current cancellation boundary and phase-checkpoint follow-up.
+
 ## October 2 source integration: Calque and artifact accounts
 
 The resumed .NET-hosted path now includes `Calque.Incremental` and the public
