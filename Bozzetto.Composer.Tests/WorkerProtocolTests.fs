@@ -71,7 +71,7 @@ let tests = testList "Composer worker binary authority" [
 
   taskCase "formatter status schema refuses the previous daemon agreement before addressed work" <| fun () -> task {
     use worker = new Worker<int64>(Path.GetTempPath(), (fun _ _ -> failwith "No backend should be opened"), compiler)
-    let previous = { BAREWireCodec.agreement with ContractDigest = "D8EEDA37A67779C9E652501A7635F61212F5FE98C0B993FBB51DA5FBB96D6445" }
+    let previous = { BAREWireCodec.agreement with ContractDigest = "6A52AB4179B0E1880AD4BB21667A83D3070F8CFF67CA380B24EB23CD1E873239" }
     let! refusedHello = worker.Handle(request "previous-daemon" (Hello previous))
     refused RefusalCode.ContractMismatch refusedHello
     let! disabled = worker.Handle(request "unnegotiated-status" (Status { Worker = target refusedHello.Authority; Session = "old-session" }))

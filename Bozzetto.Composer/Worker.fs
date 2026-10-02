@@ -26,7 +26,7 @@ let private typedRefusal (error: Bozzetto.Providers.Refusal) : Bozzetto.Composer
   { Code = code; Message = error.Code + ": " + error.Message }
 
 /// The worker owns all compiler tickets. The transport copies only closed data.
-type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBackend<'Ticket>, describeCompiler: unit -> CompilerIdentity, ?cancelRequest: (string -> bool), ?createFormatter: (unit -> IFormatBackend)) =
+type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBackend<'Ticket>, describeCompiler: unit -> CompilerIdentity, ?cancelRequest: (string -> bool), ?createFormatter: (unit -> IFormatBackend), ?formatterCleanupTimestamp: (unit -> int64)) =
   let gate = obj ()
   let host, epoch = Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N")
   let sessions = Collections.Generic.Dictionary<string, ProviderSession<'Ticket>>()
@@ -147,7 +147,8 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
                     try
                       let backend = createBackend (Path.GetFullPath project) (Path.Combine(root, host, sessionId, epoch))
                       let session = new ProviderSession<'Ticket>(host, sessionId, epoch, Path.GetFullPath project, backend,
-                        ?formatter = (createFormatter |> Option.map (fun create -> create ())))
+                        ?formatter = (createFormatter |> Option.map (fun create -> create ())),
+                        ?formatterCleanupTimestamp = formatterCleanupTimestamp)
                       let installed = lock gate (fun () ->
                         if retired then false
                         else
@@ -176,6 +177,12 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
               match found with
               | None -> return reject id RefusalCode.UnknownSession "The session is not owned by this worker."
               | Some session ->
+                // The status monitor drives deadline observation. Any arriving
+                // session request also seals the entire worker before dispatch
+                // once the owner reports an expired formatter cleanup.
+                let cleanupExpired = session.WorkerRetirementRequired.IsSome
+                if cleanupExpired then this.BeginRetirement() |> ignore
+                let isRetired = isRetired || cleanupExpired
                 resolvedAuthority <- session.Identity
                 match body with
                 | Reserve _ | Build _ | Run _ | Cancel _ | Format _ when isRetired ->

@@ -17,7 +17,7 @@ formatPreview=document,incarnation,u64le(revision),sourceSha256,configuration,fo
 hello=agreement,compiler,psg,operation[]operations,bool(inMemoryPatchAllowed)
 open=u64le(observation),project,manifestPath;reserve=reservation
 artifact=i64le(generation),sourceVersion,artifactPath,artifactSha256,objectManifest,string[]changedWitnesses,string[]retainedWitnesses,string[]retiredWitnesses,(string,i32le)[]witnessVisits,string[]compiledObjects,string[]reusedObjects,string[]retiredObjects
-status=u64le(observation),project,manifestPath,bool(closed),bool(busy),option(artifact)current,bool(revocationPending),option(string)backendError,option(string)formatterError,bool(cleanupPending),option(string)cleanupError
+status=u64le(observation),project,manifestPath,bool(closed),bool(busy),option(artifact)current,bool(revocationPending),option(string)backendError,option(string)formatterError,bool(formatterCleanupPending),option(string)workerRetirementRequired,bool(cleanupPending),option(string)cleanupError
 run=i64le(generation),sourceVersion,i32le(exitCode),standardOutput,standardError
 requestCanceled=targetRequestId,bool(cancellationRequested)
 close=u64le(observation),bool(closed),bool(cleanupPending),option(string)cleanupError
@@ -54,4 +54,4 @@ Bozzetto.Providers.AcceptedArtifact=record Generation:System.Int64;SourceVersion
 Bozzetto.Providers.Authority=record Host:System.String;Session:System.String;Provider:Bozzetto.Providers.ProviderIdentity;Epoch:System.String;Generation:System.Int64
 Bozzetto.Providers.ProviderIdentity=0:FSharp()|1:ClefComposer()
 Bozzetto.Providers.RunResult=record Generation:System.Int64;SourceVersion:System.String;ExitCode:System.Int32;StandardOutput:System.String;StandardError:System.String
-Bozzetto.Providers.SessionSnapshot=record Observation:System.UInt64;Project:System.String;ManifestPath:System.String;Closed:System.Boolean;Busy:System.Boolean;Current:Microsoft.FSharp.Core.FSharpOption`1<Bozzetto.Providers.AcceptedArtifact>;RevocationPending:System.Boolean;BackendError:Microsoft.FSharp.Core.FSharpOption`1<System.String>;FormatterError:Microsoft.FSharp.Core.FSharpOption`1<System.String>;CleanupPending:System.Boolean;CleanupError:Microsoft.FSharp.Core.FSharpOption`1<System.String>
+Bozzetto.Providers.SessionSnapshot=record Observation:System.UInt64;Project:System.String;ManifestPath:System.String;Closed:System.Boolean;Busy:System.Boolean;Current:Microsoft.FSharp.Core.FSharpOption`1<Bozzetto.Providers.AcceptedArtifact>;RevocationPending:System.Boolean;BackendError:Microsoft.FSharp.Core.FSharpOption`1<System.String>;FormatterError:Microsoft.FSharp.Core.FSharpOption`1<System.String>;FormatterCleanupPending:System.Boolean;WorkerRetirementRequired:Microsoft.FSharp.Core.FSharpOption`1<System.String>;CleanupPending:System.Boolean;CleanupError:Microsoft.FSharp.Core.FSharpOption`1<System.String>

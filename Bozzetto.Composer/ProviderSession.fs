@@ -2,6 +2,7 @@ namespace Bozzetto.Providers
 
 open System
 open System.Collections.Generic
+open System.Text
 open System.Threading
 open System.Threading.Tasks
 open Fidelity.FSharp.Incremental
@@ -20,7 +21,7 @@ type private Producer<'a> = {
 /// One mailbox owns this explicit compiler session. Tasks here are projections
 /// for the CLR worker protocol; evaluator and callback lifetime belongs to the
 /// functional host. A producer's scope also identifies its physical drain.
-type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend<'Ticket>, ?formatter: IFormatBackend, ?beforeFormatInvocation: (unit -> Task)) =
+type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend<'Ticket>, ?formatter: IFormatBackend, ?beforeFormatInvocation: (unit -> Task), ?formatterCleanupTimestamp: (unit -> int64)) =
   let gate = obj ()
   let invocation = new SemaphoreSlim(1, 1)
   let formatter = match formatter with Some supplied -> supplied | None -> new FormatterSession() :> IFormatBackend
@@ -43,6 +44,9 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   let mutable revocation: int64 option = None
   let mutable backendError: string option = None
   let mutable formatterError: string option = None
+  let formatterErrors = System.Collections.Generic.Queue<string * int>()
+  let mutable formatterErrorBytes = 0
+  let mutable formatterErrorsTruncated = false
   let mutable cleanupComplete = false
   let mutable cleanupError: string option = None
   let mutable closeTask: Task<Reply<unit>> option = None
@@ -51,20 +55,82 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   let scopeLimit = 1024UL
   let demandLimit = 8192UL
   let controlLimit = 8192UL
+  let cleanupTimestamp = defaultArg formatterCleanupTimestamp Diagnostics.Stopwatch.GetTimestamp
+  let formatterCleanups = Dictionary<uint64, int64>()
+  let mutable formatterCloseTask: Task<Result<unit, string>> option = None
+  let mutable workerRetirementRequired: string option = None
 
   let authority () =
     { Host = host; Session = id; Provider = ProviderIdentity.ClefComposer
       Epoch = epoch; Generation = generation }
   let refuse code message : Result<'a, Refusal> = Result.Error { Code = code; Message = message }
   let reply outcome = { Authority = authority (); Outcome = outcome }
-  let recordFormatterError evidence =
-    formatterError <- Some(match formatterError with None -> evidence | Some previous -> previous + "; " + evidence)
-  let recordFormatterDiagnostics diagnostics =
-    if not (List.isEmpty diagnostics) then
-      let evidence = diagnostics |> List.map (sprintf "%A") |> String.concat "; "
-      recordFormatterError evidence
+  // Reserve the marker even before truncation: every status can then retain
+  // recent evidence within 16 KiB, independently of the worker frame ceiling.
+  let formatterErrorMarker = "[formatter evidence truncated]"
+  let formatterErrorBudget = 16 * 1024 - Encoding.UTF8.GetByteCount formatterErrorMarker - 2
+  let recordFormatterErrorParts (parts: string list) =
+    let entry = StringBuilder()
+    let mutable bytes = 0
+    let mutable truncated = false
+    for part in parts do
+      let part = if isNull part then "<null>" else part
+      let mutable index = 0
+      while index < part.Length && not truncated do
+        let first = part[index]
+        let paired = Char.IsHighSurrogate first && index + 1 < part.Length && Char.IsLowSurrogate part[index + 1]
+        let width =
+          if paired then 4
+          elif int first < 0x80 then 1
+          elif int first < 0x800 then 2
+          else 3
+        if bytes + width > formatterErrorBudget then truncated <- true
+        else
+          // The wire uses strict UTF-8. Normalize malformed exception text
+          // without allocating or encoding the unbounded original string.
+          if paired then
+            entry.Append(first).Append(part[index + 1]) |> ignore
+            index <- index + 2
+          else
+            entry.Append(if Char.IsSurrogate first then '\uFFFD' else first) |> ignore
+            index <- index + 1
+          bytes <- bytes + width
+    formatterErrorsTruncated <- formatterErrorsTruncated || truncated
+    if formatterErrors.Count > 0 then formatterErrorBytes <- formatterErrorBytes + 2
+    formatterErrors.Enqueue(entry.ToString(), bytes)
+    formatterErrorBytes <- formatterErrorBytes + bytes
+    while formatterErrorBytes > formatterErrorBudget do
+      let _, removedBytes = formatterErrors.Dequeue()
+      formatterErrorBytes <- formatterErrorBytes - removedBytes - (if formatterErrors.Count > 0 then 2 else 0)
+      formatterErrorsTruncated <- true
+    let retained = formatterErrors |> Seq.map fst |> String.concat "; "
+    formatterError <- Some(if formatterErrorsTruncated then formatterErrorMarker + "; " + retained else retained)
+  let recordFormatterError evidence = recordFormatterErrorParts [ evidence ]
+  let recordFormatterDiagnostics (diagnostics: FormatterDiagnostic list) =
+    for evidence in diagnostics do
+      let (AttemptId attempt) = evidence.Diagnostic.Attempt
+      recordFormatterErrorParts [
+        "Attempt="; string attempt; "UL Code="; evidence.Diagnostic.Failure.Code
+        " Incarnation="; evidence.Document.Incarnation.ToString("D")
+        " Document="; evidence.Document.Uri; " Message="; evidence.Diagnostic.Failure.Message
+      ]
+  // This deadline changes supervision, never physical ownership. The existing
+  // daemon status monitor observes it and retires the whole worker process.
+  let checkFormatterCleanupDeadline () =
+    if workerRetirementRequired.IsNone then
+      let now = cleanupTimestamp ()
+      if formatterCleanups.Values |> Seq.exists (fun started ->
+        Diagnostics.Stopwatch.GetElapsedTime(started, now) >= TimeSpan.FromSeconds 30.) then
+        let reason = "Formatter cleanup exceeded 30 seconds; the supervisor must retire this compiler worker."
+        workerRetirementRequired <- Some reason
+        current <- None
+        recordFormatterError reason
+  let finishFormatterCleanup key = lock gate (fun () ->
+    checkFormatterCleanupDeadline ()
+    formatterCleanups.Remove key |> ignore)
   let obsolete (expected: Authority) =
-    if closed then Some(refuse "closed" "Open a fresh provider session after compiler replacement.")
+    checkFormatterCleanupDeadline ()
+    if closed || workerRetirementRequired.IsSome then Some(refuse "closed" "Open a fresh provider session after compiler replacement.")
     elif generation <> expected.Generation then Some(refuse "superseded" "A newer reservation withdrew this operation's authority.")
     else None
 
@@ -137,21 +203,25 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   let startFormatterRetirements () =
     let retirements = formatter.DrainRetirements()
     if not retirements.IsEmpty then
+      let cleanupKey = controlSerial + 1UL
+      formatterCleanups.Add(cleanupKey, cleanupTimestamp ())
       startControl (fun _ -> async {
-        let join retirement = async {
-          try return! retirement
-          with error -> return Result.Error error.Message
-        }
-        let! results = retirements |> List.map join |> Async.Parallel
-        let diagnostics = formatter.DrainDiagnostics()
-        lock gate (fun () ->
-          recordFormatterDiagnostics diagnostics
-          if retirements.Length > 1 then
-            recordFormatterError "Formatter retirement transfer exceeded one child; all transferred children were joined."
-          for result in results do
-            match result with
-            | Result.Error error -> recordFormatterError ("Formatter retirement failed: " + error)
-            | Result.Ok () -> ())
+        try
+          let join retirement = async {
+            try return! retirement
+            with error -> return Result.Error error.Message
+          }
+          let! results = retirements |> List.map join |> Async.Parallel
+          let diagnostics = formatter.DrainDiagnostics()
+          lock gate (fun () ->
+            recordFormatterDiagnostics diagnostics
+            if retirements.Length > 1 then
+              recordFormatterError "Formatter retirement transfer exceeded one child; all transferred children were joined."
+            for result in results do
+              match result with
+              | Result.Error error -> recordFormatterError ("Formatter retirement failed: " + error)
+              | Result.Ok () -> ())
+        finally finishFormatterCleanup cleanupKey
       }) |> ignore
 
   let allocate expected =
@@ -314,6 +384,10 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
 
   member _.Identity = lock gate authority
 
+  member _.WorkerRetirementRequired = lock gate (fun () ->
+    checkFormatterCleanupDeadline ()
+    workerRetirementRequired)
+
   member _.Status() =
     // Retired formatting attempts can fail after their preview projection has
     // settled. Drain their typed evidence on ordinary observation as well.
@@ -324,6 +398,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
       else
         drainObservations ()
         recordFormatterDiagnostics diagnostics
+        checkFormatterCleanupDeadline ()
         // Number the captured value, not a caller's dispatch or reply order.
         observationSerial <- observationSerial + 1UL
         reply (Result.Ok {
@@ -331,6 +406,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
           Project = project; ManifestPath = manifestPath; Closed = closed
           Busy = active.Count > 0; Current = current
           RevocationPending = revocation.IsSome; BackendError = backendError; FormatterError = formatterError
+          FormatterCleanupPending = formatterCleanups.Count > 0; WorkerRetirementRequired = workerRetirementRequired
           CleanupPending = closed && not cleanupComplete; CleanupError = cleanupError }))
 
   member _.ReserveAsync(label: string) = lock gate (fun () ->
@@ -501,6 +577,15 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
       revocation <- None
       liveScopes.Clear()
       formatter.BeginClose()
+      // Start the formatter join immediately, independently of compiler drain.
+      // Key zero is reserved for the whole formatter; control keys start at one.
+      formatterCleanups.Add(0UL, cleanupTimestamp ())
+      formatterCloseTask <- Some(ClrInterop.toTask CancellationToken.None (async {
+        try
+          try return! formatter.CloseAsync()
+          with error -> return Result.Error error.Message
+        finally finishFormatterCleanup 0UL
+      }))
       AsyncMailbox.beginClose mailbox |> ignore
     reply (Result.Ok ()))
 
@@ -511,12 +596,13 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
     | _ ->
       let ownedControls = controls.Values |> Seq.toArray
       let ownedObservations = observations.Values |> Seq.toArray
+      let formatterClose = formatterCloseTask.Value
       let work = ClrInterop.toTask CancellationToken.None (async {
         let! joined = AsyncMailbox.beginClose mailbox |> AsyncMailbox.awaitClose
         let mutable projectionError = None
         try do! Task.WhenAll(Array.append ownedControls ownedObservations) |> Async.AwaitTask
         with error -> projectionError <- Some error.Message
-        let! formatterJoined = formatter.CloseAsync()
+        let! formatterJoined = formatterClose |> Async.AwaitTask
         let formatterDiagnostics = formatter.DrainDiagnostics()
         do! invocation.WaitAsync() |> Async.AwaitTask
         try

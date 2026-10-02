@@ -19,6 +19,7 @@ let private address session = { Worker = workerAddress; Session = session }
 let private status session count: SessionSnapshot =
   { Observation = uint64 count; Project = "fixture.fidproj"; ManifestPath = "fixture.manifest"
     Closed = false; Busy = false; Current = None; RevocationPending = false; BackendError = None; FormatterError = None
+    FormatterCleanupPending = false; WorkerRetirementRequired = None
     CleanupPending = false; CleanupError = None }
 let private artifact: AcceptedArtifact =
   { Generation = 0L; SourceVersion = "fixture"; ArtifactPath = "fixture"; ArtifactSha256 = "fixture"

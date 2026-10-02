@@ -48,7 +48,8 @@ module ComposerState =
   let needsReconciliation snapshot =
     match snapshot.Reply.Outcome with
     | Result.Ok(Observed status) ->
-      not snapshot.StatusFresh || status.Busy || status.RevocationPending || (status.CleanupPending && status.CleanupError.IsNone)
+      not snapshot.StatusFresh || status.Busy || status.RevocationPending || status.FormatterCleanupPending
+      || status.WorkerRetirementRequired.IsSome || (status.CleanupPending && status.CleanupError.IsNone)
     | _ -> false
   let sameState left right =
     let normalize value =
@@ -58,16 +59,18 @@ module ComposerState =
     normalize left = normalize right
 
 /// Shared typed compiler owner. JSON exists only at external client adapters.
-type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, configured: bool, beforeMonitorExit: unit -> Task) =
+type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, configured: bool, beforeMonitorExit: unit -> Task, ?monitorWindow: TimeSpan) =
   let gate = obj ()
   let lifecycle = new SemaphoreSlim(1, 1)
   let lifetime = new CancellationTokenSource()
+  let monitorWindow = defaultArg monitorWindow (TimeSpan.FromMinutes 8.)
   let changedEvent = Event<unit>()
   let snapshots = Dictionary<string, ComposerResponse>()
   let observations = Dictionary<string, StatusObservation>()
   let monitors = Dictionary<string * string * string, TaskCompletionSource<unit>>()
   let mutable worker: IComposerWorker option = None
   let mutable retiring = false
+  let mutable retirement: Task option = None
   let mutable stopped = false
   let mutable revision = 0L
 
@@ -145,12 +148,62 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
             do! connection.StopAsync()
             return Result.Error "The Composer owner retired while its worker was opening."
           else
-            connection.Exited.Add(fun reason -> withdrawOwned connection reason)
+            connection.Exited.Add(fun reason ->
+              if lock gate (fun () -> isOwner connection && not retiring) then withdrawOwned connection reason)
             if not connection.IsAlive then withdrawOwned connection "Worker exited during startup."
             changed ()
             return Result.Ok connection
     finally lifecycle.Release() |> ignore
   }
+
+  let retireOwned request (connection: IComposerWorker) reason prepare = task {
+    let admitted = lock gate (fun () ->
+      if stopped || retiring || not (isOwner connection) then false
+      else
+        retiring <- true
+        true)
+    if not admitted then return refusal request RefusalCode.ProviderRetiring "The Composer worker is already retiring."
+    else
+      withdrawOwned connection reason
+      do! lifecycle.WaitAsync()
+      let mutable exited = false
+      try
+        let! result = task {
+          if prepare then
+            try
+              let! reply = connection.RequestAsync(PrepareCompilerChange(ComposerWire.workerAddress connection.Handshake.Authority), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds 10.)
+              return ComposerState.response reply
+            with error -> return refusal request RefusalCode.RetirementFailed error.Message
+          else
+            return refusal request RefusalCode.ProviderRetiring reason
+        }
+        do! connection.StopAsync()
+        if connection.IsAlive then invalidOp "The retired Composer process did not exit."
+        exited <- true
+        lock gate (fun () -> if isOwner connection then worker <- None)
+        return result
+      finally
+        if exited then lock gate (fun () -> retiring <- false)
+        lifecycle.Release() |> ignore
+        changed ()
+  }
+
+  let retire request connection = retireOwned request connection "Compiler retirement requested." true
+
+  let escalateRetirement (connection: IComposerWorker) reason =
+    lock gate (fun () ->
+      if active connection then
+        // This hot task is owned by the supervisor, alongside its status
+        // monitors. Fencing happens synchronously before the first await.
+        let request = PrepareCompilerChange(ComposerWire.workerAddress connection.Handshake.Authority)
+        let stopping = task {
+          try
+            let! _ = retireOwned request connection reason false
+            ()
+          with error ->
+            withdrawOwned connection (reason + " Worker retirement failed: " + error.Message)
+        }
+        retirement <- Some(stopping :> Task))
 
   let refresh (connection: IComposerWorker) session cancellation = task {
     let started = lock gate (fun () -> observation session)
@@ -173,6 +226,11 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
               Some projected
             else None
           else None)
+        // Retirement is a sticky worker-owned fact. An overlapping operation
+        // may make this projection stale, but cannot revoke that safety signal.
+        if reply.Authority.Session = session
+           && ComposerWire.workerAddress reply.Authority = ComposerWire.workerAddress connection.Handshake.Authority then
+          status.WorkerRetirementRequired |> Option.iter (escalateRetirement connection)
         return observed |> Option.defaultWith (fun () -> ComposerState.failure reply.Authority RefusalCode.Superseded "Session activity or a newer observation superseded this read.")
       | Result.Ok _ -> return raise (InvalidDataException "Worker returned a non-status reply to a status request.")
       | Result.Error _ ->
@@ -196,7 +254,7 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
     if admitted then
       let run = task {
         use deadline = CancellationTokenSource.CreateLinkedTokenSource lifetime.Token
-        deadline.CancelAfter(TimeSpan.FromMinutes 8.)
+        deadline.CancelAfter monitorWindow
         let mutable observedIdle = false
         try
           try
@@ -217,40 +275,21 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
         finally
           let restart = lock gate (fun () ->
             monitors.Remove key |> ignore
-            observedIdle && not deadline.IsCancellationRequested && active connection && needed ())
+            // A general reconciliation window cannot abandon an owned cleanup
+            // deadline. An in-flight mutation may also have begun cleanup before
+            // its first successful status read, so retain that observation owner.
+            let ownedCleanup =
+              cached session |> Option.exists (fun snapshot ->
+                match snapshot.Reply.Outcome with
+                | Result.Ok(Observed status) -> status.FormatterCleanupPending
+                | _ -> false)
+            let renew = deadline.IsCancellationRequested && (ownedCleanup || (observation session).Active > 0)
+            not lifetime.IsCancellationRequested && active connection && needed ()
+            && ((observedIdle && not deadline.IsCancellationRequested) || renew))
           completion.TrySetResult() |> ignore
           if restart then reconcile connection session
       }
       run |> ignore
-
-  let retire request (connection: IComposerWorker) = task {
-    let admitted = lock gate (fun () ->
-      if stopped || retiring || not (isOwner connection) then false
-      else
-        retiring <- true
-        true)
-    if not admitted then return refusal request RefusalCode.ProviderRetiring "The Composer worker is already retiring."
-    else
-      withdrawOwned connection "Compiler retirement requested."
-      do! lifecycle.WaitAsync()
-      let mutable exited = false
-      try
-        let! result = task {
-          try
-            let! reply = connection.RequestAsync(PrepareCompilerChange(ComposerWire.workerAddress connection.Handshake.Authority), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds 10.)
-            return ComposerState.response reply
-          with error -> return refusal request RefusalCode.RetirementFailed error.Message
-        }
-        do! connection.StopAsync()
-        if connection.IsAlive then invalidOp "The retired Composer process did not exit."
-        exited <- true
-        lock gate (fun () -> if isOwner connection then worker <- None)
-        return result
-      finally
-        if exited then lock gate (fun () -> retiring <- false)
-        lifecycle.Release() |> ignore
-        changed ()
-  }
 
   new(factory, configured) = ComposerSupervisor(factory, configured, fun () -> Task.CompletedTask)
   member _.Changed = changedEvent.Publish
@@ -299,6 +338,9 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
               if operation = Operation.Status then return! refresh connection resolvedSession operationCancellation
               else
                 activity connection resolvedSession 1
+                // A held mutation can initiate formatter retirement. Observe
+                // that owned cleanup while its original reply is still pending.
+                if resolvedSession <> "" then reconcile connection resolvedSession
                 try
                   let! reply = connection.RequestAsync(body, operationCancellation)
                   return ComposerState.response reply
@@ -315,7 +357,7 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
                   | Result.Ok(Opened opened) ->
                     let status: SessionSnapshot =
                       { Observation = opened.Observation; Project = opened.Project; ManifestPath = opened.ManifestPath
-                        Closed = false; Busy = false; Current = None; RevocationPending = false; BackendError = None; FormatterError = None; CleanupPending = false; CleanupError = None }
+                        Closed = false; Busy = false; Current = None; RevocationPending = false; BackendError = None; FormatterError = None; FormatterCleanupPending = false; WorkerRetirementRequired = None; CleanupPending = false; CleanupError = None }
                     { response with Reply = { response.Reply with Outcome = Result.Ok(Observed status) } }
                     |> ComposerState.projection false "Initial status has not yet been read." |> remember connection |> ignore
                   | Result.Ok _ ->
@@ -362,9 +404,13 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
   }
 
   member _.StopAsync() = task {
-    let connection = lock gate (fun () -> stopped <- true; retiring <- true; worker)
+    let connection, ownedRetirement = lock gate (fun () ->
+      stopped <- true
+      retiring <- true
+      worker, retirement)
     lifetime.Cancel()
-    connection |> Option.iter (fun current -> withdrawOwned current "Daemon stopped.")
+    if ownedRetirement |> Option.forall _.IsCompleted then
+      connection |> Option.iter (fun current -> withdrawOwned current "Daemon stopped.")
     do! lifecycle.WaitAsync()
     try
       match lock gate (fun () -> worker) with
@@ -374,6 +420,11 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
       do! Task.WhenAll owned
       lock gate (fun () -> worker <- None)
     finally lifecycle.Release() |> ignore
+    // A concurrent escalation may have queued for the same lifecycle fence.
+    // Joining it while holding that fence would deadlock shutdown.
+    match ownedRetirement with
+    | Some owned -> do! owned
+    | None -> ()
   }
 
 module ComposerSupervisor =

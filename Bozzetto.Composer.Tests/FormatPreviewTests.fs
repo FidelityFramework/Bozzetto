@@ -401,7 +401,7 @@ let tests = testList "Composer Calque preview" [
     let! closed = closeFormatter formatter
     success closed |> ignore
   }
-  taskCase "provider owns retired document cleanup without delaying unrelated previews" <| fun () -> task {
+  taskCase "provider owns retired document cleanup while spare capacity permits unrelated previews" <| fun () -> task {
     let entered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
     let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
     let join operation = async {
@@ -427,6 +427,53 @@ let tests = testList "Composer Calque preview" [
       release.TrySetResult() |> ignore
       let! closed = closing
       success closed.Outcome |> ignore
+    finally release.TrySetResult() |> ignore
+  }
+  taskCase "formatter capacity busy expires into sticky worker retirement without discarding cleanup" <| fun () -> task {
+    let entered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let mutable timestamp = 0L
+    let join operation = async {
+      entered.TrySetResult() |> ignore
+      do! release.Task |> Async.AwaitTask
+      return! Calque.Incremental.DocumentFormatter.awaitClose operation
+    }
+    let formatter = FormatterSession(Calque.Incremental.DocumentFormatter.start, join)
+    use owner = new ProviderSession<int64>("host", "session", "epoch", "/deadline/project.fidproj", new Backend(),
+      formatter = formatter, formatterCleanupTimestamp = (fun () -> Interlocked.Read(&timestamp)))
+    let status () = owner.Status().Outcome |> success
+    let original = buffer 0UL "module Deadline\nlet value=1\n"
+    try
+      let! first = owner.FormatAsync(0L, original, CancellationToken.None)
+      success first.Outcome |> ignore
+      for index in 1 .. 31 do
+        let! retained = owner.FormatAsync(0L, { original with Document = "buffer://capacity/" + string index }, CancellationToken.None)
+        success retained.Outcome |> ignore
+      let replacement = { original with Incarnation = Guid.NewGuid().ToString("D") }
+      let! busy = owner.FormatAsync(0L, replacement, CancellationToken.None)
+      refusal "busy" busy.Outcome
+      do! entered.Task
+      (status ()).FormatterCleanupPending |> Expect.isTrue "pending close keeps daemon supervision active"
+      Interlocked.Exchange(&timestamp, 29L * Diagnostics.Stopwatch.Frequency) |> ignore
+      (status ()).WorkerRetirementRequired |> Expect.isNone "the grace interval permits physical cleanup"
+      let! existing = owner.FormatAsync(0L, { original with Document = "buffer://capacity/1" }, CancellationToken.None)
+      success existing.Outcome |> ignore
+      let! unrelated = owner.FormatAsync(0L, { original with Document = "buffer://capacity/33" }, CancellationToken.None)
+      refusal "busy" unrelated.Outcome
+      Interlocked.Exchange(&timestamp, 30L * Diagnostics.Stopwatch.Frequency) |> ignore
+      let expired = status ()
+      expired.WorkerRetirementRequired |> Expect.isSome "the exact deadline requires whole-worker supervision"
+      expired.FormatterCleanupPending |> Expect.isTrue "a deadline cannot manufacture physical completion"
+      let! refused = owner.FormatAsync(0L, replacement, CancellationToken.None)
+      refusal "closed" refused.Outcome
+      let closing = owner.CloseAsync()
+      closing.IsCompleted |> Expect.isFalse "parent still owns the held child after escalation"
+      release.TrySetResult() |> ignore
+      let! closed = closing
+      success closed.Outcome |> ignore
+      let final = status ()
+      final.FormatterCleanupPending |> Expect.isFalse "actual join clears physical cleanup state"
+      final.WorkerRetirementRequired |> Expect.equal "late cleanup cannot undo a retirement already issued" expired.WorkerRetirementRequired
     finally release.TrySetResult() |> ignore
   }
   testCase "public JSON preserves full uint64 revisions and rejects absent immutable buffers" <| fun _ ->

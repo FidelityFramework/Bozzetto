@@ -39,6 +39,8 @@ type private SessionState = {
   mutable Current: AcceptedArtifact option
   mutable Closed: bool
   mutable Busy: bool
+  mutable FormatterCleanupPending: bool
+  mutable WorkerRetirementRequired: string option
 }
 
 /// Typed process boundary; these tests exercise actual supervisor ownership,
@@ -75,6 +77,7 @@ type private Worker(host: string, pid: int) =
   member val CleanupFails = false with get, set
   member val StopThrows = false with get, set
   member val StopLeavesAlive = false with get, set
+  member val BeforeStop: unit -> Task = (fun () -> Task.CompletedTask) with get, set
   member _.Die() =
     lock gate (fun () -> alive <- false)
     exited.Trigger "worker process exited"
@@ -85,12 +88,16 @@ type private Worker(host: string, pid: int) =
       state.Current <- None
       state.Busy <- busy)
   member _.SetBusy(session, busy) = lock gate (fun () -> sessions[session].Busy <- busy)
+  member _.SetFormatterCleanup(session, pending, retirement) =
+    lock gate (fun () ->
+      sessions[session].FormatterCleanupPending <- pending
+      sessions[session].WorkerRetirementRequired <- retirement)
   member this.Response(operation, session) =
     lock gate (fun () ->
       match operation with
       | Operation.Open ->
         let id = sprintf "%s-session-%d" host (sessions.Count + 1)
-        sessions.Add(id, { Generation = 0L; Observation = 0UL; Current = None; Closed = false; Busy = false })
+        sessions.Add(id, { Generation = 0L; Observation = 0UL; Current = None; Closed = false; Busy = false; FormatterCleanupPending = false; WorkerRetirementRequired = None })
         reply id 0L (Result.Ok(Opened { Observation = 0UL; Project = "/project/fixture.fidproj"; ManifestPath = "/external/provider/current.json" }))
       | Operation.PrepareCompilerChange ->
         for state in sessions.Values do
@@ -124,7 +131,9 @@ type private Worker(host: string, pid: int) =
             state.Observation <- state.Observation + 1UL
             Observed { Observation = state.Observation; Project = "/project/fixture.fidproj"; ManifestPath = "/external/provider/current.json"
                        Closed = state.Closed; Busy = state.Busy; Current = state.Current
-                       RevocationPending = false; BackendError = None; FormatterError = None; CleanupPending = false; CleanupError = None }
+                       RevocationPending = false; BackendError = None; FormatterError = None
+                       FormatterCleanupPending = state.FormatterCleanupPending; WorkerRetirementRequired = state.WorkerRetirementRequired
+                       CleanupPending = false; CleanupError = None }
           | other -> failwithf "Unexpected fake-worker operation: %A" other
         reply session state.Generation (Result.Ok value))
   interface IComposerWorker with
@@ -148,11 +157,12 @@ type private Worker(host: string, pid: int) =
       match this.Intercept operation session with
       | Some result -> result
       | None -> Task.FromResult(this.Response(operation, session))
-    member this.StopAsync() =
+    member this.StopAsync() = (task {
       Interlocked.Increment &stops |> ignore
-      if this.StopThrows then Task.FromException(InvalidOperationException "termination failed; process still alive")
-      elif this.StopLeavesAlive then Task.CompletedTask
-      else this.Die(); Task.CompletedTask
+      do! this.BeforeStop ()
+      if this.StopThrows then return raise (InvalidOperationException "termination failed; process still alive")
+      elif not this.StopLeavesAlive then this.Die()
+    } :> Task)
 
 let private request operation (worker: Worker) session : RequestBody =
   let address = worker.SessionAddress session
@@ -164,6 +174,9 @@ let private request operation (worker: Worker) session : RequestBody =
   | Operation.Run -> RequestBody.Run(address, [||])
   | Operation.Cancel -> Cancel address
   | Operation.Close -> Close address
+  | Operation.Format -> Format(address, 0L, {
+      Document = "buffer://supervisor.clef"; Incarnation = "00000000-0000-0000-0000-000000000001"
+      Revision = 1UL; Source = "let value = 1\n"; Configuration = "clef-two-space-lf-v1" })
   | Operation.PrepareCompilerChange -> PrepareCompilerChange worker.Address
   | other -> failwithf "Unexpected test request: %A" other
 let private execute (owner: ComposerSupervisor) request = owner.ExecuteAsync(request, CancellationToken.None)
@@ -181,6 +194,65 @@ let private assertWithdrawn response =
   let status = observed response
   status.Closed |> Expect.isTrue "session is terminal"
   status.Current |> Expect.isNone "terminal session has no runnable artifact"
+
+let private cleanupAcrossMonitorWindow knownPending () = task {
+  let worker = Worker("formatter-monitor-renewal", 128)
+  let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true,
+    (fun () -> Task.CompletedTask), monitorWindow = TimeSpan.FromMilliseconds 250.)
+  let heldFormat = completion<Reply> ()
+  let readEntered = completion<unit> ()
+  let stopEntered = completion<unit> ()
+  worker.BeforeStop <- fun () -> stopEntered.TrySetResult() |> ignore; Task.CompletedTask
+  try
+    let! session = openSession owner worker
+    let mutable reads = 0
+    let mutable expired = false
+    worker.Intercept <- fun operation current ->
+      if current = session && operation = Operation.Format then
+        worker.SetFormatterCleanup(session, true, None)
+        Some heldFormat.Task
+      elif current = session && operation = Operation.Status then
+        let token = worker.Tokens |> Array.last |> snd
+        if not token.CanBeCanceled then None
+        elif Interlocked.Increment &reads = 1 then
+          readEntered.TrySetResult() |> ignore
+          Some(task {
+            try
+              do! Task.Delay(Timeout.Infinite, token)
+              return worker.Response(Operation.Status, session)
+            finally Volatile.Write(&expired, token.IsCancellationRequested)
+          })
+        else
+          Volatile.Read &expired |> Expect.isTrue "the prior monitoring window expired before renewal"
+          worker.SetFormatterCleanup(session, true, Some "Formatter cleanup exceeded its deadline after monitor renewal.")
+          None
+      else None
+    let! pendingFormat = task {
+      if knownPending then
+        worker.SetFormatterCleanup(session, true, None)
+        let! initial = execute owner (request Operation.Status worker session)
+        (observed initial).FormatterCleanupPending |> Expect.isTrue "cleanup is observed before monitoring its deadline"
+        return None
+      else
+        return Some(execute owner (request Operation.Format worker session))
+    }
+    do! readEntered.Task
+    // No subsequent client request drives this: the monitoring window expires
+    // during a failed status read and its successor must observe retirement.
+    do! stopEntered.Task
+    Volatile.Read &reads >= 2 |> Expect.isTrue "owned cleanup survives expiry of the general reconciliation window"
+    match pendingFormat with
+    | Some pending ->
+      heldFormat.TrySetResult(worker.Response(Operation.Status, session)) |> ignore
+      let! response = pending
+      response |> refused RefusalCode.Closed
+    | None -> ()
+    let! view = snapshots owner
+    snapshot session view |> assertWithdrawn
+  finally
+    heldFormat.TrySetException(OperationCanceledException "test cleanup") |> ignore
+    owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult()
+}
 
 let private lateReplyDuringReplacement holdRefresh () = task {
   let old = Worker("old", 101)
@@ -201,6 +273,11 @@ let private lateReplyDuringReplacement holdRefresh () = task {
   do! entered.Task
   // Capture the old successful reply before retirement; delivery is delayed.
   let late = old.Response((if holdRefresh then Operation.Status else Operation.Build), session)
+  let late =
+    match late.Outcome with
+    | Result.Ok(Observed status) ->
+      { late with Outcome = Result.Ok(Observed { status with WorkerRetirementRequired = Some "Old formatter cleanup expired." }) }
+    | _ -> late
   let! retired = execute owner (request Operation.PrepareCompilerChange old "")
   success retired |> ignore
   let! replacement = openSession owner fresh
@@ -212,6 +289,7 @@ let private lateReplyDuringReplacement holdRefresh () = task {
   let current = snapshot replacement entries |> observed
   current.Current |> Expect.isNone "late old success cannot lend an artifact to the replacement"
   creations |> Expect.equal "replacement uses one fresh worker" 2
+  fresh.StopCount |> Expect.equal "late old retirement signals cannot stop the new epoch" 0
   do! owner.StopAsync()
 }
 
@@ -424,6 +502,114 @@ let tests =
       let! view = snapshots owner
       snapshot session view |> assertWithdrawn
       do! owner.StopAsync()
+    }
+
+    taskCase "formatter cleanup deadline retires every session without another editor request and joins before replacement" <| fun () -> task {
+      let old = Worker("formatter-deadline", 125)
+      let fresh = Worker("formatter-replacement", 126)
+      let mutable creations = 0
+      let owner = ComposerSupervisor((fun () ->
+        let count = Interlocked.Increment &creations
+        if count > 1 then old.Alive |> Expect.isFalse "physical exit precedes replacement construction"
+        Task.FromResult((if count = 1 then old else fresh) :> IComposerWorker)), true)
+      let stopEntered = completion<unit> ()
+      let stopReleased = completion<unit> ()
+      old.BeforeStop <- fun () ->
+        stopEntered.TrySetResult() |> ignore
+        stopReleased.Task :> Task
+      let lateBuild = completion<Reply> ()
+      let lateFormat = completion<Reply> ()
+      let monitorEntered = completion<unit> ()
+      let monitorReleased = completion<Reply> ()
+      try
+        let! first = openSession owner old
+        let! second = openSession owner old
+        let! firstBuilt = execute owner (request Operation.Build old first)
+        let! secondBuilt = execute owner (request Operation.Build old second)
+        success firstBuilt |> ignore
+        success secondBuilt |> ignore
+        let mutable reads = 0
+        old.Intercept <- fun operation session ->
+          if operation = Operation.Status && session = first && Interlocked.Increment &reads = 2 then
+            monitorEntered.TrySetResult() |> ignore
+            Some monitorReleased.Task
+          elif operation = Operation.Format && session = first then
+            old.SetFormatterCleanup(first, true, None)
+            Some lateFormat.Task
+          elif operation = Operation.Build && session = second then Some lateBuild.Task
+          else None
+        let pendingBuild = execute owner (request Operation.Build old second)
+        let lateSuccess = old.Response(Operation.Build, second)
+        let pendingFormat = execute owner (request Operation.Format old first)
+        do! monitorEntered.Task
+        pendingFormat.IsCompleted |> Expect.isFalse "cleanup supervision starts before the original format replies"
+        let reason = "Formatter cleanup exceeded its 30-second deadline."
+        old.SetFormatterCleanup(first, true, Some reason)
+        // This is the already-running monitor's reply. No further client
+        // status, save, format or close is needed to trigger supervision.
+        monitorReleased.TrySetResult(old.Response(Operation.Status, first)) |> ignore
+        do! stopEntered.Task
+        let! duringStop = snapshots owner
+        for entry in duringStop do
+          assertWithdrawn entry
+          entry.WorkerError |> Expect.equal "all sessions retain the escalation cause" (Some reason)
+        (snapshot first duringStop |> observed).FormatterCleanupPending
+        |> Expect.isTrue "the deadline never fabricates completed formatter cleanup"
+        old.Requests |> Array.exists (fun (operation, _) -> operation = Operation.PrepareCompilerChange)
+        |> Expect.isFalse "expired cleanup proceeds directly to the owned process stop"
+        lateBuild.TrySetResult lateSuccess |> ignore
+        let! late = pendingBuild
+        late |> refused RefusalCode.Closed
+        lateFormat.TrySetResult(old.Response(Operation.Status, first)) |> ignore
+        let! formatted = pendingFormat
+        formatted |> refused RefusalCode.Closed
+        let opening = execute owner (request Operation.Open fresh "")
+        opening.IsCompleted |> Expect.isFalse "replacement waits for physical process join"
+        creations |> Expect.equal "no replacement factory runs during stop" 1
+        stopReleased.TrySetResult() |> ignore
+        let! replacement = opening
+        success replacement |> ignore
+        creations |> Expect.equal "one replacement opens after the old process joins" 2
+        let! afterStop = snapshots owner
+        snapshot first afterStop |> assertWithdrawn
+        snapshot second afterStop |> assertWithdrawn
+        (snapshot first afterStop).WorkerError |> Expect.equal "exit notification retains the initiating deadline" (Some reason)
+      finally
+        stopReleased.TrySetResult() |> ignore
+        monitorReleased.TrySetException(OperationCanceledException "test cleanup") |> ignore
+        lateBuild.TrySetException(OperationCanceledException "test cleanup") |> ignore
+        lateFormat.TrySetException(OperationCanceledException "test cleanup") |> ignore
+        owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult()
+    }
+
+    taskCase "pending formatter cleanup renews an expired monitor after a failed status read" (cleanupAcrossMonitorWindow true)
+
+    taskCase "held mutation renews an expired monitor before its first cleanup observation" (cleanupAcrossMonitorWindow false)
+
+    taskCase "failed formatter-deadline process stop stays fenced and observable" <| fun () -> task {
+      let worker = Worker("formatter-stop-failure", 127)
+      worker.StopThrows <- true
+      let mutable creations = 0
+      let owner = ComposerSupervisor((fun () ->
+        Interlocked.Increment &creations |> ignore
+        Task.FromResult(worker :> IComposerWorker)), true)
+      try
+        let! session = openSession owner worker
+        worker.SetFormatterCleanup(session, true, Some "Formatter cleanup exceeded its deadline.")
+        let! status = execute owner (request Operation.Status worker session)
+        status |> refused RefusalCode.Closed
+        let! view = snapshots owner
+        let terminal = snapshot session view
+        assertWithdrawn terminal
+        terminal.WorkerError.Value.Contains("termination failed", StringComparison.Ordinal)
+        |> Expect.isTrue "failed physical termination remains observable"
+        (observed terminal).FormatterCleanupPending |> Expect.isTrue "failed termination never claims a drain"
+        let! retry = execute owner (request Operation.Open worker "")
+        retry |> refused RefusalCode.ProviderUnavailable
+        creations |> Expect.equal "failed retirement forbids a replacement process" 1
+      finally
+        worker.StopThrows <- false
+        owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult()
     }
 
     taskCase "late worker replies and late status refreshes cannot revive a retired compiler epoch" <| fun () -> task {

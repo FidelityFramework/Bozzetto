@@ -2,6 +2,7 @@ module Bozzetto.Composer.Tests.WorkerCancellationTests
 
 open System
 open System.IO
+open System.Text
 open System.Threading
 open System.Threading.Tasks
 open Bozzetto.Composer.WorkerProtocol
@@ -314,6 +315,126 @@ let tests = testList "Composer worker request lifetime" [
     let final = snapshot ()
     final.FormatterError |> Expect.equal "closed status retains evidence for the retired session" (Some evidence)
     final.BackendError |> Expect.isNone "successful compiler controls have their own status"
+  }
+
+  taskCase "formatter evidence stays bounded and wire observable after repeated and oversized Unicode faults" <| fun () -> task {
+    let root = directory ()
+    let project = Path.Combine(root, "bounded-diagnostics.fidproj")
+    File.WriteAllText(project, "injected formatter diagnostics; no compiler invocation")
+    let backend = new Backend(false)
+    let formatter = RecordingFormatter(false)
+    use worker = new Worker<int64>(Path.Combine(root, "sessions"), (fun _ _ -> backend), describeCompiler,
+      createFormatter = (fun () -> formatter))
+    let! identity = hello worker
+    let! opened = worker.Handle(request "open" (Open(address identity, project)))
+    success opened |> ignore
+    let target = session opened.Authority
+    let utf8 = UTF8Encoding(false, true)
+    let record attempt message = formatter.QueueDiagnostic {
+      Document = { Uri = "buffer://diagnostics/bounded.clef"; Incarnation = Guid.Parse("00000000-0000-0000-0000-000000000001") }
+      Diagnostic = { Attempt = Fidelity.FSharp.Incremental.AttemptId attempt
+                     Failure = { Code = "formatter-host-failure"; Message = message } }
+    }
+    let roundtrip reply =
+      let bytes = BAREWireCodec.encodeReply reply |> Result.defaultWith (fun error -> failtestf "Evidence prevented reply encoding: %A" error)
+      BAREWireCodec.decodeReply bytes |> Expect.equal "bounded evidence roundtrips through strict UTF-8 binary replies" (Result.Ok reply)
+      reply
+    let readEvidence reply =
+      let value = observed (roundtrip reply)
+      value.BackendError |> Expect.isNone "formatter evidence remains separate from compiler failure"
+      let evidence = value.FormatterError |> Option.defaultWith (fun () -> failtest "Formatter evidence is missing")
+      utf8.GetByteCount evidence <= 16 * 1024 |> Expect.isTrue "formatter evidence including marker fits its UTF-8 byte budget"
+      evidence
+    let mutable cumulativeBytes = 0
+    let mutable retained = ""
+    for number in 1 .. 300 do
+      let message = sprintf "fault-%04d|%s|complete-%04d" number (String('x', 4096)) number
+      cumulativeBytes <- cumulativeBytes + utf8.GetByteCount message
+      record (uint64 number) message
+      let! reply = worker.Handle(request "repeated-status" (Status target))
+      retained <- readEvidence reply
+    cumulativeBytes > BAREWireCodec.MaximumBody |> Expect.isTrue "fixture exceeds a full worker frame cumulatively"
+    retained.Contains "[formatter evidence truncated]" |> Expect.isTrue "status reports historical evidence loss"
+    retained.Contains "fault-0001|" |> Expect.isFalse "oldest whole entries are evicted"
+    retained.Contains "fault-0300|" |> Expect.isTrue "newest complete entry remains available"
+    retained.EndsWith "|complete-0300" |> Expect.isTrue "ordinary retained entries are not clipped to fill the budget"
+    record 301UL (String.replicate 100000 "\U0001F600\uD800界")
+    let! oversized = worker.Handle(request "oversized-status" (Status target))
+    let oversizedEvidence = readEvidence oversized
+    oversizedEvidence.Contains "Attempt=301UL" |> Expect.isTrue "oversized entry retains diagnostic identity"
+    oversizedEvidence.Contains "\U0001F600" |> Expect.isTrue "four-byte Unicode survives at scalar boundaries"
+    oversizedEvidence.Contains "\uFFFD" |> Expect.isTrue "malformed surrogate text is normalized for the strict wire"
+    oversizedEvidence.Contains "[formatter evidence truncated]" |> Expect.isTrue "oversized evidence is explicitly marked"
+    record 302UL "post-truncation evidence"
+    let! latest = worker.Handle(request "latest-status" (Status target))
+    let latestEvidence = readEvidence latest
+    latestEvidence.Contains "post-truncation evidence" |> Expect.isTrue "a later small fault remains recordable"
+    latestEvidence.Contains "[formatter evidence truncated]" |> Expect.isTrue "truncation remains visible after the oversized entry leaves"
+    let! reserved = worker.Handle(request "reserve" (Reserve(target, "compiler edit")))
+    success (roundtrip reserved) |> ignore
+    let! canceled = worker.Handle(request "cancel" (Cancel target))
+    success (roundtrip canceled) |> ignore
+    let! closed = worker.Handle(request "close" (Close target))
+    success (roundtrip closed) |> ignore
+    let! final = worker.Handle(request "closed-status" (Status target))
+    (observed final).Closed |> Expect.isTrue "fault retention cannot prevent close observation"
+    readEvidence final |> Expect.equal "reservation cancellation and close preserve the bounded evidence" latestEvidence
+    let! retired = worker.RetireAsync()
+    retired |> Result.isOk |> Expect.isTrue "bounded evidence does not strand worker retirement"
+  }
+
+  taskCase "formatter close deadline seals every worker session while physical cleanup remains owned" <| fun () -> task {
+    let root = directory ()
+    let project = Path.Combine(root, "deadline.fidproj")
+    File.WriteAllText(project, "injected worker with owned formatter cleanup")
+    let formatters = ResizeArray<RecordingFormatter>()
+    let createFormatter () =
+      let formatter = RecordingFormatter(true)
+      formatters.Add formatter
+      formatter :> IFormatBackend
+    let mutable timestamp = 0L
+    use worker = new Worker<int64>(Path.Combine(root, "sessions"), (fun _ _ -> new Backend(false)), describeCompiler,
+      createFormatter = createFormatter, formatterCleanupTimestamp = (fun () -> Interlocked.Read(&timestamp)))
+    try
+      let! identity = hello worker
+      let! first = worker.Handle(request "first-open" (Open(address identity, project)))
+      let! second = worker.Handle(request "second-open" (Open(address identity, project)))
+      success first |> ignore
+      success second |> ignore
+      let firstTarget, peerTarget = session first.Authority, session second.Authority
+      let buffer = {
+        Document = "buffer://deadline/main.clef"; Incarnation = Guid.NewGuid().ToString("D")
+        Revision = 1UL; Source = "module Deadline\nlet value=1\n"; Configuration = FormatPolicy.Configuration
+      }
+      let formatting = worker.Handle(request "format" (Format(firstTarget, 0L, buffer)))
+      let! pending = formatters[0].First
+      do! pending.Entered
+      let! closing = worker.Handle(request "close" (Close firstTarget))
+      match success closing with
+      | Closed state -> state.CleanupPending |> Expect.isTrue "close returns observable pending cleanup"
+      | body -> failtestf "Expected close, received %A" body
+      let! initial = worker.Handle(request "pending-status" (Status firstTarget))
+      (observed initial).FormatterCleanupPending |> Expect.isTrue "formatter close is monitored independently of compiler drain"
+      (observed initial).WorkerRetirementRequired |> Expect.isNone "initial cleanup has its grace interval"
+      Interlocked.Exchange(&timestamp, 30L * Diagnostics.Stopwatch.Frequency) |> ignore
+      let! expired = worker.Handle(request "expired-status" (Status firstTarget))
+      let state = observed expired
+      state.WorkerRetirementRequired |> Expect.isSome "owner issues a sticky worker-level escalation"
+      state.FormatterCleanupPending |> Expect.isTrue "expiration does not settle the held observer"
+      let! peer = worker.Handle(request "peer-reserve" (Reserve(peerTarget, "must be fenced")))
+      refusal RefusalCode.Closed peer
+      let! reopen = worker.Handle(request "reopen" (Open(address identity, project)))
+      refusal RefusalCode.CompilerRetired reopen
+      formatting.IsCompleted |> Expect.isFalse "worker keeps the original observation until physical release"
+      for formatter in formatters do formatter.ReleaseAll()
+      let! _ = formatting
+      let! retired = worker.RetireAsync()
+      retired |> Result.isOk |> Expect.isTrue "late cleanup physically joins the sealed worker"
+      let! final = worker.Handle(request "final-status" (Status firstTarget))
+      (observed final).WorkerRetirementRequired |> Expect.equal "late completion cannot rescind worker retirement" state.WorkerRetirementRequired
+      (observed final).FormatterCleanupPending |> Expect.isFalse "physical completion is reported separately"
+    finally
+      for formatter in formatters do formatter.ReleaseAll()
   }
 
   taskCase "retirement remembers cleanup failure from an overtaken open across later fences" <| fun () -> task {

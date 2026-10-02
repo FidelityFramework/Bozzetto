@@ -14,7 +14,7 @@ module BAREWireCodec =
   [<Literal>]
   let MaximumPayload = MaximumBody - 5
   [<Literal>]
-  let ContractDigest = "6A52AB4179B0E1880AD4BB21667A83D3070F8CFF67CA380B24EB23CD1E873239"
+  let ContractDigest = "F641CBC43607354163EACAE34D8A2A7BA904FCFBFC35295BFBEB73943C6CA9BC"
 
   let agreement = { ProtocolVersion = ProtocolVersion; Encoding = EncodingId.BAREWire1; ContractDigest = ContractDigest }
   let private utf8 = UTF8Encoding(false, true)
@@ -267,6 +267,7 @@ module BAREWireCodec =
     w.U64 v.Observation; w.String v.Project; w.String v.ManifestPath; w.Bool v.Closed; w.Bool v.Busy
     w.Optional(writeArtifact w, v.Current); w.Bool v.RevocationPending
     w.Optional(w.String, v.BackendError); w.Optional(w.String, v.FormatterError)
+    w.Bool v.FormatterCleanupPending; w.Optional(w.String, v.WorkerRetirementRequired)
     w.Bool v.CleanupPending; w.Optional(w.String, v.CleanupError)
   let private readStatus (r: Reader) : SessionSnapshot =
     let observation = r.U64()
@@ -278,10 +279,13 @@ module BAREWireCodec =
     let revocation = r.Bool()
     let backend = r.Optional r.String
     let formatter = r.Optional r.String
+    let formatterCleanup = r.Bool()
+    let retirement = r.Optional r.String
     let cleanup = r.Bool()
     let cleanupError = r.Optional r.String
     { Observation = observation; Project = project; ManifestPath = manifest; Closed = closed; Busy = busy
       Current = current; RevocationPending = revocation; BackendError = backend; FormatterError = formatter
+      FormatterCleanupPending = formatterCleanup; WorkerRetirementRequired = retirement
       CleanupPending = cleanup; CleanupError = cleanupError }
 
   let private writeReplyBody (w: Writer) body =

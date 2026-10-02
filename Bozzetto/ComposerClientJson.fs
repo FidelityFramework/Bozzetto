@@ -54,6 +54,8 @@ module ComposerClientJson =
                current = item.Current |> Option.map value |> Option.defaultValue (value (null: objnull))
                revocationPending = item.RevocationPending; backendError = nullableString item.BackendError
                formatterError = nullableString item.FormatterError
+               formatterCleanupPending = item.FormatterCleanupPending
+               workerRetirementRequired = nullableString item.WorkerRetirementRequired
                cleanupPending = item.CleanupPending; cleanupError = nullableString item.CleanupError
                statusFresh = projection.StatusFresh; statusError = nullableString projection.StatusError
                workerAvailable = projection.WorkerAvailable; workerError = nullableString projection.WorkerError

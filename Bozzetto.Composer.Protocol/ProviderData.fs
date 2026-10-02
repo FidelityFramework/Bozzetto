@@ -68,6 +68,10 @@ type SessionSnapshot = {
   /// Retained formatter host evidence for this session, independent of compiler
   /// reservation/cancellation status. Successful compiler work does not clear it.
   FormatterError: string option
+  /// Owned formatter cleanup is still physically joining; keep supervision live.
+  FormatterCleanupPending: bool
+  /// Sticky owner-issued escalation. A timeout never certifies cleanup.
+  WorkerRetirementRequired: string option
   CleanupPending: bool
   CleanupError: string option
 }

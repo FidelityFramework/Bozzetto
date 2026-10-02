@@ -105,7 +105,9 @@ let integrationRegistryTests =
         |> Integration.excludeByName (fun _ -> false)
       let summary = ref None
       let handler = CLIArguments.Append_Summary_Handler(Tests.SummaryHandler(fun s -> summary.Value <- Some s))
-      Tests.runTestsWithCLIArgs [ handler ] [| "--filter-test-list"; "Cli.stop exit codes" |] survivors |> ignore
+      // Nested runners must never start a spinner: its console lock can
+      // deadlock the outer runner's concurrent logging.
+      Tests.runTestsWithCLIArgs [ handler; Tests.CLIArguments.No_Spinner ] [| "--filter-test-list"; "Cli.stop exit codes" |] survivors |> ignore
       match summary.Value with
       | Some s -> s.passed.Length |> Expect.equal "the filtered run actually executed the matching case" 1
       | None -> failtest "no summary was captured"

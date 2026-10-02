@@ -24,6 +24,65 @@ The next release still requires `scripts/ship` and its complete gate. See the
 
 ## October 2 audit follow-up: cooperative formatting and owned retirement
 
+### Subsequent review: bounded evidence and worker supervision
+
+The [follow-up review](Incremental_Pipeline_Auditor_Followup_2026-10-02.md)
+identified unbounded formatter evidence and an overstatement about document
+capacity. Formatter evidence now retains recent entries within **16 KiB UTF-8**,
+including a persistent truncation marker. Whole older entries are evicted;
+oversized entries are clipped at Unicode scalar boundaries before concatenation.
+Malformed surrogate text is normalized for strict wire encoding. Reservation,
+cancellation and close preserve the bounded evidence.
+
+The precise capacity contract is: existing documents and new previews with spare
+capacity can proceed during unrelated retirement; at **32 live/closing handles**,
+replacement and other new-document requests receive `busy` until a physical close
+releases a slot. The user selected whole-worker retirement when that cleanup
+stalls. A **30-second monotonic deadline** produces sticky
+`WorkerRetirementRequired` status, while `FormatterCleanupPending` continues to
+describe actual ownership. Timeout does not reclaim a live handle or certify a
+successful close. Late cleanup cannot rescind an issued retirement.
+
+The daemon's existing status monitor observes cleanup even while the triggering
+request remains in flight; its normal monitoring window renews while owned work
+still requires supervision. On an exact-worker retirement signal, the supervisor
+withdraws every session's authority and invokes the existing process-stop path:
+socket shutdown, up to five seconds of graceful cleanup, then process-tree
+termination and an exit check. Replacement requires actual process and transport
+cleanup to join. Failed termination leaves the worker fenced and its terminal
+status observable. The deadline path does not spend another ten seconds asking
+an already-stalled worker to prepare for retirement.
+
+The binary status schema now has digest
+`F641CBC43607354163EACAE34D8A2A7BA904FCFBFC35295BFBEB73943C6CA9BC`;
+daemon and worker must be deployed as a matching pair. Public JSON exposes
+`formatterCleanupPending` and `workerRetirementRequired`. Physical formatter close
+starts independently of compiler draining and has one retained observation, so
+repeated provider close does not re-run that formatter join.
+
+Calque's additional tests exercise Merge-phase interruption and last-demand
+release during the actual Parse, Print and Merge pipelines. These are lifecycle
+checks, not performance claims. Ranvier remains an architectural oracle: the
+author's threading correction is preserved in the independent follow-up. Its
+cross-thread settlements marshal through `Dispatch` into owned graph mutation,
+which corresponds to the mailbox boundary. No dependency or benchmark campaign
+was added. Content-keyed owner tokens, retained drained successes and owner-tree
+scopes remain separate experiments with proof identity and physical drain as
+acceptance requirements.
+
+At the source checkpoint, the solution and worker builds and matching candidate
+publication pass; Calque passes 99/99 tests at `a5e7355`. Bozzetto acceptance is
+being rerun after two incomplete default runs exposed an unprotected nested
+Expecto spinner in `IntegrationRegistryTests`. Its child case completed, while
+the parent and console logging stalled. The nested runner now uses the existing
+`No_Spinner` convention. These incomplete runs have no TRUST verdict and are not
+acceptance evidence. Logs are retained under
+`~/.codex/work/bozzetto-resumption-2026-10-02/validation/audit-release-fixes/`.
+The installed daemon has not been replaced; this is an integration recovery
+checkpoint, not a release receipt.
+
+### Earlier repair receipt
+
 Source recovery points are Calque `19099b5` on `main`, Bozzetto `15d3e022`
 on `integration/audit-followup-20261002` (following workflow repair `371ce4b8`),
 and Lattice `3ddea31` on `fidelity`. Each is pushed to Forgejo. The candidate
@@ -50,8 +109,9 @@ Daemon and worker must be deployed together; their mandatory Hello agreement
 rejects the earlier schema despite retaining framing version 2.
 
 Replaced document incarnations become owned cleanup children. The provider
-registers them under its existing control boundary; their retirement does not
-delay unrelated previews. A handle is reclaimed only after its physical close
+registers them under its existing control boundary; previews that fit within the
+document limit do not wait for unrelated cleanup. At capacity the retry contract
+and subsequent deadline policy above apply. A handle is reclaimed only after its physical close
 returns, with faults retained and an identity tombstone preventing resurrection.
 Failed starts follow the same cleanup path and can be retried after joining.
 Lattice keeps one document ID per client/file while assigning a fresh incarnation
