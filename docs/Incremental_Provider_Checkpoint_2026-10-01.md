@@ -22,7 +22,92 @@ setup; follow-up recovery commits use `integration/audit-followup-20261002`.
 The next release still requires `scripts/ship` and its complete gate. See the
 [independent assessment](Incremental_Pipeline_Auditor_Assessment_2026-10-02.md).
 
-## October 2 resident formatting and editor preview
+## October 2 audit follow-up: cooperative formatting and owned retirement
+
+Source recovery points are Calque `19099b5` on `main`, Bozzetto `15d3e022`
+on `integration/audit-followup-20261002` (following workflow repair `371ce4b8`),
+and Lattice `3ddea31` on `fidelity`. Each is pushed to Forgejo. The candidate
+assemblies below were built from those final source trees before their commits;
+the file hashes identify the executed artifacts independently of Git metadata.
+
+The follow-up keeps the existing foundation's demand, cancellation and physical
+drain contract. Calque now checks carried `WorkCancellation` within parser token
+delivery, Oak/trivia/dialect walks, printing and output/conditional merging.
+Source preparation and the initial parse are cold. Withdrawing the last demand
+unwinds at the next checkpoint; started conditional branches still join, and an
+independent fault remains a fault. Replacement of the same work follows physical
+drain. A peer demand keeps shared evaluation alive. This introduces no scheduler
+or actor library; the ownership contract remains portable toward native hosting.
+Single lexer tokens and intervening atomic helpers are still cooperative latency
+limits. Full-document formatting remains in place; incremental syntax reuse and
+measured editor latency are separate work.
+
+Bozzetto now retains formatter faults in `FormatterError`, separately from
+compiler `BackendError`, through reservation, cancellation and close. Public JSON
+uses `formatterError`. The binary status layout changes its exact schema digest
+to `6A52AB4179B0E1880AD4BB21667A83D3070F8CFF67CA380B24EB23CD1E873239`.
+Daemon and worker must be deployed together; their mandatory Hello agreement
+rejects the earlier schema despite retaining framing version 2.
+
+Replaced document incarnations become owned cleanup children. The provider
+registers them under its existing control boundary; their retirement does not
+delay unrelated previews. A handle is reclaimed only after its physical close
+returns, with faults retained and an identity tombstone preventing resurrection.
+Failed starts follow the same cleanup path and can be retried after joining.
+Lattice keeps one document ID per client/file while assigning a fresh incarnation
+on reopening. Current previews withdrawn by another session operation now show a
+retry hint; locally obsolete observations remain quiet.
+
+The [adoption contract](Bozzetto_Incremental_Foundation_Adoption.md#functional-async-authoring-and-native-execution)
+records HelloWayland's existing native Ariel region as ownership evidence and
+keeps a hosted actor/scheduler library deferred. Closing an editor view does not
+yet retire shared document state: that requires explicit consumer ownership.
+The 32 **distinct live document** limit remains; this repair reclaims replaced
+incarnations. The 8,192 admitted incarnation limit bounds formatter identity
+tombstones. Shared Incremental history within a long-lived document still needs
+an epoch retirement policy; no library compaction or general idle eviction was
+added.
+
+Acceptance evidence is under
+`~/.codex/work/bozzetto-resumption-2026-10-02/validation/audit-followup/`:
+
+| Gate | Executed result and evidence |
+|---|---|
+| Calque build and full suite | **95/95 passed**, zero failed/skipped (`calque-build-final.log`, `calque-tests.log`, `calque-results/calque-audit.trx`). The build retains four inherited parser serialization warnings. New controls interrupt inside all five major traversal phases, withdraw actual parser/printer work, preserve peer demand, join replacement and retain independent faults. |
+| Bozzetto full build and default suite | Build: **zero warnings/errors**. **8,970 registered/ran; 8,967 passed, three existing performance-budget ignores, zero failed/errored; Trusted** (`provider-build.log`, `bozzetto-default.log`, final default row in `trust.jsonl`). Includes document-slot reclamation after close, failed-start recovery, unrelated preview progress during held cleanup and protocol/status controls. |
+| Complete Composer tier | **44/44 passed**, zero ignored/failed/errored; **Trusted** (`bozzetto-native.log`, final Composer row in `trust.jsonl`). Includes executing mid-flight Format-token withdrawal, peer observation survival, retained formatter diagnostics and the real preview/reserve/exact-base-apply/build/run journey through worker and public MCP/HTTP surfaces. |
+| Lattice client | **103/103 passed**, zero skipped (`editor-unit.log`). Real VS Code **1.139.1** acceptance passed against the preserved installed daemon (`editor-host.log`, `~/.cache/lattice-vscode/composer-host-vpd4Se/result.json`); the runner's `closed-status-0.json` records joined session cleanup. This editor receipt does not claim the new worker was installed. |
+| Publication guard and worker closure | Installed pre-push hook refuses the unchanged `main` version (`main-hook-refusal.log`); integration recovery pushes succeeded. All **34** declared worker assets are present, with **zero** test dependencies (`worker-assets.log`). Daemon/worker protocol DLLs match. All candidate files passed the final SHA-256 check (`candidate-before.sha256`, `candidate-integrity.log`). |
+
+The first Calque run was **93/95**: two new parser controls exposed the inherited
+lexer's `WrappedError` around the exact checkpoint exception. The correction
+unwraps only that invocation's recorded inner exception. An unrelated exception
+of the same type still becomes a host diagnostic. The failed log/TRX and earlier
+successful provider gates are preserved with `before-parser-fix-` names (the TRX
+is `calque-results/before-parser-fix.trx`). Both provider tiers were rerun against
+the corrected closure. The initial queue-name compile error is retained in
+`provider-build-initial-failure.log`; its correction explicitly selects the CLR
+queue type rather than the repository's persistent queue.
+
+The final candidate lives at
+`~/.codex/work/bozzetto-resumption-2026-10-02/candidate/{daemon-audit,worker-audit}`.
+Daemon SHA-256:
+`27adde9ce2ea886aa3c6bae9d11e1ecf1743b08882532ad23655d319dec1ad56`;
+worker SHA-256:
+`3d2ed2edff1c445add392770f444ce2bd99c5cefac6814f90fce618cd572d1ba`.
+The manifest records the complete closure, including corrected Calque DLLs.
+This candidate has **not** replaced installed release
+`2026-10-02-calque-7d3557971d26-66c0b1bce8fe`; shared daemon PID **99247**
+remains unchanged. All build/test leases were released. Release publication and
+installation remain separate from these pushed source recovery points.
+
+This addresses audit findings 2, 3, 7 and 9; narrows formatting latency in 1;
+corrects the contract wording in 4; and partially repairs 8. The Composer
+stale-proof test gap (5), Clef config-restore assertion (6), general document
+retirement policy and the remaining minor findings stay open. The independent
+assessment remains unchanged as evidence for its audited revisions.
+
+## Earlier October 2 resident formatting and editor preview
 
 Bozzetto `dcbe57a7`, pushed to `integration/calque-incremental-20261002`, removes
 the formatter adapter's reliance on a task's eager prefix. `RequestPreview`
@@ -38,8 +123,9 @@ The shared foundation already implements publication withdrawal, carried
 Current Incremental `d476aea2` differs from the pinned preview.6 implementation
 `3b86e2d` only in documentation. A fresh stable-SDK build and unfiltered NUnit run
 passed **108/108**, zero skipped. This confirms the library contract, not
-cooperative interruption inside every consumer: Calque's active full-document
-parse/print currently runs to completion after its output is withdrawn.
+cooperative interruption inside every consumer: at that checkpoint Calque's
+active full-document parse/print ran to completion after its output was withdrawn.
+The later audit follow-up above adds cooperative checkpoints.
 
 Lattice `5066006`, pushed to its `fidelity` branch, adds **Select Composer Session**
 and **Preview Calque Formatting**. An explicitly demanded preview captures the
@@ -89,7 +175,7 @@ and repairs its work ownership; it does not implement that command, automatic
 format-on-save or a compiler-owned unsaved-buffer save transaction. The
 [adoption contract](Bozzetto_Incremental_Foundation_Adoption.md#cold-work-and-incremental-reuse)
 and Calque's [design note](../../Calque/docs/design.md#incremental-formatting)
-record the current cancellation boundary and phase-checkpoint follow-up.
+record the cancellation boundary and the later cooperative checkpoint repair.
 
 ## October 2 source integration: Calque and artifact accounts
 
