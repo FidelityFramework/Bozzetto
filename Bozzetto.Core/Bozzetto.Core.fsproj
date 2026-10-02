@@ -3,6 +3,8 @@
     <PropertyGroup>
         <OutputType>Library</OutputType>
         <IsPackable>false</IsPackable>
+        <FidelityDataProject Condition="'$(FidelityDataProject)' == ''">$(MSBuildThisFileDirectory)../../Fidelity.Data/src/Fidelity.Data/Fidelity.Data.fsproj</FidelityDataProject>
+        <ShouldUnsetParentConfigurationAndPlatform>false</ShouldUnsetParentConfigurationAndPlatform>
         <!-- Core is part of the shipped tool closure (referenced by both Bozzetto
              and Bozzetto.Host), so it multi-targets alongside them — see
              Directory.Build.props for why (issue #131, dotnet tool TFM
@@ -15,9 +17,11 @@
 
     <ItemGroup>
         <InternalsVisibleTo Include="Bozzetto.Tests" />
+        <ProjectReference Include="$(FidelityDataProject)" />
     </ItemGroup>
 
     <ItemGroup>
+        <Compile Include="WireJson.fs" />
         <Compile Include="TestProviderTypes.fs" />
         <Compile Include="WorkflowTypes.fs" />
         <Compile Include="SessionProjectTarget.fs" />
@@ -36,6 +40,7 @@
         <Compile Include="AppOutput.fs" />
         <Compile Include="Checkout.fs" />
         <Compile Include="MemberTable.fs" />
+        <Compile Include="CohortJson.fs" />
         <Compile Include="Tutorial.fs" />
         <Compile Include="BozzettoConfig.fs" />
         <Compile Include="Timeouts.fs" />
@@ -173,6 +178,7 @@
         <Compile Include="Features\FeatureDiscovery.fs" />
         <Compile Include="Features\Diagnostician.fs" />
         <Compile Include="RetryPolicy.fs" />
+        <Compile Include="LiveTestingJson.fs" />
         <Compile Include="SseWriter.fs" />
     <Compile Include="Features\EvalStore.fs" />
     <Compile Include="Features\FeatureHooks.fs" />

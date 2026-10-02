@@ -2,7 +2,8 @@ module Bozzetto.DaemonOwnership
 
 open System
 open System.IO
-open System.Text.Json
+open System.Globalization
+open Fidelity.Data.JSON
 
 /// Ownership rule 2 (multi-agent vision §3.1): every externally-spawned
 /// daemon gets an owner or a TTL. `boz --owner-pid <pid> [--owner-start
@@ -192,7 +193,41 @@ type DaemonInfoFile = {
 }
 
 module DaemonInfoFile =
-  let jsonOptions = JsonSerializerOptions(WriteIndented = true)
+  let serialize (info: DaemonInfoFile) =
+    JsonValue.Object [
+      "Pid", JsonValue.ofInt64 (int64 info.Pid)
+      "StartTime", JsonValue.String (info.StartTime.ToString("O", CultureInfo.InvariantCulture))
+      "OwnerPid", info.OwnerPid |> Option.map (int64 >> JsonValue.ofInt64) |> Option.defaultValue JsonValue.Null
+      "OwnerStart", info.OwnerStart |> Option.map JsonValue.ofInt64 |> Option.defaultValue JsonValue.Null
+      "McpPort", JsonValue.ofInt64 (int64 info.McpPort)
+      "DashboardPort", JsonValue.ofInt64 (int64 info.DashboardPort)
+      "DataDir", JsonValue.String info.DataDir
+    ] |> Json.serializePretty
+
+  let tryParse json =
+    match Json.parse json with
+    | Ok (JsonValue.Object properties) ->
+      let fields = Map.ofList properties
+      let property name = Map.tryFind name fields
+      let integer name = property name |> Option.bind JsonValue.tryAsInt64
+      let int32 name = integer name |> Option.bind (fun value ->
+        if value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue then Some(int value) else None)
+      let optional decode name =
+        match property name with
+        | None | Some JsonValue.Null -> Some None
+        | Some _ -> decode name |> Option.map Some
+      let startedAt =
+        property "StartTime" |> Option.bind JsonValue.asString |> Option.bind (fun value ->
+          match DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
+          | true, parsed -> Some parsed
+          | false, _ -> None)
+      match int32 "Pid", startedAt, optional int32 "OwnerPid", optional integer "OwnerStart",
+            int32 "McpPort", int32 "DashboardPort", property "DataDir" |> Option.bind JsonValue.asString with
+      | Some pid, Some start, Some owner, Some ownerStart, Some mcp, Some dashboard, Some directory ->
+        Some { Pid = pid; StartTime = start; OwnerPid = owner; OwnerStart = ownerStart
+               McpPort = mcp; DashboardPort = dashboard; DataDir = directory }
+      | _ -> None
+    | _ -> None
 
   let fileName = "daemon-info.json"
 
@@ -205,7 +240,7 @@ module DaemonInfoFile =
     Directory.CreateDirectory(dataDir) |> ignore
     let target = path dataDir
     let tmp = target + ".tmp"
-    File.WriteAllText(tmp, JsonSerializer.Serialize(info, jsonOptions))
+    File.WriteAllText(tmp, serialize info)
     File.Move(tmp, target, true)
 
   let tryRead (dataDir: string) : DaemonInfoFile option =
@@ -214,10 +249,7 @@ module DaemonInfoFile =
       match File.Exists p with
       | false -> None
       | true ->
-        let info = JsonSerializer.Deserialize<DaemonInfoFile>(File.ReadAllText p, jsonOptions)
-        match obj.ReferenceEquals(info, null) with
-        | true -> None
-        | false -> Some info
+        File.ReadAllText p |> tryParse
     with _ -> None
 
   let delete (dataDir: string) : unit =
@@ -246,7 +278,7 @@ let registerSpawned (realBozzettoDir: string) (info: DaemonInfoFile) : unit =
   Directory.CreateDirectory dir |> ignore
   let target = Path.Combine(dir, sprintf "%d.json" info.Pid)
   let tmp = target + ".tmp"
-  File.WriteAllText(tmp, JsonSerializer.Serialize(info, DaemonInfoFile.jsonOptions))
+  File.WriteAllText(tmp, DaemonInfoFile.serialize info)
   File.Move(tmp, target, true)
 
 let unregisterSpawned (realBozzettoDir: string) (pid: int) : unit =
@@ -259,10 +291,7 @@ let unregisterSpawned (realBozzettoDir: string) (pid: int) : unit =
 
 let private tryReadRegistryEntry (file: string) : DaemonInfoFile option =
   try
-    let info = JsonSerializer.Deserialize<DaemonInfoFile>(File.ReadAllText file, DaemonInfoFile.jsonOptions)
-    match obj.ReferenceEquals(info, null) with
-    | true -> None
-    | false -> Some info
+    File.ReadAllText file |> DaemonInfoFile.tryParse
   with _ -> None
 
 /// Every daemon-info known on this machine: the primary daemon's own

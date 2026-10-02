@@ -9,6 +9,7 @@ open FsCheck
 open FsCheck.FSharp
 open Microsoft.FSharp.Reflection
 open Bozzetto
+open Fidelity.Data.JSON
 open Bozzetto.Tests.SharedGenerators
 
 // ── Helpers ──
@@ -299,11 +300,11 @@ let errorAlgebraHardeningTests =
       test "toJson fields preserve typed values" {
         let err = BozzettoError.WorkerTimeout("sess-1", "eval", 5.0)
         let json = BozzettoError.toJson err
-        json.fields.["sessionId"] :?> string
+        json.fields.["sessionId"] |> JsonValue.asString |> Option.get
         |> Expect.equal "sessionId" "sess-1"
-        json.fields.["operation"] :?> string
+        json.fields.["operation"] |> JsonValue.asString |> Option.get
         |> Expect.equal "operation" "eval"
-        json.fields.["timeoutSec"] :?> float
+        json.fields.["timeoutSec"] |> JsonValue.asNumber |> Option.get
         |> Expect.equal "timeoutSec" 5.0
       }
     ]

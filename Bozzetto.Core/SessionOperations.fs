@@ -1,7 +1,7 @@
 namespace Bozzetto
 
 open System
-open System.Text.Json
+open WireJson
 open Bozzetto.WorkerProtocol
 
 /// Pure, deterministic session routing and error types.
@@ -370,24 +370,20 @@ module SessionOperations =
   /// enrichment over `McpContext.SessionMap` (per-agent routing state), not
   /// part of `SessionInfo`, and keeping this function pure means it cannot
   /// read that mutable map.
-  let sessionsToJson (opts: JsonSerializerOptions) (sessions: SessionInfo list) : string =
-    let rows =
-      sessions
-      |> List.map (fun info ->
-        let worktreeBranch =
-          match Checkout.classify info.WorkingDirectory with
-          | Checkout.Checkout.Worktree(_, branch) -> Some branch
-          | Checkout.Checkout.MainCheckout _ | Checkout.Checkout.NotAGitCheckout -> None
-        {| Id = SessionId.value info.Id
-           Name = SessionInfo.displayName info
-           WorkingDirectory = info.WorkingDirectory
-           Status = SessionLifecycleStatus.label info.Status
-           Workflow = WorkflowTypes.SessionWorkflow.label info.Workflow
-           Projects = info.Projects
-           CreatedAt = info.CreatedAt
-           LastActivity = info.LastActivity
-           WorktreeBranch = worktreeBranch |})
-    JsonSerializer.Serialize({| Sessions = rows |}, opts)
+  let sessionsToJson casing (sessions: SessionInfo list) : string =
+    let rows = sessions |> array (fun info ->
+      let worktreeBranch =
+        match Checkout.classify info.WorkingDirectory with
+        | Checkout.Checkout.Worktree(_, branch) -> Some branch
+        | Checkout.Checkout.MainCheckout _ | Checkout.Checkout.NotAGitCheckout -> None
+      objectValue casing [
+        "Id", text (SessionId.value info.Id); "Name", text (SessionInfo.displayName info)
+        "WorkingDirectory", text info.WorkingDirectory; "Status", text (SessionLifecycleStatus.label info.Status)
+        "Workflow", text (WorkflowTypes.SessionWorkflow.label info.Workflow); "Projects", array text info.Projects
+        "CreatedAt", date info.CreatedAt; "LastActivity", date info.LastActivity
+        "WorktreeBranch", optional text worktreeBranch
+      ])
+    objectValue casing ["Sessions", rows] |> serialize
 
   /// A cheap, deterministic "version" of the session list — the
   /// `sessions://list` MCP resource's `McpResourceGate` key (item 12,

@@ -239,8 +239,8 @@ let private startGuardedExec (executed: int ref) : Task<WebApplication * int> = 
   McpServer.useOriginGuard (HttpOriginGuard.OwnOrigins.ofPorts [ port; port + 1 ]) app
   app.MapPost("/exec", RequestDelegate(fun ctx ->
     task {
-      use! json = McpServer.readJsonBody ctx
-      json.RootElement.GetProperty("code").GetString() |> ignore
+      let! json = McpServer.readJsonBody ctx
+      Bozzetto.Server.HttpJson.textProperty "code" json |> ignore
       executed.Value <- executed.Value + 1
       ctx.Response.StatusCode <- 200
       do! ctx.Response.WriteAsync("""{"success":true}""")

@@ -23,10 +23,7 @@ let disabledSupervisor () =
 let toolResult (response: JsonValue) =
   let result = CallToolResult()
   let encoded = Json.serialize response
-  // The MCP SDK requires JsonElement here. Fidelity.Data owns the schema and
-  // serialization; this parse only adapts the finished payload to that host API.
-  use document = System.Text.Json.JsonDocument.Parse(encoded)
-  result.StructuredContent <- Nullable(document.RootElement.Clone())
+  result.StructuredContent <- Nullable(McpProtocolJson.toElement response)
   result.Content.Add(TextContentBlock(Text = encoded))
   match JsonValue.prop "success" response with
   | Some(JsonValue.Bool false) -> result.IsError <- Nullable true

@@ -20,10 +20,7 @@ open Bozzetto.Features.Ghostwriter
 
 // ── JSON options matching daemon configuration ──
 
-let private jsonOpts =
-  let opts = JsonSerializerOptions(PropertyNamingPolicy = JsonNamingPolicy.CamelCase)
-  opts.Converters.Add(JsonFSharpConverter())
-  opts
+let private jsonOpts = Bozzetto.JsonCasing.CamelCase
 
 // ── Helpers ──
 

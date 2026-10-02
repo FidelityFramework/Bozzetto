@@ -83,7 +83,6 @@
          to 2.1.11 transitively, so the native lib is pinned directly (see
          Bozzetto.Core.fsproj). -->
     <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
-    <PackageVersion Include="NetMQ" Version="4.0.2.2" />
     <PackageVersion Include="Raylib-cs" Version="7.0.2" />
     <PackageVersion Include="SageTUI" Version="0.9.4" />
     <PackageVersion Include="Fable.Core" Version="4.5.0" />

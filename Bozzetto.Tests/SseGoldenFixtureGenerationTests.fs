@@ -44,10 +44,7 @@ open Bozzetto.Features.LiveTestActivity
 // its own jsonOpts with a CamelCase naming policy that production does NOT
 // use — that test is a self-consistent shape check, not a wire-format
 // fixture, and is out of this island's scope to touch.)
-let private productionJsonOpts () =
-  let opts = JsonSerializerOptions()
-  opts.Converters.Add(JsonFSharpConverter())
-  opts
+let private productionJsonOpts () = Bozzetto.JsonCasing.PascalCase
 
 let private fixturesDir =
   Path.Combine(__SOURCE_DIRECTORY__, "fixtures", "LiveTesting")

@@ -1,7 +1,7 @@
 namespace Bozzetto
 
 open Microsoft.Extensions.Logging
-open Microsoft.FSharp.Reflection
+open Fidelity.Data.JSON
 
 [<RequireQualifiedAccess>]
 type BuildDiagnosticSeverity =
@@ -642,46 +642,113 @@ module BozzettoError =
     | true -> Result.Error (BozzettoError.SupervisorBusy(pending, capacity))
     | false -> Result.Ok ()
 
-  /// True for a genuine F# union type that is NOT a list. F# lists
-  /// (`'a list`) are themselves unions (Cons/Nil) at the CLR level but
-  /// serialize fine as themselves; a "real" union like `SessionState` or
-  /// `ProjectCompatibility.UnsupportedTfmReason` does not, without the
-  /// `JsonFSharpConverter` the HTTP boundary's plain `JsonSerializer`
-  /// doesn't register.
-  let private isNonListUnion (t: System.Type) =
-    FSharpType.IsUnion t
-    && not (t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<int list>)
+  let private diagnosticValue (diagnostic: BuildDiagnostic) =
+    let optional encode value = value |> Option.map encode |> Option.defaultValue JsonValue.Null
+    let integer value = JsonValue.ofInt64 (int64 value)
+    JsonValue.Object [
+      "File", optional JsonValue.String diagnostic.File
+      "Line", optional integer diagnostic.Line
+      "Column", optional integer diagnostic.Column
+      "Severity", JsonValue.String (match diagnostic.Severity with BuildDiagnosticSeverity.Blocking -> "Blocking" | BuildDiagnosticSeverity.Warning -> "Warning")
+      "Code", optional JsonValue.String diagnostic.Code
+      "Message", JsonValue.String diagnostic.Message ]
 
-  /// Serialize a BozzettoError to a JSON-friendly anonymous record.
-  /// Returns { case, fields, message, suggestedAction }.
-  let toJson (err: BozzettoError) =
-    let info, values = FSharpValue.GetUnionFields(err, typeof<BozzettoError>)
-    let fieldInfos = info.GetFields()
-    let fieldMap = System.Collections.Generic.Dictionary<string, obj>()
-    Array.zip fieldInfos values
-    |> Array.iter (fun (fi, v) ->
-      match v with
-      | :? exn as ex -> fieldMap.[fi.Name] <- box ex.Message
-      // A bare F# DU boxed as `obj` (e.g. ToolNotAvailable's SessionState,
-      // or ProjectFrameworkNotHostable's UnsupportedTfmReason) is NOT
-      // serializable by the plain `JsonSerializer.Serialize` the HTTP
-      // boundary uses (McpServer.fs's jsonResponse has no
-      // JsonFSharpConverter registered) — confirmed live via a real
-      // `/api/sessions/create` call, which returned an "F# discriminated
-      // union serialization is not supported" 500 instead of the intended
-      // refusal. Reduce it to its case name, the same shape `case` above
-      // already uses to expose a DU's identity over JSON. `string list`/
-      // `BuildDiagnostic list` fields are also technically unions (F# lists
-      // are Cons/Nil) but must NOT hit this branch — they serialize fine as
-      // themselves — so `isNonListUnion` scopes this to non-list unions.
-      | _ when isNonListUnion fi.PropertyType ->
-        let caseInfo, _ = FSharpValue.GetUnionFields(v, fi.PropertyType)
-        fieldMap.[fi.Name] <- box caseInfo.Name
-      | _ -> fieldMap.[fi.Name] <- v)
-    {| case = info.Name
-       fields = fieldMap :> System.Collections.Generic.IDictionary<string, obj>
-       message = describe err
-       suggestedAction = suggestedAction err |}
+  /// Explicit error schema; adding a case requires choosing its field representation.
+  let toJson (error: BozzettoError) =
+    let caseName, fields =
+      match error with
+      | BozzettoError.ToolNotAvailable(toolName, currentState, availableTools) ->
+        "ToolNotAvailable", ["toolName", toolName |> (JsonValue.String); "currentState", currentState |> (SessionState.label >> JsonValue.String); "availableTools", availableTools |> (List.map JsonValue.String >> JsonValue.Array)]
+      | BozzettoError.SessionNotFound(sessionId) ->
+        "SessionNotFound", ["sessionId", sessionId |> (JsonValue.String)]
+      | BozzettoError.NoActiveSessions ->
+        "NoActiveSessions", []
+      | BozzettoError.AmbiguousSessions(sessionDescriptions) ->
+        "AmbiguousSessions", ["sessionDescriptions", sessionDescriptions |> (List.map JsonValue.String >> JsonValue.Array)]
+      | BozzettoError.SessionCreationFailed(reason) ->
+        "SessionCreationFailed", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.NeedsRebuild(missing) ->
+        "NeedsRebuild", ["missing", missing |> (List.map JsonValue.String >> JsonValue.Array)]
+      | BozzettoError.DuplicateSession(existingSessionId, workingDirectory) ->
+        "DuplicateSession", ["existingSessionId", existingSessionId |> (JsonValue.String); "workingDirectory", workingDirectory |> (JsonValue.String)]
+      | BozzettoError.UnsafeSessionPath(path, reason) ->
+        "UnsafeSessionPath", ["path", path |> (JsonValue.String); "reason", reason |> (JsonValue.String)]
+      | BozzettoError.ProjectFrameworkNotHostable(project, targetFrameworks, reason) ->
+        "ProjectFrameworkNotHostable", ["project", project |> (JsonValue.String); "targetFrameworks", targetFrameworks |> (List.map JsonValue.String >> JsonValue.Array); "reason", reason |> (fun ProjectCompatibility.UnsupportedTfmReason.NetFramework -> JsonValue.String "NetFramework")]
+      | BozzettoError.SessionStopFailed(sessionId, reason) ->
+        "SessionStopFailed", ["sessionId", sessionId |> (JsonValue.String); "reason", reason |> (JsonValue.String)]
+      | BozzettoError.SessionSwitchFailed(sessionId, reason) ->
+        "SessionSwitchFailed", ["sessionId", sessionId |> (JsonValue.String); "reason", reason |> (JsonValue.String)]
+      | BozzettoError.SupervisorBusy(pending, capacity) ->
+        "SupervisorBusy", ["pending", pending |> (int64 >> JsonValue.ofInt64); "capacity", capacity |> (int64 >> JsonValue.ofInt64)]
+      | BozzettoError.MemoryPressureRefused(reason) ->
+        "MemoryPressureRefused", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.SessionNotRoutable(reason) ->
+        "SessionNotRoutable", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.WorkerCommunicationFailed(sessionId, reason) ->
+        "WorkerCommunicationFailed", ["sessionId", sessionId |> (JsonValue.String); "reason", reason |> (JsonValue.String)]
+      | BozzettoError.WorkerSpawnFailed(reason) ->
+        "WorkerSpawnFailed", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.WorkerTimeout(sessionId, operation, timeoutSec) ->
+        "WorkerTimeout", ["sessionId", sessionId |> (JsonValue.String); "operation", operation |> (JsonValue.String); "timeoutSec", timeoutSec |> (JsonValue.Number)]
+      | BozzettoError.WorkerHttpError(sessionId, endpoint, statusCode) ->
+        "WorkerHttpError", ["sessionId", sessionId |> (JsonValue.String); "endpoint", endpoint |> (JsonValue.String); "statusCode", statusCode |> (int64 >> JsonValue.ofInt64)]
+      | BozzettoError.PipeClosed ->
+        "PipeClosed", []
+      | BozzettoError.EvalFailed(reason) ->
+        "EvalFailed", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.ResetFailed(reason) ->
+        "ResetFailed", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.HardResetFailed(reason) ->
+        "HardResetFailed", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.BuildFailed(exitCode, diagnostics) ->
+        "BuildFailed", ["exitCode", exitCode |> (int64 >> JsonValue.ofInt64); "diagnostics", diagnostics |> (List.map diagnosticValue >> JsonValue.Array)]
+      | BozzettoError.ScriptLoadFailed(reason) ->
+        "ScriptLoadFailed", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.CheckFailed(reason) ->
+        "CheckFailed", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.CompletionFailed(sessionId, reason) ->
+        "CompletionFailed", ["sessionId", sessionId |> (JsonValue.String); "reason", reason |> (JsonValue.String)]
+      | BozzettoError.CancelFailed(reason) ->
+        "CancelFailed", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.EvalSupersededByReset ->
+        "EvalSupersededByReset", []
+      | BozzettoError.WarmupOpenFailed(name, reason) ->
+        "WarmupOpenFailed", ["name", name |> (JsonValue.String); "reason", reason |> (JsonValue.String)]
+      | BozzettoError.WarmupContextFailed(sessionId, reason) ->
+        "WarmupContextFailed", ["sessionId", sessionId |> (JsonValue.String); "reason", reason |> (JsonValue.String)]
+      | BozzettoError.LoadedStateStale(sessionId, reason) ->
+        "LoadedStateStale", ["sessionId", sessionId |> (JsonValue.String); "reason", reason |> (JsonValue.String)]
+      | BozzettoError.AppRunFailed(project, reason) ->
+        "AppRunFailed", ["project", project |> (JsonValue.String); "reason", reason |> (JsonValue.String)]
+      | BozzettoError.RestartLimitExceeded(restartCount, windowMinutes) ->
+        "RestartLimitExceeded", ["restartCount", restartCount |> (int64 >> JsonValue.ofInt64); "windowMinutes", windowMinutes |> (JsonValue.Number)]
+      | BozzettoError.DaemonStartFailed(reason) ->
+        "DaemonStartFailed", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.DaemonNotRunning ->
+        "DaemonNotRunning", []
+      | BozzettoError.PortInUse(port) ->
+        "PortInUse", ["port", port |> (int64 >> JsonValue.ofInt64)]
+      | BozzettoError.SseConnectionError(reason) ->
+        "SseConnectionError", ["reason", reason |> (JsonValue.String)]
+      | BozzettoError.JsonParseError(context, reason) ->
+        "JsonParseError", ["context", context |> (JsonValue.String); "reason", reason |> (JsonValue.String)]
+      | BozzettoError.CohortActionFailed(reason, suggestion) ->
+        "CohortActionFailed", ["reason", reason |> (JsonValue.String); "suggestion", suggestion |> (JsonValue.String)]
+      | BozzettoError.Unexpected(cause) ->
+        "Unexpected", ["Item", cause |> (fun (error: exn) -> JsonValue.String error.Message)]
+    {| case = caseName
+       fields = Map.ofList fields
+       message = describe error
+       suggestedAction = suggestedAction error |}
+
+  let toJsonValue (error: BozzettoError) : JsonValue =
+    let value = toJson error
+    JsonValue.Object [
+      "case", JsonValue.String value.case
+      "fields", JsonValue.Object (Map.toList value.fields)
+      "message", JsonValue.String value.message
+      "suggestedAction", JsonValue.String value.suggestedAction ]
 
 /// Carries a BozzettoError through an exception-typed error channel (the eval
 /// actor's `EvalResponse.EvaluationResult`) so the worker boundary recovers

@@ -1,7 +1,6 @@
 namespace Bozzetto.Server
 
-open System.Text.Json
-open System.Text.Json.Serialization
+open Fidelity.Data.JSON
 open Bozzetto
 
 /// The SSE `event:` name a case rides on. Editor clients (the in-repo VS Code
@@ -89,112 +88,99 @@ module SseEvent =
   /// Preserved for the existing wire-contract name ("session" channel only).
   let sseEventTypeSession = channelName SseChannel.Session
 
-  let private jsonOpts =
-    let o = JsonSerializerOptions()
-    o.DefaultIgnoreCondition <- JsonIgnoreCondition.WhenWritingNull
-    o
+  let private sid (s: WorkerProtocol.SessionId) = WorkerProtocol.SessionId.value s |> JsonValue.String
+  let private integer value = JsonValue.ofInt64 (int64 value)
+  let private strings values = values |> List.map JsonValue.String |> JsonValue.Array
 
-  let private sid (s: WorkerProtocol.SessionId) = WorkerProtocol.SessionId.value s
-
-  /// `jsonOpts` here has no F# converter registered (only
-  /// `DefaultIgnoreCondition`), so an `Option` field must be converted to a
-  /// nullable `obj` before serializing — same discipline as `diagnosticJson`'s
-  /// `FileName |> Option.toObj` below.
   let private sessionHealthJson (health: SessionHealth) =
-    {| status = SessionHealth.label health
-       reason = SessionHealth.reason health |> Option.toObj |}
+    JsonValue.Object [
+      "status", JsonValue.String (SessionHealth.label health)
+      match SessionHealth.reason health with
+      | Some reason -> "reason", JsonValue.String reason
+      | None -> ()
+    ]
 
   let private diagnosticJson (d: WarmUp.WarmupFcsDiagnostic) =
-    {| message = d.Message
-       severity = d.Severity
-       errorNumber = d.ErrorNumber
-       fileName = d.FileName |> Option.toObj
-       startLine = d.StartLine
-       endLine = d.EndLine
-       startColumn = d.StartColumn
-       endColumn = d.EndColumn |}
+    JsonValue.Object [
+      "message", JsonValue.String d.Message
+      "severity", JsonValue.String d.Severity
+      "errorNumber", integer d.ErrorNumber
+      match d.FileName with
+      | Some name -> "fileName", JsonValue.String name
+      | None -> ()
+      "startLine", integer d.StartLine
+      "endLine", integer d.EndLine
+      "startColumn", integer d.StartColumn
+      "endColumn", integer d.EndColumn
+    ]
 
   let private failedOpenJson (f: WarmUp.WarmupOpenFailure) =
-    {| name = f.Name
-       isModule = WarmUp.OpenableKind.toBool f.Kind
-       error = f.ErrorMessage
-       retryCount = f.RetryCount
-       diagnostics = f.Diagnostics |> List.map diagnosticJson |}
+    JsonValue.Object [
+      "name", JsonValue.String f.Name
+      "isModule", JsonValue.Bool (WarmUp.OpenableKind.toBool f.Kind)
+      "error", JsonValue.String f.ErrorMessage
+      "retryCount", integer f.RetryCount
+      "diagnostics", JsonValue.Array (List.map diagnosticJson f.Diagnostics)
+    ]
 
   let private namespaceOpenedJson (b: WarmUp.OpenedBinding) =
-    {| name = b.Name
-       isModule = WarmUp.OpenableKind.toBool b.Kind
-       source = b.Source
-       durationMs = b.DurationMs |}
+    JsonValue.Object [
+      "name", JsonValue.String b.Name
+      "isModule", JsonValue.Bool (WarmUp.OpenableKind.toBool b.Kind)
+      "source", JsonValue.String b.Source
+      "durationMs", JsonValue.Number b.DurationMs
+    ]
 
   let private assemblyLoadedJson (a: LoadedAssembly) =
-    {| name = a.Name
-       path = a.Path
-       namespaceCount = a.NamespaceCount
-       moduleCount = a.ModuleCount |}
+    JsonValue.Object [
+      "name", JsonValue.String a.Name
+      "path", JsonValue.String a.Path
+      "namespaceCount", integer a.NamespaceCount
+      "moduleCount", integer a.ModuleCount
+    ]
 
   let private warmupContextJson (ctx: WarmupContext) =
-    {| sourceFilesScanned = ctx.SourceFilesScanned
-       warmupDurationMs = WarmupContext.totalDurationMs ctx
-       phaseTiming =
-         {| scanSourceFilesMs = ctx.PhaseTiming.ScanSourceFilesMs
-            scanAssembliesMs = ctx.PhaseTiming.ScanAssembliesMs
-            openNamespacesMs = ctx.PhaseTiming.OpenNamespacesMs
-            totalMs = ctx.PhaseTiming.TotalMs |}
-       assembliesLoaded = ctx.AssembliesLoaded |> List.map assemblyLoadedJson
-       namespacesOpened = ctx.NamespacesOpened |> List.map namespaceOpenedJson
-       failedOpens = ctx.FailedOpens |> List.map failedOpenJson |}
+    JsonValue.Object [
+      "sourceFilesScanned", integer ctx.SourceFilesScanned
+      "warmupDurationMs", JsonValue.ofInt64 (WarmupContext.totalDurationMs ctx)
+      "phaseTiming", JsonValue.Object [
+        "scanSourceFilesMs", JsonValue.ofInt64 ctx.PhaseTiming.ScanSourceFilesMs
+        "scanAssembliesMs", JsonValue.ofInt64 ctx.PhaseTiming.ScanAssembliesMs
+        "openNamespacesMs", JsonValue.ofInt64 ctx.PhaseTiming.OpenNamespacesMs
+        "totalMs", JsonValue.ofInt64 ctx.PhaseTiming.TotalMs
+      ]
+      "assembliesLoaded", JsonValue.Array (List.map assemblyLoadedJson ctx.AssembliesLoaded)
+      "namespacesOpened", JsonValue.Array (List.map namespaceOpenedJson ctx.NamespacesOpened)
+      "failedOpens", JsonValue.Array (List.map failedOpenJson ctx.FailedOpens)
+    ]
 
-  /// Serialize an SseEvent to its JSON payload (the SSE frame's `data:`
-  /// body — not the envelope). ONE function, ONE technique
-  /// (JsonSerializer over anonymous records) for every case — replacing the
-  /// former split between DaemonStateChange's sprintf string-templating and
-  /// SessionEvents' hand-rolled Utf8JsonWriter. Wire shapes match the
-  /// pre-unification output field-for-field (see DaemonStateChangeContractTests,
-  /// McpWireProtocolTests, WorkflowSwitchTests).
+  /// Each event owns its explicit wire schema. Null optional fields remain
+  /// omitted for compatibility with the existing SSE consumers.
   let toJson (evt: SseEvent) : string =
-    match evt with
-    // ── State channel ──
-    | SessionProgress ->
-      JsonSerializer.Serialize({| sessionProgress = true |}, jsonOpts)
-    | SessionReady s ->
-      JsonSerializer.Serialize({| sessionReady = sid s |}, jsonOpts)
-    | SessionSwitched s ->
-      JsonSerializer.Serialize({| sessionSwitched = sid s |}, jsonOpts)
-    | FileReloaded (s, path) ->
-      JsonSerializer.Serialize({| fileReloaded = path; sessionId = sid s |}, jsonOpts)
-    | SessionFaulted (s, error) ->
-      JsonSerializer.Serialize({| sessionFaulted = sid s; error = error |}, jsonOpts)
-    | ModelChanged (outputCount, diagCount) ->
-      JsonSerializer.Serialize({| outputCount = outputCount; diagCount = diagCount |}, jsonOpts)
-    | WarmupProgress (s, step, total, _msg) ->
-      JsonSerializer.Serialize({| warmupProgress = true; sessionId = sid s; step = step; total = total |}, jsonOpts)
-    | SystemAlarm (phase, message) ->
-      JsonSerializer.Serialize({| systemAlarm = true; phase = phase; message = message |}, jsonOpts)
-    | CohortChanged ->
-      JsonSerializer.Serialize({| cohortChanged = true |}, jsonOpts)
-    // ── Session channel ──
-    | WarmupContextSnapshot (s, ctx) ->
-      JsonSerializer.Serialize(
-        {| ``type`` = "warmup_context_snapshot"; sessionId = s; context = warmupContextJson ctx |}, jsonOpts)
-    | SessionActivated s ->
-      JsonSerializer.Serialize({| ``type`` = "session_activated"; sessionId = s |}, jsonOpts)
-    | SessionCreated (s, projectNames) ->
-      JsonSerializer.Serialize(
-        {| ``type`` = "session_created"; sessionId = s; projectNames = projectNames |}, jsonOpts)
-    | SessionStopped s ->
-      JsonSerializer.Serialize({| ``type`` = "session_stopped"; sessionId = s |}, jsonOpts)
-    | WorkflowSwitching (s, fromLabel, toLabel) ->
-      JsonSerializer.Serialize(
-        {| ``type`` = "workflow_switching"; sessionId = s; fromWorkflow = fromLabel; toWorkflow = toLabel |}, jsonOpts)
-    | WorkflowSwitched (s, label) ->
-      JsonSerializer.Serialize(
-        {| ``type`` = "workflow_switched"
-           sessionId = s
-           workflowLabel = label |}, jsonOpts)
-    | SessionHealthChanged (s, health) ->
-      JsonSerializer.Serialize(
-        {| ``type`` = "session_health_changed"; sessionId = s; health = sessionHealthJson health |}, jsonOpts)
+    let session kind id fields =
+      ("type", JsonValue.String kind) :: ("sessionId", JsonValue.String id) :: fields
+    let fields =
+      match evt with
+      | SessionProgress -> [ "sessionProgress", JsonValue.Bool true ]
+      | SessionReady s -> [ "sessionReady", sid s ]
+      | SessionSwitched s -> [ "sessionSwitched", sid s ]
+      | FileReloaded (s, path) -> [ "fileReloaded", JsonValue.String path; "sessionId", sid s ]
+      | SessionFaulted (s, error) -> [ "sessionFaulted", sid s; "error", JsonValue.String error ]
+      | ModelChanged (outputCount, diagCount) -> [ "outputCount", integer outputCount; "diagCount", integer diagCount ]
+      | WarmupProgress (s, step, total, _msg) ->
+        [ "warmupProgress", JsonValue.Bool true; "sessionId", sid s; "step", integer step; "total", integer total ]
+      | SystemAlarm (phase, message) ->
+        [ "systemAlarm", JsonValue.Bool true; "phase", JsonValue.String phase; "message", JsonValue.String message ]
+      | CohortChanged -> [ "cohortChanged", JsonValue.Bool true ]
+      | WarmupContextSnapshot (s, ctx) -> session "warmup_context_snapshot" s [ "context", warmupContextJson ctx ]
+      | SessionActivated s -> session "session_activated" s []
+      | SessionCreated (s, projectNames) -> session "session_created" s [ "projectNames", strings projectNames ]
+      | SessionStopped s -> session "session_stopped" s []
+      | WorkflowSwitching (s, fromLabel, toLabel) ->
+        session "workflow_switching" s [ "fromWorkflow", JsonValue.String fromLabel; "toWorkflow", JsonValue.String toLabel ]
+      | WorkflowSwitched (s, label) -> session "workflow_switched" s [ "workflowLabel", JsonValue.String label ]
+      | SessionHealthChanged (s, health) -> session "session_health_changed" s [ "health", sessionHealthJson health ]
+    JsonValue.Object fields |> Json.serialize
 
   /// Format a complete SSE frame (`event: ...\ndata: ...\n\n`) for an event.
   let format (evt: SseEvent) : string =

@@ -8,7 +8,7 @@ open System.Text.Json
 open Bozzetto.Features
 open Bozzetto.Features.FeatureHooks
 
-let sseJsonOpts = JsonSerializerOptions(PropertyNamingPolicy = JsonNamingPolicy.CamelCase)
+let sseJsonOpts = Bozzetto.JsonCasing.CamelCase
 
 /// From-scratch binding scope of the retained history — the oracle the
 /// indexed store must reproduce exactly.

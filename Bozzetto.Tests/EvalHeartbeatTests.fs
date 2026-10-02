@@ -5,10 +5,7 @@ open Expecto
 open Expecto.Flip
 open Bozzetto.SseWriter
 
-let private opts =
-  let o = JsonSerializerOptions()
-  o.Converters.Add(System.Text.Json.Serialization.JsonFSharpConverter())
-  o
+let private opts = Bozzetto.JsonCasing.PascalCase
 
 // ── formatEvalHeartbeatEvent ──────────────────────────────────────────────────
 

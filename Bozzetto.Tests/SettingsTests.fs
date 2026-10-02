@@ -107,6 +107,17 @@ let storeTests =
         File.WriteAllText(path, "{ this is not valid json ]")
         SettingsStore.readLayer path |> Expect.isEmpty "malformed file yields the empty layer")
 
+    testCase "settings layers retain string values and last duplicate keys without coercion" <| fun _ ->
+      withTempDir (fun dir ->
+        let path = SettingsStore.globalPath dir
+        File.WriteAllText(path, """{"theme":"old","theme":"new","quoted":"a\"b\\c"}""")
+        SettingsStore.readLayer path
+        |> Expect.equal "flat string schema preserves JSON escapes and duplicate precedence"
+          (Map.ofList ["theme", "new"; "quoted", "a\"b\\c"])
+        for invalid in [ "null"; "42"; "true"; "[]"; "{}" ] do
+          File.WriteAllText(path, "{\"theme\":" + invalid + "}")
+          SettingsStore.readLayer path |> Expect.isEmpty "invalid raw values invalidate the layer rather than coercing it")
+
     testCase "WHY — setKey then readLayer round-trips because a persisted value must be readable back" <| fun _ ->
       withTempDir (fun dir ->
         let path = SettingsStore.globalPath dir

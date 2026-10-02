@@ -6,6 +6,7 @@ module Bozzetto.LocalData
 open System
 open System.IO
 open Bozzetto.Features
+open Fidelity.Data.JSON
 open Bozzetto.Features.FrictionSqlite
 
 let frictionFileName = "friction.db"
@@ -91,42 +92,44 @@ let render (r: Report) : string =
   lines.Add "Clear it with manage_local_data action=clear store=friction|cohort|all."
   String.Join("\n", lines)
 
-/// The JSON shape `/api/local-data` returns.
-let toJson (r: Report) : obj =
-  let oldestJson (oldest: OldestRow) : obj =
-    match oldest with
-    | OldestRow.NoRows -> null
-    | OldestRow.WrittenAt at -> box (at.ToUniversalTime().ToString("O"))
-  box
-    {| dataDir = r.DataDir
-       friction =
-         match r.Friction with
-         | FrictionReport.NotConfigured -> box {| state = "notConfigured" |}
-         | FrictionReport.ReadFailed reason -> box {| state = "readFailed"; reason = reason |}
-         | FrictionReport.Stored usage ->
-           box
-             {| state = "stored"
-                path = frictionPath r.DataDir
-                bytes = usage.Bytes
-                tables = usage.Tables |> List.map (fun t -> {| table = t.Table; rows = t.Rows; oldest = oldestJson t.Oldest |}) |}
-       cohortLedger =
-         match r.CohortLedger with
-         | Ok usage ->
-           box
-             {| state = "stored"
-                path = cohortLedgerPath r.DataDir
-                bytes = usage.Bytes
-                rows = usage.Rows
-                oldest = oldestJson usage.Oldest
-                cohort = cohortText r.Cohort |}
-         | Error reason -> box {| state = "readFailed"; reason = reason |}
-       retention =
-         {| frictionCurrentVersionOnly = FrictionTelemetryTypes.BozzettoVersion.current ()
-            frictionMaxAgeDays = r.Policy.MaxAge.TotalDays
-            frictionMaxRows = r.Policy.MaxRows
-            frictionMaxAggregateVersions = r.Policy.MaxAggregateVersions
-            pruneIntervalMinutes = r.PruneInterval.TotalMinutes
-            cohortLedgerRetentionDays = r.CohortLedgerRetention.TotalDays |} |}
+/// The explicit JSON schema returned by /api/local-data.
+let toJsonValue (report: Report) : JsonValue =
+  let object = JsonValue.Object
+  let text = WireJson.text
+  let oldest = function
+    | OldestRow.NoRows -> JsonValue.Null
+    | OldestRow.WrittenAt at -> text (at.ToUniversalTime().ToString("O"))
+  let friction =
+    match report.Friction with
+    | FrictionReport.NotConfigured -> object ["state", text "notConfigured"]
+    | FrictionReport.ReadFailed reason -> object ["state", text "readFailed"; "reason", text reason]
+    | FrictionReport.Stored usage -> object [
+        "state", text "stored"
+        "path", text (frictionPath report.DataDir)
+        "bytes", WireJson.signed usage.Bytes
+        "tables", usage.Tables |> WireJson.array (fun table -> object [
+          "table", text table.Table; "rows", WireJson.signed table.Rows; "oldest", oldest table.Oldest ]) ]
+  let ledger =
+    match report.CohortLedger with
+    | Error reason -> object ["state", text "readFailed"; "reason", text reason]
+    | Ok usage -> object [
+        "state", text "stored"
+        "path", text (cohortLedgerPath report.DataDir)
+        "bytes", WireJson.signed usage.Bytes
+        "rows", WireJson.signed usage.Rows
+        "oldest", oldest usage.Oldest
+        "cohort", text (cohortText report.Cohort) ]
+  object [
+    "dataDir", text report.DataDir
+    "friction", friction
+    "cohortLedger", ledger
+    "retention", object [
+      "frictionCurrentVersionOnly", text (FrictionTelemetryTypes.BozzettoVersion.current ())
+      "frictionMaxAgeDays", WireJson.number report.Policy.MaxAge.TotalDays
+      "frictionMaxRows", WireJson.integer report.Policy.MaxRows
+      "frictionMaxAggregateVersions", WireJson.integer report.Policy.MaxAggregateVersions
+      "pruneIntervalMinutes", WireJson.number report.PruneInterval.TotalMinutes
+      "cohortLedgerRetentionDays", WireJson.number report.CohortLedgerRetention.TotalDays ] ]
 
 [<RequireQualifiedAccess>]
 type ClearTarget =

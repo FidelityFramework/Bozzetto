@@ -82,20 +82,20 @@ let w7FeatureHooksIncrementalCacheTests =
 
     testCase "computeBindingScopePush uses CachedScope when available" <| fun _ ->
       let state = recordEval "let z = 99" "val z: int = 99" 15L FeaturePushState.empty
-      let opts = System.Text.Json.JsonSerializerOptions()
+      let opts = Bozzetto.JsonCasing.PascalCase
       let updated, sseOpt = computeBindingScopePush opts None state
       sseOpt |> Expect.isSome "first push produces SSE output"
 
     testCase "computeBindingScopePush deduplicates unchanged scope" <| fun _ ->
       let state = recordEval "let q = 7" "val q: int = 7" 20L FeaturePushState.empty
-      let opts = System.Text.Json.JsonSerializerOptions()
+      let opts = Bozzetto.JsonCasing.PascalCase
       let state2, _ = computeBindingScopePush opts None state
       let _, sseOpt2 = computeBindingScopePush opts None state2
       sseOpt2 |> Expect.isNone "second push with no change produces None (dedup)"
 
     testCase "computeEvalTimelinePush uses CachedTimeline" <| fun _ ->
       let state = recordEval "let y = 5" "val y: int = 5" 50L FeaturePushState.empty
-      let opts = System.Text.Json.JsonSerializerOptions()
+      let opts = Bozzetto.JsonCasing.PascalCase
       let _, sseOpt = computeEvalTimelinePush opts None state
       sseOpt |> Expect.isSome "timeline push produces SSE output"
 

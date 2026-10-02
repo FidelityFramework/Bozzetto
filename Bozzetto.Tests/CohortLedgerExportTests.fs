@@ -17,11 +17,7 @@ open Bozzetto.Measures
 open Bozzetto.MemberTable
 open Bozzetto.Features.CohortLedgerExport
 
-// ── Generators covering the DU shapes the codec must round-trip (mirrors
-//    CohortLedgerSqliteTests.fs's proven coverage — that suite already shows
-//    this exact WorkerProtocol.Serialization codec round-trips every
-//    CohortCommand/CohortEvent shape; this file proves the JSONL framing
-//    around it is equally lossless) ─────────────────────────────────────────
+// Generators exercise the explicit CohortJson schemas through JSONL framing.
 
 let private genMember =
   Gen.oneof [
@@ -88,10 +84,13 @@ let private genCommand : Gen<CohortCommand<MemberId>> =
     })
     Gen.map2 (fun l ts -> CohortCommand.AffectedComputed(l, ts)) genLandingId (genShortList genTestId)
     Gen.map2 (fun l ts -> CohortCommand.TestsCompleted(l, ts)) genLandingId (genShortList genTestId)
+    Gen.map (fun l -> CohortCommand.VerificationInconclusive(l, "worker retired")) genLandingId
     Gen.map2 (fun l sha -> CohortCommand.FastForwardCompleted(l, sha)) genLandingId (Gen.elements [ "final-a"; "final-b" ])
+    Gen.map (fun l -> CohortCommand.FastForwardFailed(l, "head changed")) genLandingId
     Gen.map2 (fun m l -> CohortCommand.WithdrawLanding(m, l)) genMember genLandingId
     Gen.map3 (fun by l reason -> CohortCommand.VetoLanding(by, l, reason)) genMember genLandingId (Gen.constant "reason")
     Gen.map2 (fun by head -> CohortCommand.SetIntegrationHead(by, head)) genMember (Gen.elements [ "head-a"; "head-b" ])
+    Gen.map2 (fun by l -> CohortCommand.ResolveVeto(by, l)) genMember genLandingId
   ]
 
 let private genLandingState : Gen<LandingState<MemberId>> =
@@ -107,6 +106,7 @@ let private genLandingState : Gen<LandingState<MemberId>> =
           Gen.map LandingBlocker.StaleClaimFence genClaimId
           Gen.map2 (fun f t -> LandingBlocker.HeadMoved(f, t)) (Gen.elements [ "h1" ]) (Gen.elements [ "h2" ])
           Gen.map2 (fun m r -> LandingBlocker.VetoedBy(m, r)) genMember (Gen.constant "reason")
+          Gen.constant (LandingBlocker.Inconclusive "worker retired")
         ]
       let! action =
         Gen.oneof [
@@ -166,6 +166,12 @@ let private genEvent : Gen<CohortEvent<MemberId>> =
     Gen.map CohortEvent.LandingWithdrawn genLandingId
     Gen.map3 (fun l by reason -> CohortEvent.LandingVetoed(l, by, reason)) genLandingId genMember (Gen.constant "reason")
     Gen.map CohortEvent.IntegrationConfigured (Gen.elements [ "head-a"; "head-b" ])
+    Gen.map2 (fun l memberId -> CohortEvent.LandingVetoResolved(l, memberId)) genLandingId genMember
+    Gen.map2 (fun claim at -> CohortEvent.ClaimPruned(claim, ClaimPruneReason.OrphanedPastRetention at)) genClaimId genDateTime
+    Gen.map2 (fun claim at -> CohortEvent.ClaimPruned(claim, ClaimPruneReason.ReleasedPastRetention at)) genClaimId genDateTime
+    Gen.map2 (fun claim replacement -> CohortEvent.ClaimPruned(claim, ClaimPruneReason.SupersededBy replacement)) genClaimId genClaimId
+    Gen.map2 (fun l at -> CohortEvent.LandingPruned(l, at)) genLandingId genDateTime
+    Gen.map2 (fun memberId at -> CohortEvent.MemberPurged(memberId, at)) genMember genDateTime
   ]
 
 let private genEntropy : Gen<byte[]> =
@@ -330,6 +336,30 @@ let private expectedState : CohortState<MemberId> =
 [<Tests>]
 let cohortLedgerExportTests =
   testList "CohortLedgerExport (Phase 1 item 18a, §5.2)" [
+
+    test "ledger sequence and claim fence remain exact beyond binary float integer precision" {
+      let large = 9007199254740993L
+      let fence = LanguagePrimitives.Int64WithMeasure<fence> large
+      let entry : LedgerEntry<MemberId> = {
+        Seq = LanguagePrimitives.Int64WithMeasure<ledgerSeq> large
+        Clock = DateTime(2026, 10, 2, 12, 13, 14, DateTimeKind.Utc).AddTicks 1234567L
+        Entropy = [| 0uy; 1uy; 255uy |]
+        Command = CohortCommand.ReleaseClaim(scenarioAlice, expectedClaimId, fence)
+        Events = [CohortEvent.ClaimReleased(expectedClaimId, scenarioAlice, fence)]
+      }
+      let json = toJsonl [entry]
+      fromJsonl json |> Expect.equal "all explicit ledger fields retain their typed value" (Ok [entry])
+      fromJsonl (json.Replace("9007199254740993", "9007199254740993.0"))
+      |> Expect.isError "fraction-spelled sequence and fence are not rounded"
+      fromJsonl (json.Replace("9007199254740993", "9223372036854775808"))
+      |> Expect.isError "out-of-range identity is not coerced"
+    }
+
+    test "unknown union cases and wrong field arities refuse the stored command" {
+      for json in [ """{"type":"Join","value":[]}"""; """{"type":"NewFutureCommand"}""";
+                    """{"type":"Tick","value":[1]}"""; """{"type":"Tick","value":null}""" ] do
+        CohortJson.commandFromJson json |> Expect.isError "incomplete or unknown command must not enter replay"
+    }
 
     testPropertyWithConfig config "fromJsonl (toJsonl entries) = Ok entries, for arbitrary generated ledgers" <|
       Prop.forAll (Arb.fromGen genEntries) (fun entries ->

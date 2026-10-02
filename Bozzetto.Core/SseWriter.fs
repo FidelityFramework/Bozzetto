@@ -2,7 +2,8 @@ module Bozzetto.SseWriter
 
 open System.IO
 open System.Text
-open System.Text.Json
+open Fidelity.Data.JSON
+open WireJson
 open System.Threading.Tasks
 
 /// Pure: format an SSE retry hint per the EventSource spec.
@@ -51,165 +52,92 @@ let trySendSseEvent (stream: Stream) (eventType: string) (data: string) : Task<R
   let bytes = Encoding.UTF8.GetBytes(text)
   trySendBytes stream bytes
 
-/// Inject a SessionId field into a JSON object string. None = no change (backward compat).
+/// Inject the session identity through the JSON encoder so quotes and control
+/// characters cannot escape the field. Non-object payloads are unchanged.
 let injectSessionId (sessionId: string option) (json: string) : string =
   match sessionId with
   | None -> json
   | Some sid ->
-    match json.StartsWith("{") with
-    | true ->
-      sprintf """{"SessionId":"%s",%s""" sid (json.Substring(1))
-    | false -> json
+    match Json.parse json with
+    | Ok (JsonValue.Object properties) ->
+      JsonValue.Object (("SessionId", text sid) :: (properties |> List.filter (fun (key, _) -> key <> "SessionId")))
+      |> serialize
+    | _ -> json
 
-// ── Warmup progress SSE event ──
+let private emit eventType sessionId value =
+  value |> serialize |> injectSessionId sessionId |> formatSseEvent eventType
 
-/// Derive a human-readable warmup phase from step/total context.
-/// Total <= 5 means main warmup phases (FSI creation, scanning, assembly load, finalize).
-/// Total > 5 means per-namespace open phase.
-let private deriveWarmupPhase (step: int) (total: int) =
-  match total <= 5 with
-  | true ->
+let private extend casing properties value =
+  match value, objectValue casing properties with
+  | JsonValue.Object existing, JsonValue.Object additional -> JsonValue.Object (existing @ additional)
+  | _ -> invalidArg (nameof value) "Expected an explicitly constructed JSON object."
+
+let private deriveWarmupPhase step total =
+  if total > 5 then "opening_namespaces"
+  else
     match step with
     | 1 -> "creating_fsi"
     | 2 -> "scanning_sources"
     | 3 -> "loading_assemblies"
     | _ -> "finalizing"
-  | false -> "opening_namespaces"
 
-/// Format a warmup progress event as an SSE event string.
-/// Emitted during session warmup so editor plugins can show phase-by-phase progress.
-let formatWarmupProgressEvent (opts: JsonSerializerOptions) (sessionId: string option) (step: int) (total: int) (message: string) : string =
-  let progress =
-    match total with
-    | 0 -> 0.0
-    | t -> System.Math.Round(float step / float t, 3)
-  let phase = deriveWarmupPhase step total
-  let json =
-    JsonSerializer.Serialize(
-      {| Step = step; Total = total; Message = message; Progress = progress; Phase = phase |}, opts)
-    |> injectSessionId sessionId
-  formatSseEvent "warmup_progress" json
+let formatWarmupProgressEvent casing sessionId step total message =
+  let progress = if total = 0 then 0.0 else System.Math.Round(float step / float total, 3)
+  objectValue casing [
+    "Step", integer step; "Total", integer total; "Message", text message
+    "Progress", number progress; "Phase", text (deriveWarmupPhase step total)
+  ] |> emit "warmup_progress" sessionId
 
-/// Format a TestSummary as an SSE event string
-let formatTestSummaryEvent
-  (opts: JsonSerializerOptions)
-  (sessionId: string option)
-  (summary: Features.LiveTesting.TestSummary)
-  (lastDecision: Features.LiveTesting.LiveTestingDecision option)
-  : string =
-  let payload =
-    {| Total = summary.Total
-       Passed = summary.Passed
-       Failed = summary.Failed
-       Stale = summary.Stale
-       Running = summary.Running
-       Disabled = summary.Disabled
-       Enabled = summary.Enabled
-       LastDecision = lastDecision |> Option.map Features.LiveTesting.LiveTestingDecision.toWireModel |}
-  let json = JsonSerializer.Serialize(payload, opts) |> injectSessionId sessionId
-  formatSseEvent "test_summary" json
+let formatTestSummaryEvent casing sessionId (summary: Features.LiveTesting.TestSummary) lastDecision =
+  LiveTestingJson.summaryValue casing summary
+  |> extend casing ["LastDecision", optional (LiveTestingJson.decisionValue casing) lastDecision]
+  |> emit "test_summary" sessionId
 
-/// Format a TestSummary as an SSE event string, carrying the authoritative
-/// per-session discovery state + generation. Discovery is REPLACEMENT state:
-/// clients must reject summaries whose DiscoveryGeneration is older than the
-/// last one they applied, and ReadyZeroTests/ready_zero_tests is how a
-/// completed discovery with zero tests becomes observable (the zero-test
-/// suppression defect).
-let formatTestSummaryEventWithDiscovery
-  (opts: JsonSerializerOptions)
-  (sessionId: string option)
-  (summary: Features.LiveTesting.TestSummary)
-  (lastDecision: Features.LiveTesting.LiveTestingDecision option)
-  (discoveryState: Features.LiveTesting.LiveTestDiscoveryState)
-  (discoveryGeneration: int64)
-  (activity: Features.LiveTestActivity.LiveTestActivity)
-  : string =
-  // The activity is the session's one state; clients render its words
-  // instead of rebuilding a state from the counts.
-  let payload =
-    {| Total = summary.Total
-       Passed = summary.Passed
-       Failed = summary.Failed
-       Stale = summary.Stale
-       Running = summary.Running
-       Disabled = summary.Disabled
-       Enabled = summary.Enabled
-       NotYetRun = (Features.LiveTestActivity.LiveTestActivity.tallyOf activity).NotYetRun
-       Activity = Features.LiveTestActivity.LiveTestActivity.wireKind activity
-       ActivityText = Features.LiveTestActivity.LiveTestActivity.describe activity
-       ActivityShort = Features.LiveTestActivity.LiveTestActivity.shortLabel activity
-       DiscoveryState = Features.LiveTesting.LiveTestDiscoveryState.toWireValue discoveryState
-       DiscoveryGeneration = discoveryGeneration
-       LastDecision = lastDecision |> Option.map Features.LiveTesting.LiveTestingDecision.toWireModel |}
-  let json = JsonSerializer.Serialize(payload, opts) |> injectSessionId sessionId
-  formatSseEvent "test_summary" json
+/// Discovery generations are exact integers; consumers reject older summaries.
+let formatTestSummaryEventWithDiscovery casing sessionId (summary: Features.LiveTesting.TestSummary) lastDecision discoveryState discoveryGeneration activity =
+  LiveTestingJson.summaryValue casing summary
+  |> extend casing [
+    "NotYetRun", integer (Features.LiveTestActivity.LiveTestActivity.tallyOf activity).NotYetRun
+    "Activity", text (Features.LiveTestActivity.LiveTestActivity.wireKind activity)
+    "ActivityText", text (Features.LiveTestActivity.LiveTestActivity.describe activity)
+    "ActivityShort", text (Features.LiveTestActivity.LiveTestActivity.shortLabel activity)
+    "DiscoveryState", text (Features.LiveTesting.LiveTestDiscoveryState.toWireValue discoveryState)
+    "DiscoveryGeneration", signed discoveryGeneration
+    "LastDecision", optional (LiveTestingJson.decisionValue casing) lastDecision
+  ] |> emit "test_summary" sessionId
 
-/// Format a TestResultsBatchPayload as an SSE event string
-let formatTestResultsBatchEvent (opts: JsonSerializerOptions) (sessionId: string option) (payload: Features.LiveTesting.TestResultsBatchPayload) : string =
-  let wirePayload =
-    {| Generation = payload.Generation
-       Freshness = payload.Freshness
-       Completion = payload.Completion
-       Entries = payload.Entries
-       Summary = payload.Summary
-       LastDecision = payload.LastDecision |> Option.map Features.LiveTesting.LiveTestingDecision.toWireModel |}
-  let json = JsonSerializer.Serialize(wirePayload, opts) |> injectSessionId sessionId
-  formatSseEvent "test_results_batch" json
+let formatTestResultsBatchEvent casing sessionId payload =
+  LiveTestingJson.batchValue casing payload |> emit "test_results_batch" sessionId
 
-/// Format a FileAnnotations as an SSE event string
-let formatFileAnnotationsEvent (opts: JsonSerializerOptions) (sessionId: string option) (annotations: Features.LiveTesting.FileAnnotations) : string =
-  let json = JsonSerializer.Serialize(annotations, opts) |> injectSessionId sessionId
-  formatSseEvent "file_annotations" json
+let formatFileAnnotationsEvent casing sessionId annotations =
+  LiveTestingJson.fileAnnotationsValue casing annotations |> emit "file_annotations" sessionId
 
-/// Format a CoverageView as an SSE event string.
-/// WHY — this is the shared "per-function aggregate" event that all three
-/// editors subscribe to. Each editor renders it natively: VSCode shows it
-/// as one CodeLens, Neovim shows it as one virt_text line, VS shows it
-/// in the navigation bar. The editor never sees per-test inline text for
-/// a heavily-tested function — only the aggregate badge.
-/// Performance: a single JsonSerializer.Serialize call per view. The
-/// caller (SsePublisher) is expected to throttle / batch across files.
-let formatCoverageViewEvent
-  (opts: JsonSerializerOptions)
-  (sessionId: string option)
-  (generation: int)
-  (view: Features.LiveTesting.CoverageView)
-  : string =
-  let payload =
-    {| Generation = generation
-       Symbol = view.Symbol
-       FilePath = view.FilePath
-       DefinitionLine = view.DefinitionLine
-       TotalCount = view.TotalCount
-       Overflow = view.Overflow
-       InlineBadgeText = view.InlineBadgeText
-       Health = view.Health |}
-  let json = JsonSerializer.Serialize(payload, opts) |> injectSessionId sessionId
-  formatSseEvent "coverage_view" json
+let formatCoverageViewEvent casing sessionId generation view =
+  LiveTestingJson.coverageViewValue casing view
+  |> extend casing ["Generation", integer generation]
+  |> emit "coverage_view" sessionId
 
-/// Format failure narratives as an SSE event string
-let formatFailureNarrativesEvent (opts: JsonSerializerOptions) (sessionId: string option) (narratives: Map<Features.LiveTesting.TestId, Features.LiveTesting.FailureNarrative>) : string =
-  let payload =
-    narratives
-    |> Map.toArray
-    |> Array.map (fun (tid, n) ->
-      {| TestId = Features.LiveTesting.TestId.value tid; LastPassedAt = n.LastPassedAt; TimeSinceLastPass = n.TimeSinceLastPass
-         CausalChanges = n.CausalChanges |> List.map (fun c ->
-           match c with
-           | Features.LiveTesting.CausalChange.SymbolChanged s -> {| Kind = "symbol"; Name = s |}
-           | Features.LiveTesting.CausalChange.FileChanged f -> {| Kind = "file"; Name = f |}
-           | Features.LiveTesting.CausalChange.Unknown -> {| Kind = "unknown"; Name = "" |})
-         PropertyViolation = n.PropertyViolation; Summary = n.Summary |})
-  let json = JsonSerializer.Serialize(payload, opts) |> injectSessionId sessionId
-  formatSseEvent "failure_narratives" json
+let formatFailureNarrativesEvent casing sessionId (narratives: Map<Features.LiveTesting.TestId, Features.LiveTesting.FailureNarrative>) =
+  narratives |> Map.toSeq |> array (fun (tid, n) ->
+    let changeValue change =
+      let kind, name =
+        match change with
+        | Features.LiveTesting.CausalChange.SymbolChanged s -> "symbol", s
+        | Features.LiveTesting.CausalChange.FileChanged f -> "file", f
+        | Features.LiveTesting.CausalChange.Unknown -> "unknown", ""
+      objectValue casing ["Kind", text kind; "Name", text name]
+    objectValue casing [
+      "TestId", LiveTestingJson.testIdValue tid
+      "LastPassedAt", optional timestamp n.LastPassedAt
+      "TimeSinceLastPass", optional duration n.TimeSinceLastPass
+      "CausalChanges", array changeValue n.CausalChanges
+      "PropertyViolation", optional (LiveTestingJson.propertyViolationValue casing) n.PropertyViolation
+      "Summary", text n.Summary
+    ]) |> emit "failure_narratives" sessionId
 
-/// Format TestSourceLocations as an SSE event string
-let formatTestSourceLocationsEvent (opts: JsonSerializerOptions) (sessionId: string option) (locations: Features.LiveTesting.TestSourceLocation list) : string =
-  let payload = {| Locations = locations |}
-  let json = JsonSerializer.Serialize(payload, opts) |> injectSessionId sessionId
-  formatSseEvent "test_source_locations" json
-
-// ── Bindings snapshot (CQRS: server-side parsing, push via SSE) ──
+let formatTestSourceLocationsEvent casing sessionId locations =
+  objectValue casing ["Locations", array (LiveTestingJson.sourceLocationValue casing) locations]
+  |> emit "test_source_locations" sessionId
 
 /// A single FSI binding tracked server-side
 type FsiBinding = {
@@ -287,211 +215,150 @@ let accumulateBindings
     Map.add name { Name = name; TypeSig = typeSig; Value = value; ShadowCount = count } acc
   ) existing
 
-/// Format a bindings snapshot as an SSE event string.
-/// Includes both the legacy FsiBinding array (for backward compat) and rich BindingValue records.
-/// blockStartLine (1-based) lets clients position per-binding ghost text decorations correctly.
-let formatBindingsSnapshotEvent
-  (opts: JsonSerializerOptions)
-  (sessionId: string option)
-  (bindingValues: Features.FsiOutputParser.BindingValue list)
-  (blockStartLine: int)
-  (filePath: string option)
-  (bindings: FsiBinding array)
-  : string =
-  let json =
-    JsonSerializer.Serialize(
-      {| Bindings = bindings
-         BindingValues = bindingValues
-         blockStartLine = blockStartLine
-         filePath = filePath |> Option.defaultValue "" |},
-      opts)
-    |> injectSessionId sessionId
-  formatSseEvent "bindings_snapshot" json
+/// The retained bindings read model is encoded explicitly, independently of
+/// the retired embedded FSI producer.
+let formatBindingsSnapshotEvent casing sessionId bindingValues blockStartLine filePath (bindings: FsiBinding array) =
+  objectValue casing [
+    "Bindings", array (fun b -> objectValue casing [
+      "Name", text b.Name; "TypeSig", text b.TypeSig; "Value", optional text b.Value
+      "ShadowCount", integer b.ShadowCount
+    ]) bindings
+    "BindingValues", array (LiveTestingJson.bindingValue casing) bindingValues
+    "blockStartLine", integer blockStartLine
+    "filePath", text (filePath |> Option.defaultValue "")
+  ] |> emit "bindings_snapshot" sessionId
 
-/// Format a live bindings snapshot (the reflection-walked watch-window tree)
-/// as an SSE event string.
-let formatLiveBindingsEvent
-  (opts: JsonSerializerOptions)
-  (sessionId: string option)
-  (snapshot: Features.LiveValueTree.LiveValueSnapshot)
-  : string =
-  let json =
-    JsonSerializer.Serialize(snapshot, opts)
-    |> injectSessionId sessionId
-  formatSseEvent "live_bindings" json
+let formatLiveBindingsEvent casing sessionId snapshot =
+  LiveTestingJson.liveSnapshotValue casing snapshot |> emit "live_bindings" sessionId
 
-/// Format a test trace as an SSE event string
-let formatTestTraceEvent (sessionId: string option) (traceJson: string) : string =
-  let json = injectSessionId sessionId traceJson
-  formatSseEvent "test_trace" json
+let formatTestTraceEvent sessionId traceJson =
+  traceJson |> injectSessionId sessionId |> formatSseEvent "test_trace"
 
-// ── Feature SSE formatters (CQRS: push-only, no GET endpoints) ──
+let formatEvalDiffEvent casing sessionId (summary: Features.EvalDiff.DiffSummary) =
+  let lineValue line =
+    let kind, current, previous =
+      match line with
+      | Features.EvalDiff.Added s -> "added", s, ""
+      | Features.EvalDiff.Removed s -> "removed", "", s
+      | Features.EvalDiff.Modified (o, n) -> "modified", n, o
+      | Features.EvalDiff.Unchanged s -> "unchanged", s, ""
+    objectValue casing ["Kind", text kind; "Text", text current; "OldText", text previous]
+  objectValue casing [
+    "Lines", array lineValue summary.Lines
+    "Added", integer summary.AddedCount; "Removed", integer summary.RemovedCount
+    "Modified", integer summary.ModifiedCount; "Unchanged", integer summary.UnchangedCount
+  ] |> emit "eval_diff" sessionId
 
-/// Format an eval diff as an SSE event string
-let formatEvalDiffEvent (opts: JsonSerializerOptions) (sessionId: string option) (summary: Features.EvalDiff.DiffSummary) : string =
-  let payload =
-    {| Lines = summary.Lines |> List.map (fun l ->
-         match l with
-         | Features.EvalDiff.Added s -> {| Kind = "added"; Text = s; OldText = "" |}
-         | Features.EvalDiff.Removed s -> {| Kind = "removed"; Text = ""; OldText = s |}
-         | Features.EvalDiff.Modified (o, n) -> {| Kind = "modified"; Text = n; OldText = o |}
-         | Features.EvalDiff.Unchanged s -> {| Kind = "unchanged"; Text = s; OldText = "" |})
-       Added = summary.AddedCount
-       Removed = summary.RemovedCount
-       Modified = summary.ModifiedCount
-       Unchanged = summary.UnchangedCount |}
-  let json = JsonSerializer.Serialize(payload, opts) |> injectSessionId sessionId
-  formatSseEvent "eval_diff" json
+let formatEvalStartedEvent casing sessionId filePath blockStartLine =
+  objectValue casing ["filePath", text filePath; "blockStartLine", integer blockStartLine]
+  |> emit "eval_started" sessionId
 
-/// Format an eval started notification as an SSE event.
-/// Emitted at the start of each /exec call so editor plugins can mark decorations stale.
-let formatEvalStartedEvent (opts: JsonSerializerOptions) (sessionId: string option) (filePath: string) (blockStartLine: int) : string =
-  let json =
-    JsonSerializer.Serialize(
-      {| filePath = filePath
-         blockStartLine = blockStartLine |}, opts)
-    |> injectSessionId sessionId
-  formatSseEvent "eval_started" json
+let formatEvalHeartbeatEvent casing sessionId filePath blockStartLine elapsedMs =
+  objectValue casing ["FilePath", text filePath; "BlockStartLine", integer blockStartLine; "ElapsedMs", signed elapsedMs]
+  |> emit "eval_heartbeat" sessionId
 
-/// Format an eval heartbeat as an SSE event.
-/// Emitted every ~500ms by an independent timer while an eval is running.
-/// Lets editors show elapsed time and confirm the SSE connection is alive.
-let formatEvalHeartbeatEvent (opts: JsonSerializerOptions) (sessionId: string option) (filePath: string) (blockStartLine: int) (elapsedMs: int64) : string =
-  let json =
-    JsonSerializer.Serialize(
-      {| FilePath = filePath
-         BlockStartLine = blockStartLine
-         ElapsedMs = elapsedMs |}, opts)
-    |> injectSessionId sessionId
-  formatSseEvent "eval_heartbeat" json
+let formatEvalResultEvent casing sessionId filePath blockStartLine output success durationMs =
+  objectValue casing [
+    "filePath", text filePath; "blockStartLine", integer blockStartLine
+    "output", text output; "success", boolean success; "durationMs", number durationMs
+  ] |> emit "eval_result" sessionId
 
-/// Format an eval result as an SSE event for inline decorations.
-/// Emitted after each /exec call with filePath, blockStartLine, and durationMs populated.
-let formatEvalResultEvent (opts: JsonSerializerOptions) (sessionId: string option) (filePath: string) (blockStartLine: int) (output: string) (success: bool) (durationMs: float) : string =
-  let json =
-    JsonSerializer.Serialize(
-      {| filePath = filePath
-         blockStartLine = blockStartLine
-         output = output
-         success = success
-         durationMs = durationMs |}, opts)
-    |> injectSessionId sessionId
-  formatSseEvent "eval_result" json
+let formatCellDependenciesEvent casing sessionId (graph: Features.CellDependencyGraph.CellGraph) =
+  objectValue casing [
+    "Nodes", graph.Cells |> Map.values |> array (fun c -> objectValue casing [
+      "Id", integer c.Id; "Produces", array text c.Produces; "Consumes", array text c.Consumes
+    ])
+    "Edges", graph.Edges |> array (fun (f, t) -> objectValue casing ["From", integer f; "To", integer t])
+  ] |> emit "cell_dependencies" sessionId
 
-/// Format a cell dependency graph as an SSE event string
-let formatCellDependenciesEvent (opts: JsonSerializerOptions) (sessionId: string option) (graph: Features.CellDependencyGraph.CellGraph) : string =
-  let payload =
-    {| Nodes = graph.Cells |> Map.values |> Seq.map (fun c ->
-         {| Id = c.Id; Produces = c.Produces; Consumes = c.Consumes |})
-         |> Array.ofSeq
-       Edges = graph.Edges |> List.map (fun (f, t) -> {| From = f; To = t |}) |}
-  let json = JsonSerializer.Serialize(payload, opts) |> injectSessionId sessionId
-  formatSseEvent "cell_dependencies" json
+let formatBindingScopeMapEvent casing sessionId (snapshot: Features.BindingExplorer.BindingScopeSnapshot) =
+  objectValue casing [
+    "Bindings", snapshot.Bindings |> array (fun b -> objectValue casing [
+      "Name", text b.Name; "TypeSig", text b.TypeSig; "CellIndex", integer b.CellIndex
+      "ShadowedBy", array integer b.ShadowedBy; "ReferencedIn", array integer b.ReferencedIn
+    ])
+    "ActiveCount", integer snapshot.ActiveBindings.Count
+    "ShadowedCount", integer snapshot.ShadowedBindings.Length
+  ] |> emit "binding_scope_map" sessionId
 
-/// Format a binding scope map as an SSE event string
-let formatBindingScopeMapEvent (opts: JsonSerializerOptions) (sessionId: string option) (snapshot: Features.BindingExplorer.BindingScopeSnapshot) : string =
-  let payload =
-    {| Bindings = snapshot.Bindings |> List.map (fun b ->
-         {| Name = b.Name; TypeSig = b.TypeSig; CellIndex = b.CellIndex
-            ShadowedBy = b.ShadowedBy; ReferencedIn = b.ReferencedIn |})
-       ActiveCount = snapshot.ActiveBindings.Count
-       ShadowedCount = snapshot.ShadowedBindings.Length |}
-  let json = JsonSerializer.Serialize(payload, opts) |> injectSessionId sessionId
-  formatSseEvent "binding_scope_map" json
+let formatEvalTimelineEvent casing sessionId (stats: Features.EvalTimeline.TimelineStats) =
+  objectValue casing [
+    "Count", integer stats.Count; "P50Ms", optional number stats.P50Ms
+    "P95Ms", optional number stats.P95Ms; "P99Ms", optional number stats.P99Ms
+    "MeanMs", optional number stats.MeanMs; "Sparkline", text stats.Sparkline
+  ] |> emit "eval_timeline" sessionId
 
-/// Format eval timeline stats as an SSE event string
-let formatEvalTimelineEvent (opts: JsonSerializerOptions) (sessionId: string option) (stats: Features.EvalTimeline.TimelineStats) : string =
-  let payload =
-    {| Count = stats.Count
-       P50Ms = stats.P50Ms
-       P95Ms = stats.P95Ms
-       P99Ms = stats.P99Ms
-       MeanMs = stats.MeanMs
-       Sparkline = stats.Sparkline |}
-  let json = JsonSerializer.Serialize(payload, opts) |> injectSessionId sessionId
-  formatSseEvent "eval_timeline" json
+let formatDiagnosisReadyEvent casing sessionId (report: Features.Diagnostician.DiagnosticReport) =
+  let staleness = function
+    | Features.EvalProvenance.Staleness.Fresh -> union "Fresh" []
+    | Features.EvalProvenance.Staleness.StaleUpstream ids -> union "StaleUpstream" [array integer ids]
+  let severity =
+    match report.Severity with
+    | Features.Diagnostician.DiagnosticSeverity.Info -> "Info"
+    | Features.Diagnostician.DiagnosticSeverity.Warning -> "Warning"
+    | Features.Diagnostician.DiagnosticSeverity.Critical -> "Critical"
+  objectValue casing [
+    "Severity", text severity
+    "FailureCount", integer report.Failures.Length
+    "AffectedCells", report.AffectedCells |> array (fun (cell, stale) -> JsonValue.Array [integer cell; staleness stale])
+    "SuggestionCount", integer report.SuggestedFixes.Length
+    "TopSuggestions", report.SuggestedFixes |> List.truncate 3 |> array (fun s -> objectValue casing [
+      "Code", text s.Code; "Explanation", text s.Explanation; "Confidence", number s.Confidence
+    ])
+    "Failures", report.Failures |> array (fun f -> objectValue casing [
+      "TestName", text f.TestName
+      "CausalSymbols", f.Narrative.CausalChanges |> List.choose (function
+        | Features.LiveTesting.CausalChange.SymbolChanged s -> Some s
+        | _ -> None) |> array text
+    ])
+    "Performance", report.PerformanceContext |> optional (fun s -> objectValue casing [
+      "Sparkline", text s.Sparkline; "P50Ms", optional number s.P50Ms; "P95Ms", optional number s.P95Ms
+    ])
+    "Summary", text report.Summary
+  ] |> emit "diagnosis_ready" sessionId
 
-/// Format a DiagnosticReport as an SSE event string.
-/// Includes per-failure testName + causalSymbols so clients can render repair CodeLens.
-let formatDiagnosisReadyEvent (opts: JsonSerializerOptions) (sessionId: string option) (report: Features.Diagnostician.DiagnosticReport) : string =
-  let extractCausalSymbols (changes: Features.LiveTesting.CausalChange list) =
-    changes
-    |> List.choose (function
-      | Features.LiveTesting.CausalChange.SymbolChanged s -> Some s
-      | _ -> None)
-    |> List.toArray
-  let payload =
-    {| Severity = sprintf "%A" report.Severity
-       FailureCount = report.Failures.Length
-       AffectedCells = report.AffectedCells
-       SuggestionCount = report.SuggestedFixes.Length
-       TopSuggestions =
-         report.SuggestedFixes
-         |> List.truncate 3
-         |> List.map (fun s -> {| Code = s.Code; Explanation = s.Explanation; Confidence = s.Confidence |})
-       Failures =
-         report.Failures
-         |> List.map (fun f ->
-           {| TestName = f.TestName
-              CausalSymbols = extractCausalSymbols f.Narrative.CausalChanges |})
-         |> List.toArray
-       Performance =
-         report.PerformanceContext
-         |> Option.map (fun s -> {| Sparkline = s.Sparkline; P50Ms = s.P50Ms; P95Ms = s.P95Ms |})
-       Summary = report.Summary |}
-  let json = JsonSerializer.Serialize(payload, opts) |> injectSessionId sessionId
-  formatSseEvent "diagnosis_ready" json
+// Cohort events are daemon-scoped and intentionally have no SessionId.
+let private displayMember = MemberTable.MemberId.display
 
-// ── Cohort SSE events (item 15a: cohort_matrix / claim_changed / landing_changed) ──
-// Multi-agent cohort coordination (bozzetto-multiagent-vision.md). Unlike every
-// formatter above, these three rows are NOT session-scoped — one cohort spans
-// every session/agent connected to this daemon — so they carry no SessionId.
-// `Features.CohortOwner` (Bozzetto.Core/Features/CohortOwner.fs) is the single
-// per-daemon owner; `Bozzetto/McpServer.fs` subscribes to its `Events` stream
-// and reads its published `CohortFrame`/`CohortState` to build these payloads.
+let private claimScopeToWire casing scope =
+  let kind, path =
+    match scope with
+    | Cohort.ClaimScope.File p -> "file", p
+    | Cohort.ClaimScope.Project p -> "project", p
+  objectValue casing ["Kind", text kind; "Path", text path]
 
-let private displayMember (m: MemberTable.MemberId) = MemberTable.MemberId.display m
+let private claimStateToWire casing state =
+  let kind, holder, since =
+    match state with
+    | Cohort.ClaimState.Held holder -> "held", holder, None
+    | Cohort.ClaimState.Orphaned (holder, since) -> "orphaned", holder, Some since
+    | Cohort.ClaimState.Released (holder, since) -> "released", holder, Some since
+  objectValue casing ["Kind", text kind; "Holder", text (displayMember holder); "Since", optional date since]
 
-let private claimScopeToWire (scope: Cohort.ClaimScope) =
-  match scope with
-  | Cohort.ClaimScope.File p -> {| Kind = "file"; Path = p |}
-  | Cohort.ClaimScope.Project p -> {| Kind = "project"; Path = p |}
+let private landingBlockerToWire casing blocker =
+  let kind, files, tests, claimId, fromHead, toHead, by, reason =
+    match blocker with
+    | Cohort.LandingBlocker.RebaseConflict files -> "rebase_conflict", files, [], "", "", "", "", ""
+    | Cohort.LandingBlocker.FailingTests tests -> "failing_tests", [], tests |> List.map (fun (Cohort.TestId t) -> t), "", "", "", "", ""
+    | Cohort.LandingBlocker.StaleClaimFence (Cohort.ClaimId cid) -> "stale_claim_fence", [], [], cid, "", "", "", ""
+    | Cohort.LandingBlocker.HeadMoved (fromHead, toHead) -> "head_moved", [], [], "", fromHead, toHead, "", ""
+    | Cohort.LandingBlocker.VetoedBy (by, reason) -> "vetoed_by", [], [], "", "", "", displayMember by, reason
+    | Cohort.LandingBlocker.Inconclusive reason -> "inconclusive", [], [], "", "", "", "", reason
+  objectValue casing [
+    "Kind", text kind; "Files", array text files; "Tests", array text tests
+    "ClaimId", text claimId; "From", text fromHead; "To", text toHead; "By", text by; "Reason", text reason
+  ]
 
-/// Uniform shape across Held/Orphaned/Released so `Array.map` produces one
-/// anonymous-record type — F# gives each distinct field set its own
-/// structural type, so the match arms must agree on fields.
-let private claimStateToWire (state: Cohort.ClaimState<MemberTable.MemberId>) =
-  match state with
-  | Cohort.ClaimState.Held holder -> {| Kind = "held"; Holder = displayMember holder; Since = None |}
-  | Cohort.ClaimState.Orphaned (prev, since) -> {| Kind = "orphaned"; Holder = displayMember prev; Since = Some since |}
-  | Cohort.ClaimState.Released (by, at) -> {| Kind = "released"; Holder = displayMember by; Since = Some at |}
+let private nextActionToWire casing action =
+  let kind, tests =
+    match action with
+    | Cohort.NextAction.RebaseAndResubmit -> "rebase_and_resubmit", []
+    | Cohort.NextAction.AwaitConductor -> "await_conductor", []
+    | Cohort.NextAction.FixTests tests -> "fix_tests", tests |> List.map (fun (Cohort.TestId t) -> t)
+    | Cohort.NextAction.Withdraw -> "withdraw", []
+  objectValue casing ["Kind", text kind; "Tests", array text tests]
 
-/// Uniform shape across every `LandingBlocker` case, for the same reason as
-/// `claimStateToWire` — fields not meaningful for a given case are left at
-/// their zero value ("" / []) rather than becoming a per-case record type.
-let private landingBlockerToWire (blocker: Cohort.LandingBlocker<MemberTable.MemberId>) =
-  match blocker with
-  | Cohort.LandingBlocker.RebaseConflict files ->
-    {| Kind = "rebase_conflict"; Files = files; Tests = []; ClaimId = ""; From = ""; To = ""; By = ""; Reason = "" |}
-  | Cohort.LandingBlocker.FailingTests tests ->
-    {| Kind = "failing_tests"; Files = []; Tests = tests |> List.map (fun (Cohort.TestId t) -> t); ClaimId = ""; From = ""; To = ""; By = ""; Reason = "" |}
-  | Cohort.LandingBlocker.StaleClaimFence (Cohort.ClaimId cid) ->
-    {| Kind = "stale_claim_fence"; Files = []; Tests = []; ClaimId = cid; From = ""; To = ""; By = ""; Reason = "" |}
-  | Cohort.LandingBlocker.HeadMoved (from, to') ->
-    {| Kind = "head_moved"; Files = []; Tests = []; ClaimId = ""; From = from; To = to'; By = ""; Reason = "" |}
-  | Cohort.LandingBlocker.VetoedBy (by, reason) ->
-    {| Kind = "vetoed_by"; Files = []; Tests = []; ClaimId = ""; From = ""; To = ""; By = displayMember by; Reason = reason |}
-  | Cohort.LandingBlocker.Inconclusive reason ->
-    {| Kind = "inconclusive"; Files = []; Tests = []; ClaimId = ""; From = ""; To = ""; By = ""; Reason = reason |}
-
-let private nextActionToWire (action: Cohort.NextAction) =
-  match action with
-  | Cohort.NextAction.RebaseAndResubmit -> {| Kind = "rebase_and_resubmit"; Tests = [] |}
-  | Cohort.NextAction.AwaitConductor -> {| Kind = "await_conductor"; Tests = [] |}
-  | Cohort.NextAction.FixTests tests -> {| Kind = "fix_tests"; Tests = tests |> List.map (fun (Cohort.TestId t) -> t) |}
-  | Cohort.NextAction.Withdraw -> {| Kind = "withdraw"; Tests = [] |}
-
-let private landingStateKind (state: Cohort.LandingState<MemberTable.MemberId>) =
+let private landingStateKind state =
   match state with
   | Cohort.LandingState.Queued -> "queued"
   | Cohort.LandingState.Rebasing _ -> "rebasing"
@@ -500,156 +367,76 @@ let private landingStateKind (state: Cohort.LandingState<MemberTable.MemberId>) 
   | Cohort.LandingState.Landed _ -> "landed"
   | Cohort.LandingState.Withdrawn -> "withdrawn"
 
-/// Format the daemon's single per-daemon `CohortFrame` (Cohort.fs's `project`)
-/// as an SSE event string: members (id/role/seat/conductor), claims
-/// (id/scope/holder/fence/state), the flat, index-aligned test matrix
-/// (Tests + one Pass/Fail/Stale row per session, `Rows.[i]` aligned with
-/// `frame.SessionGens.[i]`), and — additive — `IntegrationHead` plus one row
-/// per landing (id/requester/statement/commits/state/queue position/
-/// blocker/next-action) so a `cohort://status` reader can see landing
-/// progress without a separate channel. Version-gate at the call site (compare
-/// `frame.Version` to the last one sent, like `coverage_view`'s generation
-/// gate) — this formatter itself always formats whatever frame it is given.
-/// Pure JSON projection of a `CohortFrame` — the same read model shared by
-/// the `cohort_matrix` SSE event (below) and the `cohort://status` MCP
-/// resource (McpResources.fs, bozzetto-multiagent-vision.md item 12 / §5.6:
-/// "one read model, no new channel"). Extracted from `formatCohortMatrixEvent`
-/// so every wire surface that needs the cohort frame serializes the exact
-/// same payload shape instead of hand-rolling its own.
-let cohortFrameJson (opts: JsonSerializerOptions) (frame: Cohort.CohortFrame<MemberTable.MemberId>) : string =
-  let members =
-    Array.init frame.MemberIds.Length (fun i ->
-      {| Id = displayMember frame.MemberIds.[i]
-         Role = sprintf "%A" frame.MemberRole.[i]
-         Seat =
-           match frame.MemberSeat.[i] with
-           | Cohort.SeatState.Present -> "present"
-           | Cohort.SeatState.Departed _ -> "departed"
-         Conductor = frame.Conductor = Some frame.MemberIds.[i] |})
-  let claims =
-    Array.init frame.ClaimIds.Length (fun i ->
-      let (Cohort.ClaimId cid) = frame.ClaimIds.[i]
-      let holder =
-        match frame.ClaimHolderIndex.[i] with
-        | -1 -> None
-        | idx -> Some (displayMember frame.MemberIds.[idx])
-      {| Id = cid
-         Scope = claimScopeToWire frame.ClaimScope.[i]
-         Holder = holder
-         Fence = frame.ClaimFence.[i]
-         State = claimStateToWire frame.ClaimState.[i] |})
-  let tests = frame.TestIds |> Array.map (fun (Cohort.TestId t) -> t)
-  let rows =
-    Array.init frame.SessionGens.Length (fun i ->
-      {| Generation = frame.SessionGens.[i]
-         Pass = frame.Pass.[i]
-         Fail = frame.Fail.[i]
-         Stale = frame.Stale.[i] |})
-  // Additive — closes the dogfood-surfaced gap (`CohortDogfoodIntegrationTests.fs`:
-  // "get_cohort_status/the cohort://status MCP resource do NOT surface landing
-  // state or IntegrationHead at all"). Reuses the SAME per-case wire shapes
-  // `formatLandingChangedEvent` already uses for a single landing
-  // (`landingStateKind`/`landingBlockerToWire`/`nextActionToWire`), so
-  // `landing_changed` and the landing rows here never drift into two
-  // different wire shapes for the same domain concept.
-  let landings =
-    Array.init frame.LandingIds.Length (fun i ->
-      let (Cohort.LandingId lid) = frame.LandingIds.[i]
-      let requester =
-        match frame.LandingRequesterIndex.[i] with
-        | -1 -> None
-        | idx -> Some (displayMember frame.MemberIds.[idx])
-      let blocker, nextAction =
-        match frame.LandingState.[i] with
-        | Cohort.LandingState.Blocked (b, na) -> Some (landingBlockerToWire b), Some (nextActionToWire na)
-        | _ -> None, None
-      {| Id = lid
-         Requester = requester
-         Statement = Cohort.Statement.value frame.LandingStatement.[i]
-         Commits = frame.LandingCommits.[i]
-         State = landingStateKind frame.LandingState.[i]
-         QueuePosition = frame.LandingQueuePosition.[i]
-         Blocker = blocker
-         NextAction = nextAction |})
-  let payload =
-    {| Version = frame.Version
-       Members = members
-       Claims = claims
-       Tests = tests
-       Rows = rows
-       IntegrationHead = frame.IntegrationHead
-       Landings = landings |}
-  JsonSerializer.Serialize(payload, opts)
+let private landingBlockerValues casing state =
+  match state with
+  | Cohort.LandingState.Blocked (blocker, action) -> landingBlockerToWire casing blocker, nextActionToWire casing action
+  | _ -> JsonValue.Null, JsonValue.Null
 
-let formatCohortMatrixEvent (opts: JsonSerializerOptions) (frame: Cohort.CohortFrame<MemberTable.MemberId>) : string =
-  formatSseEvent "cohort_matrix" (cohortFrameJson opts frame)
+/// Shared projection used by SSE and the cohort MCP resource.
+let cohortFrameJson casing (frame: Cohort.CohortFrame<MemberTable.MemberId>) =
+  let memberAt index = if index = -1 then JsonValue.Null else text (displayMember frame.MemberIds[index])
+  let members = Array.init frame.MemberIds.Length (fun i ->
+    let role =
+      match frame.MemberRole[i] with
+      | Cohort.JoinableRole.Implementer -> "Implementer"
+      | Cohort.JoinableRole.Verifier -> "Verifier"
+      | Cohort.JoinableRole.Observer -> "Observer"
+    let seat = match frame.MemberSeat[i] with Cohort.SeatState.Present -> "present" | Cohort.SeatState.Departed _ -> "departed"
+    objectValue casing [
+      "Id", text (displayMember frame.MemberIds[i]); "Role", text role; "Seat", text seat
+      "Conductor", boolean (frame.Conductor = Some frame.MemberIds[i])
+    ])
+  let claims = Array.init frame.ClaimIds.Length (fun i ->
+    let (Cohort.ClaimId cid) = frame.ClaimIds[i]
+    objectValue casing [
+      "Id", text cid; "Scope", claimScopeToWire casing frame.ClaimScope[i]
+      "Holder", memberAt frame.ClaimHolderIndex[i]; "Fence", signed (int64 frame.ClaimFence[i])
+      "State", claimStateToWire casing frame.ClaimState[i]
+    ])
+  let rows = Array.init frame.SessionGens.Length (fun i -> objectValue casing [
+    "Generation", signed frame.SessionGens[i]
+    "Pass", array boolean frame.Pass[i]; "Fail", array boolean frame.Fail[i]; "Stale", array boolean frame.Stale[i]
+  ])
+  let landings = Array.init frame.LandingIds.Length (fun i ->
+    let (Cohort.LandingId lid) = frame.LandingIds[i]
+    let blocker, nextAction = landingBlockerValues casing frame.LandingState[i]
+    objectValue casing [
+      "Id", text lid; "Requester", memberAt frame.LandingRequesterIndex[i]
+      "Statement", text (Cohort.Statement.value frame.LandingStatement[i])
+      "Commits", array text frame.LandingCommits[i]; "State", text (landingStateKind frame.LandingState[i])
+      "QueuePosition", integer frame.LandingQueuePosition[i]; "Blocker", blocker; "NextAction", nextAction
+    ])
+  objectValue casing [
+    "Version", signed (int64 frame.Version); "Members", array id members; "Claims", array id claims
+    "Tests", array (fun (Cohort.TestId t) -> text t) frame.TestIds; "Rows", array id rows
+    "IntegrationHead", text frame.IntegrationHead; "Landings", array id landings
+  ] |> serialize
 
-/// Format a single claim change (from a `ClaimAcquired`/`ClaimReleased`/
-/// `ClaimOrphaned`/`ClaimReassigned` `Cohort.CohortEvent`) as an SSE event
-/// string. `claim` is the CURRENT `Cohort.Claim` — read from
-/// `CohortOwner.Handle.ReadCohortState()` after the triggering event was
-/// applied — because the event DUs themselves don't all carry `Scope`
-/// (`ClaimReleased`/`ClaimOrphaned`/`ClaimReassigned` don't), so the caller
-/// looks the claim up by id instead of projecting the event's own fields.
-/// `kind` names which event fired: "acquired" | "released" | "orphaned" | "reassigned".
-let formatClaimChangedEvent (opts: JsonSerializerOptions) (kind: string) (claim: Cohort.Claim<MemberTable.MemberId>) : string =
+let formatCohortMatrixEvent casing frame =
+  cohortFrameJson casing frame |> formatSseEvent "cohort_matrix"
+
+let formatClaimChangedEvent casing kind (claim: Cohort.Claim<MemberTable.MemberId>) =
   let (Cohort.ClaimId cid) = claim.Id
-  let holder =
-    match claim.State with
-    | Cohort.ClaimState.Held h -> Some (displayMember h)
-    | _ -> None
-  let payload =
-    {| ClaimId = cid
-       Scope = claimScopeToWire claim.Scope
-       Holder = holder
-       Fence = claim.Fence
-       Kind = kind |}
-  let json = JsonSerializer.Serialize(payload, opts)
-  formatSseEvent "claim_changed" json
+  let holder = match claim.State with Cohort.ClaimState.Held holder -> Some (displayMember holder) | _ -> None
+  objectValue casing [
+    "ClaimId", text cid; "Scope", claimScopeToWire casing claim.Scope
+    "Holder", optional text holder; "Fence", signed (int64 claim.Fence); "Kind", text kind
+  ] |> emit "claim_changed" None
 
-/// Format a single landing state change (from a `LandingStateChanged`
-/// `Cohort.CohortEvent`) as an SSE event string. `landing` is the CURRENT
-/// `Cohort.LandingRequest` — read from `ReadCohortState()` after the
-/// triggering event was applied, same reasoning as `formatClaimChangedEvent`.
-/// `Blocker`/`NextAction` are populated only when `State = "blocked"`.
-let formatLandingChangedEvent (opts: JsonSerializerOptions) (landing: Cohort.LandingRequest<MemberTable.MemberId>) : string =
+let formatLandingChangedEvent casing (landing: Cohort.LandingRequest<MemberTable.MemberId>) =
   let (Cohort.LandingId lid) = landing.Id
-  let blocker, nextAction =
-    match landing.State with
-    | Cohort.LandingState.Blocked (b, na) -> Some (landingBlockerToWire b), Some (nextActionToWire na)
-    | _ -> None, None
-  let payload =
-    {| LandingId = lid
-       Requester = displayMember landing.Requester
-       State = landingStateKind landing.State
-       Blocker = blocker
-       NextAction = nextAction |}
-  let json = JsonSerializer.Serialize(payload, opts)
-  formatSseEvent "landing_changed" json
+  let blocker, nextAction = landingBlockerValues casing landing.State
+  objectValue casing [
+    "LandingId", text lid; "Requester", text (displayMember landing.Requester)
+    "State", text (landingStateKind landing.State); "Blocker", blocker; "NextAction", nextAction
+  ] |> emit "landing_changed" None
 
-/// Format a claim early-warning (multi-agent vision §5.1: a cohort member's
-/// watcher observed a save landing inside a DIFFERENT member's held claim —
-/// advisory, never blocking, `Cohort.decide`'s `ObserveSave` case never
-/// refuses). `claim` is the CURRENT `Cohort.Claim` — read from
-/// `CohortOwner.Handle.ReadCohortState()` by the `ClaimViolationObserved`
-/// event's `ClaimId` — because that event doesn't carry `Scope` either,
-/// same reasoning as `formatClaimChangedEvent`/`formatLandingChangedEvent`.
-/// `observer`/`holder`/`path` come straight off the event itself.
-let formatSaveObservedEvent
-  (opts: JsonSerializerOptions)
-  (claim: Cohort.Claim<MemberTable.MemberId>)
-  (observer: MemberTable.MemberId)
-  (holder: MemberTable.MemberId)
-  (path: string) : string =
+let formatSaveObservedEvent casing (claim: Cohort.Claim<MemberTable.MemberId>) observer holder path =
   let (Cohort.ClaimId cid) = claim.Id
-  let payload =
-    {| ClaimId = cid
-       Observer = displayMember observer
-       Holder = displayMember holder
-       Scope = claimScopeToWire claim.Scope
-       Path = path |}
-  let json = JsonSerializer.Serialize(payload, opts)
-  formatSseEvent "save_observed" json
+  objectValue casing [
+    "ClaimId", text cid; "Observer", text (displayMember observer); "Holder", text (displayMember holder)
+    "Scope", claimScopeToWire casing claim.Scope; "Path", text path
+  ] |> emit "save_observed" None
 
 // ── Authoritative SSE event type registry ──────────────────────────────────────────
 

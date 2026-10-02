@@ -123,6 +123,65 @@ let tests =
       |> Expect.stringContains "recommended action should preserve the resolving alternative" "list_tests"
     }
 
+    testCase "friction JSON preserves null alternatives, escaped feedback and every signal's evidence" <| fun _ ->
+      let tool = ToolName.create "run_tests" |> ok
+      let escaped = "quoted \"feedback\"\nnext\\line\tλ"
+      let report: Bozzetto.Features.FrictionTelemetry.FrictionReport =
+        { TotalEvents = Int32.MaxValue
+          TotalFeedbackItems = 1
+          HighestPriorityTools =
+            [ { Tool = tool; TotalInvocations = 3; BlockedCount = 2; AbandonedCount = 1
+                ExplicitFeedbackCount = 1; MostCommonBlocker = None; MostCommonFollowUp = None
+                MostCommonAlternative = None; SuggestedFixTarget = "Clarify the tool" } ]
+          TopBlockers = []
+          FrequentTransitions = []
+          RecentFeedback =
+            [ { Tool = tool; Kind = ExplicitFeedbackKind.ToolIntentWasUnclear; Count = 1
+                LatestReason = escaped; LatestAlternative = None } ]
+          RecommendedWorkItems =
+            [ { Title = escaped; TargetTool = None; LikelyFixType = "clarity"
+                Reason = escaped; SuggestedAction = escaped } ] }
+      let window = { FirstAtUtc = baseTimeUtc; LastAtUtc = baseTimeUtc; EventCount = 13 }
+      let duration = DurationMs.create Int32.MaxValue |> ok
+      let cases =
+        [ FrictionSignal.ExcessivePolling(tool, 11, 7, window), "Calls", 11
+          FrictionSignal.ResetThrash(9, window), "Resets", 9
+          FrictionSignal.HardResetAfterCreate duration, "GapMs", Int32.MaxValue
+          FrictionSignal.UnattributedFailure(escaped, 8), "Count", 8
+          FrictionSignal.InvalidStateCall(tool, 6), "Blocked", 6
+          FrictionSignal.RepeatedSameError(BlockerKind.InvalidRequest, 5), "Run", 5
+          FrictionSignal.RetryLoop(tool, 4), "Attempts", 4
+          FrictionSignal.SlowTimeToFirstSuccess(duration, 3), "FailedBefore", 3 ]
+      let signal value =
+        { Signal = value; Scope = SignalScope.Agent escaped; Confidence = SignalConfidence.Strong }
+      let signals = List.map (fun (value, _, _) -> signal value) cases
+      let signals = signals @ [ signal (FrictionSignal.Abandonment(tool, BlockerKind.InvalidRequest)) ]
+      use doc = JsonDocument.Parse(frictionReportJson report signals)
+      let root = doc.RootElement
+      root.GetProperty("TotalEvents").GetInt32()
+      |> Expect.equal "Counts retain their exact integer value." Int32.MaxValue
+      let top = root.GetProperty("HighestPriorityTools")[0]
+      for field in [ "MostCommonBlocker"; "MostCommonFollowUp"; "MostCommonAlternative" ] do
+        top.GetProperty(field).ValueKind |> Expect.equal "Absent choices are explicit JSON null." JsonValueKind.Null
+      root.GetProperty("RecentFeedback")[0].GetProperty("LatestReason").GetString()
+      |> Expect.equal "Feedback is escaped by the JSON library." escaped
+      root.GetProperty("RecentFeedback")[0].GetProperty("LatestAlternative").ValueKind
+      |> Expect.equal "Missing feedback alternatives remain null." JsonValueKind.Null
+      root.GetProperty("RecommendedWorkItems")[0].GetProperty("TargetTool").ValueKind
+      |> Expect.equal "A work item may apply to no particular tool." JsonValueKind.Null
+      let observed = root.GetProperty("ObservedSignals")
+      observed.GetArrayLength() |> Expect.equal "All nine signal cases have a schema." 9
+      for index, (value, field, expected) in List.indexed cases do
+        observed[index].GetProperty("Id").GetString()
+        |> Expect.equal "Signal identity stays stable." (FrictionSignal.id value)
+        observed[index].GetProperty(field).GetInt32() |> Expect.equal "Evidence is not stringified." expected
+        observed[index].GetProperty("Scope").GetString()
+        |> Expect.equal "Scope text is escaped verbatim." ("Agent:" + escaped)
+      observed[0].GetProperty("EventCount").GetInt32() |> Expect.equal "Window evidence is retained." 13
+      observed[3].GetProperty("RawTool").GetString() |> Expect.equal "Unattributed names are escaped." escaped
+      observed[8].GetProperty("LastBlocker").GetString()
+      |> Expect.equal "Abandonment retains its blocker." "InvalidRequest"
+
     // ── B7 — observed signals surfaced through the daemon read model ──
 
     testCaseTask "reportDirect surfaces observed signals from the harvest replay pattern (B7)" <| fun () -> task {

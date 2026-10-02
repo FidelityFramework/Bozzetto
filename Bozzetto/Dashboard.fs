@@ -33,6 +33,7 @@
 module Bozzetto.Server.Dashboard
 
 open System
+open Fidelity.Data.JSON
 open System.IO
 open System.Net.Http
 open System.Security.Cryptography
@@ -690,10 +691,7 @@ module SnapshotRenderGuard =
       Decision.Render { LastRendered = Some candidate; Version = SnapshotVersion.next memory.Version }
 
 /// Read the page client id from a signals JSON body; empty when absent.
-let private clientIdFromSignals (doc: System.Text.Json.JsonDocument) =
-  match doc.RootElement.TryGetProperty(Signals.ClientId) with
-  | true, p -> p.GetString()
-  | _ -> ""
+let private clientIdFromSignals doc = HttpJson.textProperty Signals.ClientId doc
 
 /// Retarget a specific browser's SSE stream to a viewing session — the
 /// signal-driven counterpart of session selection (there is no URL query
@@ -1563,15 +1561,11 @@ let createEvalHandler
   : HttpHandler =
   fun ctx -> task {
     try
-      use! doc = readSignalsJsonSized ctx
+      let! doc = readSignalsJsonSized ctx
       let code =
-        match doc.RootElement.TryGetProperty("code") with
-        | true, prop -> prop.GetString()
-        | _ -> ""
+        HttpJson.stringProperty "code" doc |> Option.defaultValue ""
       let sessionIdStr =
-        match doc.RootElement.TryGetProperty(Signals.ViewingSessionId) with
-        | true, prop -> prop.GetString()
-        | _ -> ""
+        HttpJson.stringProperty Signals.ViewingSessionId doc |> Option.defaultValue ""
       match String.IsNullOrWhiteSpace code with
       | true ->
         Response.sseStartResponse ctx |> ignore
@@ -1634,19 +1628,15 @@ let createEvalFileHandler
       do! checkBodySize ctx
       use reader = new StreamReader(ctx.Request.Body)
       let! body = reader.ReadToEndAsync()
-      use doc = System.Text.Json.JsonDocument.Parse(body)
+      let doc = HttpJson.parse body
       let filePath =
-        match doc.RootElement.TryGetProperty("path") with
-        | true, prop -> prop.GetString()
-        | _ -> ""
+        HttpJson.stringProperty "path" doc |> Option.defaultValue ""
       let sessionIdStr =
-        match doc.RootElement.TryGetProperty(Signals.ViewingSessionId) with
-        | true, prop -> prop.GetString()
-        | _ -> ""
+        HttpJson.stringProperty Signals.ViewingSessionId doc |> Option.defaultValue ""
       match WorkerProtocol.SessionId.validate sessionIdStr with
       | Error _ ->
         ctx.Response.StatusCode <- 400
-        do! ctx.Response.WriteAsJsonAsync({| error = "Invalid session ID" |})
+        do! HttpJson.write ctx (HttpJson.error ("Invalid session ID"))
       | Ok sessionId ->
         // W1: Canonicalize and confirm the requested file is inside the session's working directory.
         // This prevents path traversal attacks like {"path":"C:/Users/.ssh/id_rsa"}.
@@ -1674,7 +1664,7 @@ let createEvalFileHandler
         match isContained && File.Exists canonical with
         | false ->
           ctx.Response.StatusCode <- 403
-          do! ctx.Response.WriteAsJsonAsync({| success = false; error = "File not found or outside session working directory" |})
+          do! HttpJson.write ctx (HttpJson.result false "error" ("File not found or outside session working directory"))
         | true ->
           let! code = File.ReadAllTextAsync(canonical)
           let codeWithTerminator =
@@ -1684,45 +1674,39 @@ let createEvalFileHandler
             | false -> sprintf "%s;;" trimmed
           let! result = evalCode sessionId codeWithTerminator
           match result with
-          | Ok msg -> do! ctx.Response.WriteAsJsonAsync({| success = true; result = msg |})
+          | Ok msg -> do! HttpJson.write ctx (HttpJson.result true "result" (msg))
           | Error err ->
             ctx.Response.StatusCode <- 422
-            do! ctx.Response.WriteAsJsonAsync({| success = false; error = err |})
+            do! HttpJson.write ctx (HttpJson.result false "error" (err))
     with
     | :? RequestTooLargeException -> ()  // 413 already written
     | ex ->
       ctx.Response.StatusCode <- 500
-      let details = Bozzetto.BozzettoError.toJson (Bozzetto.BozzettoError.Unexpected ex)
-      do! ctx.Response.WriteAsJsonAsync(
-            {| success = false
-               error = Bozzetto.BozzettoError.describe (Bozzetto.BozzettoError.Unexpected ex)
-               errorDetails = details |})
+      let details = Bozzetto.BozzettoError.toJsonValue (Bozzetto.BozzettoError.Unexpected ex)
+      do! HttpJson.write ctx (JsonValue.Object [
+        "success", JsonValue.Bool false
+        "error", JsonValue.String (Bozzetto.BozzettoError.describe (Bozzetto.BozzettoError.Unexpected ex))
+        "errorDetails", details ])
   }
 let createCompletionsHandler
   (getCompletions: WorkerProtocol.SessionId -> string -> int -> Threading.Tasks.Task<Features.AutoCompletion.CompletionItem list>)
   : HttpHandler =
   fun ctx -> task {
     try
-      use! doc = readSignalsJsonSized ctx
+      let! doc = readSignalsJsonSized ctx
       let code =
-        match doc.RootElement.TryGetProperty(Signals.Code) with
-        | true, prop -> prop.GetString()
-        | _ -> ""
+        HttpJson.stringProperty Signals.Code doc |> Option.defaultValue ""
       let cursorPos =
-        match doc.RootElement.TryGetProperty(Signals.CursorPos) with
-        | true, prop ->
-          match prop.ValueKind with
-          | System.Text.Json.JsonValueKind.Number -> prop.GetInt32()
-          | System.Text.Json.JsonValueKind.String ->
-            match System.Int32.TryParse(prop.GetString()) with
-            | true, v -> v
-            | false, _ -> -1
-          | _ -> -1
-        | _ -> -1
+        match HttpJson.property Signals.CursorPos doc with
+        | Some (JsonValue.String text) ->
+          match System.Int32.TryParse text with true, value -> value | _ -> -1
+        | Some value ->
+          JsonValue.tryAsInt64 value
+          |> Option.filter (fun value -> value >= int64 System.Int32.MinValue && value <= int64 System.Int32.MaxValue)
+          |> Option.map int |> Option.defaultValue -1
+        | None -> -1
       let sessionIdStr =
-        match doc.RootElement.TryGetProperty(Signals.ViewingSessionId) with
-        | true, prop -> prop.GetString()
-        | _ -> ""
+        HttpJson.stringProperty Signals.ViewingSessionId doc |> Option.defaultValue ""
       Response.sseStartResponse ctx |> ignore
       match String.IsNullOrWhiteSpace code || cursorPos < 0 with
       | true ->
@@ -1738,11 +1722,11 @@ let createCompletionsHandler
     | :? RequestTooLargeException -> ()
     | ex ->
       ctx.Response.StatusCode <- 500
-      let details = Bozzetto.BozzettoError.toJson (Bozzetto.BozzettoError.Unexpected ex)
-      do! ctx.Response.WriteAsJsonAsync(
-            {| success = false
-               error = Bozzetto.BozzettoError.describe (Bozzetto.BozzettoError.Unexpected ex)
-               errorDetails = details |})
+      let details = Bozzetto.BozzettoError.toJsonValue (Bozzetto.BozzettoError.Unexpected ex)
+      do! HttpJson.write ctx (JsonValue.Object [
+        "success", JsonValue.Bool false
+        "error", JsonValue.String (Bozzetto.BozzettoError.describe (Bozzetto.BozzettoError.Unexpected ex))
+        "errorDetails", details ])
   }
 
 /// Create the reset POST handler. `label` names the action in every message
@@ -1755,9 +1739,9 @@ let createResetHandler
     try
       let! sessionIdResult = task {
         try
-          use! doc = readSignalsJsonSized ctx
-          match doc.RootElement.TryGetProperty(Signals.ViewingSessionId) with
-          | true, prop -> return WorkerProtocol.SessionId.validate (prop.GetString())
+          let! doc = readSignalsJsonSized ctx
+          match HttpJson.stringProperty Signals.ViewingSessionId doc with
+          | Some value -> return WorkerProtocol.SessionId.validate value
           | _ -> return Error "Missing viewingSessionId"
         with ex ->
           Log.warn "[Dashboard] Session ID extraction from JSON failed: %s\n%s" ex.Message (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
@@ -1827,15 +1811,13 @@ let createWorkflowSwitchHandler
     try
       let! sessionIdResult, targetRaw = task {
         try
-          use! doc = readSignalsJsonSized ctx
+          let! doc = readSignalsJsonSized ctx
           let sidResult =
-            match doc.RootElement.TryGetProperty(Signals.ViewingSessionId) with
-            | true, prop -> WorkerProtocol.SessionId.validate (prop.GetString())
+            match HttpJson.stringProperty Signals.ViewingSessionId doc with
+            | Some value -> WorkerProtocol.SessionId.validate value
             | _ -> Error "Missing viewingSessionId"
           let target =
-            match doc.RootElement.TryGetProperty(Signals.WorkflowTarget) with
-            | true, prop when prop.ValueKind = Text.Json.JsonValueKind.String -> prop.GetString()
-            | _ -> ""
+            HttpJson.stringProperty Signals.WorkflowTarget doc |> Option.defaultValue ""
           return sidResult, target
         with ex ->
           Log.warn "[Dashboard] workflow-switch request parse failed: %s" ex.Message
@@ -1887,9 +1869,9 @@ let createCancelEvalHandler
     try
       let! sessionIdResult = task {
         try
-          use! doc = readSignalsJsonSized ctx
-          match doc.RootElement.TryGetProperty(Signals.ViewingSessionId) with
-          | true, prop -> return WorkerProtocol.SessionId.validate (prop.GetString())
+          let! doc = readSignalsJsonSized ctx
+          match HttpJson.stringProperty Signals.ViewingSessionId doc with
+          | Some value -> return WorkerProtocol.SessionId.validate value
           | _ -> return Error "Missing viewingSessionId"
         with ex ->
           Log.warn "[Dashboard] Session ID extraction from JSON failed: %s\n%s" ex.Message (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
@@ -1970,14 +1952,12 @@ let createSettingsEditHandler : string -> HttpHandler =
       match descriptorForSignal sigName with
       | None -> do! morphSettingsPanel ctx (SettingsPanel.Rejected("Unknown setting", sigName)) paths
       | Some d ->
-        use! doc = readSignalsJsonSized ctx
+        let! doc = readSignalsJsonSized ctx
         let readSignal (name: string) =
-          match doc.RootElement.TryGetProperty(name) with
-          | true, prop ->
-            match prop.ValueKind with
-            | System.Text.Json.JsonValueKind.String -> prop.GetString()
-            | _ -> prop.GetRawText()
-          | _ -> ""
+          match HttpJson.property name doc with
+          | Some (JsonValue.String text) -> text
+          | Some value -> Json.serialize value
+          | None -> ""
         let rawValue = readSignal sigName
         let layer = SettingsPanel.layerForScope (readSignal Signals.SettingsScope) d
         let notice =
@@ -1998,11 +1978,9 @@ let createSettingsClearHandler : string -> HttpHandler =
       match descriptorForSignal sigName with
       | None -> do! morphSettingsPanel ctx (SettingsPanel.Rejected("Unknown setting", sigName)) paths
       | Some d ->
-        use! doc = readSignalsJsonSized ctx
+        let! doc = readSignalsJsonSized ctx
         let scope =
-          match doc.RootElement.TryGetProperty(Signals.SettingsScope) with
-          | true, prop when prop.ValueKind = System.Text.Json.JsonValueKind.String -> prop.GetString()
-          | _ -> SettingsPanel.ScopeGlobal
+          HttpJson.stringProperty Signals.SettingsScope doc |> Option.defaultValue SettingsPanel.ScopeGlobal
         let layer = SettingsPanel.layerForScope scope d
         let notice =
           match Bozzetto.SettingsCatalog.clear paths layer d with
@@ -2201,20 +2179,16 @@ let createFrictionSendHandler
   : HttpHandler =
   fun ctx -> task {
     try
-      use! doc = readSignalsJsonSized ctx
+      let! doc = readSignalsJsonSized ctx
       let endpoint =
-        match doc.RootElement.TryGetProperty("frictionEndpoint") with
-        | true, prop -> prop.GetString()
-        | _ -> ""
+        HttpJson.stringProperty "frictionEndpoint" doc |> Option.defaultValue ""
       let token =
-        match doc.RootElement.TryGetProperty("frictionToken") with
-        | true, prop -> prop.GetString()
-        | _ -> ""
+        HttpJson.stringProperty "frictionToken" doc |> Option.defaultValue ""
       let editsJson =
-        match doc.RootElement.TryGetProperty("frictionEdits") with
-        | true, prop when prop.ValueKind = System.Text.Json.JsonValueKind.String -> prop.GetString()
-        | true, prop -> prop.GetRawText()
-        | _ -> ""
+        match HttpJson.property "frictionEdits" doc with
+        | Some (JsonValue.String text) -> text
+        | Some value -> Json.serialize value
+        | None -> ""
       Response.sseStartResponse ctx |> ignore
       match endpoint.Length with
       | 0 ->
@@ -2237,7 +2211,7 @@ let createFrictionSendHandler
               do! ssePatchNode ctx (frictionSendResultDom false err "")
             | Ok bundle ->
               let outgoing = Bozzetto.Features.FrictionReviewView.buildOutgoingForSend bundle.Report editsJson
-              let payloadJson = System.Text.Json.JsonSerializer.Serialize(outgoing)
+              let payloadJson = Bozzetto.Features.FrictionReviewView.outgoingJson outgoing
               let urlHash = frictionEndpointHash endpoint
               let mutable attemptError : string option = None
               let mutable reportId = ""
@@ -2253,12 +2227,7 @@ let createFrictionSendHandler
                   let! body = resp.Content.ReadAsStringAsync() |> Async.AwaitTask
                   if resp.IsSuccessStatusCode then
                     try
-                      use respDoc = System.Text.Json.JsonDocument.Parse(body)
-                      let root = respDoc.RootElement
-                      reportId <-
-                        match root.TryGetProperty("reportId") with
-                        | true, p -> p.GetString()
-                        | _ -> ""
+                      reportId <- HttpJson.parse body |> HttpJson.textProperty "reportId"
                     with _ -> ()
                     let sentAt = System.DateTimeOffset.UtcNow
                     let sent =
@@ -2295,7 +2264,7 @@ let createFrictionSendHandler
 let createDiscoverHandler : HttpHandler =
   fun ctx -> task {
     try
-      use! doc = readSignalsJsonSized ctx
+      let! doc = readSignalsJsonSized ctx
       let dir = getSignalString doc "newSessionDir" "new-session-dir"
       // The Projects field's current value — the preview must reflect what
       // Create will ACTUALLY do for what the user has typed right now, not
@@ -2337,7 +2306,7 @@ let createToggleProjectHandler : HttpHandler =
         match ctx.Request.Query.TryGetValue "path" with
         | true, v -> string v
         | _ -> ""
-      use! doc = readSignalsJsonSized ctx
+      let! doc = readSignalsJsonSized ctx
       let current = getSignalString doc "manualProjects" "manual-projects"
       let dir = getSignalString doc "newSessionDir" "new-session-dir"
       Response.sseStartResponse ctx |> ignore
@@ -2366,7 +2335,7 @@ let createToggleProjectHandler : HttpHandler =
 let createDirSuggestHandler : HttpHandler =
   fun ctx -> task {
     try
-      use! doc = readSignalsJsonSized ctx
+      let! doc = readSignalsJsonSized ctx
       let dir = getSignalString doc "newSessionDir" "new-session-dir"
       Response.sseStartResponse ctx |> ignore
       do! ssePatchNode ctx (renderDirSuggestions (DirSuggest.suggest dir))
@@ -2385,7 +2354,7 @@ let createCreateSessionHandler
   : HttpHandler =
   fun ctx -> task {
     try
-      use! doc = readSignalsJsonSized ctx
+      let! doc = readSignalsJsonSized ctx
       let dir = getSignalString doc "newSessionDir" "new-session-dir"
       let manualProjects = getSignalString doc "manualProjects" "manual-projects"
       let channelClientId = clientIdFromSignals doc
@@ -2463,7 +2432,7 @@ let createToggleWarmupAutoOpenHandler
   : HttpHandler =
   fun ctx -> task {
     try
-      use! doc = readSignalsJsonSized ctx
+      let! doc = readSignalsJsonSized ctx
       let dir = getSignalString doc "newSessionDir" "new-session-dir"
       let sessionId = getSignalString doc Signals.ViewingSessionId "viewing-session-id"
       let configResultNode message cssClass =
@@ -2581,16 +2550,28 @@ let createApiStateHandler
           {| testName = l.TestName; filePath = l.FilePath; startLine = l.StartLine |})
       let workflow = q.GetSessionWorkflow activeSid
       let payload =
-        System.Text.Json.JsonSerializer.Serialize(
-          {| sessionId = activeSidStr
-             sessionState = SessionState.label state
-             evalCount = stats.EvalCount
-             avgMs = if stats.EvalCount > 0 then stats.TotalDuration.TotalMilliseconds / float stats.EvalCount else 0.0
-             activeWorkingDir = activeDir
-             liveTestingStatus = liveTestingStatus
-             regions = regions
-             testSourceLocations = testSourceLocations
-             workflowLabel = WorkflowTypes.SessionWorkflow.label workflow |})
+        JsonValue.Object [
+          "sessionId", JsonValue.String activeSidStr
+          "sessionState", JsonValue.String (SessionState.label state)
+          "evalCount", HttpJson.integer stats.EvalCount
+          "avgMs", JsonValue.Number (if stats.EvalCount > 0 then stats.TotalDuration.TotalMilliseconds / float stats.EvalCount else 0.0)
+          "activeWorkingDir", JsonValue.String activeDir
+          "liveTestingStatus", JsonValue.String liveTestingStatus
+          "regions", regions |> List.map (fun region -> JsonValue.Object [
+            "id", JsonValue.String region.id
+            "content", JsonValue.String region.content
+            "cursor", region.cursor |> HttpJson.optional (fun cursor -> JsonValue.Object [
+              "line", HttpJson.integer cursor.line; "col", HttpJson.integer cursor.col ])
+            "completions", region.completions |> HttpJson.optional (fun completions -> JsonValue.Object [
+              "items", HttpJson.strings completions.items; "selectedIndex", HttpJson.integer completions.selectedIndex ])
+            "lineAnnotations", region.lineAnnotations |> Array.map (fun annotation -> JsonValue.Object [
+              "line", HttpJson.integer annotation.line; "icon", JsonValue.String annotation.icon
+              "tooltip", JsonValue.String annotation.tooltip ]) |> Array.toList |> JsonValue.Array ]) |> JsonValue.Array
+          "testSourceLocations", testSourceLocations |> List.map (fun location -> JsonValue.Object [
+            "testName", JsonValue.String location.testName; "filePath", JsonValue.String location.filePath
+            "startLine", HttpJson.integer location.startLine ]) |> JsonValue.Array
+          "workflowLabel", JsonValue.String (WorkflowTypes.SessionWorkflow.label workflow) ]
+        |> Json.serialize
       do! ctx.Response.WriteAsync(sprintf "data: %s\n\n" payload)
       do! ctx.Response.Body.FlushAsync()
     }
@@ -2656,23 +2637,24 @@ let createApiDispatchHandler
     use reader = new StreamReader(ctx.Request.Body)
     let! body = reader.ReadToEndAsync()
     try
-      let action = System.Text.Json.JsonSerializer.Deserialize<{| action: string; value: string option |}>(body)
-      let editorAction = parseEditorAction action.action action.value
-      let appMsg = parseAppMsg action.action editorAction
+      let action = HttpJson.parse body
+      let name = HttpJson.textProperty "action" action
+      let editorAction = parseEditorAction name (HttpJson.stringProperty "value" action)
+      let appMsg = parseAppMsg name editorAction
       match appMsg with
       | Some msg ->
         dispatch msg
         ctx.Response.StatusCode <- 200
-        do! ctx.Response.WriteAsJsonAsync({| ok = true |})
+        do! HttpJson.write ctx (JsonValue.Object [ "ok", JsonValue.Bool true ])
       | None ->
         ctx.Response.StatusCode <- 400
-        do! ctx.Response.WriteAsJsonAsync({| error = sprintf "Unknown action: %s" action.action |})
+        do! HttpJson.write ctx (HttpJson.error (sprintf "Unknown action: %s" name))
     with
     | :? RequestTooLargeException -> ()  // 413 already written
     | ex ->
       Log.warn "[dashboard] /api/dispatch failed: %s" ex.Message
       ctx.Response.StatusCode <- 400
-      do! ctx.Response.WriteAsJsonAsync({| error = "Request failed" |})
+      do! HttpJson.write ctx (HttpJson.error ("Request failed"))
   }
 
 /// Live-testing toggle route: dispatch the change, then push so the panel shows the
@@ -2737,7 +2719,7 @@ let createInspectSearchHandler (q: DashboardQueries) (infra: DashboardInfra) : H
 let createCohortScrubHandler (infra: DashboardInfra) : HttpHandler =
   fun ctx -> task {
     try
-      use! doc = readSignalsJsonSized ctx
+      let! doc = readSignalsJsonSized ctx
       let channelClientId = clientIdFromSignals doc
       let raw = getSignalString doc Signals.CohortViewingSeq "cohort-viewing-seq"
       let seqOpt = Features.CohortScrubber.tryParseSeq raw
@@ -2895,14 +2877,12 @@ let createEndpoints
         // Theme is passed in the POST body by the select's onchange handler
         // (see renderThemePicker). We also read it from the signals JSON as
         // a fallback for legacy clients that only had data-bind.
-        use! doc = readSignalsJsonSized ctx
+        let! doc = readSignalsJsonSized ctx
         let theme =
           match ctx.Request.Query.ContainsKey "theme" with
           | true -> ctx.Request.Query.["theme"].ToString()
           | false ->
-            match doc.RootElement.TryGetProperty(Signals.Theme) with
-            | true, prop -> prop.GetString()
-            | _ -> ""
+            HttpJson.stringProperty Signals.Theme doc |> Option.defaultValue ""
         // Per-client viewing session: the session the user is looking at in
         // THIS browser tab. There is NO global fallback — if the client
         // didn't send a viewing-session signal, we don't know which session
@@ -2910,9 +2890,7 @@ let createEndpoints
         // daemon global (that would let one client's choice overwrite
         // another client's project theme).
         let viewingId =
-          match doc.RootElement.TryGetProperty(Signals.ViewingSessionId) with
-          | true, prop -> prop.GetString()
-          | _ -> ""
+          HttpJson.stringProperty Signals.ViewingSessionId doc |> Option.defaultValue ""
         let rawDir =
           match String.IsNullOrEmpty viewingId with
           | false ->
@@ -2941,7 +2919,7 @@ let createEndpoints
       | ex ->
         Log.warn "[dashboard] /dashboard/set-theme failed: %s" ex.Message
         ctx.Response.StatusCode <- 400
-        do! ctx.Response.WriteAsJsonAsync({| error = "Request failed" |})
+        do! HttpJson.write ctx (HttpJson.error ("Request failed"))
     })
     // Change the "Resume Previous" list's sort order — server-authoritative,
     // same shape as /dashboard/set-theme: read the chosen key, remember it
@@ -2954,14 +2932,12 @@ let createEndpoints
     // state change.
     yield post "/dashboard/session-picker/sort" (fun ctx -> task {
       try
-        use! doc = readSignalsJsonSized ctx
+        let! doc = readSignalsJsonSized ctx
         let sortKey =
           match ctx.Request.Query.ContainsKey "sort" with
           | true -> ctx.Request.Query.["sort"].ToString()
           | false ->
-            match doc.RootElement.TryGetProperty("sort") with
-            | true, prop -> prop.GetString()
-            | _ -> ""
+            HttpJson.stringProperty "sort" doc |> Option.defaultValue ""
         let order = PreviousSessionSort.ofKey sortKey
         let clientId = clientIdFromSignals doc
         match clientId with
@@ -2978,7 +2954,7 @@ let createEndpoints
       | ex ->
         Log.warn "[dashboard] /dashboard/session-picker/sort failed: %s" ex.Message
         ctx.Response.StatusCode <- 400
-        do! ctx.Response.WriteAsJsonAsync({| error = "Request failed" |})
+        do! HttpJson.write ctx (HttpJson.error ("Request failed"))
     })
     // Preserve the legacy route without allocating an unusable F# workspace.
     yield post "/dashboard/session/create-temp" (fun ctx -> task {
@@ -3024,7 +3000,6 @@ let createEndpoints
           do! ssePatchNode ctx (evalResultError (sprintf "Previous session '%s' not found" sessionId))
       })
     // TUI client API
-    yield get "/api/state" (createApiStateHandler q infra)
     yield post "/api/dispatch" (createApiDispatchHandler a.Dispatch)
     yield post "/dashboard/cohort/scrub" (createCohortScrubHandler infra)
     yield post "/dashboard/live-testing/enable" (createLiveTestingToggleHandler a.Dispatch infra.TriggerStateChange BozzettoMsg.EnableLiveTesting)
@@ -3095,9 +3070,7 @@ let createEndpoints
       // click "stop others" without interfering.
       let! doc = readSignalsJsonSized ctx
       let viewingId =
-        match doc.RootElement.TryGetProperty(Signals.ViewingSessionId) with
-        | true, prop -> prop.GetString()
-        | _ -> ""
+        HttpJson.stringProperty Signals.ViewingSessionId doc |> Option.defaultValue ""
       let keepId =
         match String.IsNullOrEmpty viewingId with
         | false ->
@@ -3136,6 +3109,7 @@ let createEndpoints
       ctx.Response.Redirect(target.Uri.AbsoluteUri)
     })
     // Daemon info endpoint for client discovery (replaces daemon.json)
+    yield get "/api/state" (createApiStateHandler q infra)
     yield get "/api/daemon-info" (fun ctx -> task {
       let startedAt =
         let proc = System.Diagnostics.Process.GetCurrentProcess()
@@ -3149,13 +3123,13 @@ let createEndpoints
           Environment.CurrentDirectory
           infra.McpPort
           sessionCount
-      do! ctx.Response.WriteAsJsonAsync(data)
+      do! HttpJson.write ctx (DaemonInfoContract.toJsonValue data)
     })
     // Graceful shutdown endpoint
     match a.ShutdownCallback with
     | Some shutdown ->
       yield post "/api/shutdown" (fun ctx -> task {
-        do! ctx.Response.WriteAsJsonAsync({| status = "shutting_down" |})
+        do! HttpJson.write ctx (JsonValue.Object [ "status", JsonValue.String "shutting_down" ])
         shutdown ()
       })
     | None -> ()

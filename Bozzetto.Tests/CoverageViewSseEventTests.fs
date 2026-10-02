@@ -16,10 +16,7 @@ open Bozzetto.Features.LiveTesting
 /// 3. SSE - payload includes Symbol + FilePath + DefinitionLine so
 ///    the editor can place the badge without a second lookup.
 
-let private makeOpts () =
-  let o = JsonSerializerOptions()
-  o.Converters.Add(System.Text.Json.Serialization.JsonFSharpConverter())
-  o
+let private makeOpts () = Bozzetto.JsonCasing.PascalCase
 
 let private sampleView =
   { CoverageView.Symbol = "Module.add"

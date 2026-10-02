@@ -4,8 +4,8 @@ namespace Bozzetto
 
 open System
 open System.IO
-open System.Text.Json
-open System.Text.Json.Serialization
+open Fidelity.Data.JSON
+open McpJson
 open System.Threading.Tasks
 open System.Xml.Linq
 open Bozzetto
@@ -1183,124 +1183,47 @@ module McpTools =
           info |> Option.map (fun i -> (DateTime.UtcNow - i.CreatedAt).TotalSeconds)
         let! progress = ctx.SessionOps.GetWarmupProgress (toSessionId sid)
         return
-          System.Text.Json.JsonSerializer.Serialize(
-            {| state = "Rebuilding"
-               sessionId = sid
-               status = WorkerProtocol.SessionLifecycleStatus.label status
-               message = formatSessionResolution resolution
-               elapsedSeconds = elapsedSeconds
-               // The worst-case wall clock a warming session can take: the
-               // pre-port phase's absolute ceiling (Timeouts.warmupAbsoluteMax
-               // — silence trips it sooner, at warmupInactivityLimit since
-               // the last WARMUP_PROGRESS= line) plus the post-port
-               // ready-poll's own bound.
-               boundSeconds = Timeouts.warmupAbsoluteMax.TotalSeconds + Timeouts.warmupReadyPollMax.TotalSeconds
-               inactivityBoundSeconds = Timeouts.warmupInactivityLimit.TotalSeconds
-               progress = progress
-               available = availableTools |})
+          object [
+            "state", text "Rebuilding"
+            "sessionId", text sid
+            "status", text (WorkerProtocol.SessionLifecycleStatus.label status)
+            "message", text (formatSessionResolution resolution)
+            "elapsedSeconds", optional real elapsedSeconds
+            "boundSeconds", real (Timeouts.warmupAbsoluteMax.TotalSeconds + Timeouts.warmupReadyPollMax.TotalSeconds)
+            "inactivityBoundSeconds", real Timeouts.warmupInactivityLimit.TotalSeconds
+            "progress", optional text progress
+            "available", strings availableTools ] |> render
       | FaultedSession (sid, cause) ->
         let availableTools = Affordances.availableTools SessionState.Faulted
         return
-          System.Text.Json.JsonSerializer.Serialize(
-            {| state = "Faulted"
-               sessionId = sid
-               faultReason = FaultCause.describe cause
-               message = formatSessionResolution resolution
-               available = availableTools |})
+          object [
+            "state", text "Faulted"; "sessionId", text sid
+            "faultReason", text (FaultCause.describe cause)
+            "message", text (formatSessionResolution resolution)
+            "available", strings availableTools ] |> render
       | Routable sid ->
         // Defensive only — see INVARIANT above. Never expected in practice.
-        return System.Text.Json.JsonSerializer.Serialize({| state = "Rebuilding"; sessionId = sid; message = "" |})
+        return (object ["state", text "Rebuilding"; "sessionId", text sid; "message", text ""] |> render)
       | Gone msg ->
-        return System.Text.Json.JsonSerializer.Serialize({| state = "NoSession"; message = msg |})
+        return (object ["state", text "NoSession"; "message", text msg] |> render)
     }
 
   let getDaemonStatus (ctx: McpContext) : Task<string> =
-    task {
-      let machineMemory = Bozzetto.Features.MachineMemory.current ()
-      let health = ctx.GetDaemonHealth ()
-      let telemetry = ctx.GetProcessTelemetry ()
-      let leases = Bozzetto.Features.LeaseWatch.snapshot ()
-      let anomalyRows =
-        health
-        |> Option.bind (fun h -> Some h.Anomalies)
-        |> Option.defaultValue []
-        |> List.choose (fun verdict ->
-          Bozzetto.Features.HealthAnomaly.evidenceOf verdict
-          |> Option.map (fun evidence ->
-            {| signal = Bozzetto.Features.HealthAnomaly.signalName evidence.Signal
-               state = Bozzetto.Features.HealthAnomaly.verdictName verdict
-               message = Bozzetto.Features.HealthAnomaly.describe verdict |> Option.defaultValue ""
-               observedValue = evidence.ObservedValue
-               baselineMean = evidence.BaselineMean
-               baselineStdDev = evidence.BaselineStdDev
-               deviationInSigmas = evidence.DeviationInSigmas
-               sustainedForSeconds = evidence.SustainedFor.TotalSeconds
-               samplesSustained = evidence.SamplesSustained |}))
-      let sessionSummaries =
-        health |> Option.map (fun h -> h.SessionSummaries) |> Option.defaultValue []
-      let countStatus status =
-        sessionSummaries |> List.filter (fun session -> session.Status = status) |> List.length
-      let payload = {|
-        state = "Ready"
-        scope = "Daemon"
-        daemonVersion = health |> Option.map (fun h -> h.Version) |> Option.defaultValue Bozzetto.Server.DaemonInfo.version
-        coreVersion = Bozzetto.Features.FrictionTelemetryTypes.BozzettoVersion.current ()
-        daemonPid = health |> Option.map (fun h -> h.DaemonPid) |> Option.defaultValue Environment.ProcessId
-        mcpPort = health |> Option.map (fun h -> h.DaemonPort) |> Option.defaultValue ctx.McpPort
-        uptimeSeconds =
-          health |> Option.map (fun h -> h.Uptime.TotalSeconds) |> Option.defaultValue 0.0
-        overall = health |> Option.map (fun h -> Bozzetto.Features.DaemonHealth.healthLabel (Bozzetto.Features.DaemonHealth.overallStatus h)) |> Option.defaultValue "Unknown"
-        memoryPressure =
-          health |> Option.map (fun h -> Bozzetto.MemoryPressure.describe h.MemoryPressure) |> Option.defaultValue (Bozzetto.MemoryPressure.describe Bozzetto.MemoryPressure.Normal)
-        memoryPressureNote =
-          health |> Option.map (fun h -> Bozzetto.MemoryPressure.explain h.MemoryPressure) |> Option.defaultValue ""
-        machineMemory =
-          {| totalBytes = machineMemory.TotalBytes
-             availableBytes = machineMemory.AvailableBytes |}
-        daemonResidentBytes = health |> Option.map (fun h -> int64 h.MemoryMB * 1_048_576L) |> Option.defaultValue 0L
-        aggregateResidentBytes = telemetry |> Option.map (fun t -> t.AggregateResidentBytes) |> Option.defaultValue 0L
-        aggregateCpuPercent = telemetry |> Option.map (fun t -> t.AggregateCpuPercent) |> Option.defaultValue 0.0
-        telemetrySampledAt = telemetry |> Option.map (fun t -> t.SampledAt) |> Option.defaultValue DateTimeOffset.UtcNow
-        processes = telemetry |> Option.map (fun t -> t.Processes) |> Option.defaultValue []
-        sessions = {|
-          provider = "fsharp"
-          total = sessionSummaries |> List.length
-          ready = countStatus Bozzetto.Features.SessionHealthStatus.Ready
-          evaluating = countStatus Bozzetto.Features.SessionHealthStatus.Evaluating
-          warmingUp = countStatus Bozzetto.Features.SessionHealthStatus.WarmingUp
-          faulted = countStatus Bozzetto.Features.SessionHealthStatus.Faulted
-          stopped = countStatus Bozzetto.Features.SessionHealthStatus.Stopped
-        |}
-        leases = {| activeCount = leases.ActiveCount
-                    queueDepth = leases.QueueDepth
-                    active = leases.Active
-                    queue = leases.Queue |}
-        anomalies = anomalyRows
-        available = Bozzetto.Affordances.availableTools Bozzetto.SessionState.Uninitialized
-      |}
-      return System.Text.Json.JsonSerializer.Serialize payload
-    }
+    Task.FromResult (DaemonStatusPayload.serialize ctx.McpPort (ctx.GetDaemonHealth ()) (ctx.GetProcessTelemetry ()))
 
   let private leaseDecisionJson kind decision : string =
     let kindName = Bozzetto.ExpensiveWorkLease.Kind.toToken kind
-    match decision with
-    | Bozzetto.ExpensiveWorkLease.Decision.Granted(leaseId, expiresAt) ->
-      System.Text.Json.JsonSerializer.Serialize(
-        {| kind = kindName
-           decision = "granted"
-           leaseId = Bozzetto.ExpensiveWorkLease.LeaseId.value leaseId
-           expiresAt = expiresAt |})
-    | Bozzetto.ExpensiveWorkLease.Decision.Wait(retryAfter, reason) ->
-      System.Text.Json.JsonSerializer.Serialize(
-        {| kind = kindName
-           decision = "wait"
-           retryAfterSeconds = retryAfter.TotalSeconds
-           reason = reason |})
-    | Bozzetto.ExpensiveWorkLease.Decision.Refused reason ->
-      System.Text.Json.JsonSerializer.Serialize(
-        {| kind = kindName
-           decision = "refused"
-           reason = reason |})
+    let fields =
+      match decision with
+      | Bozzetto.ExpensiveWorkLease.Decision.Granted(leaseId, expiresAt) ->
+        [ "decision", text "granted"
+          "leaseId", text (Bozzetto.ExpensiveWorkLease.LeaseId.value leaseId)
+          "expiresAt", timestamp expiresAt ]
+      | Bozzetto.ExpensiveWorkLease.Decision.Wait(retryAfter, reason) ->
+        ["decision", text "wait"; "retryAfterSeconds", real retryAfter.TotalSeconds; "reason", text reason]
+      | Bozzetto.ExpensiveWorkLease.Decision.Refused reason ->
+        ["decision", text "refused"; "reason", text reason]
+    object (("kind", text kindName) :: fields) |> render
 
   let acquireWorkLease (agent: string) (kind: Bozzetto.ExpensiveWorkLease.Kind) : string =
     let holder = resolvedKey agent
@@ -1327,34 +1250,27 @@ module McpTools =
       let! resolution = resolveSessionId ctx agent sessionId workingDirectory
       match resolution with
       | Gone message ->
-        return System.Text.Json.JsonSerializer.Serialize(
-          {| state = "NoSession"
-             scope = "Session"
-             message = message |})
+        return (object ["state", text "NoSession"; "scope", text "Session"; "message", text message] |> render)
       | WarmingUp (sid, status) | Unroutable (sid, status) ->
         let! info = ctx.SessionOps.GetSessionInfo (toSessionId sid)
         let targets = info |> Option.bind (fun value -> SessionProjectTarget.tryCreateMany value.Projects |> Result.toOption) |> Option.defaultValue []
-        return System.Text.Json.JsonSerializer.Serialize(
-          {| state = "WarmingUp"
-             scope = "Session"
-             sessionId = sid
-             lifecycle = WorkerProtocol.SessionLifecycleStatus.label status
-             target = targets
-             loadedProjects = info |> Option.map (fun value -> value.ProjectRoles |> List.map _.Path) |> Option.defaultValue []
-             workerPid = WorkerProtocol.SessionLifecycleStatus.workerPid status
-             workerPort = WorkerProtocol.SessionLifecycleStatus.workerPort status
-             available = Bozzetto.Affordances.availableTools Bozzetto.SessionState.WarmingUp |})
+        return (object [
+          "state", text "WarmingUp"; "scope", text "Session"; "sessionId", text sid
+          "lifecycle", text (WorkerProtocol.SessionLifecycleStatus.label status)
+          "target", array SessionStatusPayload.targetValue targets
+          "loadedProjects", strings (info |> Option.map (fun value -> value.ProjectRoles |> List.map _.Path) |> Option.defaultValue [])
+          "workerPid", optional integer (WorkerProtocol.SessionLifecycleStatus.workerPid status)
+          "workerPort", optional integer (WorkerProtocol.SessionLifecycleStatus.workerPort status)
+          "available", strings (Bozzetto.Affordances.availableTools Bozzetto.SessionState.WarmingUp) ] |> render)
       | FaultedSession (sid, cause) ->
         let! info = ctx.SessionOps.GetSessionInfo (toSessionId sid)
         let targets = info |> Option.bind (fun value -> SessionProjectTarget.tryCreateMany value.Projects |> Result.toOption) |> Option.defaultValue []
-        return System.Text.Json.JsonSerializer.Serialize(
-          {| state = "Faulted"
-             scope = "Session"
-             sessionId = sid
-             faultReason = FaultCause.describe cause
-             target = targets
-             loadedProjects = info |> Option.map (fun value -> value.ProjectRoles |> List.map _.Path) |> Option.defaultValue []
-             available = Bozzetto.Affordances.availableTools Bozzetto.SessionState.Faulted |})
+        return (object [
+          "state", text "Faulted"; "scope", text "Session"; "sessionId", text sid
+          "faultReason", text (FaultCause.describe cause)
+          "target", array SessionStatusPayload.targetValue targets
+          "loadedProjects", strings (info |> Option.map (fun value -> value.ProjectRoles |> List.map _.Path) |> Option.defaultValue [])
+          "available", strings (Bozzetto.Affordances.availableTools Bozzetto.SessionState.Faulted) ] |> render)
       | Routable sid ->
         let! info = ctx.SessionOps.GetSessionInfo (toSessionId sid)
         let! routeResult =
@@ -1388,7 +1304,7 @@ module McpTools =
               CoreVersion = snapshot.CoreVersion
               EvalCount = snapshot.EvalCount
               AverageDurationMs = snapshot.AvgDurationMs
-              Health = SessionHealth.toJson health }
+              Health = health }
         | _, _ ->
           return! renderWarmingOrFaulted ctx resolution
     }
@@ -1403,25 +1319,13 @@ module McpTools =
         let! sessions = ctx.SessionOps.GetAllSessions()
         let sessionCount = sessions |> List.length
         let availableTools = Affordances.availableTools SessionState.Uninitialized
-        // Stale-daemon affordance (issue #136), same silent-unless-stale
-        // read as the Routable branch below — deliberately included here
-        // too: a create_session failure that reads like a Bozzetto bug (the
-        // motivating incident) is most often noticed right where an agent
-        // next calls get_fsi_status with no session yet to show for it.
-        let staleLine =
-          UpdateCheckService.currentOutcome ()
-          |> UpdateCheck.describe
-          |> Option.map (fun line -> " " + line)
-          |> Option.defaultValue ""
         return
-          System.Text.Json.JsonSerializer.Serialize(
-            {| state = "NoSession"
-               message =
-                 (match sessionCount with
+          object [
+            "state", text "NoSession"
+            "message", text (match sessionCount with
                   | 0 -> "No sessions exist. Call get_available_projects to discover .fsproj/.sln/.slnx files (pass working_directory to narrow a large tree), then create_project_session for one .fsproj, create_solution_session for one .sln/.slnx, or create_bare_session for a project-free REPL."
                   | _ -> sprintf "%d session(s) exist but none matched the working directory. Use list_sessions to see them, or switch_session to select one." sessionCount)
-                 + staleLine
-               available = availableTools |})
+            "available", strings availableTools ] |> render
       | WarmingUp _ | Unroutable _ | FaultedSession _ ->
         // INVARIANT (get_fsi_status is total): a session that exists but is
         // starting, restarting, faulted, or not yet routable is reported as
@@ -1507,17 +1411,7 @@ module McpTools =
                   |> Option.map (fun line -> "\n" + line)
                   |> Option.defaultValue ""
             }
-          // Stale-daemon affordance (issue #136): the daemon's own periodic
-          // NuGet check (UpdateCheckService, DaemonMode's background loop),
-          // read here with no IO of its own — silent unless genuinely
-          // behind, so a current daemon never nags on the tool agents call
-          // constantly.
-          let staleLine =
-            UpdateCheckService.currentOutcome ()
-            |> UpdateCheck.describe
-            |> Option.map (fun line -> "\n" + line)
-            |> Option.defaultValue ""
-          return enriched + rebuildLine + selfHostLine + healthLine + staleLine
+          return enriched + rebuildLine + selfHostLine + healthLine
         | Ok other ->
           return sprintf "Unexpected response: %A" other
         | Error (RestartInProgress msg) ->
@@ -1525,11 +1419,7 @@ module McpTools =
           // Report it as Rebuilding, not as a crash.
           let availableTools = Affordances.availableTools SessionState.WarmingUp
           return
-            System.Text.Json.JsonSerializer.Serialize(
-              {| state = "Rebuilding"
-                 sessionId = sid
-                 message = msg
-                 available = availableTools |})
+            object ["state", text "Rebuilding"; "sessionId", text sid; "message", text msg; "available", strings availableTools] |> render
         | Error msg ->
           // The proxy looked routable a moment ago but the round-trip itself
           // failed (worker died between the proxy lookup and this call, or a
@@ -1595,12 +1485,12 @@ module McpTools =
       match info with
       | Some sessionInfo ->
         return
-          System.Text.Json.JsonSerializer.Serialize(
-            {| sessionId = sid
-               workingDirectory = sessionInfo.WorkingDirectory
-               projects = sessionInfo.Projects
-               mcpPort = ctx.McpPort
-               status = WorkerProtocol.SessionLifecycleStatus.label sessionInfo.Status |})
+          object [
+            "sessionId", text sid
+            "workingDirectory", text sessionInfo.WorkingDirectory
+            "projects", strings sessionInfo.Projects
+            "mcpPort", integer ctx.McpPort
+            "status", text (WorkerProtocol.SessionLifecycleStatus.label sessionInfo.Status) ] |> render
       | None ->
         return """{"status": "initializing", "message": "Session is still warming up. This typically takes 15-30s. Use get_recent_fsi_events to monitor warmup progress. Do NOT sleep-poll or create a new session."}"""
     })
@@ -2140,8 +2030,16 @@ module McpTools =
               let model : Features.DomainModelViz.StateMachineModel =
                 { TypeName = typeName; Cases = cases; Transitions = [] }
               let data = Features.DomainModelViz.StateMachineRenderer.renderAsData model
-              let opts = JsonSerializerOptions(WriteIndented = true)
-              JsonSerializer.Serialize(data, opts)
+              object [
+                "TypeName", text data.TypeName
+                "States", data.States |> array (fun value -> object [
+                  "Name", text value.Name
+                  "Fields", value.Fields |> array (fun (name, fieldType) -> object ["Item1", text name; "Item2", text fieldType])
+                  "IsEntry", boolean value.IsEntry
+                  "IsTerminal", boolean value.IsTerminal ])
+                "Transitions", data.Transitions |> array (fun value -> object [
+                  "From", text value.From; "To", text value.To; "Function", text value.Function; "IsError", boolean value.IsError])
+                "AsciiDiagram", text data.AsciiDiagram ] |> pretty
           | None ->
             sprintf "Could not extract DU cases from '%s'. Output: %s" typeName output
         | Ok other -> sprintf "Unexpected response: %A" other
@@ -2333,35 +2231,21 @@ module McpTools =
       | Some sessionInfo ->
       let current = sessionInfo.Workflow
       let cost = WorkflowTypes.TransitionCost.compute 0 0
-      let opts = JsonSerializerOptions(WriteIndented = true)
       let prevLabel = WorkflowTypes.SessionWorkflow.label current
       let targetLabel = WorkflowTypes.SessionWorkflow.label target
       let serializeOutcome outcome =
-        match outcome with
-        | WorkflowTypes.WorkflowSwitchOutcome.AlreadyActive (c, msg) ->
-          JsonSerializer.Serialize(
-            {| Outcome = "alreadyActive"
-               PreviousWorkflow = prevLabel
-               TargetWorkflow = targetLabel
-               Cost = c; Switched = false
-               NewSessionId = (None: string option)
-               Message = msg |}, opts)
-        | WorkflowTypes.WorkflowSwitchOutcome.DryRunPreview (c, msg) ->
-          JsonSerializer.Serialize(
-            {| Outcome = "dryRunPreview"
-               PreviousWorkflow = prevLabel
-               TargetWorkflow = targetLabel
-               Cost = c; Switched = false
-               NewSessionId = (None: string option)
-               Message = msg |}, opts)
-        | WorkflowTypes.WorkflowSwitchOutcome.Executed (_, _, c, sid, msg) ->
-          JsonSerializer.Serialize(
-            {| Outcome = "executed"
-               PreviousWorkflow = prevLabel
-               TargetWorkflow = targetLabel
-               Cost = c; Switched = true
-               NewSessionId = Some sid
-               Message = msg |}, opts)
+        let name, cost, switched, session, message =
+          match outcome with
+          | WorkflowTypes.WorkflowSwitchOutcome.AlreadyActive (cost, message) -> "alreadyActive", cost, false, None, message
+          | WorkflowTypes.WorkflowSwitchOutcome.DryRunPreview (cost, message) -> "dryRunPreview", cost, false, None, message
+          | WorkflowTypes.WorkflowSwitchOutcome.Executed (_, _, cost, session, message) -> "executed", cost, true, Some session, message
+        object [
+          "Outcome", text name; "PreviousWorkflow", text prevLabel; "TargetWorkflow", text targetLabel
+          "Cost", object [
+            "DefinitionsLost", integer cost.DefinitionsLost
+            "CellsLost", integer cost.CellsLost
+            "EstimatedRestart", text (cost.EstimatedRestart.ToString("c")) ]
+          "Switched", boolean switched; "NewSessionId", optional text session; "Message", text message ] |> pretty
       // 4. If same workflow kind, no-op
       match WorkflowTypes.SessionWorkflow.label current = WorkflowTypes.SessionWorkflow.label target with
       | true ->
@@ -2422,11 +2306,6 @@ module McpTools =
     }
 
   // ── Live Testing MCP Tools ──────────────────────────────────
-
-  let liveTestJsonOpts =
-    let o = JsonSerializerOptions(WriteIndented = false)
-    o.Converters.Add(JsonFSharpConverter())
-    o
 
   type FailureLocation = {
     FilePath: string
@@ -2516,20 +2395,20 @@ module McpTools =
               | Features.LiveTesting.TestOrigin.ReflectionOnly -> false)
             |> Some
           | None -> None
-        let resp = System.Collections.Generic.Dictionary<string, obj>()
-        resp["Enabled"] <- box (state.Activation = Features.LiveTesting.LiveTestingActivation.Active)
-        resp["Summary"] <- box summary
-        resp["DiscoveryState"] <- box (Features.LiveTesting.LiveTestDiscoveryState.toWireValue discoveryState)
-        resp["DiscoveryHint"] <- box (Features.LiveTesting.LiveTestState.discoveryHint state)
-        resp["DiscoveryRequiresEval"] <- box discoveryRequiresEval
+        let resp = System.Collections.Generic.Dictionary<string, JsonValue>()
+        resp["Enabled"] <- boolean (state.Activation = Features.LiveTesting.LiveTestingActivation.Active)
+        resp["Summary"] <- LiveTestingJson.summaryValue JsonCasing.PascalCase summary
+        resp["DiscoveryState"] <- text (Features.LiveTesting.LiveTestDiscoveryState.toWireValue discoveryState)
+        resp["DiscoveryHint"] <- text (Features.LiveTesting.LiveTestState.discoveryHint state)
+        resp["DiscoveryRequiresEval"] <- boolean discoveryRequiresEval
         match state.LastDecision with
-        | Some decision -> resp["LastDecision"] <- box (Features.LiveTesting.LiveTestingDecision.toWireModel decision)
+        | Some decision -> resp["LastDecision"] <- LiveTestingJson.decisionValue JsonCasing.PascalCase decision
         | None -> ()
         match state.LastDiscoveryTime > System.DateTimeOffset.MinValue with
-        | true -> resp["LastDiscoveryTime"] <- box state.LastDiscoveryTime
+        | true -> resp["LastDiscoveryTime"] <- timestamp state.LastDiscoveryTime
         | false -> ()
         match tests with
-        | Some t -> resp["Tests"] <- box t
+        | Some t -> resp["Tests"] <- array (LiveTestingJson.statusEntryValue JsonCasing.PascalCase) t
         | None -> ()
         let bitmapCount = Map.count state.TestCoverageBitmaps
         match bitmapCount > 0 with
@@ -2539,7 +2418,7 @@ module McpTools =
             |> Map.toSeq
             |> Seq.map (fun (_, bm) -> Features.LiveTesting.CoverageBitmap.popCount bm)
             |> Seq.averageBy float
-          resp["CoverageBitmapStats"] <- box {| TestsWithCoverage = bitmapCount; AvgHitProbes = avgProbes |}
+          resp["CoverageBitmapStats"] <- object ["TestsWithCoverage", integer bitmapCount; "AvgHitProbes", real avgProbes]
         | false -> ()
         let failedEntries = match tests with | Some t -> t | None -> sessionEntries
         let failedTests =
@@ -2562,9 +2441,11 @@ module McpTools =
             | _ -> None)
           |> Array.truncate 20
         match failedTests.Length > 0 with
-        | true -> resp["FailedTests"] <- box failedTests
+        | true -> resp["FailedTests"] <- failedTests |> array (fun value -> object [
+            "Name", text value.Name; "Message", text value.Message; "DurationMs", integer value.DurationMs
+            "Location", value.Location |> optional (fun location -> object ["File", text location.File; "Line", integer location.Line]) ])
         | false -> ()
-        return JsonSerializer.Serialize(resp, liveTestJsonOpts)
+        return (resp |> Seq.map (fun entry -> entry.Key, entry.Value) |> Seq.toList |> object |> render)
     }
 
   let rec setLiveTesting (ctx: McpContext) (enabled: bool) : Task<string> =
@@ -2729,7 +2610,28 @@ module McpTools =
                | true -> None
                | false -> Some "Live testing is not active. Call enable_live_testing to start test discovery and automatic re-runs."
       |}
-      Task.FromResult (JsonSerializer.Serialize(resp, liveTestJsonOpts))
+      Task.FromResult (object [
+        "Enabled", (resp.Enabled |> boolean)
+        "IsRunning", (resp.IsRunning |> boolean)
+        "History", (resp.History |> LiveTestingJson.historyValue JsonCasing.PascalCase)
+        "Summary", (resp.Summary |> LiveTestingJson.summaryValue JsonCasing.PascalCase)
+        "DiscoveryState", (resp.DiscoveryState |> text)
+        "DiscoveryHint", (resp.DiscoveryHint |> text)
+        "DiscoveryRequiresEval", (resp.DiscoveryRequiresEval |> boolean)
+        "LastDiscoveryTime", (resp.LastDiscoveryTime |> optional (fun value -> (value |> timestamp)))
+        "LastDecision", (resp.LastDecision |> optional (fun value -> object [
+          "Cause", (value.Cause |> text)
+          "FilePath", (value.FilePath |> text)
+          "Precision", (value.Precision |> text)
+          "Trust", (value.Trust |> text)
+          "ChangedSymbols", (value.ChangedSymbols |> strings)
+          "SelectedTests", (value.SelectedTests |> strings)
+          "DeferredTests", (value.DeferredTests |> strings)
+          "Reason", (value.Reason |> text) ]))
+        "Timing", (resp.Timing |> text)
+        "Providers", (resp.Providers |> strings)
+        "Policies", (resp.Policies |> strings)
+        "Hint", (resp.Hint |> optional (fun value -> (value |> text))) ] |> render)
 
   let explainTestRun (ctx: McpContext) (testName: string) : Task<string> =
     task {
@@ -2782,7 +2684,18 @@ module McpTools =
                    | _ -> false |})
             ChangedSymbols = changedSymbols
           |}
-          return JsonSerializer.Serialize(resp, liveTestJsonOpts)
+          return (object [
+            "MatchCount", (resp.MatchCount |> integer)
+            "Explanations", (resp.Explanations |> array (fun value -> object [
+              "TestId", (value.TestId |> text)
+              "DisplayName", (value.DisplayName |> text)
+              "Reason", (value.Reason |> text)
+              "CoveringSymbols", (value.CoveringSymbols |> strings)
+              "Trigger", (value.Trigger |> text)
+              "DurationMs", (value.DurationMs |> optional (fun value -> (value |> real)))
+              "FlakyClassification", (value.FlakyClassification |> text)
+              "IsFlaky", (value.IsFlaky |> boolean) ]))
+            "ChangedSymbols", (resp.ChangedSymbols |> strings) ] |> render)
     }
 
   let queryTestCoverage (ctx: McpContext) (symbol: string) : Task<string> =
@@ -2813,7 +2726,13 @@ module McpTools =
                DisplayName = ct.DisplayName
                LastResult = resultStr |})
         |}
-        return JsonSerializer.Serialize(resp, liveTestJsonOpts)
+        return (object [
+          "Symbol", (resp.Symbol |> text)
+          "CoveringTestCount", (resp.CoveringTestCount |> integer)
+          "Tests", (resp.Tests |> array (fun value -> object [
+            "TestId", (value.TestId |> text)
+            "DisplayName", (value.DisplayName |> text)
+            "LastResult", (value.LastResult |> text) ])) ] |> render)
     }
 
   /// Format file-level coverage annotations as JSON for the get_file_coverage MCP tool.
@@ -2836,16 +2755,16 @@ module McpTools =
              | Features.LiveTesting.CoverageHealth.SomeFailing -> "SomeFailing")
           | Features.LiveTesting.CoverageStatus.NotCovered -> false, 0, "NotCovered"
           | Features.LiveTesting.CoverageStatus.Pending -> false, 0, "Pending"
-        let branchObj : obj =
+        let branchObj =
           match ca.BranchCoverage with
           | Some Features.LiveTesting.LineCoverage.FullyCovered ->
-            {| Case = "FullyCovered" |} :> obj
+            object ["Case", text "FullyCovered"]
           | Some (Features.LiveTesting.LineCoverage.PartiallyCovered (c, t)) ->
-            {| Case = "PartiallyCovered"; Covered = c; Total = t |} :> obj
+            object ["Case", text "PartiallyCovered"; "Covered", integer c; "Total", integer t]
           | Some Features.LiveTesting.LineCoverage.NotCovered ->
-            {| Case = "NotCovered" |} :> obj
+            object ["Case", text "NotCovered"]
           | None ->
-            {| Case = "Unknown" |} :> obj
+            object ["Case", text "Unknown"]
         let coveringTests = ca.CoveringTestIds |> Array.map testNameFor
         {| Line = ca.Line; EndLine = ca.EndLine; EndColumn = ca.EndColumn
            Covered = covered; TestCount = testCount; Health = health
@@ -2865,7 +2784,15 @@ module McpTools =
         CoveragePercent = pct
       |}
     |}
-    JsonSerializer.Serialize(resp, liveTestJsonOpts)
+    object [
+      "FilePath", text resp.FilePath
+      "Lines", resp.Lines |> array (fun line -> object [
+        "Line", integer line.Line; "EndLine", integer line.EndLine; "EndColumn", integer line.EndColumn
+        "Covered", boolean line.Covered; "TestCount", integer line.TestCount; "Health", text line.Health
+        "CoveringTests", strings line.CoveringTests; "BranchCoverage", line.BranchCoverage ])
+      "Summary", object [
+        "CoveredLines", integer resp.Summary.CoveredLines; "TotalLines", integer resp.Summary.TotalLines
+        "CoveragePercent", real resp.Summary.CoveragePercent ] ] |> render
 
   /// MCP tool: get per-line coverage data for a specific file.
   /// Resolves partial file paths, then computes line-level coverage from
@@ -2886,7 +2813,9 @@ module McpTools =
         match resolvedPath with
         | None ->
           let resp = {| FilePath = filePath; Error = "File not found in test sources or instrumentation maps" |}
-          return JsonSerializer.Serialize(resp, liveTestJsonOpts)
+          return (object [
+            "FilePath", (resp.FilePath |> text)
+            "Error", (resp.Error |> text) ] |> render)
         | Some fullPath ->
           let annotations = Features.LiveTesting.FileAnnotations.projectWithCoverage fullPath cycleState
           return formatFileCoverageResponse annotations testState
@@ -3035,7 +2964,46 @@ module McpTools =
                         Summary = report.Summary |}
               | None -> None
             let resp = {| MatchCount = narrs.Length; Narratives = narrs; Diagnostics = diagnostics |}
-            return JsonSerializer.Serialize(resp, liveTestJsonOpts)
+            return (object [
+              "MatchCount", (resp.MatchCount |> integer)
+              "Narratives", (resp.Narratives |> array (fun value -> object [
+                "TestId", (value.TestId |> text)
+                "DisplayName", (value.DisplayName |> text)
+                "Summary", (value.Summary |> text)
+                "LastPassedAt", (value.LastPassedAt |> optional (fun value -> (value |> timestamp)))
+                "TimeSinceLastPass", (value.TimeSinceLastPass |> optional (fun value -> (value |> real)))
+                "CausalChanges", (value.CausalChanges |> array (fun value -> object [
+                  "Kind", (value.Kind |> text)
+                  "Name", (value.Name |> text) ]))
+                "PropertyViolation", (value.PropertyViolation |> optional (fun value -> object [
+                  "PropertyName", (value.PropertyName |> text)
+                  "ShrunkCounterexample", (value.ShrunkCounterexample |> text)
+                  "AlgebraicCategory", (value.AlgebraicCategory |> optional (fun value -> (value |> text))) ]))
+                "CoverageIntel", (value.CoverageIntel |> optional (fun value -> object [
+                  "CoveragePercent", (value.CoveragePercent |> real)
+                  "CoveredBranches", (value.CoveredBranches |> integer)
+                  "TotalBranches", (value.TotalBranches |> integer)
+                  "Verdict", (value.Verdict |> text)
+                  "BlindSpots", (value.BlindSpots |> array (fun value -> object [
+                    "FilePath", (value.FilePath |> text)
+                    "Line", (value.Line |> integer)
+                    "EndLine", (value.EndLine |> integer)
+                    "BranchId", (value.BranchId |> integer)
+                    "NearestCoveredLine", (value.NearestCoveredLine |> optional (fun value -> (value |> integer))) ]))
+                  "CorrelatedFailures", (value.CorrelatedFailures |> strings)
+                  "Summary", (value.Summary |> text) ])) ]))
+              "Diagnostics", (resp.Diagnostics |> optional (fun value -> object [
+                "Severity", (value.Severity |> text)
+                "AffectedCells", (value.AffectedCells |> array integer)
+                "SuggestionCount", (value.SuggestionCount |> integer)
+                "TopSuggestions", (value.TopSuggestions |> array (fun value -> object [
+                  "Code", (value.Code |> text)
+                  "Explanation", (value.Explanation |> text) ]))
+                "Performance", (value.Performance |> optional (fun value -> object [
+                  "Sparkline", (value.Sparkline |> text)
+                  "P50Ms", (value.P50Ms |> real)
+                  "P95Ms", (value.P95Ms |> real) ]))
+                "Summary", (value.Summary |> text) ])) ] |> render)
     }
 
 
@@ -3629,7 +3597,31 @@ module McpTools =
              Performance = report.PerformanceContext |> Option.map (fun s -> {| Sparkline = s.Sparkline; P50Ms = s.P50Ms; P95Ms = s.P95Ms |})
              Summary = report.Summary |}
 
-        return JsonSerializer.Serialize(jsonData, liveTestJsonOpts)
+        return (object [
+          "FailureCount", (jsonData.FailureCount |> integer)
+          "Severity", (jsonData.Severity |> text)
+          "AffectedCellCount", (jsonData.AffectedCellCount |> integer)
+          "RippleStepCount", (jsonData.RippleStepCount |> integer)
+          "SuggestionCount", (jsonData.SuggestionCount |> integer)
+          "Failures", (jsonData.Failures |> array (fun value -> object [
+            "TestName", (value.TestName |> text)
+            "CausalCells", (value.CausalCells |> array integer)
+            "CausalChanges", (value.CausalChanges |> array (fun value -> object [
+              "Kind", (value.Kind |> text)
+              "Name", (value.Name |> text) ]))
+            "PropertyViolation", (value.PropertyViolation |> optional (fun value -> object [
+              "PropertyName", (value.PropertyName |> text)
+              "ShrunkCounterexample", (value.ShrunkCounterexample |> text)
+              "AlgebraicCategory", (value.AlgebraicCategory |> optional (fun value -> (value |> text))) ])) ]))
+          "Suggestions", (jsonData.Suggestions |> array (fun value -> object [
+            "Code", (value.Code |> text)
+            "Explanation", (value.Explanation |> text)
+            "Confidence", (value.Confidence |> real) ]))
+          "Performance", (jsonData.Performance |> optional (fun value -> object [
+            "Sparkline", (value.Sparkline |> text)
+            "P50Ms", (value.P50Ms |> real)
+            "P95Ms", (value.P95Ms |> real) ]))
+          "Summary", (jsonData.Summary |> text) ] |> render)
     }
 
   /// Coverage intelligence: joins failure narratives + coverage bitmaps + dep graph
@@ -3698,7 +3690,20 @@ module McpTools =
                CorrelatedFailures = r.CorrelatedFailures |> List.map string
                Summary = Features.CoverageIntel.CoverageIntel.summarize r |})
 
-        return JsonSerializer.Serialize(jsonData, liveTestJsonOpts)
+        return ((jsonData |> array (fun value -> object [
+          "TestId", (value.TestId |> LiveTestingJson.testIdValue)
+          "TestName", (value.TestName |> text)
+          "Verdict", (value.Verdict |> text)
+          "CoveragePercent", (value.CoveragePercent |> real)
+          "CoveredBranches", (value.CoveredBranches |> integer)
+          "TotalBranches", (value.TotalBranches |> integer)
+          "CausalSymbols", (value.CausalSymbols |> strings)
+          "BlindSpots", (value.BlindSpots |> array (fun value -> object [
+            "File", (value.File |> text)
+            "Line", (value.Line |> integer)
+            "Branch", (value.Branch |> integer) ]))
+          "CorrelatedFailures", (value.CorrelatedFailures |> strings)
+          "Summary", (value.Summary |> text) ])) |> render)
     }
 
   /// Impact forecast: joins eval timeline + cell dependency graph + performance data
@@ -3745,7 +3750,15 @@ module McpTools =
                RegressionCauses = r.RegressionCauses |> List.map (fun c -> c.ToString())
                Summary = Features.ImpactForecast.ImpactForecast.summarize r |})
 
-        return JsonSerializer.Serialize(jsonData, liveTestJsonOpts)
+        return ((jsonData |> array (fun value -> object [
+          "CellId", (value.CellId |> integer)
+          "P50Ms", (value.P50Ms |> real)
+          "P95Ms", (value.P95Ms |> real)
+          "DurationTrend", (value.DurationTrend |> array real)
+          "DownstreamCellCount", (value.DownstreamCellCount |> integer)
+          "Recommendation", (value.Recommendation |> text)
+          "RegressionCauses", (value.RegressionCauses |> strings)
+          "Summary", (value.Summary |> text) ])) |> render)
     }
 
   /// Action prioritizer: merges all intelligence into a ranked "what to do next" queue.
@@ -3819,7 +3832,16 @@ module McpTools =
                   Reason = a.Reason |})
              Summary = Features.ActionPrioritizer.ActionPrioritizer.summarize report |}
 
-        return JsonSerializer.Serialize(jsonData, liveTestJsonOpts)
+        return (object [
+          "HealthGrade", (jsonData.HealthGrade |> text)
+          "TotalFailures", (jsonData.TotalFailures |> integer)
+          "TotalBlindSpots", (jsonData.TotalBlindSpots |> integer)
+          "TotalRegressions", (jsonData.TotalRegressions |> integer)
+          "Actions", (jsonData.Actions |> array (fun value -> object [
+            "Kind", (value.Kind |> text)
+            "Priority", (value.Priority |> integer)
+            "Reason", (value.Reason |> text) ]))
+          "Summary", (jsonData.Summary |> text) ] |> render)
     }
 
   /// List all discovered tests, optionally filtered by pattern or file path.
@@ -3848,7 +3870,17 @@ module McpTools =
           MaxResults = 200
         }
         let jsonData = Features.TestDiscovery.buildListing query locations unlocated
-        return JsonSerializer.Serialize(jsonData, liveTestJsonOpts)
+        return (object [
+          "TotalCount", (jsonData.TotalCount |> integer)
+          "Returned", (jsonData.Returned |> integer)
+          "FilterApplied", (jsonData.FilterApplied |> optional (fun value -> (value |> text)))
+          "Summary", (jsonData.Summary |> text)
+          "GroupedByFile", (jsonData.GroupedByFile |> array (fun value -> object [
+            "File", (value.File |> text)
+            "Tests", (value.Tests |> array (LiveTestingJson.sourceLocationValue JsonCasing.PascalCase)) ]))
+          "WithoutSourceLocation", (jsonData.WithoutSourceLocation |> array (fun value -> object [
+            "TestName", (value.TestName |> text)
+            "CellId", (value.CellId |> integer) ])) ] |> render)
     }
 
   /// Expose the cell dependency graph with staleness annotations.
@@ -3876,7 +3908,20 @@ module McpTools =
                   UpstreamIds   = n.UpstreamIds
                   IsStale       = CellFreshness.isStale n.Staleness
                   StaleCauses   = CellFreshness.causes n.Staleness |}) |}
-        return JsonSerializer.Serialize(jsonData, liveTestJsonOpts)
+        return (object [
+          "TotalCells", (jsonData.TotalCells |> integer)
+          "TotalStale", (jsonData.TotalStale |> integer)
+          "TotalEdges", (jsonData.TotalEdges |> integer)
+          "StaleCellIds", (jsonData.StaleCellIds |> array integer)
+          "Summary", (jsonData.Summary |> text)
+          "Nodes", (jsonData.Nodes |> array (fun value -> object [
+            "Id", (value.Id |> integer)
+            "Produces", (value.Produces |> strings)
+            "Consumes", (value.Consumes |> strings)
+            "DownstreamIds", (value.DownstreamIds |> array integer)
+            "UpstreamIds", (value.UpstreamIds |> array integer)
+            "IsStale", (value.IsStale |> boolean)
+            "StaleCauses", (value.StaleCauses |> array integer) ])) ] |> render)
     }
 
   /// Discover and rank Bozzetto features relevant to the current session state.
@@ -3915,7 +3960,16 @@ module McpTools =
                 ExampleUsage      = s.ExampleUsage
                 WhyNow            = s.WhyNow
                 Relevance         = s.Relevance.ToString() |}) |}
-      return JsonSerializer.Serialize(jsonData, liveTestJsonOpts)
+      return (object [
+        "ContextSummary", (jsonData.ContextSummary |> text)
+        "TotalKnownFeatures", (jsonData.TotalKnownFeatures |> integer)
+        "Returned", (jsonData.Returned |> integer)
+        "Suggestions", (jsonData.Suggestions |> array (fun value -> object [
+          "ToolName", (value.ToolName |> text)
+          "ShortDescription", (value.ShortDescription |> text)
+          "ExampleUsage", (value.ExampleUsage |> text)
+          "WhyNow", (value.WhyNow |> text)
+          "Relevance", (value.Relevance |> text) ])) ] |> render)
     }
 
   /// suggest_repair: compose explain_test_failure → extract causal symbol → preview_what_if
@@ -4013,9 +4067,26 @@ module McpTools =
                  TimeSinceLastPass = timeSince
                  CausalChanges = allChanges
                  PrimarySymbol = primarySymbol |> Option.toObj
-                 RipplePlan    = ripplePlanOpt |> Option.toObj
+                 RipplePlan    = ripplePlanOpt
                  Suggestion    = suggestion |}
-            return JsonSerializer.Serialize(jsonData, liveTestJsonOpts)
+            return (object [
+              "TestName", (jsonData.TestName |> text)
+              "Summary", (jsonData.Summary |> text)
+              "TimeSinceLastPass", (jsonData.TimeSinceLastPass |> text)
+              "CausalChanges", (jsonData.CausalChanges |> array (fun value -> object [
+                "Kind", (value.Kind |> text)
+                "Name", (value.Name |> text) ]))
+              "PrimarySymbol", (jsonData.PrimarySymbol |> text)
+              "RipplePlan", (jsonData.RipplePlan |> optional (fun value -> object [
+                "Symbol", (value.Symbol |> text)
+                "CurrentCode", (value.CurrentCode |> text)
+                "TypeSig", (value.TypeSig |> text)
+                "AffectedCellCount", (value.AffectedCellCount |> integer)
+                "RippleSteps", (value.RippleSteps |> array (fun value -> object [
+                  "CellId", (value.CellId |> integer)
+                  "Code", (value.Code |> text)
+                  "Status", (value.Status |> text) ])) ]))
+              "Suggestion", (jsonData.Suggestion |> text) ] |> render)
     }
 
   // ── Cohort tools (cohort-integration-plan.md Slice 2, item 9) ────────────

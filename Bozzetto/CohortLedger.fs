@@ -6,18 +6,8 @@ open Bozzetto.Cohort
 open Bozzetto.MemberTable
 open Bozzetto.Features.CohortLedger
 
-/// SQLite-backed `CohortLedger.LedgerPort<MemberId>` (Slice 1,
-/// cohort-integration-plan.md D1/D3; template: `FrictionSqlite.fs`). One row
-/// per `LedgerEntry`. `Command`/`Events` are serialized with the same
-/// `JsonFSharpConverter`-configured `JsonSerializerOptions` the daemon<->
-/// worker wire protocol already uses (`WorkerProtocol.Serialization`) —
-/// DU round-tripping through that codec is already proven in this codebase,
-/// so this ledger reuses it rather than hand-rolling a second one.
-///
-/// Daemon-layer, not Core (D1): SQLite persistence lives in `Bozzetto/` today
-/// (`FrictionSqlite.fs`), and the roast's slim-the-Core mandate keeps IO
-/// adapters out of Core. `Bozzetto.Core/Features/CohortLedger.fs` defines the
-/// port this module implements.
+/// SQLite-backed cohort ledger. CohortJson supplies the same explicit
+/// command/event schema as the portable JSONL export; SQLite owns only IO.
 module Sqlite =
 
   let private schemaVersion = 1L
@@ -58,8 +48,8 @@ VALUES ($seq, $clock_ticks, $entropy, $command_json, $events_json);"
       command.Parameters.AddWithValue("$seq", int64 entry.Seq) |> ignore
       command.Parameters.AddWithValue("$clock_ticks", entry.Clock.Ticks) |> ignore
       command.Parameters.AddWithValue("$entropy", entry.Entropy) |> ignore
-      command.Parameters.AddWithValue("$command_json", WorkerProtocol.Serialization.serialize<CohortCommand<MemberId>> entry.Command) |> ignore
-      command.Parameters.AddWithValue("$events_json", WorkerProtocol.Serialization.serialize<CohortEvent<MemberId> list> entry.Events) |> ignore
+      command.Parameters.AddWithValue("$command_json", CohortJson.commandToJson entry.Command) |> ignore
+      command.Parameters.AddWithValue("$events_json", CohortJson.eventsToJson entry.Events) |> ignore
       command.ExecuteNonQuery() |> ignore
 
     let readAll () : LedgerEntry<MemberId> list =
@@ -72,8 +62,9 @@ VALUES ($seq, $clock_ticks, $entropy, $command_json, $events_json);"
         let seq = LanguagePrimitives.Int64WithMeasure<Measures.ledgerSeq> (reader.GetInt64 0)
         let clock = System.DateTime(reader.GetInt64 1, System.DateTimeKind.Utc)
         let entropy = reader.GetFieldValue<byte[]>(2)
-        let cmd = WorkerProtocol.Serialization.deserialize<CohortCommand<MemberId>> (reader.GetString 3)
-        let events = WorkerProtocol.Serialization.deserialize<CohortEvent<MemberId> list> (reader.GetString 4)
+        let require = function Ok value -> value | Error reason -> invalidOp ("Invalid stored cohort ledger: " + reason)
+        let cmd = CohortJson.commandFromJson (reader.GetString 3) |> require
+        let events = CohortJson.eventsFromJson (reader.GetString 4) |> require
         entries.Add { Seq = seq; Clock = clock; Entropy = entropy; Command = cmd; Events = events }
       List.ofSeq entries
 

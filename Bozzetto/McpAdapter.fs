@@ -4,8 +4,7 @@ namespace Bozzetto
 
 open System
 open System.IO
-open System.Text.Json
-open System.Text.Json.Serialization
+open Fidelity.Data.JSON
 open System.Threading.Tasks
 open System.Xml.Linq
 open Bozzetto.AppState
@@ -13,8 +12,25 @@ open Bozzetto.WarmUp
 open Bozzetto.Features.CellDependenciesReport
 open Bozzetto.Utils
 
+/// Explicit JSON primitives shared by MCP projections.
+module internal McpJson =
+  let text = WireJson.text
+  let integer = WireJson.integer
+  let signed = WireJson.signed
+  let real = WireJson.number
+  let boolean = WireJson.boolean
+  let array = WireJson.array
+  let strings values = array text values
+  let optional = WireJson.optional
+  let object = JsonValue.Object
+  let render = Fidelity.Data.JSON.Json.serialize
+  let pretty = Fidelity.Data.JSON.Json.serializePretty
+  let timestamp = WireJson.timestamp
+
 /// Pure functions for MCP adapter (formatting responses)
 module McpAdapter =
+
+  open McpJson
 
   let isSolutionFile (path: string) =
     path.EndsWith(".sln", System.StringComparison.Ordinal) || path.EndsWith(".slnx", System.StringComparison.Ordinal)
@@ -68,19 +84,9 @@ module McpAdapter =
     | false ->
       let trimmed = raw.Trim()
       let fromJsonArray () =
-        try
-          use doc = JsonDocument.Parse trimmed
-          match doc.RootElement.ValueKind with
-          | JsonValueKind.Array ->
-            doc.RootElement.EnumerateArray()
-            |> Seq.choose (fun e ->
-                match e.ValueKind with
-                | JsonValueKind.String -> Some(e.GetString())
-                | _ -> None)
-            |> Seq.toList
-            |> Some
-          | _ -> None
-        with _ -> None
+        match Fidelity.Data.JSON.Json.parse trimmed with
+        | Ok (JsonValue.Array values) -> Some (values |> List.choose JsonValue.asString)
+        | _ -> None
       let entries =
         match trimmed.StartsWith("[", System.StringComparison.Ordinal) with
         | true ->
@@ -158,67 +164,30 @@ module McpAdapter =
     | true -> output
     | false -> sprintf "%s\n%s" stdout output
 
-  type StructuredDiagnostic = {
-    [<JsonPropertyName("severity")>] Severity: string
-    [<JsonPropertyName("message")>] Message: string
-    [<JsonPropertyName("startLine")>] StartLine: int
-    [<JsonPropertyName("startColumn")>] StartColumn: int
-    [<JsonPropertyName("endLine")>] EndLine: int
-    [<JsonPropertyName("endColumn")>] EndColumn: int
-  }
-
-  type StructuredEvalResult = {
-    [<JsonPropertyName("success")>] Success: bool
-    [<JsonPropertyName("result")>]
-    [<JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)>]
-    Result: string
-    [<JsonPropertyName("error")>]
-    [<JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)>]
-    Error: string
-    [<JsonPropertyName("stdout")>]
-    [<JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)>]
-    Stdout: string
-    [<JsonPropertyName("diagnostics")>] Diagnostics: StructuredDiagnostic array
-    [<JsonPropertyName("code")>] Code: string
-  }
+  let private diagnosticValue (diagnostic: Features.Diagnostics.Diagnostic) =
+    object [
+      "severity", text (Features.Diagnostics.DiagnosticSeverity.label diagnostic.Severity)
+      "message", text diagnostic.Message
+      "startLine", integer diagnostic.Range.StartLine
+      "startColumn", integer diagnostic.Range.StartColumn
+      "endLine", integer diagnostic.Range.EndLine
+      "endColumn", integer diagnostic.Range.EndColumn ]
 
   let formatEvalResultJson (response: EvalResponse) : string =
     let stdout =
-      match response.Metadata.TryFind "stdout" with
-      | Some (s: obj) ->
-        let v = s.ToString()
-        match String.IsNullOrEmpty v with | true -> null | false -> v
-      | None -> null
-
-    let diagnostics =
-      response.Diagnostics
-      |> Array.map (fun d -> {
-        Severity = Features.Diagnostics.DiagnosticSeverity.label d.Severity
-        Message = d.Message
-        StartLine = d.Range.StartLine
-        StartColumn = d.Range.StartColumn
-        EndLine = d.Range.EndLine
-        EndColumn = d.Range.EndColumn
-      })
-
+      response.Metadata.TryFind "stdout"
+      |> Option.map (fun value -> value.ToString())
+      |> Option.filter (String.IsNullOrEmpty >> not)
+      |> Option.map (fun value -> "stdout", text value)
+      |> Option.toList
     let result =
       match response.EvaluationResult with
-      | Ok output ->
-        { Success = true
-          Result = output
-          Error = null
-          Stdout = stdout
-          Diagnostics = diagnostics
-          Code = response.EvaluatedCode }
-      | Error ex ->
-        { Success = false
-          Result = null
-          Error = ex.Message
-          Stdout = stdout
-          Diagnostics = diagnostics
-          Code = response.EvaluatedCode }
-
-    JsonSerializer.Serialize(result)
+      | Ok output -> ["success", boolean true; "result", text output]
+      | Error error -> ["success", boolean false; "error", text error.Message]
+    object (result @ stdout @ [
+      "diagnostics", array diagnosticValue response.Diagnostics
+      "code", text response.EvaluatedCode ])
+    |> render
 
   /// Full warmup detail for LLM startup info — shows loaded assemblies,
   /// opened namespaces/modules, failures. Included in get_startup_info only.
@@ -393,29 +362,19 @@ module McpAdapter =
     |> List.map (fun (timestamp, source, text) -> $"[{timestamp:O}] %s{source}: %s{text}")
     |> String.concat "\n"
 
-  let escapeJson (s: string) =
-    let sb = Text.StringBuilder(s.Length)
-    for c in s do
-      match c with
-      | '\\' -> sb.Append("\\\\") |> ignore
-      | '"' -> sb.Append("\\\"") |> ignore
-      | '\n' -> sb.Append("\\n") |> ignore
-      | '\r' -> sb.Append("\\r") |> ignore
-      | '\t' -> sb.Append("\\t") |> ignore
-      | '\b' -> sb.Append("\\b") |> ignore
-      | '\u000C' -> sb.Append("\\f") |> ignore
-      | c when c < '\u0020' -> sb.Append(sprintf "\\u%04X" (int c)) |> ignore
-      | c -> sb.Append(c) |> ignore
-    sb.ToString()
+  /// Kept for callers that need a string fragment; escaping belongs to Fidelity.Data.
+  let escapeJson (value: string) =
+    let encoded = JsonValue.String value |> render
+    encoded.Substring(1, encoded.Length - 2)
 
   let formatEventsJson (events: list<DateTime * string * string>) : string =
-    let items =
-      events
-      |> List.map (fun (timestamp, source, text) ->
-        sprintf """{"timestamp":"%s","source":"%s","text":"%s"}"""
-          (timestamp.ToString("O")) (escapeJson source) (escapeJson text))
-      |> String.concat ","
-    sprintf """{"events":[%s],"count":%d}""" items (List.length events)
+    object [
+      "events", array (fun (timestamp, source, value) -> object [
+        "timestamp", text (timestamp.ToString("O"))
+        "source", text source
+        "text", text value ]) events
+      "count", integer events.Length ]
+    |> render
 
   let parseScriptFile (filePath: string) : Result<list<string>, exn> =
     try
@@ -436,18 +395,24 @@ module McpAdapter =
       | _ -> ""
     sprintf "%s%s\nAvailable: %s" base' statsLine tools
 
+  let private evalStatsFields (stats: Affordances.EvalStats option) =
+    match stats with
+    | Some value when value.EvalCount > 0 ->
+      [ "evalStats", object [
+          "count", integer value.EvalCount
+          "avgMs", integer (int (Affordances.EvalStats.averageDuration value).TotalMilliseconds)
+          "minMs", integer (int value.MinDuration.TotalMilliseconds)
+          "maxMs", integer (int value.MaxDuration.TotalMilliseconds) ] ]
+    | _ -> []
+
+  let private statusFields sessionId eventCount state = [
+    "sessionId", text sessionId
+    "eventCount", integer eventCount
+    "state", text (SessionState.label state)
+    "tools", strings (Affordances.availableTools state) ]
+
   let formatStatusJson (sessionId: string) (eventCount: int) (state: SessionState) (evalStats: Affordances.EvalStats option) : string =
-    let tools = Affordances.availableTools state
-    let toolsJson = tools |> List.map (sprintf "\"%s\"") |> String.concat ","
-    let statsJson =
-      match evalStats with
-      | Some s when s.EvalCount > 0 ->
-        let avg = Affordances.EvalStats.averageDuration s
-        sprintf ""","evalStats":{"count":%d,"avgMs":%d,"minMs":%d,"maxMs":%d}"""
-          s.EvalCount (int avg.TotalMilliseconds) (int s.MinDuration.TotalMilliseconds) (int s.MaxDuration.TotalMilliseconds)
-      | _ -> ""
-    sprintf """{"sessionId":"%s","eventCount":%d,"state":"%s","tools":[%s]%s}"""
-      (escapeJson sessionId) eventCount (SessionState.label state) toolsJson statsJson
+    object (statusFields sessionId eventCount state @ evalStatsFields evalStats) |> render
 
   let formatCompletions (items: Features.AutoCompletion.CompletionItem list) : string =
     match items with
@@ -458,26 +423,22 @@ module McpAdapter =
       |> String.concat "\n"
 
   let formatCompletionsJson (items: Features.AutoCompletion.CompletionItem list) : string =
-    let jsonItems =
-      items
-      |> List.map (fun item ->
-        let detail =
-          match item.GetDescription with
-          | Some getDesc ->
-            try
-              let tags = getDesc ()
-              let text = tags |> Array.map (fun t -> t.Text) |> String.concat ""
-              match text.Length > 0 with
-              | true -> sprintf ""","detail":"%s" """ (escapeJson text)
-              | false -> ""
-            with
-            | :? System.OperationCanceledException -> reraise()
-            | _ -> ""
-          | None -> ""
-        sprintf """{"label":"%s","kind":"%s","insertText":"%s"%s}"""
-          (escapeJson item.DisplayText) (Features.AutoCompletion.CompletionKind.label item.Kind) (escapeJson item.ReplacementText) detail)
-      |> String.concat ","
-    sprintf """{"completions":[%s],"count":%d}""" jsonItems (List.length items)
+    let values = items |> List.map (fun item ->
+      let detail =
+        match item.GetDescription with
+        | Some getDescription ->
+          try
+            let description = getDescription () |> Array.map (fun tag -> tag.Text) |> String.concat ""
+            if description.Length = 0 then [] else ["detail", text description]
+          with
+          | :? System.OperationCanceledException -> reraise()
+          | _ -> []
+        | None -> []
+      object ([
+        "label", text item.DisplayText
+        "kind", text (Features.AutoCompletion.CompletionKind.label item.Kind)
+        "insertText", text item.ReplacementText ] @ detail))
+    object ["completions", JsonValue.Array values; "count", integer items.Length] |> render
 
   let formatExplorationResult (qualifiedName: string) (items: Features.AutoCompletion.CompletionItem list) : string =
     match items with
@@ -499,23 +460,16 @@ module McpAdapter =
       sprintf "## %s\n\n%s" qualifiedName sections
 
   let formatExplorationResultJson (qualifiedName: string) (items: Features.AutoCompletion.CompletionItem list) : string =
-    match items with
-    | [] -> sprintf """{"name":"%s","groups":[],"totalCount":0}""" (escapeJson qualifiedName)
-    | items ->
-      let grouped =
-        items
-        |> List.groupBy (fun item -> Features.AutoCompletion.CompletionKind.label item.Kind)
-        |> List.sortBy fst
-      let groupsJson =
-        grouped
-        |> List.map (fun (kind, members) ->
-          let membersJson =
-            members
-            |> List.map (fun m -> sprintf "\"%s\"" (escapeJson m.DisplayText))
-            |> String.concat ","
-          sprintf """{"kind":"%s","members":[%s],"count":%d}""" kind membersJson (List.length members))
-        |> String.concat ","
-      sprintf """{"name":"%s","groups":[%s],"totalCount":%d}""" (escapeJson qualifiedName) groupsJson (List.length items)
+    let groups =
+      items
+      |> List.groupBy (fun item -> Features.AutoCompletion.CompletionKind.label item.Kind)
+      |> List.sortBy fst
+      |> List.map (fun (kind, members) -> object [
+        "kind", text kind
+        "members", strings (members |> List.map (fun memberItem -> memberItem.DisplayText))
+        "count", integer members.Length ])
+    object ["name", text qualifiedName; "groups", JsonValue.Array groups; "totalCount", integer items.Length]
+    |> render
 
   let formatStartupInfo (config: AppState.StartupConfig) : string =
     // Filter out verbose -r: assembly references from args display
@@ -556,16 +510,14 @@ Startup Profile: %s{profileStr}
 Started: %s{timestamp} UTC"""
 
   let formatStartupInfoJson (config: AppState.StartupConfig) : string =
-    let data = {|
-      commandLineArgs = config.CommandLineArgs
-      loadedProjects = config.LoadedProjects |> List.toArray
-      workingDirectory = config.WorkingDirectory
-      aspireDetected = config.AspireDetected
-      startupProfileLoaded = config.StartupProfileLoaded |> Option.toObj
-      startupTimestamp = config.StartupTimestamp.ToString("O")
-    |}
-    let opts = JsonSerializerOptions(WriteIndented = true)
-    JsonSerializer.Serialize(data, opts)
+    object [
+      "commandLineArgs", strings config.CommandLineArgs
+      "loadedProjects", strings config.LoadedProjects
+      "workingDirectory", text config.WorkingDirectory
+      "aspireDetected", boolean config.AspireDetected
+      "startupProfileLoaded", optional text config.StartupProfileLoaded
+      "startupTimestamp", text (config.StartupTimestamp.ToString("O")) ]
+    |> pretty
 
   let formatDiagnosticsResult (diagnostics: Features.Diagnostics.Diagnostic array) : string =
     match Array.isEmpty diagnostics with
@@ -578,33 +530,21 @@ Started: %s{timestamp} UTC"""
       |> String.concat "\n"
 
   let formatDiagnosticsResultJson (diagnostics: Features.Diagnostics.Diagnostic array) : string =
-    let items =
-      diagnostics
-      |> Array.map (fun d ->
-        sprintf """{"severity":"%s","message":"%s","startLine":%d,"startColumn":%d,"endLine":%d,"endColumn":%d}"""
-          (Features.Diagnostics.DiagnosticSeverity.label d.Severity) (escapeJson d.Message)
-          d.Range.StartLine d.Range.StartColumn d.Range.EndLine d.Range.EndColumn)
-      |> String.concat ","
-    sprintf """{"diagnostics":[%s],"count":%d}""" items (Array.length diagnostics)
+    object ["diagnostics", array diagnosticValue diagnostics; "count", integer diagnostics.Length] |> render
 
   let formatDiagnosticsStoreAsJson (store: Features.DiagnosticsStore.T) : string =
-    let entries =
-      store
-      |> Features.DiagnosticsStore.all
-      |> List.map (fun (codeHash, diags) ->
-        {| codeHash = codeHash
-           diagnostics =
-             diags
-             |> List.map (fun (d: Features.Diagnostics.Diagnostic) ->
-               {| message = d.Message
-                  severity = Features.Diagnostics.DiagnosticSeverity.label d.Severity
-                  range =
-                    {| startLine = d.Range.StartLine
-                       startColumn = d.Range.StartColumn
-                       endLine = d.Range.EndLine
-                       endColumn = d.Range.EndColumn |} |}) |})
-      |> List.toArray
-    System.Text.Json.JsonSerializer.Serialize(entries)
+    Features.DiagnosticsStore.all store
+    |> array (fun (codeHash, diagnostics) -> object [
+      "codeHash", text codeHash
+      "diagnostics", array (fun (diagnostic: Features.Diagnostics.Diagnostic) -> object [
+        "message", text diagnostic.Message
+        "severity", text (Features.Diagnostics.DiagnosticSeverity.label diagnostic.Severity)
+        "range", object [
+          "startLine", integer diagnostic.Range.StartLine
+          "startColumn", integer diagnostic.Range.StartColumn
+          "endLine", integer diagnostic.Range.EndLine
+          "endColumn", integer diagnostic.Range.EndColumn ] ]) diagnostics ])
+    |> render
 
   let formatEnhancedStatus(sessionId: string) (eventCount: int) (state: SessionState) (evalStats: Affordances.EvalStats option) (startupConfig: AppState.StartupConfig option) : string =
     let projectsStr = 
@@ -645,33 +585,15 @@ Available: %s%s%s""" sessionId eventCount (SessionState.label state) projectsStr
     (evalStats: Affordances.EvalStats option)
     (startupConfig: AppState.StartupConfig option)
     : string =
-    let tools = Affordances.availableTools state
-    let toolsJson = tools |> List.map (sprintf "\"%s\"") |> String.concat ","
-    let statsJson =
-      match evalStats with
-      | Some s when s.EvalCount > 0 ->
-        let avg = Affordances.EvalStats.averageDuration s
-        sprintf ""","evalStats":{"count":%d,"avgMs":%d,"minMs":%d,"maxMs":%d}"""
-          s.EvalCount (int avg.TotalMilliseconds) (int s.MinDuration.TotalMilliseconds) (int s.MaxDuration.TotalMilliseconds)
-      | _ -> ""
-    let projectsJson =
-      match startupConfig with
-      | None -> "[]"
-      | Some config ->
-        config.LoadedProjects
-        |> List.map (fun p -> sprintf "\"%s\"" (escapeJson (Path.GetFileName p)))
-        |> String.concat ","
-        |> sprintf "[%s]"
-    let startupJson =
-      match startupConfig with
-      | None -> ""
-      | Some config ->
-        let workflowLabel = WorkflowTypes.SessionWorkflow.label config.Workflow
-        sprintf ""","startup":{"workingDirectory":"%s","aspireDetected":%b,"workflow":"%s","workflowLabel":"%s"}"""
-          (escapeJson config.WorkingDirectory) config.AspireDetected
-          (escapeJson (sprintf "%A" config.Workflow)) workflowLabel
-    sprintf """{"sessionId":"%s","eventCount":%d,"state":"%s","projects":%s,"tools":[%s]%s%s}"""
-      (escapeJson sessionId) eventCount (SessionState.label state) projectsJson toolsJson statsJson startupJson
+    let projects = startupConfig |> Option.map (fun config -> config.LoadedProjects |> List.map Path.GetFileName) |> Option.defaultValue []
+    let startup = startupConfig |> Option.map (fun config ->
+      "startup", object [
+        "workingDirectory", text config.WorkingDirectory
+        "aspireDetected", boolean config.AspireDetected
+        "workflow", text (sprintf "%A" config.Workflow)
+        "workflowLabel", text (WorkflowTypes.SessionWorkflow.label config.Workflow) ]) |> Option.toList
+    object (statusFields sessionId eventCount state @ ["projects", strings projects] @ evalStatsFields evalStats @ startup)
+    |> render
 
   /// What the worker ACTUALLY resolved and loaded, as opposed to what a
   /// session was declared with — the two can legitimately differ, most
@@ -716,58 +638,39 @@ Available: %s%s
 - Working Directory: %s
 - MCP Port: %d""" sessionId modeLabel eventCount (SessionState.label state) projectsStr loadedStr tools statsSection info.WorkingDirectory mcpPort
 
-  /// Diagnostics as JSON array *items* (no enclosing brackets — callers
-  /// interpolate into their own `"diagnostics":[%s]` field), spans included
-  /// (`StartLine/StartColumn/EndLine/EndColumn`). Factored out once so
-  /// `formatWorkerEvalResultJson` and `formatEvalStructuredSuccess` (the
-  /// structured `send_fsharp_code` path, roast-7 §2) can never drift apart.
-  let diagnosticsToJson (diags: WorkerProtocol.WorkerDiagnostic list) : string =
-    diags
-    |> List.map (fun (d: WorkerProtocol.WorkerDiagnostic) ->
-      sprintf """{"severity":"%s","message":"%s","startLine":%d,"startColumn":%d,"endLine":%d,"endColumn":%d}"""
-        (Features.Diagnostics.DiagnosticSeverity.label d.Severity)
-        (escapeJson d.Message) d.StartLine d.StartColumn d.EndLine d.EndColumn)
-    |> String.concat ","
+  let private workerDiagnosticValue (diagnostic: WorkerProtocol.WorkerDiagnostic) =
+    object [
+      "severity", text (Features.Diagnostics.DiagnosticSeverity.label diagnostic.Severity)
+      "message", text diagnostic.Message
+      "startLine", integer diagnostic.StartLine
+      "startColumn", integer diagnostic.StartColumn
+      "endLine", integer diagnostic.EndLine
+      "endColumn", integer diagnostic.EndColumn ]
 
   let formatWorkerEvalResultJson (response: WorkerProtocol.WorkerResponse) : string =
-    match response with
-    | WorkerProtocol.WorkerResponse.EvalResult(_, result, diags, _) ->
-      let diagsJson = diagnosticsToJson diags
-      match result with
-      | Ok output ->
-        // issue #143: same ANSI stripping as the TEXT path (Mcp.fs's
-        // formatWorkerEvalResult) — this is the JSON sibling and must not
-        // disagree about what a caller sees in "result".
-        sprintf """{"success":true,"result":"%s","diagnostics":[%s]}"""
-          (escapeJson (stripAnsi output)) diagsJson
-      | Error err ->
-        sprintf """{"success":false,"error":"%s","diagnostics":[%s]}"""
-          (escapeJson (BozzettoError.describeForAgent err)) diagsJson
-    | WorkerProtocol.WorkerResponse.WorkerError err ->
-      sprintf """{"success":false,"error":"%s","diagnostics":[]}"""
-        (escapeJson (BozzettoError.describeForAgent err))
-    | other ->
-      sprintf """{"success":false,"error":"%s","diagnostics":[]}"""
-        (escapeJson (sprintf "Unexpected response: %A" other))
+    let result, diagnostics =
+      match response with
+      | WorkerProtocol.WorkerResponse.EvalResult(_, result, diagnostics, _) ->
+        let fields =
+          match result with
+          | Ok output -> ["success", boolean true; "result", text (stripAnsi output)]
+          | Error error -> ["success", boolean false; "error", text (BozzettoError.describeForAgent error)]
+        fields, diagnostics
+      | WorkerProtocol.WorkerResponse.WorkerError error ->
+        ["success", boolean false; "error", text (BozzettoError.describeForAgent error)], []
+      | other ->
+        ["success", boolean false; "error", text (sprintf "Unexpected response: %A" other)], []
+    object (result @ ["diagnostics", array workerDiagnosticValue diagnostics]) |> render
 
-  /// Structured success payload for `send_fsharp_code` (roast-7 §2/§16 item
-  /// 2): `{success, result, diagnostics[with spans]}`, the same shape
-  /// `formatWorkerEvalResultJson`'s success branch already produces — kept
-  /// as its own named function because the failure side (below) is
-  /// deliberately NOT the same shape (it carries the full `BozzettoError`
-  /// algebra, not a flattened message).
-  let formatEvalStructuredSuccess (result: string) (diags: WorkerProtocol.WorkerDiagnostic list) : string =
-    sprintf """{"success":true,"result":"%s","diagnostics":[%s]}"""
-      (escapeJson result) (diagnosticsToJson diags)
+  let formatEvalStructuredSuccess (result: string) (diagnostics: WorkerProtocol.WorkerDiagnostic list) : string =
+    object [
+      "success", boolean true
+      "result", text result
+      "diagnostics", array workerDiagnosticValue diagnostics ]
+    |> render
 
-  /// Structured failure payload for `send_fsharp_code`: the full
-  /// `BozzettoError.toJson` triple (`case`/`message`/`suggestedAction`) —
-  /// the same shape `McpServer.structuredToolErrorResult` already emits for
-  /// every other tool that raises `BozzettoErrorException`. `send_fsharp_code`
-  /// was the one production call site that flattened this to a plain
-  /// string instead (roast-7 §2, bozzetto-roast.md Finding #2).
-  let formatEvalStructuredError (err: BozzettoError) : string =
-    JsonSerializer.Serialize(BozzettoError.toJson err)
+  let formatEvalStructuredError (error: BozzettoError) : string =
+    BozzettoError.toJsonValue error |> render
 
   /// Outbound size cap for MCP tool text results (roast-7 §13/§16 item 13).
   /// The only enforced limit before this was INBOUND — 4 MiB on the request

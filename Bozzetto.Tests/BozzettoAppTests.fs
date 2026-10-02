@@ -2687,38 +2687,6 @@ let renderConsistencyTests = testList "Render consistency" [
 ]
 
 [<Tests>]
-let dispatchRoundTripTests = testList "Dispatch round-trip" [
-  let actionsWithApi = [
-    EditorAction.SessionNavUp, "sessionNavUp"
-    EditorAction.SessionNavDown, "sessionNavDown"
-    EditorAction.SessionSelect, "sessionSelect"
-    EditorAction.SessionDelete, "sessionDelete"
-    EditorAction.SessionCycleNext, "sessionCycleNext"
-    EditorAction.SessionCyclePrev, "sessionCyclePrev"
-    EditorAction.ClearOutput, "clearOutput"
-    EditorAction.PromptBackspace, "promptBackspace"
-    EditorAction.PromptConfirm, "promptConfirm"
-    EditorAction.PromptCancel, "promptCancel"
-    EditorAction.ResetSession, "resetSession"
-    EditorAction.HardResetSession, "hardResetSession"
-  ]
-
-  for action, expectedApi in actionsWithApi do
-    testCase (sprintf "actionToApi maps %A to %s" action expectedApi) <| fun _ ->
-      let result = DaemonClient.actionToApi action
-      result |> Expect.isSome (sprintf "%A should have API mapping" action)
-      let apiAction, _ = result.Value
-      apiAction |> Expect.equal "api action name" expectedApi
-
-  testCase "PromptChar includes value in api" <| fun _ ->
-    let result = DaemonClient.actionToApi (EditorAction.PromptChar 'x')
-    result |> Expect.isSome "should have mapping"
-    let apiAction, value = result.Value
-    apiAction |> Expect.equal "action" "promptChar"
-    value |> Expect.equal "value" (Some "x")
-]
-
-[<Tests>]
 let liveTestTickIdleTests =
   let now = DateTimeOffset(2026, 9, 11, 12, 0, 0, TimeSpan.Zero)
   let pending = TestCycleDebounce.onFileSave "/w/App.fs" now TestCycleDebounce.empty

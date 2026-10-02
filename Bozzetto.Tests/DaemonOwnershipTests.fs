@@ -250,6 +250,31 @@ let isUsableSessionStatusTests = testList "isUsableSessionStatus" [
 [<Tests>]
 let daemonInfoFileTests = testList "DaemonInfoFile" [
 
+  testCase "legacy daemon registry schema preserves exact owner ticks and optional numbers" <| fun _ ->
+    let json = """{"Pid":4242,"StartTime":"2026-10-02T13:48:52.8185111Z","OwnerPid":99,"OwnerStart":9007199254740993,"McpPort":47749,"DashboardPort":47750,"DataDir":"/tmp/daemon-schema"}"""
+    let decoded = DaemonInfoFile.tryParse json
+    decoded |> Expect.isSome "existing PascalCase registry records remain readable"
+    let info = decoded.Value
+    info.OwnerStart |> Expect.equal "owner process identity does not pass through float" (Some 9007199254740993L)
+    info.StartTime.Kind |> Expect.equal "the stored UTC kind survives" DateTimeKind.Utc
+    let encoded = DaemonInfoFile.serialize info
+    DaemonInfoFile.tryParse encoded |> Expect.equal "typed schema retains every owner field" decoded
+    match Fidelity.Data.JSON.Json.parse encoded with
+    | Ok value ->
+      Fidelity.Data.JSON.Json.prop "OwnerPid" value |> Option.bind Fidelity.Data.JSON.Json.tryAsInt64
+      |> Expect.equal "Some owner uses the existing unwrapped number shape" (Some 99L)
+    | Error reason -> failtest reason
+
+  testCase "daemon registry refuses rounded owner identities and malformed fields" <| fun _ ->
+    let json = """{"Pid":4242,"StartTime":"2026-10-02T13:48:52Z","OwnerPid":null,"OwnerStart":9007199254740993,"McpPort":47749,"DashboardPort":47750,"DataDir":"/tmp/daemon-schema"}"""
+    DaemonInfoFile.tryParse json |> Expect.isSome "null is an absent optional owner"
+    for invalid in [ "9007199254740993.0"; "9.007199254740993e15"; "9223372036854775808"; "\"9007199254740993\"" ] do
+      DaemonInfoFile.tryParse (json.Replace("9007199254740993", invalid))
+      |> Expect.isNone "process identity must be an exact integer-spelled Int64"
+    DaemonInfoFile.tryParse "{}" |> Expect.isNone "an incomplete registry record does not invent a process"
+    DaemonInfoFile.tryParse (json.Replace("\"Pid\":4242", "\"Pid\":2147483648"))
+    |> Expect.isNone "PID must fit its declared Int32 field"
+
   testCase "write then tryRead roundtrips" <| fun _ ->
     let dir = Path.Combine(Path.GetTempPath(), "bozzetto-ownership-test", Guid.NewGuid().ToString("N"))
     try

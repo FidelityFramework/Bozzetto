@@ -20,10 +20,7 @@ open Expecto.Flip
 
 // ── Scenario builder ──
 
-let private jsonOpts =
-  let opts = JsonSerializerOptions(PropertyNamingPolicy = JsonNamingPolicy.CamelCase)
-  opts.Converters.Add(System.Text.Json.Serialization.JsonFSharpConverter())
-  opts
+let private jsonOpts = Bozzetto.JsonCasing.CamelCase
 
 let private clock = DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
 let private noEntropy : byte[] = [||]

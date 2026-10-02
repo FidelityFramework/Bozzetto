@@ -87,7 +87,7 @@ let cellGraph (state: FeaturePushState) : CellDependencyGraph.CellGraph =
 let recentEvals (count: int) (state: FeaturePushState) : EvalHistoryEntry list =
   EvalStore.newest count state.History |> List.rev
 
-let computeEvalDiffPush (opts: System.Text.Json.JsonSerializerOptions) (sessionId: string option) (currentOutputText: string) (state: FeaturePushState) =
+let computeEvalDiffPush (opts: JsonCasing) (sessionId: string option) (currentOutputText: string) (state: FeaturePushState) =
   let diff = EvalDiff.diffLines (Some state.LastOutputText) (Some currentOutputText)
   let summary = EvalDiff.summarize diff
   let sseStr = Bozzetto.SseWriter.formatEvalDiffEvent opts sessionId summary
@@ -97,21 +97,21 @@ let computeEvalDiffPush (opts: System.Text.Json.JsonSerializerOptions) (sessionI
   else
     { updatedState with LastEvalDiffSse = Some sseStr }, Some sseStr
 
-let computeCellDepsPush (opts: System.Text.Json.JsonSerializerOptions) (sessionId: string option) (state: FeaturePushState) =
+let computeCellDepsPush (opts: JsonCasing) (sessionId: string option) (state: FeaturePushState) =
   let sseStr = Bozzetto.SseWriter.formatCellDependenciesEvent opts sessionId (cellGraph state)
   if Some sseStr = state.LastCellDepsSse then
     { state with LastCellDepsSse = Some sseStr }, None
   else
     { state with LastCellDepsSse = Some sseStr }, Some sseStr
 
-let computeBindingScopePush (opts: System.Text.Json.JsonSerializerOptions) (sessionId: string option) (state: FeaturePushState) =
+let computeBindingScopePush (opts: JsonCasing) (sessionId: string option) (state: FeaturePushState) =
   let sseStr = Bozzetto.SseWriter.formatBindingScopeMapEvent opts sessionId (scope state)
   if Some sseStr = state.LastBindingScopeSse then
     { state with LastBindingScopeSse = Some sseStr }, None
   else
     { state with LastBindingScopeSse = Some sseStr }, Some sseStr
 
-let computeEvalTimelinePush (opts: System.Text.Json.JsonSerializerOptions) (sessionId: string option) (state: FeaturePushState) =
+let computeEvalTimelinePush (opts: JsonCasing) (sessionId: string option) (state: FeaturePushState) =
   let stats = EvalTimeline.timelineStats 20 state.CachedTimeline
   let sseStr = Bozzetto.SseWriter.formatEvalTimelineEvent opts sessionId stats
   if Some sseStr = state.LastEvalTimelineSse then
@@ -127,7 +127,7 @@ let computeEvalTimelinePush (opts: System.Text.Json.JsonSerializerOptions) (sess
 /// no client-side state). Returns the updated state, the SSE strings to emit,
 /// and the binding scope snapshot to share (Some only when it was recomputed).
 let computeHistoryDerivedPushes
-  (opts: System.Text.Json.JsonSerializerOptions)
+  (opts: JsonCasing)
   (sessionId: string option)
   (state: FeaturePushState)
   : FeaturePushState * string list * BindingExplorer.BindingScopeSnapshot option =

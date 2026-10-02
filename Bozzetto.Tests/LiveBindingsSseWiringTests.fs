@@ -29,10 +29,7 @@ open Bozzetto
 open Bozzetto.Server.McpServer
 open Bozzetto.Features.LiveValueTree
 
-let private jsonOpts =
-  let o = JsonSerializerOptions()
-  o.Converters.Add(System.Text.Json.Serialization.JsonFSharpConverter())
-  o
+let private jsonOpts = Bozzetto.JsonCasing.PascalCase
 
 let private mkSnapshot (sessionId: string) : LiveValueSnapshot =
   let root : LiveValueNode =

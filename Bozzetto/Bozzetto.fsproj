@@ -50,6 +50,8 @@
 
     <ItemGroup>
         <Compile Include="WorkerProxyWait.fs" />
+        <Compile Include="HttpJson.fs" />
+        <Compile Include="McpProtocolJson.fs" />
         <Compile Include="DaemonState.fs" />
         <Compile Include="UpdateCheckService.fs" />
         <Compile Include="DaemonTelemetry.fs" />
@@ -69,7 +71,6 @@
         <Compile Include="SyntaxHighlight.fs" />
         <Compile Include="Draw.fs" />
         <Compile Include="AnsiEmitter.fs" />
-        <Compile Include="DaemonClient.fs" />
         <Compile Include="Editor.fs" />
         <Compile Include="ElmLoop.fs" />
         <Compile Include="SessionDisplay.fs" />
@@ -100,9 +101,9 @@
         <Compile Include="Dashboard.fs" />
         <Compile Include="McpPushNotifications.fs" />
         <Compile Include="McpStateHandlers.fs" />
-        <Compile Include="JupyterKernel.fs" />
         <Compile Include="SessionPathValidation.fs" />
         <Compile Include="McpAdapter.fs" />
+        <Compile Include="DaemonStatusPayload.fs" />
         <Compile Include="McpSessionRouting.fs" />
         <Compile Include="McpRouteError.fs" />
         <Compile Include="CreateSessionUx.fs" />
@@ -119,8 +120,6 @@
         <Compile Include="McpServer.fs" />
         <Compile Include="DaemonMode.fs" />
         <Compile Include="WatchdogRunner.fs" />
-        <Compile Include="JupyterTransport.fs" />
-        <Compile Include="JupyterDaemonBridge.fs" />
         <Compile Include="EnvCheck.fs" />
         <Compile Include="CohortPlay.fs" />
         <Compile Include="McpStdioBridge.fs" />
@@ -153,7 +152,6 @@
         <PackageReference Include="FSharp.Data.Adaptive" />
         <PackageReference Include="ModelContextProtocol" />
         <PackageReference Include="ModelContextProtocol.AspNetCore" />
-        <PackageReference Include="NetMQ" />
         <PackageReference Include="Microsoft.Data.Sqlite" />
         <!-- Direct reference to the native SQLite library: pins the transitive
              SQLitePCLRaw.lib.e_sqlite3 to a version bundling SQLite >= 3.50.2,

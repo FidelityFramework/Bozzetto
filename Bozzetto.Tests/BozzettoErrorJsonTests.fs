@@ -1,7 +1,7 @@
 module Bozzetto.Tests.BozzettoErrorJsonTests
 
 open System
-open System.Collections.Generic
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open Microsoft.FSharp.Reflection
@@ -38,9 +38,9 @@ let bozzettoErrorJsonTests =
         let json = BozzettoError.toJson err
         json.case
         |> Expect.equal "case should be WarmupContextFailed" "WarmupContextFailed"
-        json.fields.["sessionId"] :?> string
+        json.fields.["sessionId"] |> JsonValue.asString |> Option.get
         |> Expect.equal "sessionId field" "sess-1"
-        json.fields.["reason"] :?> string
+        json.fields.["reason"] |> JsonValue.asString |> Option.get
         |> Expect.equal "reason field" "timeout"
         json.message
         |> Expect.stringContains "message mentions session" "sess-1"
@@ -53,7 +53,7 @@ let bozzettoErrorJsonTests =
         let json = BozzettoError.toJson err
         json.case
         |> Expect.equal "case" "PortInUse"
-        json.fields.["port"] :?> int
+        json.fields.["port"] |> JsonValue.tryAsInt64 |> Option.get |> int
         |> Expect.equal "port field" 8080
         json.suggestedAction
         |> Expect.stringContains "mentions mcp-port" "mcp-port"
@@ -67,7 +67,7 @@ let bozzettoErrorJsonTests =
         json.fields.Count
         |> Expect.equal "one field" 1
         // The unnamed field is called "Item" by FSharp.Reflection
-        let fieldValue = json.fields.Values |> Seq.head :?> string
+        let fieldValue = json.fields.Values |> Seq.head |> JsonValue.asString |> Option.get
         fieldValue
         |> Expect.equal "exn field is message string" "boom"
       }
@@ -88,11 +88,11 @@ let bozzettoErrorJsonTests =
         let json = BozzettoError.toJson err
         json.case
         |> Expect.equal "case" "WorkerTimeout"
-        json.fields.["sessionId"] :?> string
+        json.fields.["sessionId"] |> JsonValue.asString |> Option.get
         |> Expect.equal "sessionId" "s1"
-        json.fields.["operation"] :?> string
+        json.fields.["operation"] |> JsonValue.asString |> Option.get
         |> Expect.equal "operation" "eval"
-        json.fields.["timeoutSec"] :?> float
+        json.fields.["timeoutSec"] |> JsonValue.asNumber |> Option.get
         |> Expect.equal "timeoutSec" 30.5
       }
     ]
@@ -109,33 +109,15 @@ let bozzettoErrorJsonTests =
         |> Expect.isNonEmpty "suggestedAction should not be empty")
     }
 
-    // Caught live, not by the tests above: `toJson`'s `fields` dictionary
-    // boxes each field value as `obj`, and a bare F# DU boxed that way is
-    // NOT serializable by the plain `System.Text.Json.JsonSerializer` the
-    // HTTP boundary actually uses (McpServer.fs's `jsonResponse` registers
-    // no `JsonFSharpConverter`) — confirmed via a real `/api/sessions/create`
-    // call against a .NET Framework project, which returned a 500 "F#
-    // discriminated union serialization is not supported" instead of the
-    // refusal. `toJson` itself never calls `JsonSerializer`, so the tests
-    // above never caught it. This test does what the HTTP boundary does.
-    // `toJson`'s fix (see `isNonListUnion`) covers a bare DU field directly
-    // on the error case (SessionState, ProjectCompatibility.UnsupportedTfmReason).
-    // `BuildFailed`'s `BuildDiagnostic list` is excluded here: its own
-    // element type nests a DIFFERENT DU (`BuildDiagnosticSeverity`) one
-    // level deeper, inside a list of records — a pre-existing, separate gap
-    // this task did not introduce and is out of scope to fix here (it needs
-    // its own converter on `BuildDiagnosticSeverity`, not a `toJson` field
-    // reduction). Confirmed still broken today so this exclusion is honest,
-    // not papering over a live regression.
-    test "toJson output actually serializes through the plain JsonSerializer the HTTP boundary uses" {
+    test "every error including nested build diagnostics roundtrips through Fidelity.Data" {
       allErrorCases
-      |> List.filter (function BozzettoError.BuildFailed _ -> false | _ -> true)
-      |> List.iter (fun err ->
-        let json = BozzettoError.toJson err
-        try
-          System.Text.Json.JsonSerializer.Serialize(box json) |> ignore
-        with ex ->
-          failtestf "toJson output for %A did not serialize with plain JsonSerializer: %s" err ex.Message)
+      |> List.iter (fun error ->
+        let value = BozzettoError.toJsonValue error
+        let parsed = value |> Json.serialize |> Json.parse |> Result.defaultWith failtest
+        parsed |> JsonValue.prop "case" |> Option.bind JsonValue.asString
+        |> Expect.equal "case survives the actual JSON boundary" (Some (BozzettoError.toJson error).case)
+        parsed |> JsonValue.prop "fields" |> Option.get |> JsonValue.count
+        |> Expect.equal "every declared field survives" (BozzettoError.toJson error).fields.Count)
     }
 
     test "suggestedAction covers every DU case" {

@@ -396,7 +396,7 @@ let architectureTests =
         |> Expect.isFalse
           "Mcp.fs (McpAdapter/McpTools) belongs in the daemon project, not Core"
 
-      testCase "Bozzetto.Core must not contain the daemon MCP/Jupyter push modules"
+      testCase "Bozzetto.Core must not contain the daemon MCP push modules"
       <| fun _ ->
         let coreTypeNames =
           coreAssembly.GetTypes()
@@ -405,10 +405,9 @@ let architectureTests =
         |> Array.exists (fun n ->
           n = "Bozzetto.McpPushNotifications"
           || n = "Bozzetto.McpStateHandlers"
-          || n = "Bozzetto.Server.SseEvent"
-          || n = "Bozzetto.JupyterKernel")
+          || n = "Bozzetto.Server.SseEvent")
         |> Expect.isFalse
-          "MCP push/state handlers, the unified SseEvent wire vocabulary, and JupyterKernel belong in the daemon project, not Core"
+          "MCP push/state handlers and the unified SseEvent wire vocabulary belong in the daemon project, not Core"
 
       testCase "Bozzetto.Core must not contain the daemon Elm kernel"
       <| fun _ ->

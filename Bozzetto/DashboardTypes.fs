@@ -5,6 +5,8 @@ module Bozzetto.Server.DashboardTypes
 open System
 open System.IO
 open System.Text.RegularExpressions
+open Fidelity.Data.JSON
+open Bozzetto.Server
 open Bozzetto
 open Bozzetto.Measures
 open Bozzetto.Utils
@@ -1315,6 +1317,19 @@ type DaemonInfoContract = {
 
 [<RequireQualifiedAccess>]
 module DaemonInfoContract =
+  let toJsonValue (value: DaemonInfoContract) =
+    JsonValue.Object [
+      "pid", HttpJson.integer value.Pid
+      "version", JsonValue.String value.Version
+      "startedAt", JsonValue.String value.StartedAt
+      "workingDirectory", JsonValue.String value.WorkingDirectory
+      "mcpPort", HttpJson.integer value.McpPort
+      "dashboardPort", HttpJson.integer value.DashboardPort
+      "apiVersion", HttpJson.integer value.ApiVersion
+      "sessionCount", HttpJson.integer value.SessionCount
+      "componentFailures", HttpJson.strings value.ComponentFailures
+    ]
+
   let create pid version startedAt workingDirectory mcpPort sessionCount : DaemonInfoContract =
     { Pid = pid
       Version = version
@@ -1425,8 +1440,8 @@ let saveThemes (bozzettoDir: string) (themes: Collections.Concurrent.ConcurrentD
     | false -> Directory.CreateDirectory bozzettoDir |> ignore
     | true -> ()
     let path = Path.Combine(bozzettoDir, "themes.json")
-    let dict = themes |> Seq.map (fun kv -> kv.Key, kv.Value) |> dict
-    let json = Text.Json.JsonSerializer.Serialize(dict, Text.Json.JsonSerializerOptions(WriteIndented = true))
+    let json = themes |> Seq.map (fun kv -> kv.Key, JsonValue.String kv.Value) |> Seq.toList
+               |> JsonValue.Object |> Json.serializePretty
     File.WriteAllText(path, json)
   with ex -> Log.warn "Failed to save themes to %s: %s\n%s" bozzettoDir ex.Message (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
 
@@ -1438,12 +1453,15 @@ let loadThemes (bozzettoDir: string) : Collections.Concurrent.ConcurrentDictiona
     match File.Exists(path) with
     | true ->
       let json = File.ReadAllText(path)
-      let dict = Text.Json.JsonSerializer.Deserialize<Collections.Generic.Dictionary<string, string>>(json)
-      match isNull dict with
-      | false ->
-        for kv in dict do
-          result.[kv.Key] <- kv.Value
-      | true -> ()
+      match Json.parse json with
+      | Ok (JsonValue.Object fields) ->
+        if fields |> List.exists (fun (_, value) -> match value with JsonValue.String _ -> false | _ -> true) then
+          invalidOp "Theme preferences require string values."
+        for key, value in fields do
+          match value with
+          | JsonValue.String theme -> result[key] <- theme
+          | _ -> ()
+      | _ -> ()
     | false -> ()
   with ex -> Log.warn "Failed to load themes from %s: %s\n%s" bozzettoDir ex.Message (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
   result
@@ -1543,12 +1561,12 @@ let checkBodySize (ctx: Microsoft.AspNetCore.Http.HttpContext) = task {
   | _ -> ()
 }
 
-/// Size-guarded wrapper for Request.getSignalsJson (Falco.Datastar).
+/// Read Datastar signals through Fidelity.Data with the existing body limit.
 /// Raises RequestTooLargeException (after writing 413) if ContentLength > 1 MB.
 /// W2(R8): Sets IHttpMaxRequestBodySizeFeature.MaxRequestBodySize to cap chunked requests.
 /// W2(R9): Fail-closed: if the feature is null (reverse proxy) or IsReadOnly (body already
 ///         started reading), raise 413 rather than proceed unguarded with no cap enforced.
-let readSignalsJsonSized (ctx: Microsoft.AspNetCore.Http.HttpContext) : System.Threading.Tasks.Task<System.Text.Json.JsonDocument> = task {
+let readSignalsJsonSized (ctx: Microsoft.AspNetCore.Http.HttpContext) : System.Threading.Tasks.Task<JsonValue> = task {
   let maxBytes = 1_048_576L
   let maxBodyFeature = ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>()
   match maxBodyFeature with
@@ -1563,18 +1581,24 @@ let readSignalsJsonSized (ctx: Microsoft.AspNetCore.Http.HttpContext) : System.T
   | f ->
     f.MaxRequestBodySize <- maxBytes
   do! checkBodySize ctx
-  let! doc = Request.getSignalsJson ctx
-  return doc
+  let! body = task {
+    if Microsoft.AspNetCore.Http.HttpMethods.IsGet ctx.Request.Method then
+      return ctx.Request.Query["datastar"].ToString()
+    else
+      use reader = new StreamReader(ctx.Request.Body)
+      return! reader.ReadToEndAsync(ctx.RequestAborted)
+  }
+  if int64 (Text.Encoding.UTF8.GetByteCount body) > maxBytes then
+    do! write413Body ctx
+    raise RequestTooLargeException
+  return HttpJson.parse body
 }
 
 /// Helper: extract a signal by camelCase or kebab-case name from JSON signals.
-let getSignalString (doc: System.Text.Json.JsonDocument) (camelCase: string) (kebab: string) =
-  match doc.RootElement.TryGetProperty(camelCase) with
-  | true, prop -> prop.GetString()
-  | _ ->
-    match doc.RootElement.TryGetProperty(kebab) with
-    | true, prop -> prop.GetString()
-    | _ -> ""
+let getSignalString (doc: JsonValue) (camelCase: string) (kebab: string) =
+  HttpJson.stringProperty camelCase doc
+  |> Option.orElseWith (fun () -> HttpJson.stringProperty kebab doc)
+  |> Option.defaultValue ""
 
 /// Parse an app-level message, falling back to EditorAction wrapped in BozzettoMsg.Editor.
 let parseAppMsg (actionName: string) (editorAction: EditorAction option) : BozzettoMsg option =

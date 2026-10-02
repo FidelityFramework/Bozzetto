@@ -8,8 +8,7 @@ open Microsoft.Extensions.Logging
 open Bozzetto.AppState
 open Bozzetto.McpTools
 open Bozzetto.Utils
-open System.Text.Json
-open System.Text.Json.Nodes
+open Bozzetto.McpJson
 
 /// Emoji per tool category — printed once as a header, not per-line
 /// Echo MCP tool results to the Bozzetto console for visibility
@@ -169,144 +168,110 @@ let feedbackKindText = function
 /// convention: no magic strings, and the algebra's cases drive their own
 /// serialization instead of being flattened to prose).
 let private observedSignalJson (signal: Bozzetto.Features.ObservedFrictionTypes.DetectedSignal) =
-  let node = JsonObject()
-  node["Id"] <- JsonValue.Create(Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.id signal.Signal)
-  node["Confidence"] <- JsonValue.Create(string signal.Confidence)
-  node["Scope"] <-
-    JsonValue.Create(
-      match signal.Scope with
-      | Bozzetto.Features.ObservedFrictionTypes.SignalScope.DaemonWide -> "DaemonWide"
-      | Bozzetto.Features.ObservedFrictionTypes.SignalScope.Session session ->
-        sprintf "Session:%s" (Bozzetto.Features.FrictionTelemetryTypes.SessionRef.value session)
-      | Bozzetto.Features.ObservedFrictionTypes.SignalScope.Agent agent -> sprintf "Agent:%s" agent)
-  match signal.Signal with
-  | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.ExcessivePolling(tool, calls, successes, window) ->
-    node["Tool"] <- JsonValue.Create(Bozzetto.Features.FrictionTelemetryTypes.ToolName.value tool)
-    node["Calls"] <- JsonValue.Create(calls)
-    node["Successes"] <- JsonValue.Create(successes)
-    node["EventCount"] <- JsonValue.Create(window.EventCount)
-  | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.ResetThrash(resets, window) ->
-    node["Resets"] <- JsonValue.Create(resets)
-    node["EventCount"] <- JsonValue.Create(window.EventCount)
-  | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.HardResetAfterCreate gap ->
-    node["GapMs"] <- JsonValue.Create(Bozzetto.Features.FrictionTelemetryTypes.DurationMs.value gap)
-  | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.UnattributedFailure(rawTool, count) ->
-    node["RawTool"] <- JsonValue.Create(rawTool)
-    node["Count"] <- JsonValue.Create(count)
-  | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.InvalidStateCall(tool, blocked) ->
-    node["Tool"] <- JsonValue.Create(Bozzetto.Features.FrictionTelemetryTypes.ToolName.value tool)
-    node["Blocked"] <- JsonValue.Create(blocked)
-  | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.RepeatedSameError(blocker, run) ->
-    node["Blocker"] <- JsonValue.Create(string blocker)
-    node["Run"] <- JsonValue.Create(run)
-  | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.RetryLoop(tool, attempts) ->
-    node["Tool"] <- JsonValue.Create(Bozzetto.Features.FrictionTelemetryTypes.ToolName.value tool)
-    node["Attempts"] <- JsonValue.Create(attempts)
-  | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.Abandonment(tool, lastBlocker) ->
-    node["Tool"] <- JsonValue.Create(Bozzetto.Features.FrictionTelemetryTypes.ToolName.value tool)
-    node["LastBlocker"] <- JsonValue.Create(string lastBlocker)
-  | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.SlowTimeToFirstSuccess(elapsed, failedBefore) ->
-    node["ElapsedMs"] <- JsonValue.Create(Bozzetto.Features.FrictionTelemetryTypes.DurationMs.value elapsed)
-    node["FailedBefore"] <- JsonValue.Create(failedBefore)
-  node
+  let scope =
+    match signal.Scope with
+    | Bozzetto.Features.ObservedFrictionTypes.SignalScope.DaemonWide -> "DaemonWide"
+    | Bozzetto.Features.ObservedFrictionTypes.SignalScope.Session session ->
+      sprintf "Session:%s" (Bozzetto.Features.FrictionTelemetryTypes.SessionRef.value session)
+    | Bozzetto.Features.ObservedFrictionTypes.SignalScope.Agent agent -> sprintf "Agent:%s" agent
+  let toolValue tool = text (Bozzetto.Features.FrictionTelemetryTypes.ToolName.value tool)
+  let fields =
+    match signal.Signal with
+    | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.ExcessivePolling(tool, calls, successes, window) ->
+      [ "Tool", toolValue tool; "Calls", integer calls; "Successes", integer successes
+        "EventCount", integer window.EventCount ]
+    | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.ResetThrash(resets, window) ->
+      [ "Resets", integer resets; "EventCount", integer window.EventCount ]
+    | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.HardResetAfterCreate gap ->
+      [ "GapMs", integer (Bozzetto.Features.FrictionTelemetryTypes.DurationMs.value gap) ]
+    | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.UnattributedFailure(rawTool, count) ->
+      [ "RawTool", text rawTool; "Count", integer count ]
+    | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.InvalidStateCall(tool, blocked) ->
+      [ "Tool", toolValue tool; "Blocked", integer blocked ]
+    | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.RepeatedSameError(blocker, run) ->
+      [ "Blocker", text (string blocker); "Run", integer run ]
+    | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.RetryLoop(tool, attempts) ->
+      [ "Tool", toolValue tool; "Attempts", integer attempts ]
+    | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.Abandonment(tool, lastBlocker) ->
+      [ "Tool", toolValue tool; "LastBlocker", text (string lastBlocker) ]
+    | Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.SlowTimeToFirstSuccess(elapsed, failedBefore) ->
+      [ "ElapsedMs", integer (Bozzetto.Features.FrictionTelemetryTypes.DurationMs.value elapsed)
+        "FailedBefore", integer failedBefore ]
+  object (
+    [ "Id", text (Bozzetto.Features.ObservedFrictionTypes.FrictionSignal.id signal.Signal)
+      "Confidence", text (string signal.Confidence)
+      "Scope", text scope ] @ fields)
 
 let frictionReportJson
   (report: Bozzetto.Features.FrictionTelemetry.FrictionReport)
   (observedSignals: Bozzetto.Features.ObservedFrictionTypes.DetectedSignal list) =
-  let blockerText = function | Some blocker -> Some (string blocker) | None -> None
-  let toolText = function | Some tool -> Some (Bozzetto.Features.FrictionTelemetryTypes.ToolName.value tool) | None -> None
-
+  let toolText = Option.map Bozzetto.Features.FrictionTelemetryTypes.ToolName.value
+  let toolValue tool = text (Bozzetto.Features.FrictionTelemetryTypes.ToolName.value tool)
   let recentFeedbackByTool =
     report.RecentFeedback
     |> List.map (fun item -> Bozzetto.Features.FrictionTelemetryTypes.ToolName.value item.Tool, item)
     |> Map.ofList
 
-  let topTools = JsonArray()
-  report.HighestPriorityTools
-  |> List.filter (fun item -> Bozzetto.Features.FrictionTelemetry.Summaries.isActionableTool item.Tool)
-  |> List.iter (fun item ->
-    let toolName = Bozzetto.Features.FrictionTelemetryTypes.ToolName.value item.Tool
-    let fallbackAlternative =
-      recentFeedbackByTool
-      |> Map.tryFind toolName
-      |> Option.bind (fun item -> item.LatestAlternative)
-    let mostCommonAlternative =
-      match toolText item.MostCommonAlternative, fallbackAlternative with
-      | Some tool, _ -> Some tool
-      | None, alt -> alt
-    let suggestedFixTarget =
-      match mostCommonAlternative, item.SuggestedFixTarget.StartsWith("Clarify", System.StringComparison.OrdinalIgnoreCase) with
-      | Some tool, true -> sprintf "Agents keep resolving this via %s; merge or cross-link that path directly." tool
-      | _ -> item.SuggestedFixTarget
-    let node = JsonObject()
-    node["Tool"] <- JsonValue.Create(toolName)
-    node["TotalInvocations"] <- JsonValue.Create(item.TotalInvocations)
-    node["BlockedCount"] <- JsonValue.Create(item.BlockedCount)
-    node["AbandonedCount"] <- JsonValue.Create(item.AbandonedCount)
-    node["ExplicitFeedbackCount"] <- JsonValue.Create(item.ExplicitFeedbackCount)
-    node["MostCommonBlocker"] <- JsonValue.Create(blockerText item.MostCommonBlocker)
-    node["MostCommonFollowUp"] <- JsonValue.Create(toolText item.MostCommonFollowUp)
-    node["MostCommonAlternative"] <- JsonValue.Create(mostCommonAlternative)
-    node["SuggestedFixTarget"] <- JsonValue.Create(suggestedFixTarget)
-    topTools.Add(node))
+  let topTools =
+    report.HighestPriorityTools
+    |> List.filter (fun item -> Bozzetto.Features.FrictionTelemetry.Summaries.isActionableTool item.Tool)
+    |> array (fun item ->
+      let toolName = Bozzetto.Features.FrictionTelemetryTypes.ToolName.value item.Tool
+      let fallbackAlternative =
+        recentFeedbackByTool
+        |> Map.tryFind toolName
+        |> Option.bind (fun item -> item.LatestAlternative)
+      let mostCommonAlternative =
+        match toolText item.MostCommonAlternative, fallbackAlternative with
+        | Some tool, _ -> Some tool
+        | None, alt -> alt
+      let suggestedFixTarget =
+        match mostCommonAlternative, item.SuggestedFixTarget.StartsWith("Clarify", System.StringComparison.OrdinalIgnoreCase) with
+        | Some tool, true -> sprintf "Agents keep resolving this via %s; merge or cross-link that path directly." tool
+        | _ -> item.SuggestedFixTarget
+      object [
+        "Tool", text toolName
+        "TotalInvocations", integer item.TotalInvocations
+        "BlockedCount", integer item.BlockedCount
+        "AbandonedCount", integer item.AbandonedCount
+        "ExplicitFeedbackCount", integer item.ExplicitFeedbackCount
+        "MostCommonBlocker", optional (string >> text) item.MostCommonBlocker
+        "MostCommonFollowUp", optional toolValue item.MostCommonFollowUp
+        "MostCommonAlternative", optional text mostCommonAlternative
+        "SuggestedFixTarget", text suggestedFixTarget
+      ])
 
-  let topBlockers = JsonArray()
-  report.TopBlockers
-  |> List.iter (fun item ->
-    let tools = JsonArray()
-    item.MostAffectedTools
-    |> List.iter (fun tool -> tools.Add(JsonValue.Create(Bozzetto.Features.FrictionTelemetryTypes.ToolName.value tool)))
-    let node = JsonObject()
-    node["Blocker"] <- JsonValue.Create(string item.Blocker)
-    node["Count"] <- JsonValue.Create(item.Count)
-    node["MostAffectedTools"] <- tools
-    topBlockers.Add(node))
-
-  let transitions = JsonArray()
-  report.FrequentTransitions
-  |> List.iter (fun item ->
-    let node = JsonObject()
-    node["FromTool"] <- JsonValue.Create(Bozzetto.Features.FrictionTelemetryTypes.ToolName.value item.FromTool)
-    node["ToTool"] <- JsonValue.Create(Bozzetto.Features.FrictionTelemetryTypes.ToolName.value item.ToTool)
-    node["Frequency"] <- JsonValue.Create(item.Frequency)
-    transitions.Add(node))
-
-  let recentFeedback = JsonArray()
-  report.RecentFeedback
-  |> List.iter (fun item ->
-    let node = JsonObject()
-    node["Tool"] <- JsonValue.Create(Bozzetto.Features.FrictionTelemetryTypes.ToolName.value item.Tool)
-    node["Kind"] <- JsonValue.Create(feedbackKindText item.Kind)
-    node["Count"] <- JsonValue.Create(item.Count)
-    node["LatestReason"] <- JsonValue.Create(item.LatestReason)
-    node["LatestAlternative"] <- JsonValue.Create(item.LatestAlternative)
-    recentFeedback.Add(node))
-
-  let payload = JsonObject()
-  let recommendedWorkItems = JsonArray()
-  report.RecommendedWorkItems
-  |> List.iter (fun item ->
-    let node = JsonObject()
-    node["Title"] <- JsonValue.Create(item.Title)
-    node["TargetTool"] <- JsonValue.Create(item.TargetTool |> Option.map Bozzetto.Features.FrictionTelemetryTypes.ToolName.value)
-    node["LikelyFixType"] <- JsonValue.Create(item.LikelyFixType)
-    node["Reason"] <- JsonValue.Create(item.Reason)
-    node["SuggestedAction"] <- JsonValue.Create(item.SuggestedAction)
-    recommendedWorkItems.Add(node))
-
-  let observedSignalsJson = JsonArray()
-  observedSignals |> List.iter (fun signal -> observedSignalsJson.Add(observedSignalJson signal))
-
-  payload["TotalEvents"] <- JsonValue.Create(report.TotalEvents)
-  payload["TotalFeedbackItems"] <- JsonValue.Create(report.TotalFeedbackItems)
-  payload["BozzettoVersion"] <- JsonValue.Create(Bozzetto.Features.FrictionTelemetryTypes.BozzettoVersion.current ())
-  payload["HighestPriorityTools"] <- topTools
-  payload["TopBlockers"] <- topBlockers
-  payload["FrequentTransitions"] <- transitions
-  payload["RecentFeedback"] <- recentFeedback
-  payload["RecommendedWorkItems"] <- recommendedWorkItems
-  payload["ObservedSignals"] <- observedSignalsJson
-  payload.ToJsonString()
+  object [
+    "TotalEvents", integer report.TotalEvents
+    "TotalFeedbackItems", integer report.TotalFeedbackItems
+    "BozzettoVersion", text (Bozzetto.Features.FrictionTelemetryTypes.BozzettoVersion.current ())
+    "HighestPriorityTools", topTools
+    "TopBlockers", report.TopBlockers |> array (fun item -> object [
+      "Blocker", text (string item.Blocker)
+      "Count", integer item.Count
+      "MostAffectedTools", array toolValue item.MostAffectedTools
+    ])
+    "FrequentTransitions", report.FrequentTransitions |> array (fun item -> object [
+      "FromTool", toolValue item.FromTool
+      "ToTool", toolValue item.ToTool
+      "Frequency", integer item.Frequency
+    ])
+    "RecentFeedback", report.RecentFeedback |> array (fun item -> object [
+      "Tool", toolValue item.Tool
+      "Kind", text (feedbackKindText item.Kind)
+      "Count", integer item.Count
+      "LatestReason", text item.LatestReason
+      "LatestAlternative", optional text item.LatestAlternative
+    ])
+    "RecommendedWorkItems", report.RecommendedWorkItems |> array (fun item -> object [
+      "Title", text item.Title
+      "TargetTool", optional toolValue item.TargetTool
+      "LikelyFixType", text item.LikelyFixType
+      "Reason", text item.Reason
+      "SuggestedAction", text item.SuggestedAction
+    ])
+    "ObservedSignals", array observedSignalJson observedSignals
+  ] |> render
 
 let withEcho (ctx: McpContext) (toolName: string) (t: Task<string>) : Task<string> =
   task {
@@ -559,8 +524,7 @@ WORKFLOW: Use this tool instead of dotnet build or dotnet run. Bozzetto IS your 
             | None ->
               Bozzetto.McpAdapter.formatEvalStructuredSuccess boundedText diags
           try
-            use doc = System.Text.Json.JsonDocument.Parse(structuredJson)
-            result.StructuredContent <- System.Nullable(doc.RootElement.Clone())
+            result.StructuredContent <- System.Nullable(Bozzetto.Server.McpProtocolJson.parseElement structuredJson)
           with ex ->
             // Never let a structured-content build problem take down a tool
             // call whose text block already carries the full story.

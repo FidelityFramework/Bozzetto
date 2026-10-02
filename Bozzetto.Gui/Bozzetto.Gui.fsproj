@@ -8,6 +8,7 @@
         <Compile Include="RaylibPalette.fs" />
         <Compile Include="Rl.fs" />
         <Compile Include="RaylibEmitter.fs" />
+        <Compile Include="DaemonClient.fs" />
         <Compile Include="RaylibMode.fs" />
         <Compile Include="Program.fs" />
     </ItemGroup>

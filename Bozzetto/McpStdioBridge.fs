@@ -105,12 +105,19 @@ type Io =
 let private writeRejection (stdout: StdoutWriter) (msg: RpcMessage) (reason: string) =
   match msg with
   | RpcMessage.Request(id, _, _) ->
-    let idJson =
+    let idValue =
       match id with
-      | RpcId.S s -> System.Text.Json.JsonSerializer.Serialize(s: string)
-      | RpcId.N n -> string n
-    let errMsg = System.Text.Json.JsonSerializer.Serialize(reason: string)
-    stdout.WriteLine(sprintf """{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":%s}}""" idJson errMsg)
+      | RpcId.S value -> Fidelity.Data.JSON.JsonValue.String value
+      | RpcId.N value -> Fidelity.Data.JSON.JsonValue.ofInt64 value
+    let response =
+      Fidelity.Data.JSON.JsonValue.Object [
+        "jsonrpc", Fidelity.Data.JSON.JsonValue.String "2.0"
+        "id", idValue
+        "error", Fidelity.Data.JSON.JsonValue.Object [
+          "code", Fidelity.Data.JSON.JsonValue.ofInt64 -32000L
+          "message", Fidelity.Data.JSON.JsonValue.String reason ] ]
+      |> Fidelity.Data.JSON.Json.serialize
+    stdout.WriteLine response
     // Loud on both channels: the client gets a proper JSON-RPC error, and
     // stderr gets the same reason so a human watching the process (or its
     // log) never has to infer a rejection from a missing tool alone.

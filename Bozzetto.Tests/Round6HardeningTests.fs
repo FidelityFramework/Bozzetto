@@ -109,7 +109,7 @@ let knownBindingsIncrementalTests =
       |> Expect.isTrue "no val lines means no bindings added"
 
     testCase "computeCellDepsPush uses KnownBindings from state" <| fun _ ->
-      let opts = System.Text.Json.JsonSerializerOptions()
+      let opts = Bozzetto.JsonCasing.PascalCase
       let s0 = recordEval "let z = 10" "val z : int = 10" 1L FeaturePushState.empty
       let s1 = recordEval "z + 1" "val it : int = 11" 1L s0
       // Just verify it doesn't throw and returns a result

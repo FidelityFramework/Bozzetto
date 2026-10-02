@@ -2,7 +2,7 @@ namespace Bozzetto
 
 open System
 open System.IO
-open System.Text.Json
+open Fidelity.Data.JSON
 
 type DaemonInfo = {
   Pid: int
@@ -81,12 +81,6 @@ module DaemonState =
 
   let defaultMcpPort = 47749
 
-  let jsonOptions =
-    JsonSerializerOptions(
-      PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-      WriteIndented = true
-    )
-
   let isProcessAlive (pid: int) =
     try
       let p = System.Diagnostics.Process.GetProcessById(pid)
@@ -97,17 +91,18 @@ module DaemonState =
 
   let httpClient = new System.Net.Http.HttpClient(Timeout = Timeouts.healthCheck)
 
-  let private tryGetIntProperty (name: string) (root: JsonElement) =
-    match root.TryGetProperty(name) with
-    | true, value when value.ValueKind = JsonValueKind.Number -> Some (value.GetInt32())
+  let private tryGetIntProperty name (root: Map<string, JsonValue>) =
+    match root.TryFind name with
+    | Some (JsonValue.NumberLiteral _ as value) ->
+      match JsonValue.tryAsInt64 value with
+      | Some number when number >= int64 Int32.MinValue && number <= int64 Int32.MaxValue -> Some(int number)
+      | _ -> invalidOp ("Daemon field " + name + " must contain an exact Int32.")
     | _ -> None
 
-  let private tryGetStringProperty (name: string) (root: JsonElement) =
-    match root.TryGetProperty(name) with
-    | true, value when value.ValueKind = JsonValueKind.String -> Some (value.GetString())
-    | _ -> None
+  let private tryGetStringProperty name (root: Map<string, JsonValue>) =
+    root.TryFind name |> Option.bind JsonValue.asString
 
-  let private parseStartedAt (root: JsonElement) =
+  let private parseStartedAt root =
     match tryGetStringProperty "startedAt" root with
     | Some value ->
       match DateTime.TryParse value with
@@ -126,18 +121,17 @@ module DaemonState =
       SessionCount = None
       ComponentFailures = [] }
 
-  let private tryGetStringArrayProperty (name: string) (root: JsonElement) : string list =
-    match root.TryGetProperty(name) with
-    | true, value when value.ValueKind = JsonValueKind.Array ->
-      value.EnumerateArray()
-      |> Seq.choose (fun el -> if el.ValueKind = JsonValueKind.String then Some (el.GetString()) else None)
-      |> List.ofSeq
+  let private tryGetStringArrayProperty name (root: Map<string, JsonValue>) : string list =
+    match root.TryFind name with
+    | Some (JsonValue.Array values) -> values |> List.choose JsonValue.asString
     | _ -> []
 
   let tryParseDaemonInfoJson (mcpPort: int) (json: string) : DaemonInfo option =
     try
-      use doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
+      let root =
+        match Json.parse json with
+        | Ok (JsonValue.Object properties) -> Map.ofList properties
+        | _ -> invalidOp "Daemon information must be a JSON object."
       let port =
         tryGetIntProperty "mcpPort" root
         |> Option.orElseWith (fun () -> tryGetIntProperty "port" root)

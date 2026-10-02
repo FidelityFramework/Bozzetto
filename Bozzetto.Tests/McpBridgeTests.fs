@@ -17,6 +17,25 @@ let tests =
   testList "McpBridge" [
 
     testList "parseRpcMessage" [
+      testCase "large numeric request ids remain exact and raw JSON is preserved" <| fun _ ->
+        let raw = """{ "jsonrpc": "2.0", "id": 9007199254740993, "method": "initialize", "future": 1.2300e2 }"""
+        match parseRpcMessage raw with
+        | RpcMessage.Request(RpcId.N id, "initialize", retained) ->
+          id |> Expect.equal "routing identity never passes through binary float" 9007199254740993L
+          retained |> Expect.equal "forwarding does not rewrite unknown payload fields or numeric spelling" raw
+        | other -> failtestf "expected an exact-id Request, got %A" other
+
+      testCase "numeric ids that cannot identify an Int64 are refused rather than becoming notifications" <| fun _ ->
+        for number in [ "1.0"; "1e0"; "9223372036854775808"; "-9223372036854775809" ] do
+          match parseRpcMessage ("{\"id\":" + number + ",\"method\":\"initialize\"}") with
+          | RpcMessage.Unparseable _ -> ()
+          | other -> failtestf "invalid numeric id %s was routed as %A" number other
+
+      testCase "duplicate routing properties retain their last declared value" <| fun _ ->
+        match parseRpcMessage """{"id":1,"id":2,"method":"old","method":"new"}""" with
+        | RpcMessage.Request(RpcId.N 2L, "new", _) -> ()
+        | other -> failtestf "expected last-property routing, got %A" other
+
       testCase "a request has an id and a method" <| fun _ ->
         match parseRpcMessage """{"jsonrpc":"2.0","id":1,"method":"initialize"}""" with
         | RpcMessage.Request(RpcId.N 1L, "initialize", _) -> ()

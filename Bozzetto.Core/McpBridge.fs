@@ -1,6 +1,6 @@
 namespace Bozzetto
 
-open System.Text.Json
+open Fidelity.Data.JSON
 
 /// Pure decision core for the `boz mcp` stdio<->HTTP bridge — see
 /// Bozzetto/McpStdioBridge.fs for the IO edges (probing the daemon, spawning
@@ -46,29 +46,30 @@ module McpBridge =
   /// becomes `Unparseable`, never an exception the caller has to guard.
   let parseRpcMessage (raw: string) : RpcMessage =
     try
-      use doc = JsonDocument.Parse(raw)
-      let root = doc.RootElement
-      let idOpt =
-        match root.TryGetProperty("id") with
-        | true, idEl ->
-          match idEl.ValueKind with
-          | JsonValueKind.String -> Some(RpcId.S(idEl.GetString()))
-          | JsonValueKind.Number -> Some(RpcId.N(idEl.GetInt64()))
-          | _ -> None
-        | false, _ -> None
-      let methodOpt =
-        match root.TryGetProperty("method") with
-        | true, mEl when mEl.ValueKind = JsonValueKind.String -> Some(mEl.GetString())
-        | _ -> None
-      match idOpt, methodOpt with
-      | Some id, Some m -> RpcMessage.Request(id, m, raw)
-      | None, Some m -> RpcMessage.Notification(m, raw)
-      | Some id, None -> RpcMessage.Response(id, raw)
-      | None, None ->
-        RpcMessage.Unparseable(
-          raw,
-          "no 'id' and no 'method' — not a JSON-RPC request, notification, or response"
-        )
+      match Json.parse raw with
+      | Error reason -> RpcMessage.Unparseable(raw, reason)
+      | Ok (JsonValue.Object properties) ->
+        let root = Map.ofList properties
+        let id =
+          match root.TryFind "id" with
+          | Some (JsonValue.String value) -> Ok (Some (RpcId.S value))
+          | Some (JsonValue.NumberLiteral _ as value) ->
+            match JsonValue.tryAsInt64 value with
+            | Some number -> Ok (Some (RpcId.N number))
+            | None -> Error "JSON-RPC numeric id must be an exact integer-spelled Int64."
+          | _ -> Ok None
+        let methodOpt = root.TryFind "method" |> Option.bind JsonValue.asString
+        match id, methodOpt with
+        | Error reason, _ -> RpcMessage.Unparseable(raw, reason)
+        | Ok (Some id), Some m -> RpcMessage.Request(id, m, raw)
+        | Ok None, Some m -> RpcMessage.Notification(m, raw)
+        | Ok (Some id), None -> RpcMessage.Response(id, raw)
+        | Ok None, None ->
+          RpcMessage.Unparseable(
+            raw,
+            "no 'id' and no 'method' — not a JSON-RPC request, notification, or response"
+          )
+      | Ok _ -> RpcMessage.Unparseable(raw, "A JSON-RPC message must be an object.")
     with ex ->
       RpcMessage.Unparseable(raw, ex.Message)
 

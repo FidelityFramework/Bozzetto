@@ -40,6 +40,7 @@
         <Compile Include="McpAdapterTests.fs" />
         <Compile Include="McpServerE2ETests.fs" />
         <Compile Include="McpServerOversizedRequestTests.fs" />
+        <Compile Include="HttpJsonTests.fs" />
         <Compile Include="McpServerIntegrationTests.fs" />
         <Compile Include="McpToolExecutionTests.fs" />
         <Compile Include="McpLlmInteropTests.fs" />
@@ -406,8 +407,6 @@
          <Compile Include="ObservedFrictionInvalidStateTests.fs" />
          <Compile Include="ObservedFrictionAcceptanceTests.fs" />
          <Compile Include="TargetedVerifyMcpToolTests.fs" />
-         <Compile Include="JupyterKernelTests.fs" />
-         <Compile Include="JupyterDaemonBridgeTests.fs" />
         <Compile Include="TracingMiddlewareTests.fs" />
         <Compile Include="ResultExTests.fs" />
         <Compile Include="EventExhaustivenessTests.fs" />

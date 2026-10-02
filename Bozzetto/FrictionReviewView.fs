@@ -78,24 +78,76 @@ let defaultEdits (report: FrictionReport) : Map<string * string, string> =
 let parseEditsJson (json: string) : Map<string * string, string> =
   if System.String.IsNullOrWhiteSpace json then Map.empty
   else
-    try
-      use doc = System.Text.Json.JsonDocument.Parse(json)
-      match doc.RootElement.ValueKind with
-      | System.Text.Json.JsonValueKind.Object ->
-        let mutable acc = Map.empty
-        for prop in doc.RootElement.EnumerateObject() do
-          let key = prop.Name
-          let sepIndex = key.IndexOf '|'
-          if sepIndex > 0 && sepIndex < key.Length - 1 then
-            let tool = key.Substring(0, sepIndex)
-            let kind = key.Substring(sepIndex + 1)
-            match prop.Value.ValueKind with
-            | System.Text.Json.JsonValueKind.String ->
-              acc <- Map.add (tool, kind) (prop.Value.GetString()) acc
-            | _ -> ()
-        acc
-      | _ -> Map.empty
-    with _ -> Map.empty
+    match Fidelity.Data.JSON.Json.parse json with
+    | Ok (Fidelity.Data.JSON.JsonValue.Object properties) ->
+      properties
+      |> List.choose (fun (key, value) ->
+        let separator = key.IndexOf '|'
+        match value with
+        | Fidelity.Data.JSON.JsonValue.String text when separator > 0 && separator < key.Length - 1 ->
+          Some ((key.Substring(0, separator), key.Substring(separator + 1)), text)
+        | _ -> None)
+      |> Map.ofList
+    | _ -> Map.empty
+
+open Fidelity.Data.JSON
+
+let private outgoingToolValue (value: OutgoingTool) =
+  JsonValue.Object [
+    "Tool", JsonValue.String value.Tool
+    "Invocations", JsonValue.ofInt64 (int64 value.Invocations)
+    "Blocked", JsonValue.ofInt64 (int64 value.Blocked)
+    "Abandoned", JsonValue.ofInt64 (int64 value.Abandoned)
+    "ExplicitFeedback", JsonValue.ofInt64 (int64 value.ExplicitFeedback)
+    "SuggestedFix", JsonValue.String value.SuggestedFix
+  ]
+
+let private outgoingBlockerValue (value: OutgoingBlocker) =
+  JsonValue.Object [
+    "Blocker", JsonValue.String value.Blocker
+    "Count", JsonValue.ofInt64 (int64 value.Count)
+    "AffectedTools", JsonValue.Array (List.map JsonValue.String value.AffectedTools)
+  ]
+
+let private outgoingTransitionValue (value: OutgoingTransition) =
+  JsonValue.Object [
+    "From", JsonValue.String value.From
+    "To", JsonValue.String value.To
+    "Count", JsonValue.ofInt64 (int64 value.Count)
+  ]
+
+let private outgoingFeedbackValue (value: OutgoingFeedback) =
+  JsonValue.Object [
+    "Tool", JsonValue.String value.Tool
+    "Kind", JsonValue.String value.Kind
+    "Count", JsonValue.ofInt64 (int64 value.Count)
+    "Reason", JsonValue.String value.Reason
+    "Alternative", value.Alternative |> Option.map JsonValue.String |> Option.defaultValue JsonValue.Null
+  ]
+
+let private outgoingWorkItemValue (value: OutgoingWorkItem) =
+  JsonValue.Object [
+    "Title", JsonValue.String value.Title
+    "TargetTool", value.TargetTool |> Option.map JsonValue.String |> Option.defaultValue JsonValue.Null
+    "Reason", JsonValue.String value.Reason
+    "SuggestedAction", JsonValue.String value.SuggestedAction
+  ]
+
+let private outgoingReportValue (value: OutgoingReport) =
+  JsonValue.Object [
+    "SchemaVersion", JsonValue.ofInt64 (int64 value.SchemaVersion)
+    "BozzettoVersion", JsonValue.String value.BozzettoVersion
+    "SubmittedAtUtc", JsonValue.String value.SubmittedAtUtc
+    "TotalEvents", JsonValue.ofInt64 (int64 value.TotalEvents)
+    "TotalFeedbackItems", JsonValue.ofInt64 (int64 value.TotalFeedbackItems)
+    "ToolsWithFriction", JsonValue.Array (List.map outgoingToolValue value.ToolsWithFriction)
+    "TopBlockers", JsonValue.Array (List.map outgoingBlockerValue value.TopBlockers)
+    "FrequentTransitions", JsonValue.Array (List.map outgoingTransitionValue value.FrequentTransitions)
+    "RecentFeedback", JsonValue.Array (List.map outgoingFeedbackValue value.RecentFeedback)
+    "RecommendedWorkItems", JsonValue.Array (List.map outgoingWorkItemValue value.RecommendedWorkItems)
+  ]
+
+let outgoingJson value = outgoingReportValue value |> Json.serialize
 
 /// One-shot: build the outgoing report for a send from the canonical report
 /// + client-supplied edits JSON. Pure and sanitized — this is what the

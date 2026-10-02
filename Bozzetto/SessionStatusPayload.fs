@@ -16,6 +16,19 @@ namespace Bozzetto
 // `state == Ready` evaluated against a session with no assemblies loaded.
 module SessionStatusPayload =
 
+  open Fidelity.Data.JSON
+  open McpJson
+
+  let targetValue = function
+    | SessionProjectTarget.Bare -> object ["type", text "Bare"]
+    | SessionProjectTarget.Project path -> object ["type", text "Project"; "value", strings [path]]
+    | SessionProjectTarget.Solution path -> object ["type", text "Solution"; "value", strings [path]]
+
+  let private taggedOption encode = function
+    | None -> object ["type", text "None"]
+    | Some value -> object ["type", text "Some"; "value", JsonValue.Array [encode value]]
+
+
   /// The top-level state label for a session state.
   ///
   /// `Evaluating` and `Ready` both report "Ready": an in-flight eval is a LOADED
@@ -45,7 +58,7 @@ module SessionStatusPayload =
     AverageDurationMs: int64
     /// The health verdict, serialized as its caller produced it. Kept as the
     /// caller's own value so this module never restates the health rules.
-    Health: obj
+    Health: SessionHealth
   }
 
   /// Build the `get_session_status` payload.
@@ -56,20 +69,21 @@ module SessionStatusPayload =
   let serialize (facts: Facts) : string =
     let sessionState = facts.SessionState
 
-    // Targets are a closed F# union. Use the same explicit wire codec as
-    // worker messages instead of relying on runtime-default serialization.
-    WorkerProtocol.Serialization.serialize(
-      {| state = stateLabelOf sessionState
-         scope = "Session"
-         sessionId = facts.SessionId
-         target = facts.Target
-         loadedProjects = facts.LoadedProjects
-         lifecycle = WorkerProtocol.SessionLifecycleStatus.label facts.ReconciledStatus
-         workerPid = WorkerProtocol.SessionLifecycleStatus.workerPid facts.ReconciledStatus
-         workerPort = WorkerProtocol.SessionLifecycleStatus.workerPort facts.ReconciledStatus
-         workflow = WorkflowTypes.SessionWorkflow.label facts.Workflow
-         coreVersion = facts.CoreVersion
-         evalCount = facts.EvalCount
-         averageDurationMs = facts.AverageDurationMs
-         health = facts.Health
-         available = Affordances.availableTools sessionState |})
+    object [
+      "state", text (stateLabelOf sessionState)
+      "scope", text "Session"
+      "sessionId", text facts.SessionId
+      "target", array targetValue facts.Target
+      "loadedProjects", strings facts.LoadedProjects
+      "lifecycle", text (WorkerProtocol.SessionLifecycleStatus.label facts.ReconciledStatus)
+      "workerPid", taggedOption integer (WorkerProtocol.SessionLifecycleStatus.workerPid facts.ReconciledStatus)
+      "workerPort", taggedOption integer (WorkerProtocol.SessionLifecycleStatus.workerPort facts.ReconciledStatus)
+      "workflow", text (WorkflowTypes.SessionWorkflow.label facts.Workflow)
+      "coreVersion", text facts.CoreVersion
+      "evalCount", integer facts.EvalCount
+      "averageDurationMs", signed facts.AverageDurationMs
+      "health", object [
+        "status", text (SessionHealth.label facts.Health)
+        "reason", taggedOption text (SessionHealth.reason facts.Health) ]
+      "available", strings (Affordances.availableTools sessionState) ]
+    |> render

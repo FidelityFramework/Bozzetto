@@ -7,7 +7,7 @@ open System.IO
 open System.Net.Http
 open System.Net
 open System.Net.Sockets
-open System.Text.Json
+open Fidelity.Data.JSON
 open System.Xml.Linq
 open Bozzetto
 open Bozzetto.Server
@@ -85,28 +85,18 @@ let tryParseSdkListLine (line: string) =
 /// Ok None when the document has no sdk.version (no pin). Follows the CLI
 /// resolver defaults: rollForward "patch", allowPrerelease true.
 let parseGlobalJsonSdkRequirement (json: string) =
-  try
-    use doc = JsonDocument.Parse(json)
-    let root = doc.RootElement
-    match root.TryGetProperty("sdk") with
-    | true, sdk when sdk.ValueKind = JsonValueKind.Object ->
-      let version =
-        match sdk.TryGetProperty("version") with
-        | true, v when v.ValueKind = JsonValueKind.String -> Some (v.GetString())
-        | _ -> None
-      let rollForward =
-        match sdk.TryGetProperty("rollForward") with
-        | true, rf when rf.ValueKind = JsonValueKind.String -> rf.GetString()
-        | _ -> "patch"
-      let allowPrerelease =
-        match sdk.TryGetProperty("allowPrerelease") with
-        | true, ap when ap.ValueKind = JsonValueKind.False -> false
-        | _ -> true
-      match version with
-      | Some version -> Ok (Some { Version = version; RollForward = rollForward; AllowPrerelease = allowPrerelease })
-      | None -> Ok None
+  match Json.parse json with
+  | Error reason -> Error reason
+  | Ok root ->
+    match HttpJson.property "sdk" root with
+    | Some (JsonValue.Object _ as sdk) ->
+      let text name = HttpJson.property name sdk |> Option.bind JsonValue.asString
+      let rollForward = text "rollForward" |> Option.defaultValue "patch"
+      let allowPrerelease = HttpJson.property "allowPrerelease" sdk <> Some (JsonValue.Bool false)
+      text "version"
+      |> Option.map (fun version -> { Version = version; RollForward = rollForward; AllowPrerelease = allowPrerelease })
+      |> Ok
     | _ -> Ok None
-  with ex -> Error ex.Message
 
 let private tryParseSdkVersion (v: string) =
   let dash = v.IndexOf('-')
@@ -622,15 +612,16 @@ let private tryGetDaemonSessions (mcpPort: int) =
     match response.IsSuccessStatusCode with
     | true ->
       let json = response.Content.ReadAsStringAsync().Result
-      use doc = JsonDocument.Parse(json)
-      let sessions =
-        doc.RootElement.GetProperty("sessions").EnumerateArray()
-        |> Seq.map (fun session ->
-          { Id = session.GetProperty("id").GetString() |> Option.ofObj |> Option.defaultValue ""
-            WorkingDirectory = session.GetProperty("workingDirectory").GetString() |> Option.ofObj |> Option.defaultValue ""
-            Status = session.GetProperty("status").GetString() |> Option.ofObj |> Option.defaultValue "" })
-        |> Seq.toList
-      Ok sessions
+      match Json.parse json |> Result.bind (fun root ->
+        match HttpJson.property "sessions" root with
+        | Some (JsonValue.Array rows) -> Ok rows
+        | _ -> Error "Daemon response has no sessions array.") with
+      | Error reason -> Error reason
+      | Ok rows ->
+        let read name row = HttpJson.property name row |> Option.bind JsonValue.asString |> Option.defaultValue ""
+        rows
+        |> List.map (fun row -> { Id = read "id" row; WorkingDirectory = read "workingDirectory" row; Status = read "status" row })
+        |> Ok
     | false ->
       Error (sprintf "Daemon returned HTTP %d from /api/sessions" (int response.StatusCode))
   with ex ->

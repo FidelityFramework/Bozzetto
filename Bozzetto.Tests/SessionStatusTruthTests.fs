@@ -135,8 +135,16 @@ let sessionStatusTruthTests = testList "session status tells the truth" [
       targets.GetArrayLength() |> Expect.equal "Exactly the requested target is reported." 1
       targets[0].GetProperty("type").GetString()
       |> Expect.equal "The worker wire codec preserves the target constructor." label
-      WorkerProtocol.Serialization.deserialize<SessionProjectTarget list>(targets.GetRawText())
-      |> Expect.equal "Target paths and bare intent survive the actual MCP response." [ target ]
+      match target with
+      | SessionProjectTarget.Bare ->
+        targets[0].EnumerateObject() |> Seq.map (fun property -> property.Name) |> Seq.toList
+        |> Expect.equal "Bare intent carries only its explicit constructor." [ "type" ]
+      | SessionProjectTarget.Project path
+      | SessionProjectTarget.Solution path ->
+        let fields = targets[0].GetProperty("value")
+        fields.GetArrayLength() |> Expect.equal "The target carries exactly one path." 1
+        fields[0].GetString()
+        |> Expect.equal "Target paths survive the actual MCP response verbatim." path
 
   testCase "WHY — a warming session must not report Ready, because agents gate on that field" <| fun _ ->
     let facts = callStatus warmingInfo

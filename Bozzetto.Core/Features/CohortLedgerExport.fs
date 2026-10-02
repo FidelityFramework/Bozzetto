@@ -6,37 +6,16 @@ open Bozzetto
 open Bozzetto.Cohort
 open Bozzetto.MemberTable
 
-/// Portable JSONL export/import of a cohort ledger (bozzetto-multiagent-vision.md
-/// §5.2, Phase 1 item 18a: the foundation of `boz record`/`play` — "For every
-/// checked-in Bozzetto.Tests/cohorts/*.ledger.jsonl, replaying the recorded
-/// commands reconstructs the same state").
-///
-/// One self-contained JSON object per line, using the SAME
-/// `JsonFSharpConverter`-configured codec `Bozzetto/CohortLedger.fs` (the SQLite
-/// port) already proves round-trips every `CohortCommand`/`CohortEvent` DU
-/// shape (`WorkerProtocol.Serialization`). Serializing the WHOLE
-/// `LedgerEntry<MemberId>` per line — rather than a hand-rolled line record —
-/// was verified lossless (`CohortLedgerExportTests.fs`'s round-trip property)
-/// because none of `LedgerEntry`'s three "tricky" fields need special handling
-/// through this codec:
-/// - `Seq: int64<ledgerSeq>` erases to a plain `System.Int64` at runtime (units
-///   of measure are compile-time only), so it serializes as an ordinary JSON
-///   number and deserializes back into the measured field with no converter.
-/// - `Clock: DateTime` round-trips through System.Text.Json's default ISO-8601
-///   converter, which preserves `DateTimeKind` (ledger clocks are always UTC).
-/// - `Entropy: byte[]` round-trips as a base64 string, System.Text.Json's
-///   default `byte[]` encoding.
-///
-/// So this module stays a thin, honest wrapper: no bespoke wire schema to keep
-/// in sync with `Cohort.fs`, no second place a new `CohortCommand`/
-/// `CohortEvent` case has to be taught to serialize.
+/// Portable JSONL export/import of the cohort ledger. CohortJson owns the
+/// explicit, version-compatible command/event schema shared with SQLite.
+/// Import refuses a malformed line without silently dropping recorded work.
 module CohortLedgerExport =
 
   /// One `LedgerEntry<MemberId>` per line, `\n`-separated. No file IO here —
   /// `exportToFile` below is the thin wrapper for that.
   let toJsonl (entries: LedgerEntry<MemberId> list) : string =
     entries
-    |> List.map WorkerProtocol.Serialization.serialize<LedgerEntry<MemberId>>
+    |> List.map CohortJson.entryToJson
     |> String.concat "\n"
 
   /// Fail closed (never silently drops a bad line): splits on `\n`, skips
@@ -58,11 +37,9 @@ module CohortLedgerExport =
           match acc with
           | Error _ -> acc
           | Ok entries ->
-            try
-              let entry = WorkerProtocol.Serialization.deserialize<LedgerEntry<MemberId>> (line.Trim())
-              Ok(entry :: entries)
-            with ex ->
-              Error(sprintf "line %d: %s" lineNo ex.Message))
+            match CohortJson.entryFromJson (line.Trim()) with
+            | Ok entry -> Ok(entry :: entries)
+            | Error reason -> Error(sprintf "line %d: %s" lineNo reason))
         (Ok [])
       |> Result.map List.rev
 

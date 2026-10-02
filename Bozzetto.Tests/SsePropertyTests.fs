@@ -15,10 +15,7 @@ open Bozzetto.Features.EvalTimeline
 
 // ── JSON options matching daemon configuration ──
 
-let private jsonOpts =
-  let opts = JsonSerializerOptions(PropertyNamingPolicy = JsonNamingPolicy.CamelCase)
-  opts.Converters.Add(JsonFSharpConverter())
-  opts
+let private jsonOpts = Bozzetto.JsonCasing.CamelCase
 
 let private propConfig = { FsCheckConfig.defaultConfig with maxTest = 100 }
 

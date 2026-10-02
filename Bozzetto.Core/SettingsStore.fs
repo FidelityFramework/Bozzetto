@@ -2,7 +2,7 @@ namespace Bozzetto
 
 open System
 open System.IO
-open System.Text.Json
+open Fidelity.Data.JSON
 
 /// Persistence for the settings layers (unified-settings-design.md §2.3).
 /// A layer file is a flat, machine-safe JSON object of `key -> rendered raw
@@ -37,9 +37,11 @@ module SettingsStore =
       | false -> Map.empty
       | true ->
         let json = File.ReadAllText path
-        match JsonSerializer.Deserialize<Collections.Generic.Dictionary<string, string>>(json) with
-        | null -> Map.empty
-        | dict -> dict |> Seq.map (fun kv -> kv.Key, kv.Value) |> Map.ofSeq
+        match Json.parse json with
+        | Ok (JsonValue.Object properties) ->
+          let values = properties |> List.choose (function key, JsonValue.String value -> Some(key, value) | _ -> None)
+          if values.Length = properties.Length then Map.ofList values else Map.empty
+        | _ -> Map.empty
     with _ -> Map.empty
 
   /// Atomically replace a layer file with `m` (tmp + move), creating the
@@ -50,10 +52,8 @@ module SettingsStore =
       match String.IsNullOrEmpty dir || Directory.Exists dir with
       | true -> ()
       | false -> Directory.CreateDirectory dir |> ignore
-      let dict = Collections.Generic.Dictionary<string, string>()
-      for KeyValue(k, v) in m do
-        dict.[k] <- v
-      let json = JsonSerializer.Serialize(dict, JsonSerializerOptions(WriteIndented = true))
+      let json = m |> Map.toList |> List.map (fun (key, value) -> key, JsonValue.String value)
+                   |> JsonValue.Object |> Json.serializePretty
       let tmp = path + ".tmp"
       File.WriteAllText(tmp, json)
       File.Move(tmp, path, true)

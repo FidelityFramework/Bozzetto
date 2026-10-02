@@ -3,7 +3,7 @@ module Bozzetto.Server.McpServer
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
-open System.Text.Json
+open Fidelity.Data.JSON
 open System.Threading
 open System.Threading.Channels
 open System.Threading.Tasks
@@ -108,15 +108,12 @@ type McpServerTracker() =
 
   /// Broadcast a structured logging notification to all connected MCP clients.
   /// Sends to all clients in parallel with a 500ms per-send timeout.
-  member _.NotifyLogAsync(level: LoggingLevel, logger: string, data: obj) =
+  member _.NotifyLogAsync(level: LoggingLevel, logger: string, data: JsonValue) =
     task {
       match servers.IsEmpty with
       | true -> return ()
       | false ->
-        let jsonElement =
-          let json = JsonSerializer.Serialize(data)
-          use doc = JsonDocument.Parse(json)
-          doc.RootElement.Clone()
+        let jsonElement = McpProtocolJson.toElement data
         let snapshot = servers |> Seq.map (fun kvp -> kvp.Key, kvp.Value) |> Seq.toArray
         let! results =
           snapshot
@@ -287,9 +284,7 @@ let structuredToolErrorResult (err: BozzettoError) : CallToolResult =
   let result = CallToolResult()
   result.IsError <- Nullable true
   result.Content.Add(TextContentBlock(Text = BozzettoError.describeForAgent err))
-  let json = JsonSerializer.Serialize(BozzettoError.toJson err)
-  use doc = JsonDocument.Parse(json)
-  result.StructuredContent <- Nullable(doc.RootElement.Clone())
+  result.StructuredContent <- Nullable(BozzettoError.toJsonValue err |> McpProtocolJson.toElement)
   result
 
 /// CallToolFilter that captures the McpServer and appends accumulated events
@@ -432,11 +427,9 @@ let createServerCaptureFilter (mcpCtx: McpContext) (tracker: McpServerTracker) =
             | null -> None
             | args ->
               match args.TryGetValue("working_directory") with
-              | true, v when v.ValueKind = System.Text.Json.JsonValueKind.String ->
-                let s = v.GetString()
-                match String.IsNullOrWhiteSpace s with
-                | true -> None
-                | false -> Some s
+              | true, value ->
+                McpProtocolJson.ofElement value |> JsonValue.asString
+                |> Option.filter (String.IsNullOrWhiteSpace >> not)
               | _ -> None
           return!
             Bozzetto.McpTools.enforceToolCallGate
@@ -485,10 +478,10 @@ exception RequestTooLarge
 let private maxRequestBodyBytes = 4_194_304L
 
 /// Write a JSON response with the given status code.
-let jsonResponse (ctx: Microsoft.AspNetCore.Http.HttpContext) (statusCode: int) (data: obj) = task {
+let jsonResponse (ctx: Microsoft.AspNetCore.Http.HttpContext) (statusCode: int) (data: JsonValue) = task {
   ctx.Response.StatusCode <- statusCode
   ctx.Response.ContentType <- "application/json"
-  let json = System.Text.Json.JsonSerializer.Serialize(data)
+  let json = Json.serialize data
   do! ctx.Response.Body.WriteAsync(System.Text.Encoding.UTF8.GetBytes(json))
 }
 
@@ -502,10 +495,11 @@ let rawJsonResponse (ctx: Microsoft.AspNetCore.Http.HttpContext) (json: string) 
 /// parseOutcome reads it via fieldString), `errorDetails` carries the full
 /// BozzettoError algebra (case/message/suggestedAction) for agents and logs.
 let structuredErrorBody (err: BozzettoError) =
-  let details = BozzettoError.toJson err
-  box {| success = false
-         error = BozzettoError.describe err
-         errorDetails = details |}
+  JsonValue.Object [
+    "success", JsonValue.Bool false
+    "error", JsonValue.String (BozzettoError.describe err)
+    "errorDetails", BozzettoError.toJsonValue err
+  ]
 
 /// Build the structured body for an unexpected exception, logging the full
 /// details server-side while the wire carries the algebra-safe description.
@@ -521,7 +515,7 @@ let unexpectedErrorBody (ex: exn) =
 let respondIO
     (ctx: Microsoft.AspNetCore.Http.HttpContext)
     (okStatus: int)
-    (okBody: 'a -> obj)
+    (okBody: 'a -> JsonValue)
     (io: BozzettoIO<'a>) : Task =
   task {
     let! result = io
@@ -531,7 +525,7 @@ let respondIO
   } :> Task
 
 let private writeRequestTooLargeResponse (ctx: Microsoft.AspNetCore.Http.HttpContext) = task {
-  do! jsonResponse ctx 413 {| success = false; error = "Request body too large" |}
+  do! jsonResponse ctx 413 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("Request body too large") ])
 }
 
 /// Read JSON body and extract a string property, with fallback to raw body.
@@ -550,12 +544,9 @@ let readJsonProp (ctx: Microsoft.AspNetCore.Http.HttpContext) (prop: string) = t
     raise RequestTooLarge
     return null  // unreachable
   | false ->
-  try
-    use json = System.Text.Json.JsonDocument.Parse(body)
-    match json.RootElement.TryGetProperty(prop) with
-    | true, v -> return v.GetString()
-    | _ -> return body
-  with :? System.Text.Json.JsonException -> return body
+  match Json.parse body with
+  | Ok json -> return HttpJson.stringProperty prop json |> Option.defaultValue body
+  | Error _ -> return body
 }
 
 /// Read and validate a sessionId from JSON body. Returns 400 on invalid format.
@@ -564,7 +555,7 @@ let readValidatedSessionId (ctx: Microsoft.AspNetCore.Http.HttpContext) = task {
   match Bozzetto.WorkerProtocol.SessionId.validate raw with
   | Ok sid -> return Some sid
   | Error msg ->
-    do! jsonResponse ctx 400 {| success = false; error = msg |}
+    do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (msg) ])
     return None
 }
 
@@ -582,8 +573,8 @@ let withErrorHandling (ctx: Microsoft.AspNetCore.Http.HttpContext) (handler: uni
   try do! handler ()
   with
   | RequestTooLarge -> ()  // 413 already committed — do not write a second response
-  | :? System.Text.Json.JsonException as je ->
-    do! jsonResponse ctx 400 (structuredErrorBody (BozzettoError.JsonParseError ("request body", je.Message)))
+  | HttpJson.InvalidJson reason ->
+    do! jsonResponse ctx 400 (structuredErrorBody (BozzettoError.JsonParseError ("request body", reason)))
   | ex ->
     do! jsonResponse ctx 500 (unexpectedErrorBody ex)
 }
@@ -597,10 +588,10 @@ let errorHandlingMiddleware (ctx: Microsoft.AspNetCore.Http.HttpContext) (next: 
     do! next.Invoke()
   with
   | RequestTooLarge -> ()  // 413 already committed — do not write a second response
-  | :? System.Text.Json.JsonException as je ->
+  | HttpJson.InvalidJson reason ->
     match ctx.Response.HasStarted with
     | true -> ()  // SSE or streaming response already committed
-    | false -> do! jsonResponse ctx 400 (structuredErrorBody (BozzettoError.JsonParseError ("request body", je.Message)))
+    | false -> do! jsonResponse ctx 400 (structuredErrorBody (BozzettoError.JsonParseError ("request body", reason)))
   | ex ->
     match ctx.Response.HasStarted with
     | true -> ()  // SSE or streaming response already committed
@@ -658,7 +649,7 @@ let originGuardMiddleware
     let reason = Bozzetto.Server.HttpOriginGuard.Rejection.describe rejection
     Log.warn "[origin-guard] rejected %s %s (%s)" ctx.Request.Method (string ctx.Request.Path) reason
     let status = Bozzetto.Server.HttpOriginGuard.Rejection.statusCode rejection
-    do! jsonResponse ctx status {| success = false; error = sprintf "Request rejected: %s" reason |}
+    do! jsonResponse ctx status (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (sprintf "Request rejected: %s" reason) ])
 }
 
 /// Install the origin gate on a daemon web host (MCP and dashboard share it).
@@ -672,7 +663,7 @@ let readJsonBody (ctx: Microsoft.AspNetCore.Http.HttpContext) = task {
   | contentLength when contentLength.HasValue && contentLength.Value > maxRequestBodyBytes ->
     do! writeRequestTooLargeResponse ctx
     raise RequestTooLarge
-    return System.Text.Json.JsonDocument.Parse("null")  // unreachable
+    return JsonValue.Null  // unreachable
   | _ ->
   use reader = new System.IO.StreamReader(ctx.Request.Body)
   let! body = reader.ReadToEndAsync()
@@ -680,27 +671,18 @@ let readJsonBody (ctx: Microsoft.AspNetCore.Http.HttpContext) = task {
   | true ->
     do! writeRequestTooLargeResponse ctx
     raise RequestTooLarge
-    return System.Text.Json.JsonDocument.Parse("null")  // unreachable
+    return JsonValue.Null  // unreachable
   | false ->
-  return System.Text.Json.JsonDocument.Parse(body)
+  return HttpJson.parse body
 }
 
-let tryGetJsonStringAliases (root: System.Text.Json.JsonElement) (names: string list) =
-  let normalize value =
-    match String.IsNullOrWhiteSpace value with
-    | true -> None
-    | false -> Some value
-
-  names
-  |> List.tryPick (fun name ->
-    match root.TryGetProperty(name) with
-    | true, prop ->
-      match prop.ValueKind with
-      | JsonValueKind.Null
-      | JsonValueKind.Undefined -> None
-      | JsonValueKind.String -> prop.GetString() |> normalize
-      | _ -> prop.ToString() |> normalize
-    | false, _ -> None)
+let tryGetJsonStringAliases (root: JsonValue) (names: string list) =
+  names |> List.tryPick (fun name ->
+    match HttpJson.property name root with
+    | None | Some JsonValue.Null -> None
+    | Some value ->
+      let text = match value with JsonValue.String text -> text | _ -> Json.serialize value
+      if String.IsNullOrWhiteSpace text then None else Some text)
 
 /// Read the `workflow` string from a `POST /api/sessions/{sid}/workflow`
 /// body. Aliases mirror `create_session`'s own `workflow` argument so the
@@ -713,28 +695,22 @@ let tryReadWorkflowRequest (ctx: Microsoft.AspNetCore.Http.HttpContext) = task {
   | contentLength when not contentLength.HasValue || contentLength.Value <= 0L -> return None
   | _ ->
     try
-      use! doc = readJsonBody ctx
-      return tryGetJsonStringAliases doc.RootElement [ "workflow"; "targetWorkflow"; "target_workflow" ]
+      let! doc = readJsonBody ctx
+      return tryGetJsonStringAliases doc [ "workflow"; "targetWorkflow"; "target_workflow" ]
     with _ ->
       return None
 }
 
-let tryGetJsonIntAliases (root: System.Text.Json.JsonElement) (names: string list) =
-  names
-  |> List.tryPick (fun name ->
-    match root.TryGetProperty(name) with
-    | true, prop ->
-      match prop.ValueKind with
-      | JsonValueKind.Number ->
-        match prop.TryGetInt32() with
-        | true, value -> Some value
-        | false, _ -> None
-      | JsonValueKind.String ->
-        match Int32.TryParse(prop.GetString()) with
-        | true, value -> Some value
-        | false, _ -> None
-      | _ -> None
-    | false, _ -> None)
+let tryGetJsonIntAliases (root: JsonValue) (names: string list) =
+  names |> List.tryPick (fun name ->
+    match HttpJson.property name root with
+    | Some (JsonValue.String text) ->
+      match Int32.TryParse text with true, value -> Some value | _ -> None
+    | Some value ->
+      JsonValue.tryAsInt64 value
+      |> Option.filter (fun value -> value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue)
+      |> Option.map int
+    | None -> None)
 
 /// Write an SSE frame to a stream (awaitable — use in task{} CEs).
 let writeSseFrame (body: System.IO.Stream) (frame: string) = task {
@@ -835,7 +811,7 @@ let private mkContext (cfg: McpServerConfig) (stateChangedStr: IEvent<string> op
 type SseContext = {
   GetElmModel: (unit -> Bozzetto.BozzettoModel) option
   GetWarmupContext: (string -> Task<Bozzetto.WarmupContext option>) option
-  SseJsonOpts: JsonSerializerOptions
+  SseJsonOpts: JsonCasing
   TestEventBroadcast: Event<string>
   SessionEventBroadcast: Event<string>
   ServerTracker: McpServerTracker
@@ -1266,7 +1242,7 @@ let wireSessionHealthSubscription
 /// the dashboard's own update.
 let wrapLiveSnapshotSinkForSse
   (sessionEventBroadcast: Event<string>)
-  (sseJsonOpts: JsonSerializerOptions)
+  (sseJsonOpts: JsonCasing)
   (inner: (string -> Bozzetto.Features.LiveValueTree.LiveValueSnapshot -> unit) option)
   : (string -> Bozzetto.Features.LiveValueTree.LiveValueSnapshot -> unit) option =
   inner |> Option.map (fun sink ->
@@ -1385,15 +1361,17 @@ let wireModelChangeHandlers
               lt.TestState.Activation
               (LiveTestState.statusEntriesForSession sidStr lt.TestState
                |> Array.map (fun e -> e.Status))
-          System.Text.Json.JsonSerializer.Serialize(
-            {| Enabled = lt.TestState.Activation = LiveTestingActivation.Active
-               IsRunning = TestRunPhase.isAnyRunning lt.TestState.RunPhases
-               Summary = {| Total = summary.Total; Passed = summary.Passed; Failed = summary.Failed
-                            Running = summary.Running; Stale = summary.Stale |} |}, ctx.SseJsonOpts)
+          WireJson.objectValue ctx.SseJsonOpts [
+            "Enabled", JsonValue.Bool (lt.TestState.Activation = LiveTestingActivation.Active)
+            "IsRunning", JsonValue.Bool (TestRunPhase.isAnyRunning lt.TestState.RunPhases)
+            "Summary", WireJson.objectValue ctx.SseJsonOpts [
+              "Total", HttpJson.integer summary.Total
+              "Passed", HttpJson.integer summary.Passed
+              "Failed", HttpJson.integer summary.Failed
+              "Running", HttpJson.integer summary.Running
+              "Stale", HttpJson.integer summary.Stale ] ]
+          |> Json.serialize
         with
-        | :? System.Text.Json.JsonException as ex ->
-          Log.error "[MCP] Test trace serialization error: %s\n%s" ex.Message (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
-          ""
         | ex ->
           Log.error "[MCP] Test trace unexpected error: %s (%s)\n%s" ex.Message (ex.GetType().Name) (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
           ""
@@ -1658,19 +1636,19 @@ let wireModelChangeHandlers
         | true ->
           try
             let data =
-              {| event = "state_changed"
-                 diagCount = diagCount
-                 outputCount = outputCount |}
+              JsonValue.Object [ "event", JsonValue.String "state_changed"
+                                 "diagCount", HttpJson.integer diagCount
+                                 "outputCount", HttpJson.integer outputCount ]
             ctx.ServerTracker.NotifyLogAsync(
               LoggingLevel.Info, "bozzetto.state", data) |> ignore
           with
-          | :? System.Text.Json.JsonException as jex ->
-            Log.warn "[MCP] State notification JSON error (non-fatal): %s\n%s" jex.Message (jex.StackTrace |> Option.ofObj |> Option.defaultValue "")
+          | HttpJson.InvalidJson reason ->
+            Log.warn "[MCP] State notification JSON error (non-fatal): %s" reason
         | false -> ()
       with
       | :? System.IO.IOException | :? ObjectDisposedException -> ()
-      | :? System.Text.Json.JsonException as jex ->
-        Log.warn "[MCP] State change JSON error (non-fatal): %s\n%s" jex.Message (jex.StackTrace |> Option.ofObj |> Option.defaultValue "")
+      | HttpJson.InvalidJson reason ->
+        Log.warn "[MCP] State change JSON error (non-fatal): %s" reason
       | ex -> Log.error "[MCP] State change handler error: %s\n%s" ex.Message (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
     | SseEvent.SystemAlarm (phase, msg) ->
       // Daemon-level alarm — no single owning session, so every caller sees it.
@@ -1869,24 +1847,16 @@ let logStartup (app: WebApplication) (port: int) (logPath: string) (otelConfigur
 let mapExecutionRoutes (app: WebApplication) (rctx: RouteContext) =
   app.MapPost("/exec", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
-      use! json = readJsonBody ctx
-      let code = json.RootElement.GetProperty("code").GetString()
+      let! json = readJsonBody ctx
+      let code = HttpJson.requiredStringProperty "code" json
       let wd =
-        match json.RootElement.TryGetProperty("working_directory") with
-        | true, prop -> Some (prop.GetString())
-        | false, _ -> None
+        HttpJson.stringProperty "working_directory" json
       let filePath =
-        match json.RootElement.TryGetProperty("file_path") with
-        | true, prop -> Some (prop.GetString())
-        | false, _ -> None
+        HttpJson.stringProperty "file_path" json
       let evalMode =
-        match json.RootElement.TryGetProperty("eval_mode") with
-        | true, prop -> Some (prop.GetString())
-        | false, _ -> None
+        HttpJson.stringProperty "eval_mode" json
       let blockStartLine =
-        match json.RootElement.TryGetProperty("block_start_line") with
-        | true, prop -> Some (prop.GetInt32())
-        | false, _ -> None
+        tryGetJsonIntAliases json [ "block_start_line" ]
       // Notify editor plugins that eval is starting so they can mark decorations stale
       let sid = SseContext.activeSessionId rctx.SseContext
       let evalFp, evalBsl =
@@ -1960,8 +1930,8 @@ let mapExecutionRoutes (app: WebApplication) (rctx: RouteContext) =
       | Bozzetto.McpTools.Evaluated hadError ->
         let body =
           match hadError with
-          | false -> {| success = true; result = result |} :> obj
-          | true -> {| success = false; result = result; error = result |} :> obj
+          | false -> HttpJson.result true "result" result
+          | true -> JsonValue.Object [ "success", JsonValue.Bool false; "result", JsonValue.String result; "error", JsonValue.String result ]
         do! jsonResponse ctx 200 body
       | Bozzetto.McpTools.InfraFailure err ->
         do! jsonResponse ctx (BozzettoError.toHttpStatus err) (structuredErrorBody err)
@@ -1971,22 +1941,17 @@ let mapExecutionRoutes (app: WebApplication) (rctx: RouteContext) =
     task {
       let! result = Bozzetto.McpTools.resetSessionResult rctx.McpContext "http" None None
       match result with
-      | Ok message -> do! jsonResponse ctx 200 {| success = true; message = message |}
+      | Ok message -> do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "message", JsonValue.String (message) ])
       | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (structuredErrorBody err)
     } :> Task
   ) |> ignore
   app.MapPost("/hard-reset", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
-      use! json = readJsonBody ctx
-      let rebuild =
-        try
-          match json.RootElement.TryGetProperty("rebuild") with
-          | true, prop -> prop.GetBoolean()
-          | false, _ -> false
-        with :? System.Text.Json.JsonException -> false
+      let! json = readJsonBody ctx
+      let rebuild = HttpJson.property "rebuild" json = Some (JsonValue.Bool true)
       let! result = Bozzetto.McpTools.hardResetSessionResult rctx.McpContext "http" rebuild None None
       match result with
-      | Ok message -> do! jsonResponse ctx 200 {| success = true; message = message |}
+      | Ok message -> do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "message", JsonValue.String (message) ])
       | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (structuredErrorBody err)
     } :> Task
   ) |> ignore
@@ -1994,7 +1959,7 @@ let mapExecutionRoutes (app: WebApplication) (rctx: RouteContext) =
     task {
       let! result = Bozzetto.McpTools.cancelEvalResult rctx.McpContext "http" None
       match result with
-      | Ok message -> do! jsonResponse ctx 200 {| received = true; message = message |}
+      | Ok message -> do! jsonResponse ctx 200 (JsonValue.Object [ "received", JsonValue.Bool (true); "message", JsonValue.String (message) ])
       | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (structuredErrorBody err)
     } :> Task
   ) |> ignore
@@ -2002,18 +1967,16 @@ let mapExecutionRoutes (app: WebApplication) (rctx: RouteContext) =
     task {
       let! result = Bozzetto.McpTools.cancelEvalResult rctx.McpContext "http" None
       match result with
-      | Ok message -> do! jsonResponse ctx 200 {| received = true; message = message |}
+      | Ok message -> do! jsonResponse ctx 200 (JsonValue.Object [ "received", JsonValue.Bool (true); "message", JsonValue.String (message) ])
       | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (structuredErrorBody err)
     } :> Task
   ) |> ignore
   app.MapPost("/load-script", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
-      use! json = readJsonBody ctx
-      let filePath = json.RootElement.GetProperty("path").GetString()
+      let! json = readJsonBody ctx
+      let filePath = HttpJson.requiredStringProperty "path" json
       let sessionIdOpt =
-        match json.RootElement.TryGetProperty("sessionId") with
-        | true, prop -> Option.ofObj (prop.GetString())
-        | _ -> None
+        HttpJson.stringProperty "sessionId" json
       // W6: Use the requested session's workdir, not just List.tryHead (wrong in multi-session).
       // W1: resolve both file and directory symlinks via ResolveLinkTarget(returnFinalTarget=true).
       let! workingDir = task {
@@ -2046,11 +2009,11 @@ let mapExecutionRoutes (app: WebApplication) (rctx: RouteContext) =
             || canonical.Equals(canonicalDir, System.StringComparison.OrdinalIgnoreCase))
       match isContained with
       | false ->
-        do! jsonResponse ctx 403 {| success = false; error = "Path is outside the session working directory" |}
+        do! jsonResponse ctx 403 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("Path is outside the session working directory") ])
       | true ->
       let! result = Bozzetto.McpTools.loadFSharpScriptResult rctx.McpContext "http" canonical None None
       match result with
-      | Ok message -> do! jsonResponse ctx 200 {| received = true; message = message |}
+      | Ok message -> do! jsonResponse ctx 200 (JsonValue.Object [ "received", JsonValue.Bool (true); "message", JsonValue.String (message) ])
       | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (structuredErrorBody err)
     } :> Task
   ) |> ignore
@@ -2292,11 +2255,12 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
           match isFaultedOrStopped, s.faultReason with
           | true, Some reason when reason <> "" ->
             let err = BozzettoError.WorkerCommunicationFailed (s.id, reason)
-            Some (box {| message = BozzettoError.describe err
-                         suggestedAction = BozzettoError.suggestedAction err
-                         errorDetails = BozzettoError.toJson err |})
+            Some (JsonValue.Object [
+              "message", JsonValue.String (BozzettoError.describe err)
+              "suggestedAction", JsonValue.String (BozzettoError.suggestedAction err)
+              "errorDetails", BozzettoError.toJsonValue err ])
           | _ -> None)
-        |> Option.defaultValue (null :> obj)
+        |> Option.defaultValue JsonValue.Null
       // What the daemon's own telemetry says about the daemon. Without this
       // a client sees `healthy` flip with nothing to explain it, which is
       // the silence the detector exists to end: say which signal, what
@@ -2328,49 +2292,41 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
       let componentFailures = Bozzetto.Features.ComponentWatch.current ()
       let healthy = healthy && overall <> Bozzetto.Features.OverallHealth.Unhealthy && List.isEmpty componentFailures
       do! jsonResponse ctx 200
-            {| healthy = healthy
-               status = sessionStatus
-               overall = Bozzetto.Features.DaemonHealth.healthLabel overall
-               componentFailures =
-                 componentFailures
-                 |> List.map (fun f -> {| name = f.Component; reason = f.Reason; hint = f.Hint |})
-                 |> List.toArray
-               anomalies = anomalies
-               memoryMB = healthSnapshot.MemoryMB
-               // The level-based judgment (§ HealthSnapshot.MemoryPressure's
-               // doc comment): "normal"/"tight"/"critical" against the
-               // MACHINE's available memory, independent of whether
-               // `anomalies` above has anything to say about shape.
-               memoryPressure = Bozzetto.MemoryPressure.describe healthSnapshot.MemoryPressure
-               memoryPressureNote = Bozzetto.MemoryPressure.explain healthSnapshot.MemoryPressure
-               error = sessionError
-               version = version
-               apiVersion = Bozzetto.EndpointContracts.apiVersion
-               features = [ "live-testing"; "coverage-intel"; "impact-forecast"; "action-prioritizer"; "mark-all-stale"; "time-travel" ]
-               // These compatibility fields describe the inherited F# host,
-               // not the independent Composer session projection.
-               sessionProvider = "fsharp"
-               sessionCount = sessionStates.Length
-               sessionStates = sessionStates
-               diagnosticSummary = diagnosticSummary
-               // Issue #136: is THIS daemon stale against what's published on
-               // NuGet? Read with no IO of its own (Bozzetto.DaemonMode's
-               // periodic background check keeps it fresh) — silent
-               // ("unknown") unless the last completed check actually found
-               // a newer release, never a false "current" from a check that
-               // was skipped or failed.
-               updateCheck =
-                 match Bozzetto.UpdateCheckService.currentOutcome () with
-                 | Bozzetto.UpdateOutcome.UpdateAvailable(current, latest, behind) ->
-                   box
-                     {| status = "behind"
-                        current = current.ToString()
-                        latest = latest.ToString()
-                        behind = behind
-                        message = Bozzetto.UpdateCheck.describe (Bozzetto.UpdateOutcome.UpdateAvailable(current, latest, behind)) |> Option.defaultValue "" |}
-                 | Bozzetto.UpdateOutcome.UpToDate current -> box {| status = "current"; current = current.ToString() |}
-                 | Bozzetto.UpdateOutcome.CheckSkipped _
-                 | Bozzetto.UpdateOutcome.CheckFailed _ -> box {| status = "unknown" |} |}
+            (JsonValue.Object [
+              "healthy", JsonValue.Bool healthy
+              "status", JsonValue.String sessionStatus
+              "overall", JsonValue.String (Bozzetto.Features.DaemonHealth.healthLabel overall)
+              "componentFailures", componentFailures |> List.map (fun f -> JsonValue.Object [
+                "name", JsonValue.String f.Component; "reason", JsonValue.String f.Reason; "hint", JsonValue.String f.Hint ]) |> JsonValue.Array
+              "anomalies", anomalies |> Array.map (fun a -> JsonValue.Object [
+                "signal", JsonValue.String a.signal; "state", JsonValue.String a.state; "message", JsonValue.String a.message
+                "observedValue", JsonValue.Number a.observedValue
+                "baselineMean", JsonValue.Number a.baselineMean
+                "baselineStdDev", JsonValue.Number a.baselineStdDev
+                "deviationInSigmas", JsonValue.Number a.deviationInSigmas
+                "sustainedForSeconds", JsonValue.Number a.sustainedForSeconds
+                "samplesSustained", HttpJson.integer a.samplesSustained ]) |> Array.toList |> JsonValue.Array
+              "memoryMB", HttpJson.integer healthSnapshot.MemoryMB
+              "memoryPressure", JsonValue.String (Bozzetto.MemoryPressure.describe healthSnapshot.MemoryPressure)
+              "memoryPressureNote", JsonValue.String (Bozzetto.MemoryPressure.explain healthSnapshot.MemoryPressure)
+              "error", sessionError
+              "version", JsonValue.String version
+              "apiVersion", HttpJson.integer Bozzetto.EndpointContracts.apiVersion
+              "features", HttpJson.strings [ "live-testing"; "coverage-intel"; "impact-forecast"; "action-prioritizer"; "mark-all-stale"; "time-travel" ]
+              "sessionProvider", JsonValue.String "fsharp"
+              "sessionCount", HttpJson.integer sessionStates.Length
+              "sessionStates", sessionStates |> Array.map (fun row -> JsonValue.Object [
+                "id", JsonValue.String row.id
+                "projectName", JsonValue.String row.projectName
+                "status", JsonValue.String row.status
+                "health", JsonValue.Object [ "status", JsonValue.String row.health.status; "reason", HttpJson.optional JsonValue.String row.health.reason ]
+                "faultReason", HttpJson.optional JsonValue.String row.faultReason
+                "workingDirectory", JsonValue.String row.workingDirectory
+                "workerPid", HttpJson.optional HttpJson.integer row.workerPid
+                "lastActivity", WireJson.timestamp row.lastActivity
+                "workflowLabel", JsonValue.String row.workflowLabel ]) |> Array.toList |> JsonValue.Array
+              "diagnosticSummary", JsonValue.String diagnosticSummary
+              "updateCheck", JsonValue.Object [ "status", JsonValue.String "managed_distribution" ] ])
     }) :> Task
   ) |> ignore
   app.MapGet("/diag/threadpool", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
@@ -2387,15 +2343,16 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
       let pending = System.Threading.ThreadPool.PendingWorkItemCount
       let threadCount = System.Threading.ThreadPool.ThreadCount
       do! jsonResponse ctx 200
-            {| available = workerThreads.Value
-               max = maxWorkerThreads.Value
-               min = minWorkerThreads.Value
-               pending = pending
-               threadCount = threadCount
-               completionPort =
-                 {| available = completionPortThreads.Value
-                    max = maxCompletionPortThreads.Value
-                    min = minCompletionPortThreads.Value |} |}
+            (JsonValue.Object [
+              "available", HttpJson.integer workerThreads.Value
+              "max", HttpJson.integer maxWorkerThreads.Value
+              "min", HttpJson.integer minWorkerThreads.Value
+              "pending", JsonValue.ofInt64 pending
+              "threadCount", HttpJson.integer threadCount
+              "completionPort", JsonValue.Object [
+                "available", HttpJson.integer completionPortThreads.Value
+                "max", HttpJson.integer maxCompletionPortThreads.Value
+                "min", HttpJson.integer minCompletionPortThreads.Value ] ])
     } :> Task
   ) |> ignore
   app.MapGet("/version", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
@@ -2408,12 +2365,13 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
         |> Option.map (fun a -> (a :?> System.Reflection.AssemblyInformationalVersionAttribute).InformationalVersion)
         |> Option.defaultValue (string v)
       do! jsonResponse ctx 200
-            {| version = infoVersion
-               protocolVersion = 1
-               apiVersion = Bozzetto.EndpointContracts.apiVersion
-               server = "bozzetto"
-               mcp = true
-               sse = true |}
+            (JsonValue.Object [
+              "version", JsonValue.String infoVersion
+              "protocolVersion", HttpJson.integer 1
+              "apiVersion", HttpJson.integer Bozzetto.EndpointContracts.apiVersion
+              "server", JsonValue.String "bozzetto"
+              "mcp", JsonValue.Bool true
+              "sse", JsonValue.Bool true ])
     } :> Task
   ) |> ignore
 
@@ -2422,7 +2380,7 @@ let mapDiagnosticsRoutes (app: WebApplication) (rctx: RouteContext) =
     task {
       let! code = readJsonProp ctx "code"
       let! _ = Bozzetto.McpTools.checkFSharpCode rctx.McpContext "http" code None None
-      do! jsonResponse ctx 202 {| accepted = true |}
+      do! jsonResponse ctx 202 (JsonValue.Object [ "accepted", JsonValue.Bool (true) ])
     } :> Task
   ) |> ignore
   app.MapGet("/diagnostics", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
@@ -2444,24 +2402,23 @@ let mapDiagnosticsRoutes (app: WebApplication) (rctx: RouteContext) =
     task {
       let cohort = Bozzetto.LocalData.liveCohort rctx.McpContext.CohortOwner
       let report = Bozzetto.LocalData.report rctx.McpContext.FrictionStore cohort DaemonState.BozzettoDir
-      do! jsonResponse ctx 200 (Bozzetto.LocalData.toJson report)
+      do! jsonResponse ctx 200 (Bozzetto.LocalData.toJsonValue report)
     } :> Task
   ) |> ignore
   // ?store=friction|cohort|all (default all). A running cohort's ledger is left alone.
   app.MapPost("/api/local-data/clear", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
       match Bozzetto.LocalData.ClearTarget.parse (string ctx.Request.Query["store"]) with
-      | Error message -> do! jsonResponse ctx 400 {| success = false; error = message |}
+      | Error message -> do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (message) ])
       | Ok target ->
         let cohort = Bozzetto.LocalData.liveCohort rctx.McpContext.CohortOwner
         let results = Bozzetto.LocalData.clear target rctx.McpContext.FrictionStore cohort DaemonState.BozzettoDir
         do! jsonResponse ctx 200
-              {| success = true
-                 results =
-                   results
-                   |> List.map (fun (store, outcome) ->
-                     {| store = Bozzetto.LocalData.LocalStore.fileName store
-                        outcome = Bozzetto.LocalData.renderClear [ store, outcome ] |}) |}
+              (JsonValue.Object [
+                "success", JsonValue.Bool true
+                "results", results |> List.map (fun (store, outcome) -> JsonValue.Object [
+                  "store", JsonValue.String (Bozzetto.LocalData.LocalStore.fileName store)
+                  "outcome", JsonValue.String (Bozzetto.LocalData.renderClear [ store, outcome ]) ]) |> JsonValue.Array ])
     } :> Task
   ) |> ignore
 
@@ -2575,24 +2532,24 @@ let mapStatusRoutes (app: WebApplication) (rctx: RouteContext) =
         info |> Option.map (fun i -> i.WorkingDirectory) |> Option.defaultValue ""
       let projects =
         info |> Option.map (fun i -> i.Projects) |> Option.defaultValue []
-      let data =
-        {| version = version
-           sessionId = sid
-           sessionState = sessionState
-           evalCount = evalCount
-           totalDurationMs = avgMs * float evalCount
-           avgDurationMs = avgMs
-           minDurationMs = minMs
-           maxDurationMs = maxMs
-           workingDirectory = workingDir
-           projectCount = projects.Length
-           projects = projects
-           warmupFailures = ([] : {| name: string; error: string |} list)
-           regions = regionData
-           pid = Environment.ProcessId
-           uptime =
-             use proc = System.Diagnostics.Process.GetCurrentProcess()
-             (DateTime.UtcNow - proc.StartTime.ToUniversalTime()).TotalSeconds |}
+      use process = System.Diagnostics.Process.GetCurrentProcess()
+      let data = JsonValue.Object [
+        "version", JsonValue.String version
+        "sessionId", JsonValue.String sid
+        "sessionState", JsonValue.String sessionState
+        "evalCount", HttpJson.integer evalCount
+        "totalDurationMs", JsonValue.Number (avgMs * float evalCount)
+        "avgDurationMs", JsonValue.Number avgMs
+        "minDurationMs", JsonValue.Number minMs
+        "maxDurationMs", JsonValue.Number maxMs
+        "workingDirectory", JsonValue.String workingDir
+        "projectCount", HttpJson.integer projects.Length
+        "projects", HttpJson.strings projects
+        "warmupFailures", JsonValue.Array []
+        "regions", regionData |> List.map (fun r -> JsonValue.Object [
+          "id", JsonValue.String r.id; "content", JsonValue.String r.content; "affordances", HttpJson.strings r.affordances ]) |> JsonValue.Array
+        "pid", HttpJson.integer Environment.ProcessId
+        "uptime", JsonValue.Number (DateTime.UtcNow - process.StartTime.ToUniversalTime()).TotalSeconds ]
       do! jsonResponse ctx 200 data
     } :> Task
   ) |> ignore
@@ -2609,16 +2566,16 @@ let mapStatusRoutes (app: WebApplication) (rctx: RouteContext) =
       let uptime = (DateTime.UtcNow - proc.StartTime.ToUniversalTime()).TotalSeconds
       let version = DaemonInfo.version
       let! allSessions = rctx.Config.SessionOps.GetAllSessions()
-      let data =
-        {| version = version
-           apiVersion = Bozzetto.EndpointContracts.apiVersion
-           pid = Environment.ProcessId
-           uptimeSeconds = uptime
-           supervised = supervised
-           restartCount = restartCount
-           sessionCount = allSessions.Length
-           mcpPort = rctx.Config.Port
-           dashboardPort = rctx.Config.Port + 1 |}
+      let data = JsonValue.Object [
+        "version", JsonValue.String version
+        "apiVersion", HttpJson.integer Bozzetto.EndpointContracts.apiVersion
+        "pid", HttpJson.integer Environment.ProcessId
+        "uptimeSeconds", JsonValue.Number uptime
+        "supervised", JsonValue.Bool supervised
+        "restartCount", HttpJson.integer restartCount
+        "sessionCount", HttpJson.integer allSessions.Length
+        "mcpPort", HttpJson.integer rctx.Config.Port
+        "dashboardPort", HttpJson.integer (rctx.Config.Port + 1) ]
       do! jsonResponse ctx 200 data
     } :> Task
   ) |> ignore
@@ -2637,7 +2594,7 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
   app.MapGet("/api/sessions", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
       let! allSessions = rctx.Config.SessionOps.GetAllSessions()
-      let results = System.Collections.Generic.List<obj>()
+      let results = System.Collections.Generic.List<JsonValue>()
       for sess in allSessions do
         let! proxy = rctx.Config.SessionOps.GetProxy sess.Id
         let! evalCount, avgMs, status = task {
@@ -2684,23 +2641,22 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
           | None -> Task.FromResult None
         let health = Bozzetto.SessionHealth.classify sess.Status sess.ProjectRoles warmupOpt
         let appView = Bozzetto.AppRun.toView sess.App
-        results.Add(
-          {| id = Bozzetto.WorkerProtocol.SessionId.value sess.Id
-             status = status
-             faultReason = Bozzetto.WorkerProtocol.SessionLifecycleStatus.faultReason sess.Status
-             health = Bozzetto.SessionHealth.toJson health
-             projects = sess.Projects
-             // What the worker ACTUALLY resolved and loaded, which is not always what
-             // was declared: a session created with `projects=[]` still loads whatever
-             // the worker discovers in its directory. Clients that render "no project"
-             // from `projects` alone were telling the user the opposite of the truth.
-             loadedProjects = (sess.ProjectRoles |> List.map (fun p -> p.Path))
-             workingDirectory = sess.WorkingDirectory
-             evalCount = evalCount
-             avgDurationMs = avgMs
-             workflowLabel = Bozzetto.WorkflowTypes.SessionWorkflow.label sess.Workflow
-             app = {| state = appView.State; message = appView.Message; urls = appView.Urls |} |} :> obj)
-      do! jsonResponse ctx 200 {| sessions = results |}
+        results.Add(JsonValue.Object [
+          "id", JsonValue.String (Bozzetto.WorkerProtocol.SessionId.value sess.Id)
+          "status", JsonValue.String status
+          "faultReason", HttpJson.optional JsonValue.String (Bozzetto.WorkerProtocol.SessionLifecycleStatus.faultReason sess.Status)
+          "health", JsonValue.Object [ "status", JsonValue.String (Bozzetto.SessionHealth.label health)
+                                       "reason", HttpJson.optional JsonValue.String (Bozzetto.SessionHealth.reason health) ]
+          "projects", HttpJson.strings sess.Projects
+          "loadedProjects", sess.ProjectRoles |> List.map (fun p -> p.Path) |> HttpJson.strings
+          "workingDirectory", JsonValue.String sess.WorkingDirectory
+          "evalCount", HttpJson.integer evalCount
+          "avgDurationMs", JsonValue.Number avgMs
+          "workflowLabel", JsonValue.String (Bozzetto.WorkflowTypes.SessionWorkflow.label sess.Workflow)
+          "app", JsonValue.Object [ "state", JsonValue.String appView.State
+                                    "message", JsonValue.String appView.Message
+                                    "urls", HttpJson.strings appView.Urls ] ])
+      do! jsonResponse ctx 200 (JsonValue.Object [ "sessions", (Seq.toList >> JsonValue.Array) (results) ])
     } :> Task
   ) |> ignore
   app.MapPost("/api/sessions/switch", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
@@ -2720,9 +2676,9 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
             d (Bozzetto.BozzettoMsg.Event (Bozzetto.TuiEvent.SessionSwitched (None, sidStr)))
             d (Bozzetto.BozzettoMsg.Editor Bozzetto.EditorAction.ListSessions)
           | None -> ()
-          do! jsonResponse ctx 200 {| success = true; sessionId = sidStr |}
+          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "sessionId", JsonValue.String (sidStr) ])
         | None ->
-          do! jsonResponse ctx 404 {| success = false; error = sprintf "Session '%s' not found" sidStr |}
+          do! jsonResponse ctx 404 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (sprintf "Session '%s' not found" sidStr) ])
     } :> Task
   ) |> ignore
   app.MapPost("/api/sessions/{sid}/buffer-changed", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
@@ -2730,24 +2686,24 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
       let raw = ctx.Request.RouteValues.["sid"] |> string
       match Bozzetto.WorkerProtocol.SessionId.validate raw with
       | Error msg ->
-        do! jsonResponse ctx 400 {| success = false; error = msg |}
+        do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (msg) ])
       | Ok sid ->
         let sidStr = Bozzetto.WorkerProtocol.SessionId.value sid
         let! info = rctx.Config.SessionOps.GetSessionInfo sid
         match info with
         | None ->
-          do! jsonResponse ctx 404 {| success = false; error = sprintf "Session '%s' not found" sidStr |}
+          do! jsonResponse ctx 404 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (sprintf "Session '%s' not found" sidStr) ])
         | Some _ ->
-          use! json = readJsonBody ctx
-          let root = json.RootElement
-          let filePath = root.GetProperty("filePath").GetString()
-          let content = root.GetProperty("content").GetString()
+          let! json = readJsonBody ctx
+          let root = json
+          let filePath = HttpJson.requiredStringProperty "filePath" root
+          let content = HttpJson.requiredStringProperty "content" root
           match rctx.Dispatch with
           | None ->
-            do! jsonResponse ctx 503 {| success = false; error = "Elm loop not started" |}
+            do! jsonResponse ctx 503 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("Elm loop not started") ])
           | Some dispatch ->
             dispatch (Bozzetto.BozzettoMsg.BufferContentChanged (Some sidStr, filePath, content))
-            do! jsonResponse ctx 202 {| success = true; sessionId = sidStr; filePath = filePath |}
+            do! jsonResponse ctx 202 (JsonValue.Object [ "success", JsonValue.Bool (true); "sessionId", JsonValue.String (sidStr); "filePath", JsonValue.String (filePath) ])
     } :> Task
   ) |> ignore
   // Export a session's eval history as a clean .fsx transcript. Declared in
@@ -2760,13 +2716,13 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
       let raw = ctx.Request.RouteValues.["sid"] |> string
       match Bozzetto.WorkerProtocol.SessionId.validate raw with
       | Error msg ->
-        do! jsonResponse ctx 400 {| success = false; error = msg |}
+        do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (msg) ])
       | Ok sid ->
         let sidStr = Bozzetto.WorkerProtocol.SessionId.value sid
         let! info = rctx.Config.SessionOps.GetSessionInfo sid
         match info with
         | None ->
-          do! jsonResponse ctx 404 {| success = false; error = sprintf "Session '%s' not found" sidStr |}
+          do! jsonResponse ctx 404 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (sprintf "Session '%s' not found" sidStr) ])
         | Some inf ->
           match SseContext.activeSessionId rctx.SseContext with
           | Some active when active = sidStr ->
@@ -2781,9 +2737,9 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
                 |> Bozzetto.Features.FeatureHooks.cellGraph
                 |> Bozzetto.Features.SessionScribe.SessionScribe.fromGraph
                 |> Bozzetto.Features.SessionScribe.SessionScribe.exportFsx name
-            do! jsonResponse ctx 200 {| success = true; sessionId = sidStr; evalCount = evalCount; content = content |}
+            do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "sessionId", JsonValue.String (sidStr); "evalCount", HttpJson.integer (evalCount); "content", JsonValue.String (content) ])
           | _ ->
-            do! jsonResponse ctx 200 {| success = true; sessionId = sidStr; evalCount = 0; content = ""; note = "Export is available for the active session." |}
+            do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "sessionId", JsonValue.String (sidStr); "evalCount", HttpJson.integer (0); "content", JsonValue.String (""); "note", JsonValue.String ("Export is available for the active session.") ])
     } :> Task
   ) |> ignore
   // The coordination point for expensive, memory-costly work — session
@@ -2796,40 +2752,32 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
   // even for work Bozzetto itself never runs. See ExpensiveWorkLease.fs.
   app.MapPost("/api/lease/request", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
-      use! doc = readJsonBody ctx
-      let root = doc.RootElement
-      let str (name: string) =
-        let mutable v = Unchecked.defaultof<System.Text.Json.JsonElement>
-        match root.TryGetProperty(name, &v) with
-        | true -> Some(v.GetString())
-        | false -> None
+      let! doc = readJsonBody ctx
+      let root = doc
+      let str name = HttpJson.stringProperty name root
       match str "holder", str "kind" |> Option.bind Bozzetto.ExpensiveWorkLease.Kind.tryParse with
       | None, _ ->
-        do! jsonResponse ctx 400 {| success = false; error = "missing 'holder' — identify the agent/cohort member asking, not a fresh id per call" |}
+        do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("missing 'holder' — identify the agent/cohort member asking, not a fresh id per call") ])
       | _, None ->
         let validKinds = Bozzetto.ExpensiveWorkLease.Kind.all |> List.map Bozzetto.ExpensiveWorkLease.Kind.toToken
-        do! jsonResponse ctx 400 {| success = false; error = sprintf "missing or unrecognized 'kind' — must be one of: %s" (String.concat ", " validKinds) |}
+        do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (sprintf "missing or unrecognized 'kind' — must be one of: %s" (String.concat ", " validKinds)) ])
       | Some holder, Some kind ->
         match Bozzetto.Features.LeaseWatch.request holder kind with
         | Bozzetto.ExpensiveWorkLease.Decision.Granted(leaseId, expiresAt) ->
-          do! jsonResponse ctx 200 {| success = true; decision = "granted"; leaseId = Bozzetto.ExpensiveWorkLease.LeaseId.value leaseId; expiresAt = expiresAt |}
+          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "decision", JsonValue.String ("granted"); "leaseId", JsonValue.String (Bozzetto.ExpensiveWorkLease.LeaseId.value leaseId); "expiresAt", McpJson.timestamp (expiresAt) ])
         | Bozzetto.ExpensiveWorkLease.Decision.Wait(retryAfter, reason) ->
-          do! jsonResponse ctx 200 {| success = true; decision = "wait"; retryAfterSeconds = retryAfter.TotalSeconds; reason = reason |}
+          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "decision", JsonValue.String ("wait"); "retryAfterSeconds", JsonValue.Number (retryAfter.TotalSeconds); "reason", JsonValue.String (reason) ])
         | Bozzetto.ExpensiveWorkLease.Decision.Refused reason ->
-          do! jsonResponse ctx 200 {| success = true; decision = "refused"; reason = reason |}
+          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "decision", JsonValue.String ("refused"); "reason", JsonValue.String (reason) ])
     } :> Task
   ) |> ignore
   app.MapPost("/api/lease/release", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
-      use! doc = readJsonBody ctx
-      let root = doc.RootElement
-      let str (name: string) =
-        let mutable v = Unchecked.defaultof<System.Text.Json.JsonElement>
-        match root.TryGetProperty(name, &v) with
-        | true -> Some(v.GetString())
-        | false -> None
+      let! doc = readJsonBody ctx
+      let root = doc
+      let str name = HttpJson.stringProperty name root
       match str "leaseId" with
-      | None -> do! jsonResponse ctx 400 {| success = false; error = "missing 'leaseId'" |}
+      | None -> do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("missing 'leaseId'") ])
       | Some leaseIdStr ->
         // LeaseId is an opaque GUID-backed token — wrap it back into the
         // type by re-requesting it never round-trips a synthesized id,
@@ -2837,45 +2785,31 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
         let leaseId = Bozzetto.ExpensiveWorkLease.LeaseId.ofWire leaseIdStr
         match Bozzetto.Features.LeaseWatch.release leaseId with
         | Bozzetto.ExpensiveWorkLease.ReleaseOutcome.Released ->
-          do! jsonResponse ctx 200 {| success = true; outcome = "released" |}
+          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "outcome", JsonValue.String ("released") ])
         | Bozzetto.ExpensiveWorkLease.ReleaseOutcome.AlreadyGone ->
-          do! jsonResponse ctx 200 {| success = true; outcome = "already_gone" |}
+          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "outcome", JsonValue.String ("already_gone") ])
     } :> Task
   ) |> ignore
   app.MapPost("/api/sessions/create", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
-      use! doc = readJsonBody ctx
-      let root = doc.RootElement
+      let! doc = readJsonBody ctx
+      let root = doc
       let workingDir =
-        let tryProp (name: string) =
-          let mutable value = Unchecked.defaultof<System.Text.Json.JsonElement>
-          match root.TryGetProperty(name, &value) with
-          | true -> Some (value.GetString())
-          | false -> None
+        let tryProp name = HttpJson.stringProperty name root
         tryProp "workingDirectory"
         |> Option.orElseWith (fun () -> tryProp "working_directory")
         |> Option.defaultValue Environment.CurrentDirectory
       let projects =
-        let mutable projProp = Unchecked.defaultof<System.Text.Json.JsonElement>
-        match root.TryGetProperty("projects", &projProp) with
-        | true ->
-          match projProp.ValueKind with
-          | System.Text.Json.JsonValueKind.Array ->
-            projProp.EnumerateArray()
-            |> Seq.map (fun e -> e.GetString())
-            |> Seq.toList
-            |> List.filter (System.String.IsNullOrWhiteSpace >> not)
-          | System.Text.Json.JsonValueKind.String ->
-            [ projProp.GetString() ]
-            |> List.filter (System.String.IsNullOrWhiteSpace >> not)
-          | _ -> []
-        | false -> []
+        match HttpJson.property "projects" root with
+        | Some (JsonValue.Array values) -> values |> List.choose JsonValue.asString
+        | Some (JsonValue.String value) -> [ value ]
+        | _ -> []
+        |> List.filter (System.String.IsNullOrWhiteSpace >> not)
       let targetResult = SessionProjectTarget.tryCreateMany projects
       let workflow =
-        let mutable wfProp = Unchecked.defaultof<System.Text.Json.JsonElement>
-        match root.TryGetProperty("workflow", &wfProp) with
-        | true -> Bozzetto.WorkflowTypes.SessionWorkflow.ofString (wfProp.GetString())
-        | false -> Bozzetto.WorkflowTypes.SessionWorkflow.Interactive
+        HttpJson.stringProperty "workflow" root
+        |> Option.map Bozzetto.WorkflowTypes.SessionWorkflow.ofString
+        |> Option.defaultValue Bozzetto.WorkflowTypes.SessionWorkflow.Interactive
       // Finding #13: unlike the dashboard's own session-create path
       // (DashboardTypes.resolveSessionProjects), this route previously fed
       // workingDirectory/projects straight into CreateSession with no path
@@ -2893,7 +2827,7 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
         match rctx.Dispatch with
         | Some d -> d (Bozzetto.BozzettoMsg.Editor Bozzetto.EditorAction.ListSessions)
         | None -> ()
-        do! jsonResponse ctx 200 {| success = true; message = msg |}
+        do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "message", JsonValue.String (msg) ])
       | Error err ->
         do! jsonResponse ctx (BozzettoError.toHttpStatus err) (structuredErrorBody err)
     } :> Task
@@ -2909,7 +2843,7 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
         | Some d -> d (Bozzetto.BozzettoMsg.Editor Bozzetto.EditorAction.ListSessions)
         | None -> ()
         match result with
-        | Ok msg -> do! jsonResponse ctx 200 {| success = true; message = msg |}
+        | Ok msg -> do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "message", JsonValue.String (msg) ])
         | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (structuredErrorBody err)
     } :> Task
   ) |> ignore
@@ -2923,15 +2857,14 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
       let raw = ctx.Request.RouteValues.["sid"] |> string
       match Bozzetto.WorkerProtocol.SessionId.validate raw with
       | Error msg ->
-        do! jsonResponse ctx 400 {| success = false; error = msg |}
+        do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (msg) ])
       | Ok sid ->
         let! workflowRaw = tryReadWorkflowRequest ctx
         let requested = workflowRaw |> Option.defaultValue ""
         match Bozzetto.WorkflowTypes.SessionWorkflow.tryOfString requested with
         | None ->
           do! jsonResponse ctx 400
-                {| success = false
-                   error = Bozzetto.CreateSessionUx.formatUnknownWorkflowError requested |}
+                (HttpJson.result false "error" (Bozzetto.CreateSessionUx.formatUnknownWorkflowError requested))
         | Some target ->
           let! result = rctx.Config.SessionOps.SwitchWorkflow (Bozzetto.WorkerProtocol.SessionId.value sid) target
           match rctx.Dispatch with
@@ -2940,11 +2873,11 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
           match result with
           | Ok message ->
             do! jsonResponse ctx 200
-                  {| success = true
-                     message = message
-                     sessionId = Bozzetto.WorkerProtocol.SessionId.value sid
-                     workflow = Bozzetto.WorkflowTypes.SessionWorkflow.label target |}
-          | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (BozzettoError.toJson err)
+                  (JsonValue.Object [ "success", JsonValue.Bool true
+                                     "message", JsonValue.String message
+                                     "sessionId", JsonValue.String (Bozzetto.WorkerProtocol.SessionId.value sid)
+                                     "workflow", JsonValue.String (Bozzetto.WorkflowTypes.SessionWorkflow.label target) ])
+          | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (BozzettoError.toJsonValue err)
     } :> Task
   ) |> ignore
 
@@ -2959,11 +2892,11 @@ let mapLiveTestingRoutes (app: WebApplication) (rctx: RouteContext) =
   let respond (ctx: Microsoft.AspNetCore.Http.HttpContext) (result: string) (activation: string option) =
     task {
       match isFailureMessage result with
-      | true -> do! jsonResponse ctx 503 {| success = false; error = result |}
+      | true -> do! jsonResponse ctx 503 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (result) ])
       | false ->
         match activation with
-        | Some a -> do! jsonResponse ctx 200 {| success = true; message = result; activation = a |}
-        | None -> do! jsonResponse ctx 200 {| success = true; message = result |}
+        | Some a -> do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "message", JsonValue.String (result); "activation", JsonValue.String (a) ])
+        | None -> do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "message", JsonValue.String (result) ])
     }
   // Optional per-session targeting (roast UX-6 keystone): a caller that
   // knows which session it means (dashboard/editor clients driving a
@@ -2977,8 +2910,8 @@ let mapLiveTestingRoutes (app: WebApplication) (rctx: RouteContext) =
     | contentLength when not contentLength.HasValue || contentLength.Value <= 0L -> return None
     | _ ->
       try
-        use! doc = readJsonBody ctx
-        return tryGetJsonStringAliases doc.RootElement [ "sessionId"; "session_id"; "session" ]
+        let! doc = readJsonBody ctx
+        return tryGetJsonStringAliases doc [ "sessionId"; "session_id"; "session" ]
       with _ ->
         return None
   }
@@ -2998,17 +2931,17 @@ let mapLiveTestingRoutes (app: WebApplication) (rctx: RouteContext) =
   ) |> ignore
   app.MapPost("/api/live-testing/policy", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
-      use! json = readJsonBody ctx
-      let category = json.RootElement.GetProperty("category").GetString()
-      let policy = json.RootElement.GetProperty("policy").GetString()
+      let! json = readJsonBody ctx
+      let category = HttpJson.requiredStringProperty "category" json
+      let policy = HttpJson.requiredStringProperty "policy" json
       let! result = Bozzetto.McpTools.setRunPolicy rctx.McpContext category policy
       do! respond ctx result None
     } :> Task
   ) |> ignore
   app.MapPost("/api/live-testing/run", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
-      use! json = readJsonBody ctx
-      let root = json.RootElement
+      let! json = readJsonBody ctx
+      let root = json
       let patternFilter = tryGetJsonStringAliases root [ "pattern" ]
       let fileFilter = tryGetJsonStringAliases root [ "file"; "filePath"; "file_path" ]
       // Optional per-session targeting (completes the per-session live-testing
@@ -3033,9 +2966,9 @@ let mapLiveTestingRoutes (app: WebApplication) (rctx: RouteContext) =
 
       match rctx.Dispatch, rctx.SseContext.GetElmModel with
       | None, _ ->
-          do! jsonResponse ctx 503 {| success = false; error = "Cannot run tests — Elm loop not started." |}
+          do! jsonResponse ctx 503 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("Cannot run tests — Elm loop not started.") ])
       | _, None ->
-          do! jsonResponse ctx 503 {| success = false; error = "Cannot run tests — Elm model unavailable." |}
+          do! jsonResponse ctx 503 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("Cannot run tests — Elm model unavailable.") ])
       | Some dispatch, Some getModel ->
           let model = getModel()
           let discoveredTests =
@@ -3045,10 +2978,7 @@ let mapLiveTestingRoutes (app: WebApplication) (rctx: RouteContext) =
 
           match Array.isEmpty discoveredTests with
           | true ->
-              do! jsonResponse ctx 409 {|
-                success = false
-                error = "No tests discovered yet. Enable live testing and wait for DiscoveryState=ready_with_tests."
-              |}
+              do! jsonResponse ctx 409 (HttpJson.result false "error" ("No tests discovered yet. Enable live testing and wait for DiscoveryState=ready_with_tests."))
           | false ->
               let tests =
                 LiveTestCycleState.filterTestsForExplicitRun
@@ -3073,24 +3003,19 @@ let mapLiveTestingRoutes (app: WebApplication) (rctx: RouteContext) =
                       | [] -> "no filters"
                       | parts -> String.concat ", " parts
 
-                  do! jsonResponse ctx 404 {|
-                    success = false
-                    error = sprintf "No discovered tests matched the explicit run filters (%s)." filterSummary
-                  |}
+                  do! jsonResponse ctx 404 (HttpJson.result false "error" (sprintf "No discovered tests matched the explicit run filters (%s)." filterSummary))
               | false ->
                   dispatch (Bozzetto.BozzettoMsg.Event (Bozzetto.TuiEvent.RunTestsRequested (targetSession, tests, None)))
-                  do! jsonResponse ctx 200 {|
-                    success = true
-                    queued = tests.Length
-                    message = sprintf "Queued %d test(s) for explicit run." tests.Length
-                  |}
+                  do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool true
+                                      "queued", HttpJson.integer tests.Length
+                                      "message", JsonValue.String (sprintf "Queued %d test(s) for explicit run." tests.Length) ])
     } :> Task
   ) |> ignore
   app.MapGet("/api/live-testing/file-annotations", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
       let fileParam = ctx.Request.Query.["file"].ToString()
       match rctx.SseContext.GetElmModel with
-      | None -> do! jsonResponse ctx 503 {| error = "Elm loop not started" |}
+      | None -> do! jsonResponse ctx 503 (JsonValue.Object [ "error", JsonValue.String ("Elm loop not started") ])
       | Some getModel ->
         let model = getModel()
         let lt = model.LiveTesting.TestState
@@ -3100,12 +3025,12 @@ let mapLiveTestingRoutes (app: WebApplication) (rctx: RouteContext) =
         match matchingFile with
         | Some fullPath ->
           let fa = FileAnnotations.projectWithCoverage fullPath model.LiveTesting
-          let json = System.Text.Json.JsonSerializer.Serialize(fa, rctx.SseContext.SseJsonOpts)
-          do! jsonResponse ctx 200 json
+          let value = Bozzetto.LiveTestingJson.fileAnnotationsValue rctx.SseContext.SseJsonOpts fa
+          do! jsonResponse ctx 200 value
         | None ->
           let fa = FileAnnotations.empty fileParam
-          let json = System.Text.Json.JsonSerializer.Serialize(fa, rctx.SseContext.SseJsonOpts)
-          do! jsonResponse ctx 200 json
+          let value = Bozzetto.LiveTestingJson.fileAnnotationsValue rctx.SseContext.SseJsonOpts fa
+          do! jsonResponse ctx 200 value
     } :> Task
   ) |> ignore
   app.MapGet("/api/live-testing/status", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
@@ -3137,7 +3062,7 @@ let mapLiveTestingRoutes (app: WebApplication) (rctx: RouteContext) =
   app.MapPost("/api/live-testing/mark-all-stale", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
       let! result = Bozzetto.McpTools.markAllTestsStale rctx.McpContext
-      do! jsonResponse ctx 202 {| message = result |}
+      do! jsonResponse ctx 202 (JsonValue.Object [ "message", JsonValue.String (result) ])
     } :> Task
   ) |> ignore
 
@@ -3151,13 +3076,13 @@ let mapAnalysisRoutes (app: WebApplication) (rctx: RouteContext) =
   ) |> ignore
   app.MapPost("/api/completions", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
-      use! json = readJsonBody ctx
-      let root = json.RootElement
-      let code = root.GetProperty("code").GetString()
+      let! json = readJsonBody ctx
+      let root = json
+      let code = HttpJson.requiredStringProperty "code" root
       let cursor =
         match tryGetJsonIntAliases root [ "cursorPosition"; "cursor_position" ] with
         | Some value -> value
-        | None -> raise (System.Text.Json.JsonException("Missing required cursorPosition/cursor_position"))
+        | None -> raise (HttpJson.InvalidJson "Missing required cursorPosition/cursor_position")
       // WHY — editors and agents routinely send a cursor one past the end of the
       // code string (or negative on malformed input). An out-of-range cursor made
       // completions silently return zero items (smoke-test failure 2026-08).
@@ -3204,15 +3129,20 @@ let mapAnalysisRoutes (app: WebApplication) (rctx: RouteContext) =
                   | Some r -> r.TestName
                   | None -> tid
                 {| TestId = tid; TestName = testName; Status = status |})
-            System.Text.Json.JsonSerializer.Serialize(
-              {| Symbol = sym; Tests = tests; TotalSymbols = graph.SymbolToTests.Count |})
+            JsonValue.Object [
+              "Symbol", JsonValue.String sym
+              "Tests", tests |> Array.map (fun row -> JsonValue.Object [
+                "TestId", JsonValue.String row.TestId; "TestName", JsonValue.String row.TestName; "Status", JsonValue.String row.Status ]) |> Array.toList |> JsonValue.Array
+              "TotalSymbols", HttpJson.integer graph.SymbolToTests.Count ] |> Json.serialize
           | None ->
             let symbols =
               graph.SymbolToTests
               |> Map.toArray
               |> Array.map (fun (sym, tids) -> {| Symbol = sym; TestCount = tids.Length |})
-            System.Text.Json.JsonSerializer.Serialize(
-              {| Symbols = symbols; TotalSymbols = symbols.Length |})
+            JsonValue.Object [
+              "Symbols", symbols |> Array.map (fun row -> JsonValue.Object [
+                "Symbol", JsonValue.String row.Symbol; "TestCount", HttpJson.integer row.TestCount ]) |> Array.toList |> JsonValue.Array
+              "TotalSymbols", HttpJson.integer symbols.Length ] |> Json.serialize
         body, 200
       | None ->
         """{"error":"Elm model not available"}""", 503
@@ -3268,8 +3198,7 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       // dependency on `app`/`mcpContext`/`serverTracker`.
       let testEventBroadcast = Event<string>()
       let sessionEventBroadcast = Event<string>()
-      let sseJsonOpts = JsonSerializerOptions()
-      sseJsonOpts.Converters.Add(System.Text.Json.Serialization.JsonFSharpConverter())
+      let sseJsonOpts = JsonCasing.PascalCase
       // Every fresh LiveValueSnapshot now ALSO reaches editor clients over SSE
       // (roast-8 §2), not just the dashboard's own adaptive store — the inner
       // sink (when wired) still runs first and unchanged.

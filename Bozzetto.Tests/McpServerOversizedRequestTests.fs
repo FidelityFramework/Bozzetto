@@ -48,7 +48,7 @@ let tests =
       let! rejected =
         task {
           try
-            use! _ = readJsonBody ctx
+            let! _ = readJsonBody ctx
             return false
           with
           | RequestTooLarge -> return true

@@ -9,7 +9,6 @@ open Bozzetto
 open Bozzetto.Server.Dashboard
 open Bozzetto.Server.DashboardTypes
 open Bozzetto.Server.DashboardFragments
-open Bozzetto.DaemonClient
 
 let verifyTheme (name: string) (html: string) =
   Bozzetto.Tests.TestInfrastructure.Snapshots.verify "ThemePersistenceTests" name "html" html
@@ -238,51 +237,6 @@ let themePresetsTests = testList "ThemePresets" [
   }
 ]
 
-// ─── Unit: parseStateEvent activeWorkingDir ──────────────────────────────────
-
-let parseStateEventThemeTests = testList "parseStateEvent activeWorkingDir" [
-  test "parses activeWorkingDir when present" {
-    let json = """{"sessionId":"s1","sessionState":"Ready","evalCount":0,"activeWorkingDir":"C:\\Code\\MyProj","regions":[]}"""
-    let result = parseStateEvent json
-    result |> Expect.isSome "should parse"
-    result.Value.ActiveWorkingDir |> Expect.equal "activeWorkingDir" @"C:\Code\MyProj"
-  }
-
-  test "activeWorkingDir defaults to empty when missing" {
-    let json = """{"sessionId":"s1","sessionState":"Ready","evalCount":0,"regions":[]}"""
-    let result = parseStateEvent json
-    result |> Expect.isSome "should parse"
-    result.Value.ActiveWorkingDir |> Expect.equal "missing activeWorkingDir defaults to empty" ""
-  }
-
-  test "all StateEvent fields parsed correctly" {
-    let json = """{"sessionId":"abc","sessionState":"WarmingUp","evalCount":7,"avgMs":42.5,"activeWorkingDir":"C:\\test","regions":[{"id":"out","content":"hi"}]}"""
-    let result = parseStateEvent json
-    result |> Expect.isSome "should parse"
-    let e = result.Value
-    e.SessionId |> Expect.equal "sessionId" "abc"
-    e.SessionState |> Expect.equal "sessionState" "WarmingUp"
-    e.EvalCount |> Expect.equal "evalCount" 7
-    e.AvgMs |> Expect.floatClose "avgMs" Accuracy.medium 42.5
-    e.ActiveWorkingDir |> Expect.equal "activeWorkingDir" @"C:\test"
-    e.Regions.Length |> Expect.equal "region count" 1
-  }
-
-  test "activeWorkingDir with forward slashes" {
-    let json = """{"sessionState":"Ready","evalCount":0,"activeWorkingDir":"/home/user/project","regions":[]}"""
-    let result = parseStateEvent json
-    result |> Expect.isSome "should parse"
-    result.Value.ActiveWorkingDir |> Expect.equal "unix-style path" "/home/user/project"
-  }
-
-  test "activeWorkingDir with spaces in path" {
-    let json = """{"sessionState":"Ready","evalCount":0,"activeWorkingDir":"C:\\My Projects\\Cool App","regions":[]}"""
-    let result = parseStateEvent json
-    result |> Expect.isSome "should parse"
-    result.Value.ActiveWorkingDir |> Expect.equal "path with spaces" @"C:\My Projects\Cool App"
-  }
-]
-
 // ─── Unit: resolveThemePush pure logic ───────────────────────────────────────
 
 /// Test helper: build a themes dict with keys in the canonical form that
@@ -482,7 +436,6 @@ let allThemePersistenceTests = testList "Theme Persistence" [
   themePickerUnitTests
   cssVariablesTests
   themePresetsTests
-  parseStateEventThemeTests
   resolveThemePushTests
   themeDiskPersistenceTests
 ]

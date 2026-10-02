@@ -53,10 +53,14 @@ and settings JSON migration. These are intermediate integration results, not a
 final source-pinned release gate. Candidate processes alone were used; the
 installed daemon and worker remain unchanged.
 
-The subsequent JSON migration removes unused Jupyter/NetMQ, deprecated TUI JSON
-streaming, an unused friction JSON store codec, and the inherited public-NuGet
-update poller. Active schemas move to Fidelity.Data. Composer and Clef migration
-builds pass; their migrated full suites and the final Bozzetto gates are pending.
+The subsequent JSON migration is paused at the user's request; see the
+[October 2 JSON handoff](JSON_Migration_Checkpoint_2026-10-02.md) before resuming.
+It removes unused Jupyter/NetMQ and an unused friction JSON store codec. The
+SQLite friction subsystem, retained UI stream, updater and compatibility behavior
+are preserved; removing active behavior is outside the migration's scope.
+Composer and Clef migration builds pass. Their full suites retain the known
+occurrence-218 and 99 compiler-test failures respectively. The broader Bozzetto
+and Lattice edits remain unvalidated recovery checkpoints, not release evidence.
 
 ## October 2 hosted-boundary repair checkpoint
 

@@ -128,6 +128,11 @@ let private runMain (args: string array) =
 let mainRejectsUnimplementedFlagsTests =
   testSequenced <| testList "main() refuses unimplemented daemon-startup flags" [
 
+    testCase "retired Jupyter execution refuses before reading a connection file" <| fun () ->
+      let code, _, stderr = runMain [| "--jupyter"; "this-file-does-not-exist.json" |]
+      code |> Expect.equal "retired command has an explicit refusal exit" 2
+      stderr.Trim() |> Expect.equal "the refusal explains the current provider boundary" Bozzetto.ExternalFSharpService.message
+
     testCase "boz --proj exits non-zero without starting a daemon" <| fun () ->
       let code, _, stderr = runMain [| "--proj"; "Foo.fsproj" |]
       Expect.isTrue "must exit non-zero" (code <> 0)
@@ -232,4 +237,150 @@ let checkDirectoryConfigTests =
         r.Detail |> Expect.stringContains "does not overclaim validity" "not evaluate"
       finally
         Directory.Delete(dir, true)
+  ]
+
+
+[<Tests>]
+let daemonLaunchContractTests =
+  testList "CLI parsing" [
+    test "--jupyter parses to Jupyter case" {
+      Program.CliCommand.parse [| "--jupyter"; "conn.json" |]
+      |> Expect.equal "Jupyter" (Program.Jupyter "conn.json")
+    }
+
+    test "--jupyter without file falls back to ShowHelp" {
+      Program.CliCommand.parse [| "--jupyter" |]
+      |> Expect.equal "ShowHelp" Program.ShowHelp
+    }
+
+    test "--jupyter with path preserves full path" {
+      Program.CliCommand.parse [| "--jupyter"; @"C:\tmp\kernel-1234.json" |]
+      |> Expect.equal "full path" (Program.Jupyter @"C:\tmp\kernel-1234.json")
+    }
+
+    test "regular args don't match Jupyter" {
+      Program.CliCommand.parse [| "--no-watch" |]
+      |> function
+         | Program.Daemon _ -> ()
+         | other -> failtest (sprintf "Expected Daemon but got %A" other)
+    }
+
+    test "WHY — tui and gui commands are explicit deprecations because they must not silently enter daemon mode" {
+      Program.CliCommand.parse [| "tui" |]
+      |> Expect.equal "tui should be recognized as deprecated" (Program.DeprecatedClient "tui")
+      Program.CliCommand.parse [| "gui" |]
+      |> Expect.equal "gui should be recognized as deprecated" (Program.DeprecatedClient "gui")
+      Program.deprecatedClientMessage "tui"
+      |> Expect.stringContains "deprecation should direct users to the maintained UI" "/dashboard"
+    }
+
+    test "daemon launch decision starts new daemon when only default port is occupied" {
+      let defaultDaemon = {
+        Pid = 42
+        Port = 47749
+        DashboardPort = 47750
+        StartedAt = DateTime.UtcNow
+        WorkingDirectory = @"C:\Code\Repos\Elsewhere"
+        Version = "test"
+        ApiVersion = None
+        SessionCount = None
+        ComponentFailures = []
+      }
+
+      let readOnPort port =
+        match port with
+        | 47749 -> Some defaultDaemon
+        | _ -> None
+
+      Program.decideDaemonLaunch readOnPort 37849
+      |> Expect.equal "custom port should not attach to default-port daemon" Program.StartNewDaemon
+    }
+
+    test "daemon launch decision reuses daemon already running on requested port" {
+      let requestedDaemon = {
+        Pid = 43
+        Port = 37849
+        DashboardPort = 37850
+        StartedAt = DateTime.UtcNow
+        WorkingDirectory = @"C:\Code\Repos\Bozzetto"
+        Version = "test"
+        ApiVersion = None
+        SessionCount = None
+        ComponentFailures = []
+      }
+
+      let readOnPort port =
+        match port with
+        | 37849 -> Some requestedDaemon
+        | _ -> None
+
+      Program.decideDaemonLaunch readOnPort 37849
+      |> Expect.equal "requested-port daemon should be reused" (Program.AttachToExistingDaemon requestedDaemon)
+    }
+
+    test "waitForDaemonReady probes only the requested custom port" {
+      let requestedDaemon = {
+        Pid = 44
+        Port = 37849
+        DashboardPort = 37850
+        StartedAt = DateTime.UtcNow
+        WorkingDirectory = @"C:\Code\Repos\Bozzetto"
+        Version = "test"
+        ApiVersion = None
+        SessionCount = None
+        ComponentFailures = []
+      }
+
+      let probedPorts = System.Collections.Generic.List<int>()
+      let mutable attempts = 0
+
+      let readOnPort port =
+        probedPorts.Add(port)
+        attempts <- attempts + 1
+        match attempts with
+        | 3 -> Some requestedDaemon
+        | _ -> None
+
+      let sleepCalls = System.Collections.Generic.List<int>()
+      let sleep ms = sleepCalls.Add(ms)
+
+      Program.waitForDaemonReady sleep readOnPort 37849
+      |> Expect.equal "should return daemon on requested port" (Ok requestedDaemon)
+
+      probedPorts
+      |> Seq.distinct
+      |> Seq.toList
+      |> Expect.equal "should only probe requested port" [37849]
+
+      sleepCalls.Count
+      |> Expect.equal "should sleep once per probe until ready" 3
+    }
+
+    test "waitForDaemonReady times out after 30 probes on the requested port" {
+      let probedPorts = System.Collections.Generic.List<int>()
+      let readOnPort port =
+        probedPorts.Add(port)
+        None
+
+      let sleepCalls = System.Collections.Generic.List<int>()
+      let sleep ms = sleepCalls.Add(ms)
+
+      Program.waitForDaemonReady sleep readOnPort 37849
+      |> function
+         | Error (BozzettoError.DaemonStartFailed msg) ->
+           msg |> Expect.stringContains "should describe timeout" "did not become ready"
+         | Ok _ -> failtest "expected timeout error"
+         | Error other -> failtestf "unexpected error: %A" other
+
+      probedPorts.Count
+      |> Expect.equal "should probe requested port 30 times" 30
+
+      probedPorts
+      |> Seq.distinct
+      |> Seq.toList
+      |> Expect.equal "should never probe the default port" [37849]
+
+      sleepCalls.Count
+      |> Expect.equal "should sleep once per probe attempt" 30
+    }
   ]

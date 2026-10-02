@@ -46,6 +46,16 @@ let tests =
         info.Value.DashboardPort |> Expect.equal "dashboard port should derive from mcp when omitted" 47750
         info.Value.ApiVersion |> Expect.equal "api version should be absent when omitted" None
         info.Value.SessionCount |> Expect.equal "session count should be absent when omitted" None
+
+      testCase "daemon information keeps last duplicate fields and rejects inexact integer fields" <| fun _ ->
+        let duplicated = DaemonState.tryParseDaemonInfoJson 47749 """{"pid":1,"pid":42,"componentFailures":["compiler",null,3]}"""
+        duplicated |> Expect.isSome "older minimal payload still parses"
+        duplicated.Value.Pid |> Expect.equal "the last duplicate property retains the existing wire behavior" 42
+        duplicated.Value.ComponentFailures |> Expect.equal "only string component failures are displayed" ["compiler"]
+        for invalid in [ "1.0"; "1e0"; "2147483648" ] do
+          DaemonState.tryParseDaemonInfoJson 47749 ("{\"pid\":" + invalid + "}")
+          |> Expect.isNone "numeric process identity is never rounded or defaulted"
+        DaemonState.tryParseDaemonInfoJson 47749 "[]" |> Expect.isNone "non-object JSON is not daemon information"
     ]
 
     testList "daemon startup guard" [

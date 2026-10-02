@@ -28,10 +28,7 @@ let private sampleView (symbol: string) (line: int) =
     InlineBadgeText = sprintf "%c 1" (char 0x2713)
     Health = CoverageViewState.Passing }
 
-let private formatOpts () =
-  let o = JsonSerializerOptions()
-  o.Converters.Add(System.Text.Json.Serialization.JsonFSharpConverter())
-  o
+let private formatOpts () = Bozzetto.JsonCasing.PascalCase
 
 [<Tests>]
 let sseCoverageViewEventShape = testList "SSE coverage_view event shape" [

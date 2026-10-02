@@ -458,9 +458,12 @@ let private fetchSessionCountHttp (info: DaemonInfo) : int option =
     match resp.IsSuccessStatusCode with
     | true ->
       let json = resp.Content.ReadAsStringAsync().Result
-      let doc = System.Text.Json.JsonDocument.Parse(json)
-      let sessions = doc.RootElement.GetProperty("sessions")
-      Some (sessions.GetArrayLength())
+      match Fidelity.Data.JSON.Json.parse json with
+      | Ok root ->
+        match Fidelity.Data.JSON.JsonValue.prop "sessions" root with
+        | Some (Fidelity.Data.JSON.JsonValue.Array sessions) -> Some sessions.Length
+        | _ -> None
+      | Error _ -> None
     | false -> None
   with _ -> None
 
