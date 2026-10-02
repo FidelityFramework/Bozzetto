@@ -70,16 +70,45 @@ was added. Content-keyed owner tokens, retained drained successes and owner-tree
 scopes remain separate experiments with proof identity and physical drain as
 acceptance requirements.
 
-At the source checkpoint, the solution and worker builds and matching candidate
-publication pass; Calque passes 99/99 tests at `a5e7355`. Bozzetto acceptance is
-being rerun after two incomplete default runs exposed an unprotected nested
-Expecto spinner in `IntegrationRegistryTests`. Its child case completed, while
-the parent and console logging stalled. The nested runner now uses the existing
-`No_Spinner` convention. These incomplete runs have no TRUST verdict and are not
-acceptance evidence. Logs are retained under
-`~/.codex/work/bozzetto-resumption-2026-10-02/validation/audit-release-fixes/`.
-The installed daemon has not been replaced; this is an integration recovery
-checkpoint, not a release receipt.
+Source recovery points are Bozzetto `df74a727` on
+`integration/audit-followup-20261002` and Calque `a5e7355` on `main`, both pushed
+to Forgejo. The Bozzetto candidate was built from that committed source. Calque's
+new commit changes tests only; the worker retains the already-reviewed production
+formatter closure from `19099b5`.
+
+Acceptance evidence is under
+`~/.codex/work/bozzetto-resumption-2026-10-02/validation/audit-release-fixes/`:
+
+| Gate | Executed result and evidence |
+|---|---|
+| Solution and worker builds | **Zero warnings/errors** (`provider-build.log`, `worker-build.log`); matching daemon/worker publications complete. |
+| Calque full suite | **99/99 passed**, zero skipped/failed (`calque-tests.log`, `calque-results/calque-audit.trx`). Includes Merge-phase stops and last-demand release inside Parse, Print and Merge. |
+| Bozzetto unfiltered default suite | **8,977 registered/ran; 8,974 passed, three existing ignores, zero failed/errored; Trusted** (`bozzetto-default-final.log`, `trust.jsonl`). Includes deadline escalation, failed-stop fencing, monitor renewal, the 32-handle boundary and strict-wire diagnostic bounds. |
+| Complete Composer tier | **46/46 passed**, zero ignored/failed/errored; **Trusted** (`bozzetto-native.log`, `trust.jsonl`). Includes real worker and public-interface preview/reserve/apply/build/run journeys. |
+| Worker closure and artifact integrity | **34** declared runtime assets, zero missing and zero test dependencies (`worker-assets.log`); daemon/worker protocol DLLs match. All candidate files pass the final SHA-256 check (`candidate-before.sha256`, `candidate-integrity.log`). |
+
+`acceptance-receipt.json` records the source commit, exact artifact identities and
+both TRUST rows. The candidate directories are
+`~/.codex/work/bozzetto-resumption-2026-10-02/candidate/{daemon-audit-release-fixes,worker-audit-release-fixes}`.
+Daemon SHA-256:
+`d0bb50bb572b38cdc39e4a1860b39ee1deebcf403e8fcda13db0918eaa032bb6`;
+worker SHA-256:
+`a85b419ade24f7ba57c68c269545676cd156ccc19531213e9bf3fb41427fd08d`.
+
+Two initial default runs stalled at an unprotected nested Expecto spinner in
+`IntegrationRegistryTests`. Its child case completed while the parent and console
+logging stopped. Applying the existing `No_Spinner` convention resolved the stall.
+Those runs emitted no TRUST row (`bozzetto-default.log`,
+`bozzetto-default-traced.log`, and their incomplete-run JSON records). Subsequent
+whole-suite runs rejected two new test fixtures because their scratch was inside
+the project directory. The fixtures now use separate sibling directories; both
+whole suites were rerun successfully. The failed receipts remain under
+`before-fixture-fix-` names.
+
+All build/test leases are released. Installed release
+`2026-10-02-calque-7d3557971d26-66c0b1bce8fe` and shared daemon PID **99247** remain
+unchanged. Release publication still requires the complete release gate; these
+receipts establish the pushed integration checkpoint and its candidate.
 
 ### Earlier repair receipt
 
