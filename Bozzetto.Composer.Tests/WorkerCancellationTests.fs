@@ -319,7 +319,9 @@ let tests = testList "Composer worker request lifetime" [
 
   taskCase "formatter evidence stays bounded and wire observable after repeated and oversized Unicode faults" <| fun () -> task {
     let root = directory ()
-    let project = Path.Combine(root, "bounded-diagnostics.fidproj")
+    let projectDirectory = Path.Combine(root, "project")
+    Directory.CreateDirectory projectDirectory |> ignore
+    let project = Path.Combine(projectDirectory, "bounded-diagnostics.fidproj")
     File.WriteAllText(project, "injected formatter diagnostics; no compiler invocation")
     let backend = new Backend(false)
     let formatter = RecordingFormatter(false)
@@ -385,7 +387,9 @@ let tests = testList "Composer worker request lifetime" [
 
   taskCase "formatter close deadline seals every worker session while physical cleanup remains owned" <| fun () -> task {
     let root = directory ()
-    let project = Path.Combine(root, "deadline.fidproj")
+    let projectDirectory = Path.Combine(root, "project")
+    Directory.CreateDirectory projectDirectory |> ignore
+    let project = Path.Combine(projectDirectory, "deadline.fidproj")
     File.WriteAllText(project, "injected worker with owned formatter cleanup")
     let formatters = ResizeArray<RecordingFormatter>()
     let createFormatter () =
