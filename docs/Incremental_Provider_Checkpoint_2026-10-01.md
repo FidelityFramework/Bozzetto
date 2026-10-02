@@ -121,8 +121,13 @@ evidence. Process/I/O drain and durable evidence retention are different
 contracts; the repairs above establish drain, not a complete diagnostic sink.
 
 The proposed next boundary is a supervisor-owned diagnostic actor receiving
-immutable, revision-tagged PSG snapshots and execution records. Its acknowledgment
-would establish retained evidence independently of whether a revision still has
+immutable, revision-tagged PSG snapshots and execution records. The producer
+hands over the PSG; the sink owns persistence encoding and any transliteration.
+Within one process this can be a typed immutable value handoff. A process boundary
+still needs a wire representation: use the existing lossless binary PSG contract
+with schema and integrity validation, avoiding an intermediate lossy projection.
+The receiver acknowledges ownership only after acquiring a complete, validated
+snapshot; durable persistence has a separate acknowledgment. Neither grants
 compilation authority. Evidence already handed over must outlive its producer;
 worker retirement must not delete it. A killed worker cannot be relied upon to
 produce a final dump, so useful checkpoints must cross the boundary during work,
