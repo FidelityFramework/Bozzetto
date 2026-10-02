@@ -33,6 +33,15 @@ after a failed termination request. Worker transport loss seals launches and
 joins native retirement before the five-second managed-worker fallback can exit.
 It no longer asks .NET to tree-kill the calling process.
 
+Cancellation also cascades at project close. `ToolOwner.OpenScope` creates a
+child capability over the same gate and active-process registry. Sealing a
+project refuses descendant launches and starts native retirement before joining
+compiler work that may be blocked on those tools. Sibling projects remain live;
+worker retirement covers every descendant. There is no new scheduler or permanent
+scope registry. The old test expectation that a withdrawn build must finish a
+private artifact was corrected: cancellation must prevent that unnecessary work,
+while directory ownership and publication refusal remain enforced.
+
 The supervisor now distinguishes transport availability from physical process
 liveness. A faulted stop retains the live worker and its terminal evidence, while
 daemon shutdown still joins the other cleanup phases. MCP status/tool documents
@@ -49,16 +58,83 @@ exponent spellings are not accepted by strict integer projections. Parser depth
 and Unicode checks are library-owned. The only remaining System.Text.Json bridge
 in this adapter supplies the MCP SDK's required `JsonElement`; worker transport
 remains binary. This is a boundary migration, not a claim that all hosted CLR
-dependencies have been removed.
+dependencies have been removed. Existing internal Composer manifests and other
+legacy JSON serializers remain outside this public-edge migration.
 
 Recovery source anchors on `integration/hosted-boundaries-20261002`:
-Fidelity.Data `7cc19d6`, Fidelity.PSG `f2adb18`, Composer `4482182`.
-Bozzetto continues on `integration/audit-followup-20261002`. Builds have passed;
-the final frozen candidate, full runtime suites and integrity receipts are still
-pending at this source checkpoint. Evidence is being recorded under
+Fidelity.Data `7cc19d6`, Fidelity.PSG `f2adb18`, Composer `3c15fbf`.
+Bozzetto implementation/test source is `278899b9` on
+`integration/audit-followup-20261002`; later documentation commits do not change
+the candidate. Exact commits are in `source-identities.json` under the evidence
+root below. Earlier anchors `4482182`/`3bf8ee9` are superseded by the tested
+cascading-scope implementation.
+
+Evidence root:
 `/home/hhh/.codex/work/bozzetto-resumption-2026-10-02/validation/hosted-boundaries/`.
-The installed daemon has not been replaced. These integration pushes are recovery
+
+| Check | Result and receipt |
+| --- | --- |
+| Committed compiler, editor, daemon, worker builds | Passed. `alex-scopes-build.log`, `ccs-editor-scopes-build.log`, `bozzetto-async-tests-build.log`, `worker-scopes-build.log`. Existing Data SourceLink/package warnings and Composer Xtensa exhaustiveness warning remain; these are not zero-warning claims. |
+| Fidelity.Data full suite | **424 passed, one existing ignored, zero failures/errors**; `fidelity-data-tests.log`. Exact integers, retained numeric spellings, depth and Unicode controls execute here. |
+| Fidelity.PSG full suite | **307/307 passed**; `psg-tests.log` and `psg-results/*.trx`. Includes the exact-integer inspection roundtrips. |
+| Composer full Alex suite | **395 passed / 396 total, one existing failure, zero skipped**; `alex-scopes-tests.log`, `alex-scopes-results/*.trx`. All ten native-owner cases pass, including the portable stuck-child/sibling/parent regression. The existing callable `Result` case still fails at occurrence 218 before its later stale-proof assertions. |
+| Editor full and dedicated proof suites | Dedicated proof suite passes (`ccs-editor-scopes-proof-tests.log`). Full suite retains the existing `CCS8011` string-encoding fixture failure (`ccs-editor-scopes-tests.log`); the prior log is `incremental-audit-repairs-2026-10-01/validation/aligned-editor-full.log`. Neither result establishes full editor acceptance. |
+| Bozzetto unfiltered default | **8,985 registered/executed, 8,982 passed, three ignored, Trusted**; `bozzetto-default-async.log`, `default-async-trust.jsonl`. Includes exact JSON projection, failed-stop ownership and independent shutdown cleanup. The blocking-call budget was lowered to 23. |
+| Bozzetto complete Composer tier | **47/47 passed, zero ignored/failures/errors, Trusted**; `bozzetto-native.log`, `trust.jsonl`. Includes socket loss with a real live tool and its descendant, plus the shared MCP/browser journey. |
+
+The first full Alex run exposed five integration regressions in addition to the
+known failure (`alex-before-owner-scope-repair.log`); the final full run repairs
+those regressions. The first Bozzetto default run rejected an added blocking test
+join (`bozzetto-default-initial.log`); the full asynchronous rerun above passes.
+These failed receipts are retained rather than presented as passing evidence.
+
+The frozen candidate lives in `candidate/daemon-hosted-scopes` and
+`candidate/worker-hosted-scopes` beneath the same work root. `worker-assets.log`
+records **35 declared assets, zero missing, zero test dependencies**. Daemon and
+worker protocol and Fidelity.Data assemblies compare byte-identically. The
+pre-test manifest is `candidate-scopes-before.sha256`. After the native tier,
+`candidate-integrity.log` records the UTC timestamp, command, **218 entries**, each
+file's `OK` result and **integrity_exit=0**. It is an explicit receipt, not an
+empty quiet-check log. The final editor log matches the earlier receipt exactly
+after normalizing only temporary-directory IDs (`editor-baseline.normalized.log`
+and `editor-scopes.normalized.log`).
+
+Candidate SHA-256 identities:
+
+| Assembly | SHA-256 |
+| --- | --- |
+| Daemon `Bozzetto.dll` | `9e14a20cff20ef5fe39f53942096833988e7615b6e5d02858d703a0f1810de5a` |
+| Worker `Bozzetto.Composer.dll` | `b6da8990b176a0f5708e7ad7a18005d5b294b7a5075e8373cd704764fd2ba8cf` |
+| Compiler `Composer.dll` | `2ded04be407aa0a1b377dc25a1798c0fce36e8ec5bbbb141844c28ef9093a955` |
+| `Composer.Hosting.dll` | `c52ac53dfc94aac2a88f6b7918d8b138848a442c5df4b9c1f7a5acd2ac24792a` |
+
+The installed daemon PID **99247** still uses release
+`2026-10-02-calque-7d3557971d26-66c0b1bce8fe`. These integration pushes are recovery
 anchors, not release approval; `scripts/ship` and its complete gate remain required.
+The compiler/editor baseline failures, prior unresolved audit findings and
+Windows/macOS execution coverage remain outside this checkpoint's passing claims.
+
+### Diagnostic retention: next ownership boundary
+
+The user clarified that prompt cancellation must preserve useful troubleshooting
+evidence. Process/I/O drain and durable evidence retention are different
+contracts; the repairs above establish drain, not a complete diagnostic sink.
+
+The proposed next boundary is a supervisor-owned diagnostic actor receiving
+immutable, revision-tagged PSG snapshots and execution records. Its acknowledgment
+would establish retained evidence independently of whether a revision still has
+compilation authority. Evidence already handed over must outlive its producer;
+worker retirement must not delete it. A killed worker cannot be relied upon to
+produce a final dump, so useful checkpoints must cross the boundary during work,
+with incomplete or truncated capture explicitly reported.
+
+PSG binary is a candidate capture format, with JSON projections through
+Fidelity.Data when needed. Encoding, retention policy and a separate OS process
+remain design decisions, not implemented features. An actor in the existing
+daemon could survive compiler-worker failure; surviving daemon failure would
+require a stronger storage/process boundary. This direction prioritizes useful
+failure evidence without making complete-history capture or minimum allocation
+an architectural requirement.
 
 ## October 2 audit follow-up: cooperative formatting and owned retirement
 
@@ -158,8 +234,11 @@ All build/test leases are released. Installed release
 `2026-10-02-calque-7d3557971d26-66c0b1bce8fe` and shared daemon PID **99247** remain
 unchanged. Release publication still requires the complete release gate; these
 receipts establish the pushed integration checkpoint and its candidate.
-The downstream workflow reviewer/verifier outcome has not yet been recorded
-here; the auditor's latest feedback reports that result as pending.
+At the time of that earlier receipt, the downstream reviewer/verifier outcome was
+pending. The subsequently completed review of `798dade9` is recorded at the end of
+the [follow-up assessment](Incremental_Pipeline_Auditor_Followup_2026-10-02.md);
+the hosted-boundary changes at the top of this checkpoint have their own later
+source and acceptance receipts.
 
 ### Earlier repair receipt
 
