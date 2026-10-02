@@ -144,13 +144,13 @@ The matched October 2 anchor has these actual gates:
 | Gate | Result | Limit |
 | --- | --- | --- |
 | Fidelity.PSG | 270/270; focused Integrity 162/162 | Structural contract checks |
-| Alex | 271/271, including seven source-entry controls | Passive component composition |
+| Alex | 278/278, including twelve source-entry and two body-free selective controls | Passive component composition |
 | Clef/Baker | Focused 228/228; full 2,205 passed, 99 failed, 2,304 total | The same 99 failing identities; two new passing controls, no regressions or removals |
-| Composer | 370 passed, 16 failed, 386 total | 145 exact identities recovered from the 161-failure migration baseline; no regressions, additions or removals |
+| Composer | 374 passed, 12 failed, 386 total | 149 exact identities recovered from the 161-failure migration baseline; no previously passing regressions, additions or removals |
 
 The source build has no errors and six existing warnings. Composer's final
-incremental build has no errors and two existing dependency warnings; the
-preceding compile also reported the existing Xtensa incomplete-pattern warning.
+build has no errors, two existing dependency warnings and the existing Xtensa
+incomplete-pattern warning.
 A new reserved fixture-local name was corrected before the final run. Component
 DLL hashes match the assemblies copied into Composer's test output. Four fresh
 source programs (boundary, callback, hardware, kernel) pass structural Integrity
@@ -158,21 +158,12 @@ checks and retain exact dedicated spatial plans without generic value/body
 promotion. Raw TRX, code hashes and identity comparisons remain external under
 `~/.codex/work/psg-scope-retool-2026-10-01/`.
 
-The 16 Composer failures are:
+The 12 Composer failures are:
 
 - Eleven environment artifact-account cases, including native execution,
   substitution refusal and selective closure-object reuse. They stop at
   `Allocation lacks one current reservation relation`; their later checks have
   not passed. Required typed source accounts are described below.
-- Two foreign-declaration cases. One fixture still requests an executable
-  zipper for a body-free boundary entry. The other exposes missing successful
-  import-header coverage accounting. Its lost-coverage negative oracle remains
-  required; an executable declaration body is not the repair.
-- `LocalFiniteCellProofTests.Ordinary local cell recurrence keeps paired solver
-  evidence and rejects a foreign revision receipt` and
-  `IntrinsicWriteWitnessTests.Published factory borrow premises name the moved
-  invocation` still inspect now-private analytical incidence. Their source
-  incidence and public current-premise checks must remain discriminating.
 - `IncrementalBuildTests.Result branch authority rebuilds its whole scope and
   rejects another revisions proof receipt` still fails callable native transport
   at occurrence 218. Preserved typed branch authority is not native transport.
@@ -180,6 +171,23 @@ The 16 Composer failures are:
 These are unresolved failures, not exclusions or receiving acceptance. The
 [matched roster](PSG_Scoped_Integration_Interim_2026-10-01.md) identifies the
 producer, contract and consumer commits; no deployment is included.
+
+Four cases recovered since the 370/16 anchor: the two foreign-declaration
+controls and the local finite-cell and moved-factory premise controls. The
+source fixture oracles still check private incidence, actual cells/writers,
+retained rewrites and ordered roles. Public oracles compare Baker's prepared
+current claims and complete premise vectors, with genuine paired solver and
+foreign-revision controls intact.
+
+Import-header completion is now recorded separately from executable visits.
+Only a successful current entry/context and assigned import plan creates a
+receipt. Whole and selective traversal both require it; unchanged executable
+region membership is separately checked. An earlier local implementation put
+headers in body coverage and caused a new common-region escape in the already
+failing selective closure case. That regression was repaired before this anchor;
+the case again reaches missing reservation admission. Comparing failure messages,
+as well as failed identities, was necessary. One interrupted run produced no TRX;
+the completed 386-case rerun supplies the reported result.
 
 The preceding Composer total of 387 included one now-absent control for the
 retired complete-revision read API: `published revision read refuses unreserved
@@ -275,6 +283,16 @@ answer. It is research input, not a passing gate.
 The [interim repository anchor](PSG_Scoped_Integration_Interim_2026-10-01.md)
 records the Schema 15 migration and its unfinished consumer boundaries separately
 from the preceding compiled evidence.
+
+Generation 20 snapshot
+`22d818e454f216c0266335aa476532634706c5e144476171c1b7f90bba6af24a`
+confirmed the preceding synchronized compiler heads. The normative PHG tail was
+rehydrated without truncation for current-authorization and correspondence review.
+A bounded LAN supplied-code coverage review was checked against the source
+scope recipe; a local model's unsupported Nodes lookup claim was rejected against
+the actual import reader. Null, timed-out and unfinished responses are excluded
+from acceptance evidence. Bozzetto docs are pushed but are not in that indexed
+compiler corpus.
 
 The audit-ready handoff must bind matched producer/contract/consumer commits,
 actual scope/delta receipts and installed identities. It is not ready yet.

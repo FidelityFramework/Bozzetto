@@ -21,6 +21,9 @@ Baker's nominal layout and field premises without making type declarations
 runtime bodies. Publication carries their settled consequences.
 
 Alex consumes exact source-authored entry/traversal and binding facts passively.
+Successful body-free import entries have separate coverage receipts; they never
+become executable visits or enlarge Baker's region members. Whole and selective
+traversal both require those receipts and retain exact body confinement.
 Fixtures author their traversal accounts explicitly; constructing an observer
 never enriches a revision. Claim readers consume current typed propositions and
 ordered premises, with separate source and target discharge receipts.
@@ -31,8 +34,9 @@ validated compiler; source changes do not establish deployed acceptance.
 
 ## Validation
 
-PSG passes 270/270, including 162 focused Integrity cases. Alex passes 271/271,
-including all seven source-entry controls. Baker's focused cohort passes 228/228;
+PSG passes 270/270, including 162 focused Integrity cases. Alex passes 278/278,
+including twelve source-entry controls and two body-free selective controls.
+Baker's focused cohort passes 228/228;
 its full suite passes 2,205/2,304, with the identical 99 failing test identities
 and no regressions or removals against the preceding 2,302-case run. Both new
 nominal-declaration and quoted-boundary controls pass. Fresh boundary, callback,
@@ -43,13 +47,23 @@ receiving-socket or complete compiler acceptance. Raw evidence stays outside rep
 `~/.codex/work/psg-scope-retool-2026-10-01/`.
 
 The preceding aligned Composer migration baseline was 225 passed and 161 failed
-out of 386. The final matched run is 370 passed and 16 failed out of the same
-386: 145 exact test identities recovered, none regressed, added or removed.
-The final build has no errors. The 16 failures are 11 environment artifact
-account cases (including selective native closure reuse), two foreign-declaration
-cases (entry observation and missing header coverage), two fixture checks of
-now-private incidence, and the callable-`Result` native transport defect.
-The passing structural suites do not settle these failures.
+out of 386. The first matched anchor recovered 145 identities (370 passed,
+16 failed). This anchor is 374 passed and 12 failed: four further identities
+recovered, none regressed, added or removed. The final build has no errors and
+three existing warnings. Eleven failures still stop at missing environment
+reservation accounts, including selective native closure reuse; one exposes
+callable-`Result` native transport. Their later checks have not passed.
+
+The fixture repairs retain source-private incidence checks and compare the
+published current claims and complete ordered premise vectors. The moved-call
+control derives its destination insertion from the actual rewritten formal,
+preserving the original actual and intermediate history. Paired solver and
+foreign-revision refusal controls remain intact. An initial header receipt
+implementation incorrectly enlarged executable coverage and changed the
+selective closure failure to a region escape; the separate receipt repair and
+dedicated selective controls remove that regression. Failed identity counts
+alone would not have exposed it. An interrupted whole run supplied no result;
+the completed rerun is the evidence above.
 
 The previous 387-case inventory had four renamed cases and one
 complete-revision read control which disappeared with that retired API. That
@@ -67,8 +81,6 @@ conclusion follows from these gates.
 2. Author typed artifact reservation, factory-result, residence and ordered
    initialization accounts in Baker. Composer's environment artifact reader
    still depends on analytical edge roles which public revisions omit.
-   Header import coverage also needs explicit successful-entry accounting;
-   claiming coverage from an executable declaration body would hide the gap.
 3. Carry complete demanded fact scopes over sockets, with exact-base atomic
    install, edit-reservation fences, acknowledgements and joined retirement.
    The external generated typed delivery prototype is not this implementation.
@@ -82,8 +94,8 @@ foreign bases and unsupported required accounts must produce diagnostics.
 
 ## Review resources and repository roster
 
-Retrieval snapshot `3f551c76a5961230ed2c63cdadb73f6d60ea17b7e83baa5c7c2e19a2fa0af926`,
-generation 19, supplied normative spec revision
+Retrieval snapshot `22d818e454f216c0266335aa476532634706c5e144476171c1b7f90bba6af24a`,
+generation 20, confirmed the preceding matched compiler heads and supplied normative spec revision
 `44fd9890e4332c4e60e84f93031cbd757cca0d6c`. LAN reviewers received fresh
 uncommitted code directly. Useful findings were checked against actual producer
 contracts; fabricated APIs, unsupported execution claims and unrelated local
@@ -97,9 +109,9 @@ The matched source/component commits are:
 | BAREWire | `571ff31` |
 | Fidelity.PSG | `b1f0088` |
 | Clef | `2593630` |
-| Alex | `69950b9` |
-| Composer | `542745c` |
-| Bozzetto | Documentation commit containing this roster; parent `77cfa4c` |
+| Alex | `4e1f859` |
+| Composer | `72cb4ff` |
+| Bozzetto | Documentation commit containing this roster; parent `8e37703` |
 
 BAREWire, Fidelity.FSharp.Incremental, Fidelity.CloudEdge.Actor, Lattice,
 Fidelity.Data and Thuja were checked; they have no source changes in this tranche.
