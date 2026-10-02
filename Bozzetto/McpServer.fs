@@ -2532,7 +2532,7 @@ let mapStatusRoutes (app: WebApplication) (rctx: RouteContext) =
         info |> Option.map (fun i -> i.WorkingDirectory) |> Option.defaultValue ""
       let projects =
         info |> Option.map (fun i -> i.Projects) |> Option.defaultValue []
-      use process = System.Diagnostics.Process.GetCurrentProcess()
+      use currentProcess = System.Diagnostics.Process.GetCurrentProcess()
       let data = JsonValue.Object [
         "version", JsonValue.String version
         "sessionId", JsonValue.String sid
@@ -2549,7 +2549,7 @@ let mapStatusRoutes (app: WebApplication) (rctx: RouteContext) =
         "regions", regionData |> List.map (fun r -> JsonValue.Object [
           "id", JsonValue.String r.id; "content", JsonValue.String r.content; "affordances", HttpJson.strings r.affordances ]) |> JsonValue.Array
         "pid", HttpJson.integer Environment.ProcessId
-        "uptime", JsonValue.Number (DateTime.UtcNow - process.StartTime.ToUniversalTime()).TotalSeconds ]
+        "uptime", JsonValue.Number (DateTime.UtcNow - currentProcess.StartTime.ToUniversalTime()).TotalSeconds ]
       do! jsonResponse ctx 200 data
     } :> Task
   ) |> ignore
@@ -2874,9 +2874,9 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
           | Ok message ->
             do! jsonResponse ctx 200
                   (JsonValue.Object [ "success", JsonValue.Bool true
-                                     "message", JsonValue.String message
-                                     "sessionId", JsonValue.String (Bozzetto.WorkerProtocol.SessionId.value sid)
-                                     "workflow", JsonValue.String (Bozzetto.WorkflowTypes.SessionWorkflow.label target) ])
+                                      "message", JsonValue.String message
+                                      "sessionId", JsonValue.String (Bozzetto.WorkerProtocol.SessionId.value sid)
+                                      "workflow", JsonValue.String (Bozzetto.WorkflowTypes.SessionWorkflow.label target) ])
           | Error err -> do! jsonResponse ctx (BozzettoError.toHttpStatus err) (BozzettoError.toJsonValue err)
     } :> Task
   ) |> ignore
@@ -3007,8 +3007,8 @@ let mapLiveTestingRoutes (app: WebApplication) (rctx: RouteContext) =
               | false ->
                   dispatch (Bozzetto.BozzettoMsg.Event (Bozzetto.TuiEvent.RunTestsRequested (targetSession, tests, None)))
                   do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool true
-                                      "queued", HttpJson.integer tests.Length
-                                      "message", JsonValue.String (sprintf "Queued %d test(s) for explicit run." tests.Length) ])
+                                                               "queued", HttpJson.integer tests.Length
+                                                               "message", JsonValue.String (sprintf "Queued %d test(s) for explicit run." tests.Length) ])
     } :> Task
   ) |> ignore
   app.MapGet("/api/live-testing/file-annotations", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->

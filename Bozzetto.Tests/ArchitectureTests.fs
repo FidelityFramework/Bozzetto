@@ -99,7 +99,10 @@ let private productionFsFiles () =
     not (relative.StartsWith "Bozzetto.Tests/")
     && not (relative.Contains "/obj/")
     && not (relative.Contains "/bin/")
-    && not (relative.Contains "/worktrees/"))
+    && not (relative.Contains "/worktrees/")
+    // The cohort wire codec reconstructs every case when replaying stored
+    // events; that is decoding, not a shell or MCP path issuing the command.
+    && relative <> "Bozzetto.Core/CohortJson.fs")
 
 /// True when `line` is the pattern-match ARM that interprets `needle`
 /// (`| needle ... ->`), never a value construction of it.

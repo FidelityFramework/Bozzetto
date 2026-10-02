@@ -141,11 +141,6 @@
         "resolved": "0.26.0",
         "contentHash": "n7btGXdtRyprGnpLMpBs6rLScxlvPtVWwmTR8h7CtJvpZXBGhGvibEdZxRjeTZNrwf403jJ0ZPpt35Pz/NaNsw=="
       },
-      "AsyncIO": {
-        "type": "Transitive",
-        "resolved": "0.1.69",
-        "contentHash": "xyXJLi+wjy6AtIyWXHXJkPS0gItqVT4lg5w++7bA5YEjugYKdrFMGxCo6KUJ1yYwjriLQJ1g35LDljZs3Q90XQ=="
-      },
       "DiffEngine": {
         "type": "Transitive",
         "resolved": "15.6.0",
@@ -286,11 +281,6 @@
           "Microsoft.Extensions.AI.Abstractions": "10.3.0"
         }
       },
-      "NaCl.Net": {
-        "type": "Transitive",
-        "resolved": "0.1.13",
-        "contentHash": "AVg1455RQnyTy6tiessudruZHvbl70QWRPyx3og2I1Fei17LDNc7Z3DRgqN2+PsySBui/1EDP4A7adhQXydi6g=="
-      },
       "Newtonsoft.Json": {
         "type": "Transitive",
         "resolved": "13.0.3",
@@ -409,11 +399,6 @@
         "resolved": "10.0.3",
         "contentHash": "JCKbH/CN5l0CSoJBILEvJmNQVp5vV+FY3q2ue4K9p4eDT4mFEv0bjTQCV+MD6Qk1b/qk9fWmZZKhG1TklbXw1Q=="
       },
-      "System.ServiceModel.Primitives": {
-        "type": "Transitive",
-        "resolved": "8.1.2",
-        "contentHash": "xlJ07FAUSDjPL/GhvVY1/KVPWn2ce056X4nHPwqAa5rkNLiNN5rqh6VcgMUoF6J7ckwhkVJ1vVx/K/47nyyR9g=="
-      },
       "Verify": {
         "type": "Transitive",
         "resolved": "28.6.1",
@@ -433,9 +418,16 @@
           "FSharp.Core": "8.0.300"
         }
       },
+      "barewire": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.401, )"
+        }
+      },
       "bozzetto": {
         "type": "Project",
         "dependencies": {
+          "BAREWire": "[1.0.0, )",
           "Bozzetto.Composer.Protocol": "[0.6.834, )",
           "Bozzetto.Core": "[0.6.834, )",
           "FSharp.Data.Adaptive": "[1.2.26, )",
@@ -444,10 +436,10 @@
           "Falco.Datastar": "[1.3.0, )",
           "Falco.Markup": "[1.4.0, )",
           "Fidelity.Data": "[1.0.0, )",
+          "Fidelity.PSG": "[1.0.0, )",
           "Microsoft.Data.Sqlite": "[9.0.1, )",
           "ModelContextProtocol": "[1.0.0-rc.1, )",
           "ModelContextProtocol.AspNetCore": "[1.0.0-rc.1, )",
-          "NetMQ": "[4.0.2.2, )",
           "OpenTelemetry.Exporter.Console": "[1.18.0, )",
           "OpenTelemetry.Exporter.OpenTelemetryProtocol": "[1.18.0, )",
           "OpenTelemetry.Extensions.Hosting": "[1.18.0, )",
@@ -461,7 +453,9 @@
       "bozzetto.composer.protocol": {
         "type": "Project",
         "dependencies": {
-          "FSharp.Core": "[10.1.401, )"
+          "BAREWire": "[1.0.0, )",
+          "FSharp.Core": "[10.1.401, )",
+          "Fidelity.PSG": "[1.0.0, )"
         }
       },
       "bozzetto.core": {
@@ -471,6 +465,7 @@
           "FSharp.Data.Adaptive": "[1.2.26, )",
           "FSharp.SystemTextJson": "[1.4.36, )",
           "Fantomas.Core": "[8.0.0-alpha-002, )",
+          "Fidelity.Data": "[1.0.0, )",
           "FsToolkit.ErrorHandling": "[5.2.0, )",
           "FuzzySharp": "[2.0.2, )",
           "Ionide.ProjInfo": "[0.74.1, )",
@@ -483,8 +478,10 @@
       "bozzetto.diagnostics": {
         "type": "Project",
         "dependencies": {
+          "BAREWire": "[1.0.0, )",
           "FSharp.Core": "[10.1.401, )",
-          "Fidelity.Data": "[1.0.0, )"
+          "Fidelity.Data": "[1.0.0, )",
+          "Fidelity.PSG": "[1.0.0, )"
         }
       },
       "bozzetto.simulation": {
@@ -493,11 +490,39 @@
           "Bozzetto.Core": "[0.6.834, )"
         }
       },
+      "calque.core": {
+        "type": "Project",
+        "dependencies": {
+          "Calque.Syntax": "[0.1.0, )",
+          "FSharp.Core": "[10.1.401, )"
+        }
+      },
+      "calque.incremental": {
+        "type": "Project",
+        "dependencies": {
+          "Calque.Core": "[0.1.0, )",
+          "FSharp.Core": "[10.1.401, )",
+          "Fidelity.FSharp.Incremental.Hosting": "[0.1.0-preview.6, )"
+        }
+      },
+      "calque.syntax": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.401, )"
+        }
+      },
       "fidelity.data": {
         "type": "Project",
         "dependencies": {
           "FSharp.Core": "[10.1.401, )",
           "XParsec": "[0.3.0, )"
+        }
+      },
+      "fidelity.psg": {
+        "type": "Project",
+        "dependencies": {
+          "BAREWire": "[1.0.0, )",
+          "FSharp.Core": "[10.1.401, )"
         }
       },
       "Falco.Datastar": {
@@ -606,17 +631,6 @@
         "requested": "[0.11.6, )",
         "resolved": "0.11.6",
         "contentHash": "f33RkDtZO8VlGXCtmQIviOtxgnUdym9xx/b1p9h91CRGOsJFxCFOFK1FDbVt1OCf1aWwYejUFa2MOQyFWTFjbA=="
-      },
-      "NetMQ": {
-        "type": "CentralTransitive",
-        "requested": "[4.0.2.2, )",
-        "resolved": "4.0.2.2",
-        "contentHash": "G2dNt5Fcv/wdZOwTkUksJBe8RUc4wJn38FTZw8UmH5tcEkPi3KM8ME8igJ1fR+1msNpEKfLzEfgJOA6RpOE1jA==",
-        "dependencies": {
-          "AsyncIO": "0.1.69",
-          "NaCl.Net": "0.1.13",
-          "System.ServiceModel.Primitives": "8.1.2"
-        }
       },
       "OpenTelemetry": {
         "type": "CentralTransitive",

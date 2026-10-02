@@ -186,8 +186,11 @@ let errorAlgebraHardeningTests =
         //   reads the optional endpoint/token from the request body and
         //   builds a (bool, error, reportId) result string. Pure UI plumbing
         //   in a thin transport handler — not a domain operation.
+        // +12 from CohortJson's wire decoders (76 counted): they mirror
+        //   Fidelity.Data's Result<_,string> parse contract at the storage
+        //   boundary, replacing a reflective serializer — not domain operations.
         // If this fails upward, migrate new uses to Result<_,BozzettoError>.
-        (count <= 74)
+        (count <= 76)
         |> Expect.isTrue
           (sprintf "Result<_,string> grew to %d — migrate new uses to Result<_,BozzettoError>" count)
       }

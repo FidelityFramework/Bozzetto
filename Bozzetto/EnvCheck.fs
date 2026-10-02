@@ -612,10 +612,12 @@ let private tryGetDaemonSessions (mcpPort: int) =
     match response.IsSuccessStatusCode with
     | true ->
       let json = response.Content.ReadAsStringAsync().Result
-      match Json.parse json |> Result.bind (fun root ->
-        match HttpJson.property "sessions" root with
-        | Some (JsonValue.Array rows) -> Ok rows
-        | _ -> Error "Daemon response has no sessions array.") with
+      let sessions =
+        Json.parse json |> Result.bind (fun root ->
+          match HttpJson.property "sessions" root with
+          | Some (JsonValue.Array rows) -> Ok rows
+          | _ -> Error "Daemon response has no sessions array.")
+      match sessions with
       | Error reason -> Error reason
       | Ok rows ->
         let read name row = HttpJson.property name row |> Option.bind JsonValue.asString |> Option.defaultValue ""

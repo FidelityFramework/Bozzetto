@@ -26,6 +26,10 @@ module internal McpJson =
   let render = Fidelity.Data.JSON.Json.serialize
   let pretty = Fidelity.Data.JSON.Json.serializePretty
   let timestamp = WireJson.timestamp
+  let staleness value =
+    match value with
+    | Bozzetto.Features.EvalProvenance.Fresh -> WireJson.union "Fresh" []
+    | Bozzetto.Features.EvalProvenance.StaleUpstream upstream -> WireJson.union "StaleUpstream" [ array integer upstream ]
 
 /// Pure functions for MCP adapter (formatting responses)
 module McpAdapter =
@@ -369,10 +373,10 @@ module McpAdapter =
 
   let formatEventsJson (events: list<DateTime * string * string>) : string =
     object [
-      "events", array (fun (timestamp, source, value) -> object [
+      "events", (events |> array (fun (timestamp, source, value) -> object [
         "timestamp", text (timestamp.ToString("O"))
         "source", text source
-        "text", text value ]) events
+        "text", text value ]))
       "count", integer events.Length ]
     |> render
 

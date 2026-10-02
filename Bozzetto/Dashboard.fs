@@ -2006,7 +2006,7 @@ let createSessionActionHandler
       // and which page (client id) owns this browser tab's SSE stream.
       let viewingId, channelClientId =
         try
-          use doc = readSignalsJsonSized ctx |> Async.AwaitTask |> Async.RunSynchronously
+          let doc = readSignalsJsonSized ctx |> Async.AwaitTask |> Async.RunSynchronously
           getSignalString doc Signals.ViewingSessionId "viewing-session-id",
           clientIdFromSignals doc
         with _ -> "", ""
@@ -2968,7 +2968,7 @@ let createEndpoints
         let! previous = q.GetPreviousSessions ()
         let channelClientId =
           try
-            use doc = readSignalsJsonSized ctx |> Async.AwaitTask |> Async.RunSynchronously
+            let doc = readSignalsJsonSized ctx |> Async.AwaitTask |> Async.RunSynchronously
             clientIdFromSignals doc
           with _ -> ""
         match previous |> List.tryFind (fun s -> s.Id = sessionId) with

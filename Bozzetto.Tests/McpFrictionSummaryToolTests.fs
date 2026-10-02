@@ -163,11 +163,13 @@ let tests =
       let top = root.GetProperty("HighestPriorityTools")[0]
       for field in [ "MostCommonBlocker"; "MostCommonFollowUp"; "MostCommonAlternative" ] do
         top.GetProperty(field).ValueKind |> Expect.equal "Absent choices are explicit JSON null." JsonValueKind.Null
-      root.GetProperty("RecentFeedback")[0].GetProperty("LatestReason").GetString()
+      let feedback = root.GetProperty("RecentFeedback")[0]
+      feedback.GetProperty("LatestReason").GetString()
       |> Expect.equal "Feedback is escaped by the JSON library." escaped
-      root.GetProperty("RecentFeedback")[0].GetProperty("LatestAlternative").ValueKind
+      feedback.GetProperty("LatestAlternative").ValueKind
       |> Expect.equal "Missing feedback alternatives remain null." JsonValueKind.Null
-      root.GetProperty("RecommendedWorkItems")[0].GetProperty("TargetTool").ValueKind
+      let workItem = root.GetProperty("RecommendedWorkItems")[0]
+      workItem.GetProperty("TargetTool").ValueKind
       |> Expect.equal "A work item may apply to no particular tool." JsonValueKind.Null
       let observed = root.GetProperty("ObservedSignals")
       observed.GetArrayLength() |> Expect.equal "All nine signal cases have a schema." 9

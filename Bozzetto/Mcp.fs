@@ -1323,8 +1323,8 @@ module McpTools =
           object [
             "state", text "NoSession"
             "message", text (match sessionCount with
-                  | 0 -> "No sessions exist. Call get_available_projects to discover .fsproj/.sln/.slnx files (pass working_directory to narrow a large tree), then create_project_session for one .fsproj, create_solution_session for one .sln/.slnx, or create_bare_session for a project-free REPL."
-                  | _ -> sprintf "%d session(s) exist but none matched the working directory. Use list_sessions to see them, or switch_session to select one." sessionCount)
+                             | 0 -> "No sessions exist. Call get_available_projects to discover .fsproj/.sln/.slnx files (pass working_directory to narrow a large tree), then create_project_session for one .fsproj, create_solution_session for one .sln/.slnx, or create_bare_session for a project-free REPL."
+                             | _ -> sprintf "%d session(s) exist but none matched the working directory. Use list_sessions to see them, or switch_session to select one." sessionCount)
             "available", strings availableTools ] |> render
       | WarmingUp _ | Unroutable _ | FaultedSession _ ->
         // INVARIANT (get_fsi_status is total): a session that exists but is
@@ -2976,7 +2976,7 @@ module McpTools =
                   "Kind", (value.Kind |> text)
                   "Name", (value.Name |> text) ]))
                 "PropertyViolation", (value.PropertyViolation |> optional (fun value -> object [
-                  "PropertyName", (value.PropertyName |> text)
+                  "PropertyName", (value.PropertyName |> optional text)
                   "ShrunkCounterexample", (value.ShrunkCounterexample |> text)
                   "AlgebraicCategory", (value.AlgebraicCategory |> optional (fun value -> (value |> text))) ]))
                 "CoverageIntel", (value.CoverageIntel |> optional (fun value -> object [
@@ -2994,15 +2994,15 @@ module McpTools =
                   "Summary", (value.Summary |> text) ])) ]))
               "Diagnostics", (resp.Diagnostics |> optional (fun value -> object [
                 "Severity", (value.Severity |> text)
-                "AffectedCells", (value.AffectedCells |> array integer)
+                "AffectedCells", (value.AffectedCells |> array (fun (cell, stale) -> JsonValue.Array [ integer cell; staleness stale ]))
                 "SuggestionCount", (value.SuggestionCount |> integer)
                 "TopSuggestions", (value.TopSuggestions |> array (fun value -> object [
                   "Code", (value.Code |> text)
                   "Explanation", (value.Explanation |> text) ]))
                 "Performance", (value.Performance |> optional (fun value -> object [
                   "Sparkline", (value.Sparkline |> text)
-                  "P50Ms", (value.P50Ms |> real)
-                  "P95Ms", (value.P95Ms |> real) ]))
+                  "P50Ms", (value.P50Ms |> optional real)
+                  "P95Ms", (value.P95Ms |> optional real) ]))
                 "Summary", (value.Summary |> text) ])) ] |> render)
     }
 
@@ -3610,7 +3610,7 @@ module McpTools =
               "Kind", (value.Kind |> text)
               "Name", (value.Name |> text) ]))
             "PropertyViolation", (value.PropertyViolation |> optional (fun value -> object [
-              "PropertyName", (value.PropertyName |> text)
+              "PropertyName", (value.PropertyName |> optional text)
               "ShrunkCounterexample", (value.ShrunkCounterexample |> text)
               "AlgebraicCategory", (value.AlgebraicCategory |> optional (fun value -> (value |> text))) ])) ]))
           "Suggestions", (jsonData.Suggestions |> array (fun value -> object [
@@ -3619,8 +3619,8 @@ module McpTools =
             "Confidence", (value.Confidence |> real) ]))
           "Performance", (jsonData.Performance |> optional (fun value -> object [
             "Sparkline", (value.Sparkline |> text)
-            "P50Ms", (value.P50Ms |> real)
-            "P95Ms", (value.P95Ms |> real) ]))
+            "P50Ms", (value.P50Ms |> optional real)
+            "P95Ms", (value.P95Ms |> optional real) ]))
           "Summary", (jsonData.Summary |> text) ] |> render)
     }
 
