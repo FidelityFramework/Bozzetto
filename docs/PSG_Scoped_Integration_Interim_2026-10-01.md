@@ -4,6 +4,10 @@ This is a synchronized work-in-progress checkpoint. The governing contract and
 receiving gates are in the [integration checkpoint](PSG_Transport_Integration_Auditor_Checkpoint_2026-10-01.md).
 No new compiler distribution or receiving socket workflow is accepted here.
 
+The [October 2 implementor handoff](Compiler_Integration_Implementor_Handoff_2026-10-02.md)
+records the subsequent unfinished account changes and the transition of the
+outgoing implementor to auditor.
+
 ## Implemented boundary
 
 BAREWire supplies bounded byte-source readings. Fidelity.PSG Schema 15 separates
