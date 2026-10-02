@@ -1,6 +1,11 @@
 # Bozzetto shared provider checkpoint — 2026-09-30
 
 **Recorded live checkpoint; independent read-only assessment received.**
+For the current October 2 Calque deployment, exact installed hashes and fresh
+acceptance results, use the
+[cross-project checkpoint](Incremental_Provider_Checkpoint_2026-10-01.md#installed-calque-provider--october-2-1348-utc).
+The deployment paths and PIDs below describe the September 30 checkpoint.
+
 See the [auditor assessment](Bozzetto_Live_Provider_Auditor_Assessment_2026-09-30.md)
 and [correction response](Bozzetto_Live_Provider_Audit_Response_2026-09-30.md) for
 subsequent status/launcher corrections and their deployment identity. The earlier

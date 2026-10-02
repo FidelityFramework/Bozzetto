@@ -43,7 +43,8 @@ instances. These typed source facts do not contain controller/runtime handles.
 Full PSG transport across the service boundary and controller realization remain
 the separately identified work in the transport handback.
 
-Published source heads are Calque `48c77a607f111e7ec698ee5668f2d06e029fde4f`,
+Calque's implementation root is `48c77a607f111e7ec698ee5668f2d06e029fde4f`;
+documentation cleanup is published as `07f6276` on `main`. Other published source heads are
 PSG `e99010e631d196d23aa7d303a22bf06e10466a35`,
 Clef `f1dc69ac7a711c4dc3eeb81e9034e07ddf465eb3` and
 Composer `0287b744d3dd8af4dc67a6f101dd0d9bf50d6f84` on Forgejo `main`.
@@ -54,15 +55,17 @@ local Git metadata is archived outside the repository under the evidence root's
 `ssh://hhh@forge.spkez.dev:2222/FidelityFramework/Calque.git`.
 Bozzetto source is being published from base `da1f3604` on
 `integration/calque-incremental-20261002`, preserving reviewable source while
-the required `main` release gate is deferred by the daemon's memory guard.
-That branch contains the worker metadata correction and shipping/lease repairs;
-their fresh .NET gates remain pending. Existing earlier test receipts below do
-not certify those subsequent changes. Unchanged Alex and Incremental heads are
+the required full `main` release pipeline remains separate. The branch is now
+`92e54246`, including the worker metadata correction and shipping/lease repairs.
+Fresh builds and the default suite passed after the machine reboot; the Composer
+tier and installed replay are tracked below. Unchanged Alex and Incremental heads are
 `4e1f859d` and `d476aea2`.
-The pre-publication candidate was built before these commits and Calque's
-repository-metadata correction; publication is not a fresh binary receipt.
-No shared deployment promotion is claimed. Stable SDK **10.0.401** built the
-`net10.0` candidate. Both selected closures contain foundation core SHA-256
+The original pre-publication candidate predates Calque's repository-metadata
+correction. Its replacement under `candidate/daemon-corrected` and
+`candidate/worker-corrected` was built with stable SDK **10.0.401**, Bozzetto
+`89fcad86` and Calque's published implementation root. Composer's existing product
+DLLs were retained and tested, rather than claimed as newly rebuilt compiler
+sources. Both selected closures contain foundation core SHA-256
 `27b7a4d6449387529d0f415d13d3e656ef598697261868751f893de9dce44c81`
 and Hosting SHA-256
 `179f724c381241e4a102a32c92d5984ba60835b921a4c90c66f5f8263c528c11`.
@@ -75,15 +78,25 @@ Evidence is external under
 | --- | --- |
 | PSG schema-16 Release suite | **307/307 passed**, including 37 new artifact-account controls (`psg-schema16-tests.log`). |
 | Clef official mapper generation check | **218 structural mappers checked** against the fresh compiler and schema-16 contract (`clef-schema16-mappers.log`). |
-| Calque Release build and unfiltered suite | **83/83 passed**, zero skipped (`calque-incremental-final-tests.log`). The first 82/83 run exposed a splice fixture that failed parsing before its intended dialect check; fixture spacing was corrected, retaining both refusal assertions. |
-| Bozzetto solution and optional worker Release builds | **Zero warnings/errors**, using Composer's product distribution and the complete published formatter closure (`bozzetto-calque-build-product.log`, `bozzetto-calque-worker-build-product.log`). |
-| Bozzetto default suite | **8,950 registered/ran, 8,947 passed, three performance-budget ignores, zero failed/errored; Trusted** (`bozzetto-calque-default.log`, `calque-provider-trust.jsonl`). All seven preview controls and the bounded retired CLI refusal ran. Retirement changes registration; this is not identical historical suite coverage. |
+| Calque Release build and unfiltered suite | **83/83 passed**, zero skipped, against the published implementation (`calque-published-build.log`, `calque-published-tests.log`). Build: four inherited serialization warnings, zero errors. |
+| Bozzetto solution and optional worker Release builds | **Zero warnings/errors**, using Composer's product distribution and freshly published Calque closure (`bozzetto-corrected-build.log`, `worker-corrected-build.log`, `corrected-host-build-final.log`). |
+| Bozzetto default suite | **8,950 registered/ran, 8,947 passed, three performance-budget ignores, zero failed/errored; Trusted** (`bozzetto-corrected-default.log`, `corrected-provider-trust.jsonl`). All seven preview controls and the bounded retired CLI refusal ran. The wrapper's anchored text search failed on an ANSI colour prefix after the suite passed; the structured trust ledger records exit zero. |
 | Composer schema-16 Release suite | **385/386 passed**, zero skipped (`composer-schema16-tests.log`). Exact failed-case comparison recovered eleven environment failures and introduced none. Callable `Result` transport at occurrence 218 remains refused; its exact node kind is not yet established. |
-| Whole Bozzetto Composer tier | **41/41 passed, zero ignored/failed/errored; Trusted** (`bozzetto-calque-native.log`, `calque-provider-trust.jsonl`). The new real worker journey retained the unchanged callable's actual object path/digest and witness with zero visits, compiled the changed callable and ran changed output. The public MCP/HTTP journey used the staged candidate and exercised formatting, reservation, exact-base apply, cancellation/recovery and native execution. |
+| Whole Bozzetto Composer tier | **41/41 passed, zero ignored/failed/errored; Trusted**, repeated against the corrected published closure (`bozzetto-corrected-native.log`, `corrected-provider-trust.jsonl`). The real worker journey retained the unchanged callable's actual object path/digest and witness with zero visits, compiled the changed callable and ran changed output. The public MCP/HTTP journey exercised formatting, reservation, exact-base apply, cancellation/recovery and native execution. |
 | Unchanged Alex reader Release suite over schema 16 | **278/278 passed**, zero skipped (`alex-schema16-tests.log`). |
 | Clef final unfiltered Release suite | **2,212/2,311 passed, 99 failed, zero skipped** (`clef-schema16-final-tests.log`). The class/display/outcome comparison preserves all 2,304 baseline cases with their multiplicities and the same 99 failed identities; all seven additions passed, zero missing cases/new failures/recoveries (`clef-schema16-final-case-preservation.log`, `clef-schema16-final-comparison.log`). Full compiler acceptance remains red. The first run's added alias-use test had an incorrect premise-owner oracle; it was corrected to require exactly the removed and added target owners. |
 
-The staged candidate is under the same evidence root's `candidate/daemon` and
+The external report wrappers initially exited after successful tests: the default
+wrapper's anchored search missed an ANSI prefix, and the native wrapper selected
+`composer` instead of the recorded tier `--integration-composer`. Both checks were
+corrected; the structured ledger and `corrected-gate-postchecks.log` confirm the
+actual test results and unchanged candidate/installed bytes. Tests were not rerun
+solely to repair report parsing. `ci-pipeline-compile-help.log` also confirms the
+shipping script compiles after the `92e54246` syntax correction; it is not a full
+release-pipeline receipt.
+
+The original candidate is beside `validation/`, under
+`~/.codex/work/bozzetto-resumption-2026-10-02/candidate/daemon` and
 `candidate/worker-product`; the latter contains the compiler product closure,
 Calque and the shared foundation, with no test-runner assemblies in that
 directory. A subsequent deployment audit found that its dependency metadata
@@ -91,15 +104,14 @@ still named 18 absent test runtime assemblies and 65 absent localized resources
 inherited from the earlier selected test distribution. The SDK omitted external reference selection from its
 incremental dependency-file inputs. `RecordSelectedWorkerClosure` now records
 the selected distribution paths and resolved-reference hashes as an explicit
-input; its rebuild, distribution-switch regression and fresh native gate are
-pending a full-build lease. The daemon currently queues that request at critical
-memory pressure with zero allowed builds. This candidate must not be installed
-until the metadata correction passes. Publication must follow a successful
+input. The replacement's distribution-switch regression passed under a build
+lease: test distribution to older product DLLs in the same output directories,
+then an unchanged product rebuild. All **34** declared published runtime/resource
+assets exist, with **zero** test dependencies; unchanged selection preserved both
+stamp and dependency-file timestamps (`worker-closure-regression.log`). The old
+candidate must not be installed. Publication must follow a successful
 build against those same selected distributions: ordinary `--no-build` publish
-copies the build dependency file rather than regenerating it. The regression
-must switch from the test distribution to older product DLLs in the same output
-directories, validate every published runtime/resource asset, and retain stamp
-and dependency-file timestamps on an unchanged product rebuild. Its original exact
+copies the build dependency file rather than regenerating it. The original candidate's exact
 files are recorded in `calque-candidate-before.sha256`; all **211 files** matched
 after the complete Composer tier (`calque-candidate-after.log`). Live public
 evidence is in
@@ -107,29 +119,58 @@ evidence is in
 `017-mcp-composer_format_preview.json` and the subsequent native run replies.
 The owned live daemon was PID **1813858**, API 4, with a ten-minute TTL and
 reserved ports; it exited after the test. All build/test leases were released.
-The shared daemon remains
-PID **215237** with its previously installed closure; that deployment has no
-Format operation. Fresh source/owned test daemons do not establish installed
-behavior. Full-document parsing remains current; incremental syntax/trivia reuse,
+The shared daemon replacement is recorded below. PID 215237 belongs to the
+previous boot; PID 62482 was the restored old deployment, stopped gracefully
+after confirming no sessions, worker or active work leases.
+Full-document parsing remains current; incremental syntax/trivia reuse,
 markup, cooperative parser interruption and measured editor latency are open.
 
-Candidate primary assembly SHA-256 values:
+Installed primary assembly SHA-256 values:
 
 | Assembly | SHA-256 |
 | --- | --- |
-| Bozzetto | `9b5450294b8019ea6056add027f107b2e956bd5277879ba019e0060fbf586f5a` |
-| Bozzetto.Composer | `552d6ee27735da2bdc4364339edc57fe6e7142c86d79eb07700cabee5b091365` |
+| Bozzetto | `7d3557971d264b0ace288d6098ea035b90d6cdc7ca1a6f0e654bf682f5aef1fb` |
+| Bozzetto.Composer | `66c0b1bce8fe606fe3abd9f9e05a684a76ff94bc8b8d9ef0301195075c44380f` |
 | Composer | `7437b5ac7f55e90763e22b981c843d5b256a227a380ede8106e21baaa5774df4` |
 | Clef.Compiler.Service | `6c16e09c9e6fc9b5c03dba0bcbf4c3200bef79f5c7f20ae61a257b28a9698e34` |
 | Fidelity.PSG | `3ade77a33fa6b5466d575d5803de735d0860922a35f586f2b55fb016bdf80c52` |
-| Calque.Incremental | `ca072d98ce152f6ea6b0da2b969b6384c02e2cdea2d7c3e515f7ee88246f1a92` |
-| Calque.Core | `51fef0d48c9530073b9cdc88384b38df2918d30d4b798dca3ce6a9b49b5f68cc` |
-| Calque.Syntax | `c57012bd41a5c6039e038e7efb1b2d320896a6946b4c6931e3955513846b4a9b` |
+| Calque.Incremental | `4b5cc96c068014192b4da3922d3f329397811fbfd46bf3596ef650d6b10966a6` |
+| Calque.Core | `abbcbfc9389e0626555391e97783c76aaf3733ba9affc6786c0323765f3fcbdd` |
+| Calque.Syntax | `7893d30f67684577abaf94c9c2355e7830a5b778ff0756bb912e5de0031bb27d` |
 
 The daemon and worker's protocol assembly also matches byte-for-byte:
-`8bd4efc33885f410363bbdc1698c8ad7ac01b6af1c31b361fd7fbc25f7b250ad`.
-This is a reviewable source/candidate checkpoint over the named existing compiler
-failures, not a clean full-language acceptance or a deployed formatter service.
+`b4432e696f97c56591ebff105280cbfaab852be8e0c892de301eb7c24e1493e7`.
+
+### Installed Calque provider — October 2, 13:48 UTC
+
+The previously approved shared replacement now runs as **PID 99247**, started
+**2026-10-02T13:48:52.8185111Z**, API **4**, on 47749/47750 from the dedicated
+external workspace. Bounded identity, health and Composer configuration probes
+passed. `/home/hhh/.local/bin/boz` selects the immutable release directory
+`~/.local/share/bozzetto/releases/2026-10-02-calque-7d3557971d26-66c0b1bce8fe/`.
+It contains both exact tested closures, `acceptance.jsonl`, `provenance.json`, the
+previous launcher for rollback and `manifest.sha256` (SHA-256
+`d128d37bbc12a20330aa75a40a9c02ae98f10cce2968528a88a619bc08e2967c`).
+Staging compared every file to the tested candidate. Startup evidence is
+`replacement-start.json`. The public MCP replay in
+`installed-format-replay.qKATkcyr/summary.json` passed preview, reservation,
+exact-buffer comparison, save, build and `composer_run_current` for both initial
+and edited source. Output changed from `stable\nbefore\n` to `stable\nafter\n`.
+The unchanged callable retained its actual object path and SHA-256, its witness
+was retained with **zero visits**, and the changed callable was compiled. The
+replay's session closed with no pending cleanup/error; its test-suite lease was
+released. `installed-after-sessions.json` records the live worker's `format`
+operation and PSG schema-16 contract; `installed-composer-page.png` records the
+browser page with the replay session closed. This deployment does not establish clean
+full-language acceptance or completion of the full release pipeline.
+
+The next editor step remains distinct: Lattice currently checks unsaved buffers
+in its own CCS session while Bozzetto builds saved source. The existing
+[editor direction](Bozzetto_Editor_Workspace_Direction_2026-09-30.md) specifies
+explicit reserve/save/build before shared compiler-owned overlays. A formatting
+preview can be added independently; applying it must coordinate source versions
+with that save/build workflow. No shared unsaved-buffer compiler session or
+automatic format-on-save integration is claimed by this installed replay.
 
 Retrieval configuration has been published in speakez-lab
 `0b5dde1cd44195f00b483fd749159e122302ed45`. Its scoped seventeen-source rollout
