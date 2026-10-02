@@ -179,3 +179,132 @@ the largest expected effect on repeated previews; then retained drained results;
 then high-water stamps; then the named supersession policy; then scope parenting;
 and a `Core.step` micro-baseline at 1, 100 and 1,000 works to decide when the
 quadratic bookkeeping would block incremental syntax reuse.
+
+## Review of the bounded-cleanup checkpoint (798dade9)
+
+Independent review of Bozzetto `798dade9` (source `1d878ecd`, `df74a727`; docs-only
+`f7921e70` landed during the review) and Calque `a5e7355`, both pushed. Method:
+five dimension reviewers (bounded evidence, cleanup deadline, supervisor
+escalation, wire/docs/Calque, evidence), three adversarial lenses per finding
+with majority survival, then a completeness critic; 123 agents, read-only on
+the repositories, no Bozzetto build or test run, installed daemon untouched. Of
+39 reviewer findings, 30 survived and 9 were refuted. The three highest-impact
+items below were re-read in source by the auditor.
+
+### Verdict
+
+Both defects from the previous section are fixed and the checkpoint's claims
+hold: formatter evidence is bounded at exactly 16 KiB with exact byte accounting,
+paired surrogates are never split, lone surrogates become U+FFFD, the bound
+survives reservation, cancellation and close, and the test fills past the frame
+limit and roundtrips every status through the strict codec. The capacity
+contract is now stated correctly and tested. The 30-second deadline is observed
+without client traffic because the daemon monitor polls status on a 100 ms
+timer while cleanup is pending and renews its window. Escalation withdraws every
+session and runs the stop path. Calque's new tests exercise release of the last
+demand and a Merge-phase stop against the real pipeline. All gate receipts,
+candidate hashes, the protocol DLL pair, the worker closure and the corrected
+integrity receipt verify. No blocker. Two significant items and one pre-existing
+significant defect found by the critic should be fixed before release.
+
+### Significant
+
+1. **Worker self-termination cannot kill its process tree** (pre-existing,
+   `Bozzetto.Composer/Program.fs:110`). The bounded-shutdown fallback calls
+   `Process.GetCurrentProcess().Kill(true)`. .NET refuses a tree kill whose tree
+   contains the calling process and throws `InvalidOperationException` (resource
+   `KillEntireProcessTree_DisallowedBecauseTreeContainsCallingProcess`, present in
+   the installed runtime). The exception reaches the outer handler, the worker
+   exits with code 1, and any native tool still running under a Build or Run is
+   orphaned. In daemon-driven escalation the daemon's own kill usually covers the
+   child first, so the stop-path claim holds in the common case but not
+   deterministically, and not at all when the socket closes because the daemon
+   died. No test retires a worker while a native child is live. Fix: enumerate
+   and kill children explicitly, or make the daemon-side kill the only authority
+   and have the worker exit plainly; add one native test that retires with a
+   sleeping artifact running.
+2. **A failed termination poisons daemon shutdown** (`Bozzetto/ComposerSupervisor.fs:417`,
+   `Bozzetto/ComposerWorkerClient.fs:331-334`, `Bozzetto/DaemonMode.fs:3618-3622`).
+   After a failed stop the supervisor keeps the connection as the current worker
+   and the client memoises its faulted stop task. The only recovery is a daemon
+   restart, and on that restart the supervisor's stop re-awaits the same faulted
+   task and throws; the daemon wraps the Composer stop and
+   `performGracefulShutdown` in one handler, so graceful shutdown is skipped with a
+   warning. Separate the two steps and treat an already-faulted stop as settled.
+3. **The new status fields and the retirement policy are undocumented for
+   clients** (`docs/mcp-tools.md:83,99-101`, `Bozzetto/ComposerTools.fs:63`). The
+   `composer_session_status` row and tool description still say "pending
+   revocation and cleanup errors"; neither names `formatterError`,
+   `formatterCleanupPending`, `workerRetirementRequired`, the busy-retry contract
+   or the autonomous whole-worker retirement. The capacity sentence at lines
+   99-101 still says capacity refuses rather than evicting, which now conflicts
+   with replacement-at-capacity retiring the previous incarnation.
+
+### Minor
+
+- `FormatterSession.cleanupFailures` is still append-only and is concatenated
+  into `CleanupError`, which ships in every Status and Close reply. A session
+  whose demand releases persistently fail can push those replies past the frame
+  limit, the same failure shape the formatter field just escaped
+  (`FormatterSession.fs:61`, `ProviderSession.fs:618`). Apply the same bound.
+- The fence after a failed stop is permanent for the daemon's lifetime and is
+  reported with the same `provider_unavailable` "retiring" text as a transient
+  retirement, so an agent may retry forever. The fence also engages on any
+  exception from the stop's cleanup (for example a socket directory already
+  removed), not only on a process that did not exit
+  (`ComposerSupervisor.fs:132`, `ComposerWorkerClient.fs:320-328`).
+- At 32 live handles with nothing closing, a 33rd distinct document receives
+  `session_capacity`, not `busy`, and no close will ever free a slot; the
+  checkpoint's "busy until a physical close releases a slot" covers only the
+  replacement case (`FormatterSession.fs:154`).
+- The adoption contract still says Calque does not inspect the cancellation
+  signal mid-computation and says nothing about the 16 KiB bound or the 30 s
+  retirement policy (`docs/Bozzetto_Incremental_Foundation_Adoption.md:100-104`).
+- The oversized-entry test clips exactly on a repeat-unit boundary, so the
+  pair-straddle guard is proven by reading, not by assertion
+  (`WorkerCancellationTests.fs:363`). The 16 KiB bound is asserted as at most,
+  never as exactly, and the 30 s value is a literal duplicated in message text.
+- The daemon-side rejection of an old-digest worker Hello remains untested.
+- Lattice shows `busy`, `closed` and `provider_unavailable` refusals verbatim as
+  error dialogs with no retry-after-busy behaviour; no client version bump is
+  needed since the fields are additive and ignored.
+- Each retired worker leaves its scratch tree, lease file and evidence directory
+  in place; replacement is clean by construction through fresh host and epoch
+  identities, not by cleanup. With 10 Hz polling during cleanup the wire logs
+  are not small.
+- Evidence: the integrity log cited at 798dade9 was empty because the check ran
+  quietly; the implementor's correction in `f7921e70` records 211 OK results,
+  and the auditor's own re-check agrees. The two new Composer-tier cases also
+  run in the default tier, so 8,977 and 46 are not disjoint counts. The
+  checkpoint's "formatter closure unchanged" line is content-true since the
+  worker's Calque DLLs are byte-identical to the previous candidate, but the
+  stated commit is the test-only one. Two sentences, the user's selection of
+  whole-worker retirement and the release of all leases, are not verifiable
+  from artifacts.
+
+### Refuted or confirmed benign
+
+Nine reviewer findings were refuted on verification. The notable ones: in-worker
+sealing consulting only the addressed session is covered within one monitor tick
+by the daemon-side withdrawal; a document close that throws is retained with its
+fault as designed; a cleanup finishing at or after 30 s sets sticky retirement by
+design; the deadline applies only `current <- None` because every operation then
+refuses `closed`; the unbounded final join in the stop path is reachable only
+after the process has exited; the stalled first default runs are attributable to
+the nested spinner from the traced log.
+
+### Status of earlier findings
+
+Finding 1 of this document (unbounded formatter evidence) is fixed. Finding 2
+(capacity liveness) is fixed by the deadline and escalation, with the
+documentation gaps above. The five items from the first assessment that were
+open before this checkpoint remain open and untouched: Composer stale-proof
+test, Clef config-restore assertion, `cleanupFailures` never cleared,
+daemon-side Hello mismatch untested, `install-hooks` worktree edge.
+
+### Serialization note
+
+The new fields reach clients through `Bozzetto/ComposerClientJson.fs`, which
+uses `System.Text.Json`. The user's standing preference is `Fidelity.Data` for
+any unavoidable JSON handling; adopting it at this public edge is a deliberate
+dependency change to raise separately, not part of this checkpoint.
