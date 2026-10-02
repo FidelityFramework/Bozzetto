@@ -24,25 +24,44 @@ let private artifact: AcceptedArtifact =
   { Generation = 0L; SourceVersion = "fixture"; ArtifactPath = "fixture"; ArtifactSha256 = "fixture"
     ObjectManifest = "fixture"; ChangedWitnesses = [||]; RetainedWitnesses = [||]; RetiredWitnesses = [||]
     WitnessVisits = [||]; CompiledObjects = [||]; ReusedObjects = [||]; RetiredObjects = [||] }
+let private formatBuffer: FormatBuffer =
+  { Document = "buffer://transport/quoted.clef"; Incarnation = "00000000-0000-0000-0000-000000000001"
+    Revision = 1UL; Source = "module Quoted\nlet value = <@ 1 @>\n"; Configuration = "fixture" }
+let private ownedRequest operation session =
+  match operation with
+  | Operation.Build -> Build(address session, "reservation")
+  | Operation.Run -> Run(address session, [||])
+  | Operation.Format -> Format(address session, 0L, formatBuffer)
+  | _ -> failwith "Expected an operation with a worker-side demand."
 
 /// Child-only typed transport fixture; control barriers use fixture session IDs.
+/// It records individual requests, not Calque's shared producer/demand state.
 let runFixture socketPath =
   use socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
   socket.Connect(UnixDomainSocketEndPoint socketPath)
   use stream = new NetworkStream(socket, ownsSocket = false)
   let held = ResizeArray<Request>()
-  let reply (request: Request) result =
+  let withdrawn = Collections.Generic.HashSet<string>()
+  let replyOutcome (request: Request) outcome =
     let response: Reply =
       { ProtocolVersion = BAREWireCodec.ProtocolVersion; RequestId = request.RequestId
         Authority = { Host = workerAddress.Host; Epoch = workerAddress.Epoch; Provider = workerAddress.Provider
                       Generation = 0L; Session = ComposerWire.session request.Body }
-        Outcome = Result.Ok result }
+        Outcome = outcome }
     StreamFrames.writeReplyAsync stream CancellationToken.None response |> fun work -> work.GetAwaiter().GetResult()
     |> Result.defaultWith (fun error -> failwithf "Fixture encoding: %A" error)
+  let reply request result = replyOutcome request (Result.Ok result)
   let complete (request: Request) =
     match request.Body with
     | Build _ -> reply request (Built artifact)
     | Run _ -> reply request (Ran { Generation = 0L; SourceVersion = "fixture"; ExitCode = 0; StandardOutput = ""; StandardError = "" })
+    | Format(_, _, buffer) ->
+      if withdrawn.Contains request.RequestId then
+        replyOutcome request (Result.Error { Code = RefusalCode.Canceled; Message = "Only this preview observer was withdrawn." })
+      else
+        reply request (Formatted {
+          Document = buffer.Document; Incarnation = buffer.Incarnation; Revision = buffer.Revision
+          SourceSha256 = "fixture"; Configuration = buffer.Configuration; FormatterIdentity = "fixture"; Formatted = buffer.Source })
     | Status target -> reply request (Observed(status target.Session 0))
     | _ -> failwith "Unexpected held fixture operation."
   let mutable reading = true
@@ -57,16 +76,25 @@ let runFixture socketPath =
           Agreement = agreement; Compiler = { AssemblyPath = "fixture"; Sha256 = "fixture"; Version = "fixture" }
           Psg = { Schema = Fidelity.PSG.Revision.Schema; AssemblySha256 = "fixture"
                   FormatVersion = Fidelity.PSG.Binary.FormatVersion; ContractFingerprint = Fidelity.PSG.Binary.ContractFingerprint }
-          Operations = [|Operation.Hello; Operation.Status; Operation.Build; Operation.Run; Operation.CancelRequest|]
+          Operations = [|Operation.Hello; Operation.Status; Operation.Build; Operation.Run; Operation.Format; Operation.CancelRequest|]
           InMemoryPatchAllowed = false })
       | Status target when target.Session = "barrier" -> reply request (Observed(status target.Session held.Count))
-      | CancelRequest(_, id) -> reply request (RequestCanceled { TargetRequestId = id; CancellationRequested = true })
+      | Status target when target.Session = "withdrawals" -> reply request (Observed(status target.Session withdrawn.Count))
+      | Status target when target.Session = "format-requests" ->
+        let retained =
+          held |> Seq.filter (fun request ->
+            match request.Body with Format _ -> not (withdrawn.Contains request.RequestId) | _ -> false) |> Seq.length
+        reply request (Observed(status target.Session retained))
+      | CancelRequest(_, id) ->
+        let found = held |> Seq.exists (fun request -> request.RequestId = id)
+        if found then withdrawn.Add id |> ignore
+        reply request (RequestCanceled { TargetRequestId = id; CancellationRequested = found })
       | Status target when target.Session = "release" ->
         let count = held.Count
         for request in held do complete request
         held.Clear()
         reply request (Observed(status target.Session count))
-      | Build _ | Run _ | Status _ -> held.Add request
+      | Build _ | Run _ | Format _ | Status _ -> held.Add request
       | _ -> failwith "Unexpected fixture request."
   0
 
@@ -92,7 +120,7 @@ let private capacity operation = task {
   let boundary () = entered.Set(); if not (release.Wait(TimeSpan.FromSeconds 20.)) then failwith "Cancellation barrier timeout."
   let! client = start boundary (fun _ _ -> Task.CompletedTask)
   use cancellation = new CancellationTokenSource()
-  let victimBody = if operation = Operation.Build then Build(address "victim", "reservation") else Run(address "victim", [||])
+  let victimBody = ownedRequest operation "victim"
   let victim = client.RequestAsync(victimBody, cancellation.Token)
   let held = [|for index in 1..255 -> client.RequestAsync(request (string index), CancellationToken.None)|]
   let canceling = Task.Run(Action(fun () -> cancellation.Cancel()))
@@ -117,7 +145,7 @@ let private capacity operation = task {
     client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.).GetAwaiter().GetResult()
 }
 
-let private cancellationPhase phase = task {
+let private cancellationPhase operation phase = task {
   let entered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let beforeWrite _ session =
@@ -136,7 +164,7 @@ let private cancellationPhase phase = task {
     count barrier |> Expect.equal "Peer is physically held." 1
     if phase = "writing" || phase = "sent" then
       use cancellation = new CancellationTokenSource()
-      let victim = client.RequestAsync(Build(address (if phase = "writing" then "writer" else "victim"), "reservation"), cancellation.Token)
+      let victim = client.RequestAsync(ownedRequest operation (if phase = "writing" then "writer" else "victim"), cancellation.Token)
       if phase = "writing" then
         do! entered.Task |> bounded
         cancellation.Cancel()
@@ -157,7 +185,7 @@ let private cancellationPhase phase = task {
         use cancellation = new CancellationTokenSource()
         if phase = "initial" then cancellation.Cancel()
         encodingCancellation <- if phase = "encoding" then Some cancellation else None
-        let victim = client.RequestAsync(request "victim", cancellation.Token)
+        let victim = client.RequestAsync(ownedRequest operation "victim", cancellation.Token)
         if phase = "queued" then cancellation.Cancel()
         let! detached = canceled victim
         detached |> Expect.isTrue "Every never-written request detaches."
@@ -180,7 +208,7 @@ let private cancellationPhase phase = task {
     client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.).GetAwaiter().GetResult()
 }
 
-let private closeRetainsCallback () = task {
+let private closeRetainsCallback operation = task {
   use entered = new ManualResetEventSlim()
   use release = new ManualResetEventSlim()
   let boundary () =
@@ -189,7 +217,7 @@ let private closeRetainsCallback () = task {
   let! client = start boundary (fun _ _ -> Task.CompletedTask)
   use child = System.Diagnostics.Process.GetProcessById client.ProcessId
   use cancellation = new CancellationTokenSource()
-  let victim = client.RequestAsync(Build(address "held-close", "reservation"), cancellation.Token)
+  let victim = client.RequestAsync(ownedRequest operation "held-close", cancellation.Token)
   let mutable canceling = Task.CompletedTask
   let mutable closing = Task.CompletedTask
   let mutable verified = false
@@ -233,8 +261,40 @@ let private closeRetainsCallback () = task {
 let tests = testList "Composer worker socket client" [
   testTask "build withdrawal retains capacity while peer requests survive" { do! capacity Operation.Build }
   testTask "run withdrawal retains capacity while peer requests survive" { do! capacity Operation.Run }
+  testTask "format withdrawal retains capacity while peer requests survive" { do! capacity Operation.Format }
   for phase in ["initial"; "encoding"; "queued"; "writing"; "sent"] do
-    testTask (phase + " cancellation drains owned work without consuming unrelated capacity") { do! cancellationPhase phase }
+    testTask (phase + " cancellation drains owned work without consuming unrelated capacity") { do! cancellationPhase Operation.Build phase }
+    testTask ("format " + phase + " cancellation drains owned work without consuming unrelated capacity") { do! cancellationPhase Operation.Format phase }
+  testCaseAsync "format cancellation targets one wire request when session and buffer are identical" (async {
+    let! client = start ignore (fun _ _ -> Task.CompletedTask) |> Async.AwaitTask
+    use cancellation = new CancellationTokenSource()
+    try
+      let body = ownedRequest Operation.Format "shared-session"
+      let victim = client.RequestAsync(body, cancellation.Token)
+      let peer = client.RequestAsync(body, CancellationToken.None)
+      let! before = client.RequestAsync(request "format-requests", CancellationToken.None) |> bounded |> Async.AwaitTask
+      count before |> Expect.equal "Both exact-buffer requests have reached the worker." 2
+      cancellation.Cancel()
+      let! detached = canceled victim |> Async.AwaitTask
+      detached |> Expect.isTrue "Caller cancellation completes after its targeted withdrawal acknowledgement."
+      let! remaining = client.RequestAsync(request "format-requests", CancellationToken.None) |> bounded |> Async.AwaitTask
+      count remaining |> Expect.equal "Only the canceled request is withdrawn at the worker boundary." 1
+      let! withdrawals = client.RequestAsync(request "withdrawals", CancellationToken.None) |> bounded |> Async.AwaitTask
+      count withdrawals |> Expect.equal "The worker received one exact request cancellation." 1
+      peer.IsCompleted |> Expect.isFalse "The other observer remains attached to its result."
+      let! released = client.RequestAsync(request "release", CancellationToken.None) |> bounded |> Async.AwaitTask
+      count released |> Expect.equal "Both physical responses are still correlated and drained." 2
+      let! survived = peer |> bounded |> Async.AwaitTask
+      match survived.Outcome with
+      | Result.Ok(Formatted preview) ->
+        preview.Document |> Expect.equal "The peer keeps its immutable document identity." formatBuffer.Document
+        preview.Formatted |> Expect.equal "The peer receives its requested preview." formatBuffer.Source
+      | outcome -> failtestf "The uncanceled formatter observer did not complete: %A" outcome
+      let! final = client.RequestAsync(request "barrier", CancellationToken.None) |> bounded |> Async.AwaitTask
+      count final |> Expect.equal "No physical request remains held." 0
+      client.IsAlive |> Expect.isTrue "Targeted withdrawal preserves the shared worker."
+    finally client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.).GetAwaiter().GetResult()
+  })
   testTask "close terminates the owned socket child and drains diagnostics" {
     let! (client: IComposerWorker) = start ignore (fun _ _ -> Task.CompletedTask)
     let pid = client.ProcessId
@@ -245,5 +305,6 @@ let tests = testList "Composer worker socket client" [
       with :? ArgumentException -> true
     exited |> Expect.isTrue "Close physically joins the child process."
   }
-  testTask "close retains ownership of a held cancellation callback after physical child exit" { do! closeRetainsCallback () }
+  testTask "close retains ownership of a held cancellation callback after physical child exit" { do! closeRetainsCallback Operation.Build }
+  testTask "close retains ownership of a held format cancellation callback after physical child exit" { do! closeRetainsCallback Operation.Format }
 ]

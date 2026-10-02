@@ -31,6 +31,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   let active = HashSet<WorkId>()
   let observations = Dictionary<WorkId, Task>()
   let controls = Dictionary<uint64, Task>()
+  let formatDemands = Dictionary<uint64, FormatDemand>()
   let mutable serial = 0UL
   let mutable demandSerial = 0UL
   let mutable controlSerial = 0UL
@@ -103,6 +104,11 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
     generation <- generation + 1L
     reservation <- None
     current <- None
+    // Changing the compiler generation also withdraws its accepted immutable
+    // previews. Their existing owners still observe and join the exact release
+    // controls; the document mailbox retains physical evaluator ownership.
+    for demand in formatDemands.Values do demand.Withdraw()
+    formatDemands.Clear()
     let operations = liveScopes |> Seq.map (fun scope -> admit (Action.CloseScope scope)) |> Seq.toList
     for ScopeId value in liveScopes do
       let work = WorkId value
@@ -114,8 +120,10 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
     controlSerial <- controlSerial + 1UL
     let key = controlSerial
     let work = ClrInterop.toTask CancellationToken.None (async {
-      try return! workflow
-      finally lock gate (fun () -> controls.Remove key |> ignore)
+      try return! workflow key
+      finally lock gate (fun () ->
+        formatDemands.Remove key |> ignore
+        controls.Remove key |> ignore)
     })
     controls.Add(key, work :> Task)
     work
@@ -308,7 +316,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
     else
       let expected, withdrawals = revoke ()
       revocation <- None
-      startControl (async {
+      startControl (fun _ -> async {
         do! invocation.WaitAsync() |> Async.AwaitTask
         try
           let allowed = lock gate (fun () -> (obsolete expected).IsNone)
@@ -360,7 +368,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
     else
       let expected, withdrawals = revoke ()
       revocation <- Some expected.Generation
-      startControl (async {
+      startControl (fun _ -> async {
         do! invocation.WaitAsync() |> Async.AwaitTask
         try
           if lock gate (fun () -> (obsolete expected).IsNone) then
@@ -416,19 +424,30 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
     elif controlSerial >= controlLimit then Task.FromResult(reply (refuse "session_capacity" "Session control capacity reached; open a fresh session."))
     else
       let expected = authority ()
-      startControl (async {
+      startControl (fun key -> async {
         let! result = async {
           try
             do! beforeFormatInvocation() |> Async.AwaitTask
-            // The owned formatter's synchronous prefix admits the immutable
-            // snapshot before its first await. Order that actual admission
-            // with reservation; an obsolete queued request must not advance
-            // a document's revision high-water mark, even if its reply refuses.
-            let running = lock gate (fun () ->
+            // Accept the demand explicitly under the generation fence. Its
+            // cold Async observation must not defer document revision changes
+            // until after a competing reservation has already won.
+            let accepted = lock gate (fun () ->
               match obsolete expected with
-              | Some refusal -> Task.FromResult refusal
-              | None -> formatter.PreviewAsync(buffer, cancellation))
-            return! running |> Async.AwaitTask
+              | Some refusal -> refusal
+              | None when cancellation.IsCancellationRequested -> refuse "canceled" "The formatting request was canceled before acceptance."
+              | None ->
+                formatter.RequestPreview buffer
+                |> Result.map (fun demand ->
+                  formatDemands.Add(key, demand)
+                  demand))
+            match accepted with
+            | Result.Error refusal -> return Result.Error refusal
+            | Result.Ok demand ->
+              // CLR cancellation requests release of this exact demand; it
+              // never cancels the resident owner or a peer's observation.
+              use registration = cancellation.Register(fun () -> demand.Withdraw())
+              let! result = demand.Observe
+              return if cancellation.IsCancellationRequested then refuse "canceled" "The formatting demand was canceled." else result
           with error -> return refuse "backend_failed" error.Message
         }
         let diagnostics = formatter.DrainDiagnostics()
@@ -461,7 +480,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
         let mutable projectionError = None
         try do! Task.WhenAll(Array.append ownedControls ownedObservations) |> Async.AwaitTask
         with error -> projectionError <- Some error.Message
-        let! formatterJoined = formatter.CloseAsync() |> Async.AwaitTask
+        let! formatterJoined = formatter.CloseAsync()
         let formatterDiagnostics = formatter.DrainDiagnostics()
         do! invocation.WaitAsync() |> Async.AwaitTask
         try

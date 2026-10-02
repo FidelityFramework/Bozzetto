@@ -77,7 +77,7 @@ type private Backend(failCleanup: bool) =
       disposals <- disposals + 1
       if failCleanup then failwith "sticky injected cleanup failure"
 
-let private canceledOperation runOperation () = task {
+let private canceledOperation operation () = task {
   let root = directory ()
   let projectDirectory = Path.Combine(root, "project")
   Directory.CreateDirectory projectDirectory |> ignore
@@ -91,12 +91,21 @@ let private canceledOperation runOperation () = task {
   let target = session opened.Authority
   let! reserved = worker.Handle(request "reserve" (Reserve(target, "initial")))
   let token = reservation reserved
+  let runOperation = operation = Operation.Run
   if runOperation then
     let! accepted = worker.Handle(request "first-build" (Build(target, token)))
     success accepted |> ignore
   use canceled = new CancellationTokenSource()
   canceled.Cancel()
-  let body = if runOperation then RequestBody.Run(target, [||]) else Build(target, token)
+  let body =
+    match operation with
+    | Operation.Build -> Build(target, token)
+    | Operation.Run -> RequestBody.Run(target, [||])
+    | Operation.Format ->
+      Format(target, reserved.Authority.Generation, {
+        Document = "buffer://cancellation/main.clef"; Incarnation = Guid.NewGuid().ToString("D")
+        Revision = 1UL; Source = "module Main\nlet value=42\n"; Configuration = FormatPolicy.Configuration })
+    | _ -> failtest "Expected build, run or format cancellation."
   let! refused = worker.Handle(request "canceled-operation" body, cancellation = canceled.Token)
   refusal RefusalCode.Canceled refused
   let! status = worker.Handle(request "status" (Status target))
@@ -166,8 +175,9 @@ let tests = testList "Composer worker request lifetime" [
     observed |> Seq.toList |> Expect.equal "callback receives exact explicit targets only" [ "held-build"; "completed-request" ]
   }
 
-  taskCase "worker forwards pre-canceled build token to captured session revision" (canceledOperation false)
-  taskCase "worker forwards pre-canceled run token before native invocation" (canceledOperation true)
+  taskCase "worker forwards pre-canceled build token to captured session revision" (canceledOperation Operation.Build)
+  taskCase "worker forwards pre-canceled run token before native invocation" (canceledOperation Operation.Run)
+  taskCase "worker forwards pre-canceled format token before attaching preview demand" (canceledOperation Operation.Format)
 
   taskCase "retirement remembers cleanup failure from an overtaken open across later fences" <| fun () -> task {
     let root = directory ()

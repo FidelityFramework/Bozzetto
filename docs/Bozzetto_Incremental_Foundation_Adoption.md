@@ -87,6 +87,30 @@ host already interprets lifecycle effects: observing `Start` must not launch the
 same work a second time. Reusing an eligible result is also distinct from reusing
 an executing task or repeating an effectful operation.
 
+Supersession is implemented in the shared foundation. Input changes and scope
+reservations withdraw affected publication before requesting cancellation.
+Releasing one demand preserves a producer still needed by another consumer.
+The host joins the evaluator and its cancellation callbacks before acknowledging
+`Drained`; another attempt for the same `WorkId` cannot start before that join.
+Independent work can still run within the configured concurrency limit.
+
+`WorkCancellation` carries this request explicitly. The host runs owned workflows
+without ambient F# cancellation so that cleanup and its failures cannot be
+detached by a canceled observer. Evaluators must cooperate with the carried
+request and include their children and cleanup in completion. Currently Calque's
+full-document parser/printer does not inspect that signal mid-computation: its
+adapter withdraws obsolete output immediately and owns the parse/print until it
+returns. This establishes safe supersession, not prompt interruption inside every
+compiler or formatter phase.
+
+Bozzetto's formatter adapter accepts `RequestPreview` under the provider's
+generation lock and returns a demand with a cold `Async` owner workflow and an
+exact withdrawal operation. It no longer relies on a task's eager prefix for
+ordering. A new compiler generation withdraws registered formatting demands;
+request cancellation withdraws only that request. Accepted demands and their
+release controls remain owned through session close. Each observing consumer
+gets its own demand handle while Calque shares the underlying snapshot work.
+
 There is a specific migration hazard in Bozzetto's current
 [backend contract](../Bozzetto.Composer/ProviderContracts.fs): `RunCurrentAsync`
 selects and launches its artifact synchronously before returning its task, so

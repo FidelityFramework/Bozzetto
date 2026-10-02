@@ -227,7 +227,13 @@ module ComposerWorkerClient =
         checkCapacity ()
         cancellationSlot |> Option.iter (fun original -> cancellationSlots.Remove original |> ignore)
         pending.Add(requestId, request))
-      let requiresRevocation = operation = Operation.Build || operation = Operation.Run
+      // Each of these calls owns a worker-side demand. Withdrawing one caller
+      // must reach that exact request; abandoning its reply retains the demand,
+      // while a session-wide Cancel would also withdraw unrelated consumers.
+      let requiresWithdrawal =
+        match operation with
+        | Operation.Build | Operation.Run | Operation.Format -> true
+        | _ -> false
       let completeAbandonment (error: exn) =
         match error with
         | :? OperationCanceledException -> completion.TrySetCanceled cancellation |> ignore
@@ -249,13 +255,13 @@ module ComposerWorkerClient =
         let removed, sent, writing, overflow = lock gate (fun () ->
           let removed = pending.Remove requestId
           if removed then
-            if requiresRevocation && (request.Sent || request.Writing) then cancellationSlots.Add requestId |> ignore
+            if requiresWithdrawal && (request.Sent || request.Writing) then cancellationSlots.Add requestId |> ignore
             request.Abandonment <- Some error
             if request.Sent || request.Writing then abandoned.Add(requestId, request)
           removed, request.Sent, request.Writing, abandoned.Count > 4096)
         if removed then
-          if requiresRevocation && sent then startOwned (cancelTarget error) |> ignore
-          elif not requiresRevocation || not writing then completeAbandonment error
+          if requiresWithdrawal && sent then startOwned (cancelTarget error) |> ignore
+          elif not requiresWithdrawal || not writing then completeAbandonment error
         if overflow then invalidate (IOException "Composer worker exceeded its abandoned-request limit.") true
       let timeout = if operation = Operation.Build then TimeSpan.FromMinutes 8. else TimeSpan.FromSeconds 30.
       use deadline = new Timer(TimerCallback(fun (_: objnull) -> abandon (TimeoutException(sprintf "Composer %A timed out." operation))), box (), timeout, Timeout.InfiniteTimeSpan)
@@ -278,7 +284,7 @@ module ComposerWorkerClient =
               do! stream.FlushAsync sendDeadline.Token
               let canceled = lock gate (fun () -> request.Sent <- true; request.Abandonment)
               match canceled with
-              | Some reason when requiresRevocation -> startOwned (cancelTarget reason) |> ignore
+              | Some reason when requiresWithdrawal -> startOwned (cancelTarget reason) |> ignore
               | _ -> ()
           finally writes.Release() |> ignore
         with error ->

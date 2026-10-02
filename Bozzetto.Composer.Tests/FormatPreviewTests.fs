@@ -8,6 +8,7 @@ open Expecto.Flip
 open Bozzetto.Providers
 open Bozzetto.Composer.Protocol
 open Bozzetto.ComposerIntegration
+open Fidelity.FSharp.Incremental.Hosting
 
 let private buffer revision source : FormatBuffer = {
   Document = "buffer://not-a-file/quoted.clef"; Incarnation = "00000000-0000-0000-0000-000000000001"
@@ -22,6 +23,12 @@ let private refusal code = function
 let private taskCase name (work: unit -> Task<unit>) = testCaseAsync name (async {
   do! (work ()).WaitAsync(TimeSpan.FromSeconds 15.) |> Async.AwaitTask
 })
+let private preview (formatter: FormatterSession) snapshot =
+  match formatter.RequestPreview snapshot with
+  | Ok demand -> ClrInterop.toTask CancellationToken.None demand.Observe
+  | Error refusal -> Task.FromResult(Error refusal)
+let private closeFormatter (formatter: FormatterSession) =
+  formatter.CloseAsync() |> ClrInterop.toTask CancellationToken.None
 
 type private Backend() =
   let mutable generation = 0L
@@ -52,26 +59,31 @@ type private Backend() =
 /// publication fence must refuse its old-generation successful completion.
 type private HeldFormatter() =
   let entered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+  let withdrawn = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let mutable closed = false
   let diagnostics = Collections.Concurrent.ConcurrentQueue<FormatterDiagnostic>()
   member _.Entered = entered.Task
+  member _.Withdrawn = withdrawn.Task
   member _.Release() = release.TrySetResult() |> ignore
   member _.Closed = closed
   member _.QueueDiagnostic diagnostic = diagnostics.Enqueue diagnostic
   interface IFormatBackend with
-    member _.PreviewAsync(buffer, _) = task {
-      entered.TrySetResult() |> ignore
-      do! release.Task
-      return Ok {
-        Document = buffer.Document; Incarnation = buffer.Incarnation; Revision = buffer.Revision
-        SourceSha256 = FormatPolicy.sourceSha256 buffer.Source; Configuration = buffer.Configuration
-        FormatterIdentity = "test-held"; Formatted = buffer.Source
+    member _.RequestPreview buffer = Ok {
+      Observe = async {
+        entered.TrySetResult() |> ignore
+        do! release.Task |> Async.AwaitTask
+        return Ok {
+          Document = buffer.Document; Incarnation = buffer.Incarnation; Revision = buffer.Revision
+          SourceSha256 = FormatPolicy.sourceSha256 buffer.Source; Configuration = buffer.Configuration
+          FormatterIdentity = "test-held"; Formatted = buffer.Source
+        }
       }
+      Withdraw = fun () -> withdrawn.TrySetResult() |> ignore
     }
     member _.BeginClose() = closed <- true
-    member _.CloseAsync() = task {
-      do! release.Task
+    member _.CloseAsync() = async {
+      do! release.Task |> Async.AwaitTask
       return Ok ()
     }
     member _.DrainDiagnostics() =
@@ -85,9 +97,9 @@ type private RecordingFormatter() =
   let admitted = Collections.Concurrent.ConcurrentQueue<FormatBuffer>()
   member _.Admitted = admitted.ToArray()
   interface IFormatBackend with
-    member _.PreviewAsync(buffer, cancellation) =
+    member _.RequestPreview buffer =
       admitted.Enqueue buffer
-      formatter.PreviewAsync(buffer, cancellation)
+      formatter.RequestPreview buffer
     member _.BeginClose() = formatter.BeginClose()
     member _.CloseAsync() = formatter.CloseAsync()
     member _.DrainDiagnostics() = formatter.DrainDiagnostics()
@@ -119,30 +131,85 @@ let tests = testList "Composer Calque preview" [
     let formatter = FormatterSession()
     try
       let original = buffer 3UL "module Sample\nlet value=1\n"
-      let! first = formatter.PreviewAsync(original, CancellationToken.None)
-      let! same = formatter.PreviewAsync(original, CancellationToken.None)
+      let! first = preview formatter original
+      let! same = preview formatter original
       success same |> Expect.equal "same immutable snapshot has the same preview" (success first)
-      let! conflict = formatter.PreviewAsync({ original with Source = "module Sample\nlet value=2\n" }, CancellationToken.None)
+      let! conflict = preview formatter { original with Source = "module Sample\nlet value=2\n" }
       conflict |> refusal "superseded"
-      let! old = formatter.PreviewAsync({ original with Revision = 2UL }, CancellationToken.None)
+      let! old = preview formatter { original with Revision = 2UL }
       old |> refusal "superseded"
       let replacement = { original with Incarnation = Guid.NewGuid().ToString("D"); Revision = 0UL }
-      let! newIncarnation = formatter.PreviewAsync(replacement, CancellationToken.None)
+      let! newIncarnation = preview formatter replacement
       success newIncarnation |> ignore
-      let! retired = formatter.PreviewAsync(original, CancellationToken.None)
+      let! retired = preview formatter original
       retired |> refusal "superseded"
     finally formatter.BeginClose()
-    let! closed = formatter.CloseAsync()
+    let! closed = closeFormatter formatter
     success closed |> ignore
   }
-  taskCase "pending preview completion after reservation refuses its original generation" <| fun () -> task {
+  taskCase "demand acceptance records the snapshot before its cold observation runs" <| fun () -> task {
+    let formatter = FormatterSession()
+    try
+      let original = buffer 3UL "module Sample\nlet value=3\n"
+      let first = formatter.RequestPreview original |> success
+      let delayedObservation = first.Observe
+      formatter.RequestPreview { original with Revision = 2UL }
+      |> refusal "superseded"
+      formatter.RequestPreview { original with Source = "module Sample\nlet value=99\n" }
+      |> refusal "superseded"
+      let current = buffer 4UL "module Sample\nlet value=4\n"
+      let second = formatter.RequestPreview current |> success
+      let! stale = ClrInterop.toTask CancellationToken.None delayedObservation
+      stale |> refusal "superseded"
+      let! fresh = ClrInterop.toTask CancellationToken.None second.Observe
+      (success fresh).SourceSha256 |> Expect.equal "observation cannot reinstate the older input" (FormatPolicy.sourceSha256 current.Source)
+    finally formatter.BeginClose()
+    let! closed = closeFormatter formatter
+    success closed |> ignore
+  }
+  taskCase "withdrawing one accepted formatter demand preserves its peer before either is observed" <| fun () -> task {
+    let formatter = FormatterSession()
+    try
+      let snapshot = buffer 1UL "module Shared\nlet value=1\n"
+      let canceled = formatter.RequestPreview snapshot |> success
+      let peer = formatter.RequestPreview snapshot |> success
+      canceled.Withdraw()
+      canceled.Withdraw()
+      let! results = [ canceled.Observe; peer.Observe ] |> Async.Parallel |> ClrInterop.toTask CancellationToken.None
+      results[0] |> refusal "canceled"
+      (success results[1]).SourceSha256 |> Expect.equal "the peer retains its exact immutable input" (FormatPolicy.sourceSha256 snapshot.Source)
+      let! repeated = preview formatter snapshot
+      success repeated |> Expect.equal "an independently released consumer preserves the shared preview" (success results[1])
+    finally formatter.BeginClose()
+    let! closed = closeFormatter formatter
+    success closed |> ignore
+  }
+  taskCase "closing the formatter owns an accepted demand that was never observed" <| fun () -> task {
+    let formatter = FormatterSession()
+    let snapshot = buffer 1UL "module Unobserved\nlet value=1\n"
+    let demand = formatter.RequestPreview snapshot |> success
+    let withdrawn = formatter.RequestPreview snapshot |> success
+    withdrawn.Withdraw()
+    formatter.BeginClose()
+    let! closed = closeFormatter formatter
+    success closed |> ignore
+    let! late = ClrInterop.toTask CancellationToken.None demand.Observe
+    late |> refusal "closed"
+    let! lateWithdrawal = ClrInterop.toTask CancellationToken.None withdrawn.Observe
+    lateWithdrawal |> refusal "closed"
+    formatter.RequestPreview (buffer 2UL "module Unobserved\nlet value=2\n") |> refusal "closed"
+  }
+  taskCase "reservation withdraws a pending preview before cleanup and refuses its original generation" <| fun () -> task {
     let backend = new Backend()
     let formatter = HeldFormatter()
     use owner = new ProviderSession<int64>("host", "session", "epoch", "/not-read/project.fidproj", backend, formatter = formatter)
     try
       let preview = owner.FormatAsync(0L, buffer 1UL "module Sample\nlet value=1\n", CancellationToken.None)
       do! formatter.Entered
-      let! reserved = owner.ReserveAsync "new edit"
+      let reservation = owner.ReserveAsync "new edit"
+      formatter.Withdrawn.IsCompleted |> Expect.isTrue "reservation immediately withdraws accepted formatting without a replacement preview"
+      preview.IsCompleted |> Expect.isFalse "withdrawal does not discard the held observation or its cleanup"
+      let! reserved = reservation
       success reserved.Outcome |> ignore
       formatter.QueueDiagnostic {
         Document = { Uri = "buffer://stale-attempt"; Incarnation = Guid.Parse("00000000-0000-0000-0000-000000000001") }
@@ -203,12 +270,15 @@ let tests = testList "Composer Calque preview" [
     let! closed = owner.CloseAsync()
     success closed.Outcome |> ignore
   }
-  taskCase "session close seals admission and joins retained formatter work" <| fun () -> task {
+  taskCase "session close seals admission and joins withdrawn formatter work" <| fun () -> task {
     let formatter = HeldFormatter()
     use owner = new ProviderSession<int64>("host", "session", "epoch", "/not-read/project.fidproj", new Backend(), formatter = formatter)
     try
       let pending = owner.FormatAsync(0L, buffer 1UL "module Sample\nlet value=1\n", CancellationToken.None)
       do! formatter.Entered
+      let! reservation = owner.ReserveAsync "withdraw before closing"
+      success reservation.Outcome |> ignore
+      formatter.Withdrawn.IsCompleted |> Expect.isTrue "the retained formatter demand was withdrawn before close"
       let closing = owner.CloseAsync()
       formatter.Closed |> Expect.isTrue "close synchronously seals the formatting host"
       let! premature = Task.WhenAny(closing :> Task, Task.Delay 100)
@@ -227,16 +297,16 @@ let tests = testList "Composer Calque preview" [
     try
       for index in 1 .. 32 do
         let snapshot = { buffer 0UL "module Sample\nlet value=1\n" with Document = "buffer://" + string index }
-        let! preview = formatter.PreviewAsync(snapshot, CancellationToken.None)
-        success preview |> ignore
-      let! full = formatter.PreviewAsync({ buffer 0UL "module Sample\nlet value=1\n" with Document = "buffer://33" }, CancellationToken.None)
+        let! formatted = preview formatter snapshot
+        success formatted |> ignore
+      let! full = preview formatter { buffer 0UL "module Sample\nlet value=1\n" with Document = "buffer://33" }
       full |> refusal "session_capacity"
-      let! retained = formatter.PreviewAsync({ buffer 0UL "module Sample\nlet value=1\n" with Document = "buffer://1" }, CancellationToken.None)
+      let! retained = preview formatter { buffer 0UL "module Sample\nlet value=1\n" with Document = "buffer://1" }
       success retained |> ignore
-      let! config = formatter.PreviewAsync({ buffer 0UL "" with Configuration = "unknown" }, CancellationToken.None)
+      let! config = preview formatter { buffer 0UL "" with Configuration = "unknown" }
       config |> refusal "invalid_request"
     finally formatter.BeginClose()
-    let! closed = formatter.CloseAsync()
+    let! closed = closeFormatter formatter
     success closed |> ignore
   }
   testCase "public JSON preserves full uint64 revisions and rejects absent immutable buffers" <| fun _ ->
