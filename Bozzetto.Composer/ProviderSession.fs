@@ -42,6 +42,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   let mutable current: AcceptedArtifact option = None
   let mutable revocation: int64 option = None
   let mutable backendError: string option = None
+  let mutable formatterError: string option = None
   let mutable cleanupComplete = false
   let mutable cleanupError: string option = None
   let mutable closeTask: Task<Reply<unit>> option = None
@@ -56,10 +57,12 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
       Epoch = epoch; Generation = generation }
   let refuse code message : Result<'a, Refusal> = Result.Error { Code = code; Message = message }
   let reply outcome = { Authority = authority (); Outcome = outcome }
+  let recordFormatterError evidence =
+    formatterError <- Some(match formatterError with None -> evidence | Some previous -> previous + "; " + evidence)
   let recordFormatterDiagnostics diagnostics =
     if not (List.isEmpty diagnostics) then
       let evidence = diagnostics |> List.map (sprintf "%A") |> String.concat "; "
-      backendError <- Some(match backendError with None -> evidence | Some previous -> previous + "; " + evidence)
+      recordFormatterError evidence
   let obsolete (expected: Authority) =
     if closed then Some(refuse "closed" "Open a fresh provider session after compiler replacement.")
     elif generation <> expected.Generation then Some(refuse "superseded" "A newer reservation withdrew this operation's authority.")
@@ -127,6 +130,29 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
     })
     controls.Add(key, work :> Task)
     work
+
+  // RequestPreview and this transfer run together under the provider gate.
+  // One existing control slot owns the complete transferred batch, including
+  // unexpected multiple retirements; no child is dropped on a contract fault.
+  let startFormatterRetirements () =
+    let retirements = formatter.DrainRetirements()
+    if not retirements.IsEmpty then
+      startControl (fun _ -> async {
+        let join retirement = async {
+          try return! retirement
+          with error -> return Result.Error error.Message
+        }
+        let! results = retirements |> List.map join |> Async.Parallel
+        let diagnostics = formatter.DrainDiagnostics()
+        lock gate (fun () ->
+          recordFormatterDiagnostics diagnostics
+          if retirements.Length > 1 then
+            recordFormatterError "Formatter retirement transfer exceeded one child; all transferred children were joined."
+          for result in results do
+            match result with
+            | Result.Error error -> recordFormatterError ("Formatter retirement failed: " + error)
+            | Result.Ok () -> ())
+      }) |> ignore
 
   let allocate expected =
     serial <- serial + 1UL
@@ -304,7 +330,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
           Observation = observationSerial
           Project = project; ManifestPath = manifestPath; Closed = closed
           Busy = active.Count > 0; Current = current
-          RevocationPending = revocation.IsSome; BackendError = backendError
+          RevocationPending = revocation.IsSome; BackendError = backendError; FormatterError = formatterError
           CleanupPending = closed && not cleanupComplete; CleanupError = cleanupError }))
 
   member _.ReserveAsync(label: string) = lock gate (fun () ->
@@ -435,11 +461,18 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
               match obsolete expected with
               | Some refusal -> refusal
               | None when cancellation.IsCancellationRequested -> refuse "canceled" "The formatting request was canceled before acceptance."
+              // Reserve the retirement control before the formatter can replace
+              // an incarnation. Delayed requests may refuse here without
+              // accepting any document demand or orphaning its cleanup.
+              | None when controls.Count >= 128 -> refuse "busy" "The formatter retirement control queue is full."
+              | None when controlSerial >= controlLimit -> refuse "session_capacity" "Session control capacity reached; open a fresh session."
               | None ->
-                formatter.RequestPreview buffer
-                |> Result.map (fun demand ->
-                  formatDemands.Add(key, demand)
-                  demand))
+                try
+                  formatter.RequestPreview buffer
+                  |> Result.map (fun demand ->
+                    formatDemands.Add(key, demand)
+                    demand)
+                finally startFormatterRetirements ())
             match accepted with
             | Result.Error refusal -> return Result.Error refusal
             | Result.Ok demand ->
@@ -453,6 +486,9 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
         let diagnostics = formatter.DrainDiagnostics()
         return lock gate (fun () ->
           recordFormatterDiagnostics diagnostics
+          match result with
+          | Result.Error error when error.Code = "backend_failed" -> recordFormatterError error.Message
+          | _ -> ()
           { Authority = expected; Outcome = match obsolete expected with Some refusal -> refusal | None -> result })
       }))
 

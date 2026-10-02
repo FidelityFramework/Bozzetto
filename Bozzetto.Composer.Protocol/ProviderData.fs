@@ -65,6 +65,9 @@ type SessionSnapshot = {
   Current: AcceptedArtifact option
   RevocationPending: bool
   BackendError: string option
+  /// Retained formatter host evidence for this session, independent of compiler
+  /// reservation/cancellation status. Successful compiler work does not clear it.
+  FormatterError: string option
   CleanupPending: bool
   CleanupError: string option
 }

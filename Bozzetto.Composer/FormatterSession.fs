@@ -30,6 +30,10 @@ type FormatDemand = {
 /// file read/write permission, artifact acceptance or execution authority.
 type IFormatBackend =
   abstract RequestPreview: FormatBuffer -> Result<FormatDemand, Bozzetto.Providers.Refusal>
+  /// Transfer each newly retired child once to the provider's owned controls.
+  /// RequestPreview adds at most one child. The provider drains after each
+  /// request; these cold joins are independent of the preview observation.
+  abstract DrainRetirements: unit -> Async<Result<unit, string>> list
   abstract BeginClose: unit -> unit
   abstract CloseAsync: unit -> Async<Result<unit, string>>
   abstract DrainDiagnostics: unit -> FormatterDiagnostic list
@@ -40,14 +44,19 @@ module FormatPolicy =
   let sourceSha256 source = UTF8Encoding(false, true).GetBytes(source: string) |> SHA256.HashData |> Convert.ToHexString
   let config = { FormatConfig.Default with IndentSize = 2; EndOfLine = EndOfLineStyle.LF }
 
-/// Bounded handles and incarnation tombstones last for this provider epoch.
+/// At most 32 live/closing handles and 8192 admitted identities per epoch.
 /// Document labels are never interpreted as paths or opened by this boundary.
-type FormatterSession() =
+type FormatterSession internal (
+  startDocument: DocumentFormatter.Handle -> Result<unit, FormatterError>,
+  awaitDocumentClose: DocumentFormatter.CloseOperation -> Async<Result<unit, FormatterError>>) =
   let gate = obj ()
   let handles = Dictionary<DocumentIdentity, DocumentFormatter.Handle>()
   let current = Dictionary<string, DocumentIdentity>(StringComparer.Ordinal)
   let latest = Dictionary<DocumentIdentity, SourceSnapshot>()
   let closing = Dictionary<DocumentIdentity, DocumentFormatter.CloseOperation>()
+  let pendingRetirements = System.Collections.Generic.Queue<DocumentIdentity * DocumentFormatter.CloseOperation>()
+  let admittedIdentities = HashSet<DocumentIdentity>()
+  let diagnostics = ResizeArray<FormatterDiagnostic>()
   let releaseControls = HashSet<DocumentFormatter.ControlOperation>(HashIdentity.Reference)
   let cleanupFailures = ResizeArray<string>()
   let mutable closed = false
@@ -72,6 +81,38 @@ type FormatterSession() =
       | other -> "request_refused", sprintf "Formatter refused: %A" other
     { Code = code; Message = message }
   let error failure = Error(refusalOfError failure)
+  let joinClose (document, operation) = async {
+    let! returned, result = async {
+      try
+        let! joined = awaitDocumentClose operation
+        return true, joined |> Result.mapError (sprintf "%A")
+      with failure -> return false, Error failure.Message
+    }
+    lock gate (fun () ->
+      match closing.TryGetValue document with
+      | true, retained when returned && obj.ReferenceEquals(retained, operation) ->
+        let handle = handles[document]
+        for diagnostic in DocumentFormatter.drainDiagnostics handle do
+          diagnostics.Add { Document = document; Diagnostic = diagnostic }
+        closing.Remove document |> ignore
+        handles.Remove document |> ignore
+        latest.Remove document |> ignore
+        if current.TryGetValue document.Uri = (true, document) then current.Remove document.Uri |> ignore
+        match result with
+        | Error failure -> cleanupFailures.Add("Formatter document close failed: " + failure)
+        | Ok () -> ()
+      | true, _ when not returned ->
+        match result with
+        | Error failure -> cleanupFailures.Add("Formatter document close did not join: " + failure)
+        | Ok () -> ()
+      | _ -> ())
+    return result
+  }
+  let retire document handle =
+    if not (closing.ContainsKey document) then
+      let operation = DocumentFormatter.beginClose handle
+      closing.Add(document, operation)
+      pendingRetirements.Enqueue(document, operation)
   let joinRelease control = async {
     let! result = async {
       try
@@ -98,27 +139,51 @@ type FormatterSession() =
       let selected =
         match handles.TryGetValue document with
         | true, handle when current.TryGetValue document.Uri = (true, document) -> Ok handle
-        | true, _ -> refuse "superseded" "This document incarnation was retired."
-        | _ when handles.Count >= 32 -> refuse "session_capacity" "The provider retains at most 32 document incarnations; open a fresh session."
+        | true, _ when admittedIdentities.Contains document -> refuse "superseded" "This document incarnation was retired."
+        | true, _ -> refuse "busy" "The failed formatter start is still being joined."
+        | _ when admittedIdentities.Contains document -> refuse "superseded" "This document incarnation was retired."
+        | _ when admittedIdentities.Count >= 8192 -> refuse "session_capacity" "The provider formatter has reached its incarnation identity limit; open a fresh session."
         | _ ->
-          match DocumentFormatter.create { Epoch = 1UL; CommandCapacity = 256; MaxDemands = 128 } document with
-          | Error failure -> error failure
-          | Ok handle ->
-            match DocumentFormatter.start handle with
-            | Error failure -> closing.Add(document, DocumentFormatter.beginClose handle); handles.Add(document, handle); error failure
-            | Ok () ->
-              match current.TryGetValue document.Uri with
-              | true, previous -> closing[previous] <- DocumentFormatter.beginClose handles[previous]
-              | _ -> ()
+          if handles.Count >= 32 then
+            match current.TryGetValue document.Uri with
+            | true, previous ->
+              retire previous handles[previous]
+              current.Remove document.Uri |> ignore
+            | _ -> ()
+            if closing.Count > 0 then refuse "busy" "Retired formatter work must finish closing before another document can start."
+            else refuse "session_capacity" "The provider retains at most 32 live document incarnations; open a fresh session."
+          else
+            match DocumentFormatter.create { Epoch = 1UL; CommandCapacity = 256; MaxDemands = 128 } document with
+            | Error failure -> error failure
+            | Ok handle ->
               handles.Add(document, handle)
-              current[document.Uri] <- document
-              Ok handle
+              match startDocument handle with
+              | Error failure -> retire document handle; error failure
+              | Ok () ->
+                match current.TryGetValue document.Uri with
+                | true, previous -> retire previous handles[previous]
+                | _ -> ()
+                admittedIdentities.Add document |> ignore
+                current[document.Uri] <- document
+                Ok handle
       selected |> Result.bind (fun handle ->
         let snapshot: SourceSnapshot = {
           Document = document; Revision = buffer.Revision; ConfigurationRevision = 1UL
           IsSignature = false; Source = buffer.Source; Config = FormatPolicy.config
         }
         DocumentFormatter.request snapshot handle |> Result.map (fun request -> latest[document] <- snapshot; snapshot, handle, request) |> Result.mapError refusalOfError))
+  new () = FormatterSession(DocumentFormatter.start, DocumentFormatter.awaitClose)
+  member _.DrainRetirements() = lock gate (fun () ->
+    let owned = pendingRetirements.ToArray()
+    pendingRetirements.Clear()
+    owned |> Array.map joinClose |> Array.toList)
+  member private _.JoinRetiredAsync() =
+    let owned = lock gate (fun () -> closing |> Seq.map (fun pair -> pair.Key, pair.Value) |> Seq.toArray)
+    async {
+      let! results = owned |> Array.map joinClose |> Async.Parallel
+      let failures = results |> Array.choose (function Error failure -> Some failure | _ -> None)
+      return if failures.Length = 0 then Ok () else Error(String.concat "; " failures)
+    }
   member _.RequestPreview(buffer: FormatBuffer) =
     admit buffer |> Result.map (fun (snapshot, handle, request) ->
       // The exact command handle survives cancellation and observation. A
@@ -186,27 +251,29 @@ type FormatterSession() =
       { Observe = observe; Withdraw = fun () -> withdraw () |> ignore })
   member _.BeginClose() = lock gate (fun () ->
     closed <- true
+    pendingRetirements.Clear()
     for KeyValue(document, handle) in handles do
       if not (closing.ContainsKey document) then closing.Add(document, DocumentFormatter.beginClose handle))
   member this.CloseAsync() =
     this.BeginClose()
-    let owned, releases = lock gate (fun () -> closing.Values |> Seq.toArray, releaseControls |> Seq.toArray)
+    let releases = lock gate (fun () -> releaseControls |> Seq.toArray)
     async {
       let! _ = releases |> Array.map joinRelease |> Async.Parallel
-      let! results = owned |> Array.map DocumentFormatter.awaitClose |> Async.Parallel
-      let closeFailures = results |> Array.choose (function Error failure -> Some(sprintf "%A" failure) | _ -> None)
-      let releaseFailures = lock gate (fun () -> cleanupFailures.ToArray())
-      let failures = Array.append closeFailures releaseFailures
+      let! _ = this.JoinRetiredAsync()
+      let failures = lock gate (fun () -> cleanupFailures.ToArray())
       return if failures.Length = 0 then Ok () else Error(String.concat "; " failures)
     }
   member _.DrainDiagnostics() =
-    let owned = lock gate (fun () -> handles |> Seq.map (fun pair -> pair.Key, pair.Value) |> Seq.toArray)
-    owned |> Array.collect (fun (document, handle) ->
-      DocumentFormatter.drainDiagnostics handle
-      |> List.map (fun diagnostic -> { Document = document; Diagnostic = diagnostic })
-      |> List.toArray) |> Array.toList
+    lock gate (fun () ->
+      for KeyValue(document, handle) in handles do
+        for diagnostic in DocumentFormatter.drainDiagnostics handle do
+          diagnostics.Add { Document = document; Diagnostic = diagnostic }
+      let retained = diagnostics |> Seq.toList
+      diagnostics.Clear()
+      retained)
   interface IFormatBackend with
     member this.RequestPreview buffer = this.RequestPreview buffer
+    member this.DrainRetirements() = this.DrainRetirements()
     member this.BeginClose() = this.BeginClose()
     member this.CloseAsync() = this.CloseAsync()
     member this.DrainDiagnostics() = this.DrainDiagnostics()

@@ -315,7 +315,7 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
                   | Result.Ok(Opened opened) ->
                     let status: SessionSnapshot =
                       { Observation = opened.Observation; Project = opened.Project; ManifestPath = opened.ManifestPath
-                        Closed = false; Busy = false; Current = None; RevocationPending = false; BackendError = None; CleanupPending = false; CleanupError = None }
+                        Closed = false; Busy = false; Current = None; RevocationPending = false; BackendError = None; FormatterError = None; CleanupPending = false; CleanupError = None }
                     { response with Reply = { response.Reply with Outcome = Result.Ok(Observed status) } }
                     |> ComposerState.projection false "Initial status has not yet been read." |> remember connection |> ignore
                   | Result.Ok _ ->

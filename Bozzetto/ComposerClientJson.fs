@@ -53,6 +53,7 @@ module ComposerClientJson =
                closed = item.Closed; busy = item.Busy
                current = item.Current |> Option.map value |> Option.defaultValue (value (null: objnull))
                revocationPending = item.RevocationPending; backendError = nullableString item.BackendError
+               formatterError = nullableString item.FormatterError
                cleanupPending = item.CleanupPending; cleanupError = nullableString item.CleanupError
                statusFresh = projection.StatusFresh; statusError = nullableString projection.StatusError
                workerAvailable = projection.WorkerAvailable; workerError = nullableString projection.WorkerError

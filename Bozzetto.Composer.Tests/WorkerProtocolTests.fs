@@ -69,6 +69,15 @@ let tests = testList "Composer worker binary authority" [
     | body -> failtestf "Expected cancellation response: %A" body
   }
 
+  taskCase "formatter status schema refuses the previous daemon agreement before addressed work" <| fun () -> task {
+    use worker = new Worker<int64>(Path.GetTempPath(), (fun _ _ -> failwith "No backend should be opened"), compiler)
+    let previous = { BAREWireCodec.agreement with ContractDigest = "D8EEDA37A67779C9E652501A7635F61212F5FE98C0B993FBB51DA5FBB96D6445" }
+    let! refusedHello = worker.Handle(request "previous-daemon" (Hello previous))
+    refused RefusalCode.ContractMismatch refusedHello
+    let! disabled = worker.Handle(request "unnegotiated-status" (Status { Worker = target refusedHello.Authority; Session = "old-session" }))
+    refused RefusalCode.ProtocolVersion disabled
+  }
+
   taskCase "status preserves compiler identity and reservation withdraws artifact authority" <| fun () -> task {
     let cache = Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache", "bozzetto", "worker-status-tests", Guid.NewGuid().ToString("N"))
     Directory.CreateDirectory cache |> ignore

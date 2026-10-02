@@ -77,6 +77,66 @@ type private Backend(failCleanup: bool) =
       disposals <- disposals + 1
       if failCleanup then failwith "sticky injected cleanup failure"
 
+/// Every accepted preview has a separate withdrawal signal and a physical join.
+/// Holding Observe lets the test drive the worker token after admission, instead
+/// of accepting a pre-canceled reply as evidence that the callback ran.
+type private PendingPreview(buffer: FormatBuffer, held: bool) =
+  let entered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+  let withdrawn = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+  let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+  let joined = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+  do if not held then release.SetResult()
+  member _.Entered = entered.Task
+  member _.Withdrawn = withdrawn.Task
+  member _.Joined = joined.Task
+  member _.Release() = release.TrySetResult() |> ignore
+  member _.Demand = {
+    Observe = async {
+      entered.TrySetResult() |> ignore
+      try
+        do! release.Task |> Async.AwaitTask
+        return Result.Ok {
+          Document = buffer.Document; Incarnation = buffer.Incarnation; Revision = buffer.Revision
+          SourceSha256 = FormatPolicy.sourceSha256 buffer.Source; Configuration = buffer.Configuration
+          FormatterIdentity = "held-format-owner"; Formatted = buffer.Source
+        }
+      finally joined.TrySetResult() |> ignore
+    }
+    Withdraw = fun () -> withdrawn.TrySetResult() |> ignore
+  }
+
+type private RecordingFormatter(held: bool) =
+  let previews = Collections.Concurrent.ConcurrentQueue<PendingPreview>()
+  let diagnostics = Collections.Concurrent.ConcurrentQueue<FormatterDiagnostic>()
+  let first = TaskCompletionSource<PendingPreview>(TaskCreationOptions.RunContinuationsAsynchronously)
+  let second = TaskCompletionSource<PendingPreview>(TaskCreationOptions.RunContinuationsAsynchronously)
+  let mutable count = 0
+  member _.Admissions = Volatile.Read(&count)
+  member _.First = first.Task
+  member _.Second = second.Task
+  member _.QueueDiagnostic diagnostic = diagnostics.Enqueue diagnostic
+  member _.ReleaseAll() = for preview in previews do preview.Release()
+  interface IFormatBackend with
+    member _.RequestPreview buffer =
+      let preview = PendingPreview(buffer, held)
+      previews.Enqueue preview
+      match Interlocked.Increment(&count) with
+      | 1 -> first.TrySetResult preview |> ignore
+      | 2 -> second.TrySetResult preview |> ignore
+      | _ -> ()
+      Result.Ok preview.Demand
+    member _.BeginClose() = for preview in previews do preview.Demand.Withdraw()
+    member _.DrainRetirements() = []
+    member _.CloseAsync() = async {
+      for preview in previews do do! preview.Joined |> Async.AwaitTask
+      return Result.Ok ()
+    }
+    member _.DrainDiagnostics() =
+      let captured = ResizeArray<FormatterDiagnostic>()
+      let mutable diagnostic = Unchecked.defaultof<FormatterDiagnostic>
+      while diagnostics.TryDequeue(&diagnostic) do captured.Add diagnostic
+      captured |> Seq.toList
+
 let private canceledOperation operation () = task {
   let root = directory ()
   let projectDirectory = Path.Combine(root, "project")
@@ -84,7 +144,9 @@ let private canceledOperation operation () = task {
   let project = Path.Combine(projectDirectory, "test.fidproj")
   File.WriteAllText(project, "test fixture: backend injected; no compiler invoked")
   let backend = new Backend(false)
-  use worker = new Worker<int64>(Path.Combine(root, "sessions"), (fun _ _ -> backend), describeCompiler)
+  let formatter = RecordingFormatter(false)
+  use worker = new Worker<int64>(Path.Combine(root, "sessions"), (fun _ _ -> backend), describeCompiler,
+    createFormatter = (fun () -> formatter))
   let! identity = hello worker
   let! opened = worker.Handle(request "open" (Open(address identity, project)))
   success opened |> ignore
@@ -114,6 +176,7 @@ let private canceledOperation operation () = task {
   status.Current.IsSome |> Expect.equal "forwarded observer cancellation preserves current artifact authority" runOperation
   backend.Builds |> Expect.equal "pre-canceled build never enters backend" (if runOperation then 1 else 0)
   backend.Runs |> Expect.equal "pre-canceled run never launches an artifact" 0
+  formatter.Admissions |> Expect.equal "pre-canceled format never attaches a formatter demand" 0
   let! retired = worker.RetireAsync()
   retired |> Result.isOk |> Expect.isTrue "clean worker retirement"
 }
@@ -178,6 +241,80 @@ let tests = testList "Composer worker request lifetime" [
   taskCase "worker forwards pre-canceled build token to captured session revision" (canceledOperation Operation.Build)
   taskCase "worker forwards pre-canceled run token before native invocation" (canceledOperation Operation.Run)
   taskCase "worker forwards pre-canceled format token before attaching preview demand" (canceledOperation Operation.Format)
+
+  taskCase "mid-flight format token withdraws only its admitted demand and joins observation" <| fun () -> task {
+    let root = directory ()
+    let project = Path.Combine(root, "project", "mid-flight.fidproj")
+    Directory.CreateDirectory(Path.GetDirectoryName project) |> ignore
+    File.WriteAllText(project, "injected formatter owner; no compiler invocation")
+    let backend = new Backend(false)
+    let formatter = RecordingFormatter(true)
+    use worker = new Worker<int64>(Path.Combine(root, "sessions"), (fun _ _ -> backend), describeCompiler,
+      createFormatter = (fun () -> formatter))
+    use cancellation = new CancellationTokenSource()
+    try
+      let! identity = hello worker
+      let! opened = worker.Handle(request "open" (Open(address identity, project)))
+      success opened |> ignore
+      let target = session opened.Authority
+      let buffer = {
+        Document = "buffer://cancellation/mid-flight.clef"; Incarnation = Guid.NewGuid().ToString("D")
+        Revision = 1UL; Source = "module Main\nlet value=42\n"; Configuration = FormatPolicy.Configuration
+      }
+      let canceled = worker.Handle(request "first-format" (Format(target, 0L, buffer)), cancellation = cancellation.Token)
+      let! first = formatter.First
+      do! first.Entered
+      let peer = worker.Handle(request "peer-format" (Format(target, 0L, buffer)))
+      let! second = formatter.Second
+      do! second.Entered
+      formatter.Admissions |> Expect.equal "both requests entered the formatter before cancellation" 2
+      cancellation.Cancel()
+      do! first.Withdrawn
+      second.Withdrawn.IsCompleted |> Expect.isFalse "caller token cannot release the peer demand"
+      canceled.IsCompleted |> Expect.isFalse "withdrawal preserves the original observation's cleanup join"
+      peer.IsCompleted |> Expect.isFalse "peer still owns its live observation"
+      formatter.ReleaseAll()
+      let! canceledReply = canceled
+      refusal RefusalCode.Canceled canceledReply
+      first.Joined.IsCompleted |> Expect.isTrue "canceled reply follows physical observation completion"
+      let! peerReply = peer
+      match success peerReply with
+      | Formatted preview -> preview.Revision |> Expect.equal "peer retains the same immutable revision" 1UL
+      | body -> failtestf "Expected peer format result, received %A" body
+      let! status = worker.Handle(request "status" (Status target))
+      status.Authority.Generation |> Expect.equal "request cancellation does not reserve the shared session" 0L
+      (observed status).FormatterError |> Expect.isNone "normal request cancellation is not a formatter fault"
+    finally formatter.ReleaseAll()
+    let! retired = worker.RetireAsync()
+    retired |> Result.isOk |> Expect.isTrue "both formatter observations and worker owner close"
+  }
+
+  taskCase "formatter diagnostics survive compiler reservation cancellation and close in a distinct field" <| fun () -> task {
+    let backend = new Backend(false)
+    let formatter = RecordingFormatter(false)
+    use owner = new ProviderSession<int64>("host", "session", "epoch", "/injected/project.fidproj", backend, formatter = formatter)
+    formatter.QueueDiagnostic {
+      Document = { Uri = "buffer://diagnostics/main.clef"; Incarnation = Guid.Parse("00000000-0000-0000-0000-000000000001") }
+      Diagnostic = { Attempt = Fidelity.FSharp.Incremental.AttemptId 19UL
+                     Failure = { Code = "formatter-host-failure"; Message = "retained formatter evidence" } }
+    }
+    let snapshot () = owner.Status().Outcome |> Result.defaultWith (fun error -> failtestf "Status failed: %A" error)
+    let first = snapshot ()
+    first.BackendError |> Expect.isNone "formatter evidence never occupies the compiler error field"
+    let evidence = first.FormatterError |> Option.defaultWith (fun () -> failtest "Formatter diagnostic is missing")
+    for text in [ "buffer://diagnostics/main.clef"; "19UL"; "formatter-host-failure"; "retained formatter evidence" ] do
+      evidence.Contains text |> Expect.isTrue "formatter status preserves complete typed evidence"
+    let! reservation = owner.ReserveAsync "compiler edit"
+    reservation.Outcome |> Result.isOk |> Expect.isTrue "successful compiler reservation"
+    (snapshot ()).FormatterError |> Expect.equal "reservation cannot clear formatter evidence" (Some evidence)
+    owner.Cancel().Outcome |> Result.isOk |> Expect.isTrue "compiler cancellation accepted"
+    (snapshot ()).FormatterError |> Expect.equal "cancellation cannot overwrite formatter evidence" (Some evidence)
+    let! closed = owner.CloseAsync()
+    closed.Outcome |> Result.isOk |> Expect.isTrue "all compiler controls and formatter cleanup joined"
+    let final = snapshot ()
+    final.FormatterError |> Expect.equal "closed status retains evidence for the retired session" (Some evidence)
+    final.BackendError |> Expect.isNone "successful compiler controls have their own status"
+  }
 
   taskCase "retirement remembers cleanup failure from an overtaken open across later fences" <| fun () -> task {
     let root = directory ()

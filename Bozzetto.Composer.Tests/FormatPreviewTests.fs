@@ -24,9 +24,17 @@ let private taskCase name (work: unit -> Task<unit>) = testCaseAsync name (async
   do! (work ()).WaitAsync(TimeSpan.FromSeconds 15.) |> Async.AwaitTask
 })
 let private preview (formatter: FormatterSession) snapshot =
-  match formatter.RequestPreview snapshot with
-  | Ok demand -> ClrInterop.toTask CancellationToken.None demand.Observe
-  | Error refusal -> Task.FromResult(Error refusal)
+  task {
+    let accepted = formatter.RequestPreview snapshot
+    let retired = formatter.DrainRetirements() |> List.map (ClrInterop.toTask CancellationToken.None)
+    let! result =
+      match accepted with
+      | Ok demand -> ClrInterop.toTask CancellationToken.None demand.Observe
+      | Error refusal -> Task.FromResult(Error refusal)
+    let! joined = Task.WhenAll retired
+    joined |> Array.iter (fun result -> success result |> ignore)
+    return result
+  }
 let private closeFormatter (formatter: FormatterSession) =
   formatter.CloseAsync() |> ClrInterop.toTask CancellationToken.None
 
@@ -82,6 +90,7 @@ type private HeldFormatter() =
       Withdraw = fun () -> withdrawn.TrySetResult() |> ignore
     }
     member _.BeginClose() = closed <- true
+    member _.DrainRetirements() = []
     member _.CloseAsync() = async {
       do! release.Task |> Async.AwaitTask
       return Ok ()
@@ -101,6 +110,7 @@ type private RecordingFormatter() =
       admitted.Enqueue buffer
       formatter.RequestPreview buffer
     member _.BeginClose() = formatter.BeginClose()
+    member _.DrainRetirements() = formatter.DrainRetirements()
     member _.CloseAsync() = formatter.CloseAsync()
     member _.DrainDiagnostics() = formatter.DrainDiagnostics()
 
@@ -220,7 +230,7 @@ let tests = testList "Composer Calque preview" [
       let! stale = preview
       stale.Outcome |> refusal "superseded"
       stale.Authority.Generation |> Expect.equal "refusal preserves admitted generation" 0L
-      let diagnostic = (owner.Status() |> fun response -> success response.Outcome).BackendError |> Option.defaultWith (fun () -> failtest "stale formatter diagnostics were discarded")
+      let diagnostic = (owner.Status() |> fun response -> success response.Outcome).FormatterError |> Option.defaultWith (fun () -> failtest "stale formatter diagnostics were discarded")
       for evidence in [ "buffer://stale-attempt"; "77UL"; "withdrawn-attempt-failure"; "retained stale formatter fault" ] do
         diagnostic.Contains evidence |> Expect.isTrue "the stale attempt's complete diagnostic remains visible"
       formatter.QueueDiagnostic {
@@ -228,7 +238,7 @@ let tests = testList "Composer Calque preview" [
         Diagnostic = { Attempt = Fidelity.FSharp.Incremental.AttemptId 78UL
                        Failure = { Code = "late-retired-failure"; Message = "fault after projection settlement" } }
       }
-      let late = (owner.Status() |> fun response -> success response.Outcome).BackendError |> Option.defaultValue ""
+      let late = (owner.Status() |> fun response -> success response.Outcome).FormatterError |> Option.defaultValue ""
       late.Contains "late-retired-failure" |> Expect.isTrue "ordinary status captures faults after a preview has settled"
       late.Contains "withdrawn-attempt-failure" |> Expect.isTrue "later diagnostics preserve previous attempt evidence"
       let! rejected = owner.FormatAsync(0L, buffer 2UL "module Sample\nlet value=2\n", CancellationToken.None)
@@ -308,6 +318,116 @@ let tests = testList "Composer Calque preview" [
     finally formatter.BeginClose()
     let! closed = closeFormatter formatter
     success closed |> ignore
+  }
+  taskCase "joined retired incarnations release slots without resurrecting old identities" <| fun () -> task {
+    let formatter = FormatterSession()
+    let original = buffer 0UL "module Reopened\nlet value=1\n"
+    try
+      let! first = preview formatter original
+      success first |> ignore
+      for _ in 1 .. 40 do
+        let snapshot = { original with Incarnation = Guid.NewGuid().ToString("D") }
+        let! reopened = preview formatter snapshot
+        success reopened |> ignore
+      formatter.RequestPreview original |> refusal "superseded"
+      formatter.DrainRetirements() |> Expect.isEmpty "each retired child transferred only once"
+    finally formatter.BeginClose()
+    let! closed = closeFormatter formatter
+    success closed |> ignore
+  }
+  taskCase "a retired document occupies its slot until physical close joins" <| fun () -> task {
+    let entered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let join operation = async {
+      entered.TrySetResult() |> ignore
+      do! release.Task |> Async.AwaitTask
+      return! Calque.Incremental.DocumentFormatter.awaitClose operation
+    }
+    let formatter = FormatterSession(Calque.Incremental.DocumentFormatter.start, join)
+    let original = { buffer 0UL "module Capacity\nlet value=1\n" with Document = "buffer://retiring" }
+    try
+      let! first = preview formatter original
+      success first |> ignore
+      for index in 1 .. 31 do
+        let! retained = preview formatter { original with Document = "buffer://retained/" + string index }
+        success retained |> ignore
+      let replacement = { original with Incarnation = Guid.NewGuid().ToString("D") }
+      formatter.RequestPreview replacement |> refusal "busy"
+      let retirements = formatter.DrainRetirements()
+      retirements.Length |> Expect.equal "one exact retired child was transferred" 1
+      formatter.DrainRetirements() |> Expect.isEmpty "retirement is not scheduled twice"
+      let joined = retirements.Head |> ClrInterop.toTask CancellationToken.None
+      do! entered.Task
+      formatter.RequestPreview { original with Document = "buffer://unrelated/33" } |> refusal "busy"
+      formatter.RequestPreview original |> refusal "superseded"
+      joined.IsCompleted |> Expect.isFalse "sealing did not reclaim the live physical slot"
+      release.TrySetResult() |> ignore
+      let! retired = joined
+      success retired |> ignore
+      let! reopened = preview formatter replacement
+      success reopened |> ignore
+      formatter.RequestPreview original |> refusal "superseded"
+      let! retained = preview formatter { original with Document = "buffer://retained/1" }
+      success retained |> ignore
+    finally
+      release.TrySetResult() |> ignore
+      formatter.BeginClose()
+    let! closed = closeFormatter formatter
+    success closed |> ignore
+  }
+  taskCase "failed document starts are joined without consuming an incarnation identity" <| fun () -> task {
+    let mutable failStart = true
+    let start handle =
+      if failStart then
+        failStart <- false
+        Error(Calque.Incremental.FormatterError.InvalidSettings "injected start failure")
+      else Calque.Incremental.DocumentFormatter.start handle
+    let formatter = FormatterSession(start, Calque.Incremental.DocumentFormatter.awaitClose)
+    let original = buffer 0UL "module Retry\nlet value=1\n"
+    try
+      formatter.RequestPreview original |> refusal "request_refused"
+      formatter.RequestPreview original |> refusal "busy"
+      let retirements = formatter.DrainRetirements()
+      retirements.Length |> Expect.equal "failed start retains one owned cleanup" 1
+      let! joined = retirements.Head |> ClrInterop.toTask CancellationToken.None
+      success joined |> ignore
+      let! retried = preview formatter original
+      success retried |> ignore
+      for index in 1 .. 31 do
+        let! retained = preview formatter { original with Document = "buffer://remaining/" + string index }
+        success retained |> ignore
+      formatter.RequestPreview { original with Document = "buffer://over-capacity" } |> refusal "session_capacity"
+    finally formatter.BeginClose()
+    let! closed = closeFormatter formatter
+    success closed |> ignore
+  }
+  taskCase "provider owns retired document cleanup without delaying unrelated previews" <| fun () -> task {
+    let entered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let join operation = async {
+      entered.TrySetResult() |> ignore
+      do! release.Task |> Async.AwaitTask
+      return! Calque.Incremental.DocumentFormatter.awaitClose operation
+    }
+    let formatter = FormatterSession(Calque.Incremental.DocumentFormatter.start, join)
+    use owner = new ProviderSession<int64>("host", "session", "epoch", "/not-read/project.fidproj", new Backend(), formatter = formatter)
+    try
+      let original = buffer 0UL "module Owned\nlet value=1\n"
+      let! first = owner.FormatAsync(0L, original, CancellationToken.None)
+      success first.Outcome |> ignore
+      let replacement = { original with Incarnation = Guid.NewGuid().ToString("D") }
+      let! reopened = owner.FormatAsync(0L, replacement, CancellationToken.None)
+      success reopened.Outcome |> ignore
+      do! entered.Task
+      let! unrelated = owner.FormatAsync(0L, { original with Document = "buffer://unrelated" }, CancellationToken.None)
+      success unrelated.Outcome |> ignore
+      let closing = owner.CloseAsync()
+      let! premature = Task.WhenAny(closing :> Task, Task.Delay 50)
+      obj.ReferenceEquals(premature, closing) |> Expect.isFalse "parent close still owns the physically held retired child"
+      release.TrySetResult() |> ignore
+      let! closed = closing
+      success closed.Outcome |> ignore
+    finally release.TrySetResult() |> ignore
   }
   testCase "public JSON preserves full uint64 revisions and rejects absent immutable buffers" <| fun _ ->
     let snapshot = buffer UInt64.MaxValue "module Sample\nlet value=1\n"

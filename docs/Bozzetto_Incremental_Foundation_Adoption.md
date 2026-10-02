@@ -148,6 +148,25 @@ serializing unrelated child results behind it. Session close seals new work and
 joins those children, retaining failures as evidence. Shared document release on
 editor close still needs an explicit ownership contract.
 
+HelloWayland already supplies native execution evidence for this separation.
+Its CPU renderer uses Fidelity.Platform's
+[Ariel region](../../Fidelity.Platform/Environments/Linux/x86_64/Ariel/Region.clef):
+persistent pthread carriers claim disjoint pixel intervals, while work completion
+and participant retirement have separate counts. The region returns only after
+retirement callbacks finish and captured callbacks are cleared. The
+[native lifecycle tests](../../Fidelity.Platform/tests/Ariel/native/Lifecycle.clef)
+deliberately delay retirement even for zero work and failed work. This parallels
+the foundation's `Finished`/`Drained` distinction. It is evidence for the shared
+ownership contract, not full actor scheduling conformance or a hosted .NET pool
+to reproduce. The [CPU scope record](../../Composer/docs/multi-core-cpu.md)
+identifies the remaining scheduling guarantees.
+
+The hosted integration continues to use F# `Async` on .NET's existing dispatch
+substrate. Dependency readiness, demand and supervision do not require another
+thread scheduler. A separate `Fidelity.FSharp.Actor` abstraction remains deferred
+until reusable actor semantics and explicit scheduler assumptions justify it;
+do not attribute Ariel fairness or control-plane guarantees to the CLR pool.
+
 Prefer a quiet API of small module operations, typed data and pure F# `Async`
 workflows during interim .NET hosting. Necessary CLR interoperability belongs at
 explicit execution boundaries. Do not use boxed payloads, `:> obj`, unchecked

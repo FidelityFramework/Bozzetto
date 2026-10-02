@@ -26,7 +26,7 @@ let private typedRefusal (error: Bozzetto.Providers.Refusal) : Bozzetto.Composer
   { Code = code; Message = error.Code + ": " + error.Message }
 
 /// The worker owns all compiler tickets. The transport copies only closed data.
-type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBackend<'Ticket>, describeCompiler: unit -> CompilerIdentity, ?cancelRequest: (string -> bool)) =
+type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBackend<'Ticket>, describeCompiler: unit -> CompilerIdentity, ?cancelRequest: (string -> bool), ?createFormatter: (unit -> IFormatBackend)) =
   let gate = obj ()
   let host, epoch = Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N")
   let sessions = Collections.Generic.Dictionary<string, ProviderSession<'Ticket>>()
@@ -146,7 +146,8 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
                   try
                     try
                       let backend = createBackend (Path.GetFullPath project) (Path.Combine(root, host, sessionId, epoch))
-                      let session = new ProviderSession<'Ticket>(host, sessionId, epoch, Path.GetFullPath project, backend)
+                      let session = new ProviderSession<'Ticket>(host, sessionId, epoch, Path.GetFullPath project, backend,
+                        ?formatter = (createFormatter |> Option.map (fun create -> create ())))
                       let installed = lock gate (fun () ->
                         if retired then false
                         else

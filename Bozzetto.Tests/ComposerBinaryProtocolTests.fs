@@ -31,7 +31,8 @@ let private artifact: AcceptedArtifact = {
 let private status: SessionSnapshot = {
   Observation = 19UL; Project = "/tmp/project.fidproj"; ManifestPath = "/tmp/current.json"
   Closed = true; Busy = true; Current = Some artifact; RevocationPending = true
-  BackendError = Some "backend error"; CleanupPending = true; CleanupError = Some "cleanup error"
+  BackendError = Some "backend error"; FormatterError = Some "formatter host error"
+  CleanupPending = true; CleanupError = Some "cleanup error"
 }
 let private request body: Request = { ProtocolVersion = 2us; RequestId = "id/α/\000/not-u32"; Body = body }
 let private reply body: Reply = { ProtocolVersion = 2us; RequestId = "same-full-id"; Authority = authority; Outcome = Result.Ok body }
@@ -156,6 +157,19 @@ let tests = testList "Composer typed binary worker protocol" [
       let original = reply body
       original |> BAREWireCodec.encodeReply |> mustSucceed |> BAREWireCodec.decodeReply
       |> Expect.equal "reply exact equality" (Result.Ok original)
+
+  testCase "public status labels formatter evidence separately from compiler failure" <| fun _ ->
+    let projected = reply (Observed status) |> Bozzetto.ComposerIntegration.ComposerClientJson.wireReply
+    let body = projected.GetProperty "result"
+    body.GetProperty("backendError").GetString() |> Expect.equal "compiler evidence keeps its own label" "backend error"
+    body.GetProperty("formatterError").GetString() |> Expect.equal "formatter evidence has its own label" "formatter host error"
+    let clear = { status with BackendError = None; FormatterError = None }
+    let projected = reply (Observed clear) |> Bozzetto.ComposerIntegration.ComposerClientJson.wireReply
+    for field in [ "backendError"; "formatterError" ] do
+      projected.GetProperty("result").GetProperty(field).ValueKind
+      |> Expect.equal "absent diagnostic is a JSON null" System.Text.Json.JsonValueKind.Null
+    reply (Observed clear) |> BAREWireCodec.encodeReply |> mustSucceed |> BAREWireCodec.decodeReply
+    |> Expect.equal "empty independent fields roundtrip over binary" (Result.Ok(reply (Observed clear)))
 
   testCase "all refusal codes preserve typed identity and stable explicit tags" <| fun _ ->
     refusals.Length |> Expect.equal "all closed refusals covered" (Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<RefusalCode>).Length)

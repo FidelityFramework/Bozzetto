@@ -124,7 +124,7 @@ type private Worker(host: string, pid: int) =
             state.Observation <- state.Observation + 1UL
             Observed { Observation = state.Observation; Project = "/project/fixture.fidproj"; ManifestPath = "/external/provider/current.json"
                        Closed = state.Closed; Busy = state.Busy; Current = state.Current
-                       RevocationPending = false; BackendError = None; CleanupPending = false; CleanupError = None }
+                       RevocationPending = false; BackendError = None; FormatterError = None; CleanupPending = false; CleanupError = None }
           | other -> failwithf "Unexpected fake-worker operation: %A" other
         reply session state.Generation (Result.Ok value))
   interface IComposerWorker with
