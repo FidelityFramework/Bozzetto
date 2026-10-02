@@ -5,9 +5,6 @@ open System.Text
 open BAREWire.Encoding
 open Bozzetto.Providers
 
-[<RequireQualifiedAccess>]
-type CodecFailure = InvalidPayload | FrameTooLarge | UnsupportedVersion of uint16
-
 /// Explicit schema codecs: no reflection, JSON projection, or encoding fallback.
 module BAREWireCodec =
   [<Literal>]
@@ -17,24 +14,41 @@ module BAREWireCodec =
   [<Literal>]
   let MaximumPayload = MaximumBody - 5
   [<Literal>]
-  let ContractDigest = "4387e39b352c8e1e0793bc5656015324f79a79ec68fdf7313fc2d13ef3b4558a"
+  let ContractDigest = "3000EBA080E0E37E7A0A56AB7FABE804BA2272E93C86439749569C0EF9FCD441"
 
   let agreement = { ProtocolVersion = ProtocolVersion; Encoding = EncodingId.BAREWire1; ContractDigest = ContractDigest }
   let private utf8 = UTF8Encoding(false, true)
 
-  type private Writer() =
-    let bytes = Array.zeroCreate<byte> MaximumPayload
+  let private uintLength (value: uint64) =
+    let mutable value = value
+    let mutable length = 1
+    while value >= 128UL do
+      value <- value >>> 7
+      length <- length + 1
+    length
+
+  type private Writer(maximum: int) =
+    let mutable bytes = Array.zeroCreate<byte> (min maximum 4096)
     let mutable at = 0
-    member _.U16(value) = at <- Encoder.writeU16 bytes at value
-    member _.I32(value) = at <- Encoder.writeI32 bytes at value
-    member _.I64(value) = at <- Encoder.writeI64 bytes at value
-    member _.U64(value) = at <- Encoder.writeU64 bytes at value
-    member _.Bool(value) = at <- Encoder.writeBool bytes at value
-    member _.Tag(value) = at <- Encoder.writeTag bytes at value
-    member _.String(value: string) =
+    let ensure count =
+      if Cursor.isOk at then
+        if count < 0 || count > maximum - at then at <- Cursor.Fault
+        elif at + count > bytes.Length then
+          Array.Resize(&bytes, min maximum (max (at + count) (bytes.Length * 2)))
+    member _.U16(value) = ensure 2; at <- Encoder.writeU16 bytes at value
+    member _.U32(value) = ensure 4; at <- Encoder.writeU32 bytes at value
+    member _.I32(value) = ensure 4; at <- Encoder.writeI32 bytes at value
+    member _.I64(value) = ensure 8; at <- Encoder.writeI64 bytes at value
+    member _.U64(value) = ensure 8; at <- Encoder.writeU64 bytes at value
+    member _.Bool(value) = ensure 1; at <- Encoder.writeBool bytes at value
+    member _.Tag(value) = ensure (uintLength (uint64 value)); at <- Encoder.writeTag bytes at value
+    member _.Data(value: byte array) =
+      ensure (uintLength (uint64 value.Length) + value.Length)
+      at <- Encoder.writeData bytes at value
+    member this.String(value: string) =
       let length = utf8.GetByteCount value
       if length > MaximumPayload then at <- Cursor.Fault
-      elif Cursor.isOk at then at <- Encoder.writeData bytes at (utf8.GetBytes value)
+      elif Cursor.isOk at then this.Data(utf8.GetBytes value)
     member this.Optional(write, value) =
       match value with
       | None -> this.Bool false
@@ -42,6 +56,7 @@ module BAREWireCodec =
     member _.Array(write, values: 'T array) =
       if values.Length > MaximumPayload then at <- Cursor.Fault
       else
+        ensure (uintLength (uint64 values.Length))
         at <- Encoder.writeUInt bytes at (uint64 values.Length)
         let mutable index = 0
         while Cursor.isOk at && index < values.Length do
@@ -54,6 +69,7 @@ module BAREWireCodec =
   type private Reader(bytes: byte array) =
     let mutable at = 0
     member _.U16() = let value, next = Decoder.readU16 bytes at in at <- next; value
+    member _.U32() = let value, next = Decoder.readU32 bytes at in at <- next; value
     member _.I32() = let value, next = Decoder.readI32 bytes at in at <- next; value
     member _.I64() = let value, next = Decoder.readI64 bytes at in at <- next; value
     member _.U64() = let value, next = Decoder.readU64 bytes at in at <- next; value
@@ -63,7 +79,9 @@ module BAREWireCodec =
     member _.String() =
       let value, next = Decoder.readData bytes at
       at <- next
-      if Cursor.isFault at then "" else utf8.GetString value
+      if Cursor.isFault at then ""
+      elif value.Length > MaximumPayload then at <- Cursor.Fault; ""
+      else utf8.GetString value
     member this.Optional(read) =
       if this.Bool() then Some(read()) else None
     member this.Array(read: unit -> 'T) =
@@ -71,7 +89,7 @@ module BAREWireCodec =
       at <- next
       // Every element in this schema has at least one encoded byte. Bound
       // the allocation by the actual remaining extent, before converting.
-      if Cursor.isFault at || count > uint64 (Cursor.remaining bytes at) then
+      if Cursor.isFault at || count > uint64 MaximumPayload || count > uint64 (Cursor.remaining bytes at) then
         this.Invalid<'T array>()
       else
         let values = Array.zeroCreate<'T> (int count)
@@ -116,6 +134,8 @@ module BAREWireCodec =
     | RefusalCode.SessionCapacity -> 20 | RefusalCode.BackendFailed -> 21
     | RefusalCode.InvalidReservation -> 22 | RefusalCode.NotAccepted -> 23
     | RefusalCode.FrameTooLarge -> 24 | RefusalCode.MalformedPayload -> 25
+    | RefusalCode.ProviderRetiring -> 26 | RefusalCode.ProviderUnavailable -> 27
+    | RefusalCode.RetirementFailed -> 28 | RefusalCode.Timeout -> 29
 
   let private readRefusalCode (r: Reader) =
     match r.Tag() with
@@ -132,6 +152,8 @@ module BAREWireCodec =
     | 20 -> RefusalCode.SessionCapacity | 21 -> RefusalCode.BackendFailed
     | 22 -> RefusalCode.InvalidReservation | 23 -> RefusalCode.NotAccepted
     | 24 -> RefusalCode.FrameTooLarge | 25 -> RefusalCode.MalformedPayload
+    | 26 -> RefusalCode.ProviderRetiring | 27 -> RefusalCode.ProviderUnavailable
+    | 28 -> RefusalCode.RetirementFailed | 29 -> RefusalCode.Timeout
     | _ -> r.Invalid()
 
   let private writeWorker (w: Writer) (v: WorkerAddress) =
@@ -247,6 +269,7 @@ module BAREWireCodec =
       writeAgreement w v.Agreement
       w.String v.Compiler.AssemblyPath; w.String v.Compiler.Sha256; w.String v.Compiler.Version
       w.I32 v.Psg.Schema; w.String v.Psg.AssemblySha256
+      w.U32 v.Psg.FormatVersion; w.String v.Psg.ContractFingerprint
       w.Array((operationTag >> w.Tag), v.Operations); w.Bool v.InMemoryPatchAllowed
     | Opened v -> w.U64 v.Observation; w.String v.Project; w.String v.ManifestPath
     | Reserved v -> w.String v.Reservation
@@ -266,10 +289,13 @@ module BAREWireCodec =
       let version = r.String()
       let schema = r.I32()
       let psgHash = r.String()
+      let format = r.U32()
+      let fingerprint = r.String()
       let operations = r.Array(fun () -> readOperation r)
       let patch = r.Bool()
       HelloAccepted { Agreement = agreed; Compiler = { AssemblyPath = path; Sha256 = hash; Version = version }
-                      Psg = { Schema = schema; AssemblySha256 = psgHash }; Operations = operations; InMemoryPatchAllowed = patch }
+                      Psg = { Schema = schema; AssemblySha256 = psgHash; FormatVersion = format; ContractFingerprint = fingerprint }
+                      Operations = operations; InMemoryPatchAllowed = patch }
     | Operation.Open ->
       let observation = r.U64()
       let project = r.String()
@@ -299,11 +325,11 @@ module BAREWireCodec =
       let restart = r.Bool()
       CompilerRetired { RestartRequired = restart; InMemoryPatchAllowed = r.Bool() }
 
-  let private encode version write =
+  let private encode maximum version write =
     if version <> ProtocolVersion then Result.Error(CodecFailure.UnsupportedVersion version)
     else
       try
-        let writer = Writer()
+        let writer = Writer(maximum)
         writer.U16 version
         write writer
         writer.Finish()
@@ -311,8 +337,9 @@ module BAREWireCodec =
       | :? ArgumentException -> Result.Error CodecFailure.InvalidPayload
       | :? NullReferenceException -> Result.Error CodecFailure.InvalidPayload
 
-  let private decode read (bytes: byte array) =
-    if bytes.Length > MaximumPayload then Result.Error CodecFailure.FrameTooLarge
+  let private decode maximum read (bytes: byte array) =
+    if isNull bytes then Result.Error CodecFailure.InvalidPayload
+    elif bytes.Length > maximum then Result.Error CodecFailure.FrameTooLarge
     else
       try
         let reader = Reader bytes
@@ -327,24 +354,24 @@ module BAREWireCodec =
       | :? MatchFailureException -> Result.Error CodecFailure.InvalidPayload
 
   let encodeRequest (request: Request) =
-    encode request.ProtocolVersion (fun w -> w.String request.RequestId; writeRequestBody w request.Body)
+    encode MaximumPayload request.ProtocolVersion (fun w -> w.String request.RequestId; writeRequestBody w request.Body)
   let decodeRequest bytes =
-    decode (fun r ->
+    decode MaximumPayload (fun r ->
       let id = r.String()
       let body = readRequestBody r
       { ProtocolVersion = ProtocolVersion; RequestId = id; Body = body }) bytes
   let encodeReply (reply: Reply) =
-    encode reply.ProtocolVersion (fun w ->
+    encode MaximumPayload reply.ProtocolVersion (fun w ->
       w.String reply.RequestId
       writeAuthority w reply.Authority
       match reply.Outcome with
       | Result.Ok body -> w.Bool false; writeReplyBody w body
       | Result.Error refusal -> w.Bool true; w.Tag(refusalTag refusal.Code); w.String refusal.Message)
   let decodeReply bytes =
-    decode (fun r ->
+    decode MaximumPayload (fun r ->
       let id = r.String()
       let authority = readAuthority r
-      let outcome =
+      let outcome: Result<ReplyBody, Bozzetto.Composer.Protocol.Refusal> =
         if r.Bool() then
           let code = readRefusalCode r
           Result.Error { Code = code; Message = r.String() }

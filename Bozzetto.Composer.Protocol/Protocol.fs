@@ -37,7 +37,7 @@ type Request = { ProtocolVersion: uint16; RequestId: string; Body: RequestBody }
 
 type CompilerIdentity = { AssemblyPath: string; Sha256: string; Version: string }
 /// A description of the loaded semantic contract, not a transferred revision.
-type PsgIdentity = { Schema: int; AssemblySha256: string }
+type PsgIdentity = { Schema: int; AssemblySha256: string; FormatVersion: uint32; ContractFingerprint: string }
 type HelloResult = {
   Agreement: Agreement
   Compiler: CompilerIdentity
@@ -65,6 +65,7 @@ type RefusalCode =
   | CompilerRefused | Canceled | ObservationCapacity | Busy | SessionCapacity
   | BackendFailed | InvalidReservation | NotAccepted | FrameTooLarge
   | MalformedPayload
+  | ProviderRetiring | ProviderUnavailable | RetirementFailed | Timeout
 
 type Refusal = { Code: RefusalCode; Message: string }
 
@@ -87,9 +88,13 @@ type Reply = {
   Outcome: Result<ReplyBody, Refusal>
 }
 
+[<RequireQualifiedAccess>]
+type CodecFailure = InvalidPayload | FrameTooLarge | UnsupportedVersion of uint16
+
 /// Outer framing failures without a decoded request identity are connection
 /// failures. They never invent an authority-bearing session reply.
 type FrameFailure =
   | TruncatedPrefix | TruncatedBody | InvalidLength of uint32
   | UnexpectedFrameKind of byte | InvalidCorrelation of uint32
   | InvalidPayload | UnsupportedVersion of uint16
+  | PayloadRejected of CodecFailure

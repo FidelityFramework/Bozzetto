@@ -222,6 +222,21 @@ let tests =
           let current = status |> success |> field "current"
           text "artifactSha256" current |> Expect.equal "MCP status sees HTTP build artifact" (text "artifactSha256" accepted)
           text "sourceVersion" current |> Expect.equal "both interfaces share the checked source receipt" (text "sourceVersion" accepted)
+          // These are external JSON adapter refusals. Neither malformed
+          // arguments nor a foreign operation can become a binary worker request.
+          let! malformedCode, malformed = httpJson http evidence "POST" "/api/composer/run"
+                                            (Some(dict (arguments first @ [ "arguments", box [| 1 |] ])))
+          malformedCode |> Expect.equal "malformed run rejected at HTTP boundary" 400
+          text "code" (field "error" malformed) |> Expect.equal "typed arguments required" "invalid_request"
+          let! unsupportedCode, unsupported = httpJson http evidence "POST" "/api/composer/eval" (Some(dict (arguments first)))
+          unsupportedCode |> Expect.equal "unsupported operation rejected at HTTP boundary" 400
+          text "code" (field "error" unsupported) |> Expect.equal "no alternate evaluation provider" "unsupported_operation"
+          let! retiredCode, retired = httpJson http evidence "POST" "/api/composer/read_revision" (Some(dict (arguments first)))
+          retiredCode |> Expect.equal "retired graph delivery has no HTTP route" 400
+          text "code" (field "error" retired) |> Expect.equal "full graph delivery is unsupported" "unsupported_operation"
+          let! afterMalformed = composer mcp evidence "composer_session_status" (arguments first)
+          text "artifactSha256" (afterMalformed |> success |> field "current")
+          |> Expect.equal "adapter refusal preserves accepted authority" (text "artifactSha256" accepted)
           // The daemon has zero F# sessions and one accepted Composer session.
           // Legacy counts must name their provider rather than imply no work exists.
           let! providerState = readResource mcp evidence

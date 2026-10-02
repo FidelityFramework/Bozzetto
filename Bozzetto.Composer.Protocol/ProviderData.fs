@@ -68,4 +68,3 @@ type SessionSnapshot = {
   CleanupPending: bool
   CleanupError: string option
 }
-

@@ -1,0 +1,26 @@
+<Project>
+  <!-- Every process that reads the shared protocol uses the same PSG/BAREWire
+       build selection. A selected distribution is an exact dependency closure. -->
+  <PropertyGroup>
+    <PsgContractProject Condition="'$(PsgContractProject)' == ''">$(MSBuildThisFileDirectory)../../Fidelity.PSG/src/Fidelity.PSG/Fidelity.PSG.fsproj</PsgContractProject>
+    <BareWireProject Condition="'$(BareWireProject)' == ''">$(MSBuildThisFileDirectory)../../BAREWire/src/BAREWire.fsproj</BareWireProject>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(ComposerDistribution)' == ''">
+    <ProjectReference Include="$(PsgContractProject)" />
+    <ProjectReference Include="$(BareWireProject)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ComposerDistribution)' != ''">
+    <Reference Include="BAREWire">
+      <HintPath>$(ComposerDistribution)/BAREWire.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Fidelity.PSG">
+      <HintPath>$(ComposerDistribution)/Fidelity.PSG.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="RequireSelectedComposerContract" BeforeTargets="ResolveReferences" Condition="'$(ComposerDistribution)' != ''">
+    <Error Condition="!$([System.IO.Path]::IsPathFullyQualified('$(ComposerDistribution)')) Or !Exists('$(ComposerDistribution)/BAREWire.dll') Or !Exists('$(ComposerDistribution)/Fidelity.PSG.dll')"
+      Text="ComposerDistribution must name the absolute selected compiler closure, including BAREWire.dll and Fidelity.PSG.dll." />
+  </Target>
+</Project>

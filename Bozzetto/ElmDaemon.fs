@@ -16,17 +16,9 @@ let createEffectDeps
       // Non-blocking: read from CQRS snapshot instead of mailbox
       let sessions = SessionManager.QuerySnapshot.allSessions (readSnapshot())
       SessionOperations.resolveSession sessionIdOpt sessions
-    GetProxy = fun sessionId ->
-      // CQRS read path — lock-free snapshot, no mailbox blocking. This is the
-      // Elm effect loop's own proxy resolver (live-testing cycles and
-      // discovery) — a separate closure from SessionManagementOps.GetProxy,
-      // so it gets the same `SessionProxy.touching` wrap independently. Both
-      // resolve from the same worker URLs; neither may forget the touch.
-      let snap = readSnapshot()
-      let urls = snap.WorkerBaseUrls |> Map.toSeq |> Seq.map (fun (k, v) -> WorkerProtocol.SessionId.value k, v) |> Map.ofSeq
-      HttpWorkerClient.proxyFromUrls (WorkerProtocol.SessionId.value sessionId) urls
-      |> Option.map (WorkerProtocol.SessionProxy.touching (fun () ->
-        sessionManager.Post(SessionManager.SessionCommand.TouchSession sessionId)))
+    GetProxy = fun _sessionId ->
+      Utils.Log.warn "%s" ExternalFSharpService.message
+      None
     CreateSession = fun _targets _workingDir _workflow ->
       async {
         return

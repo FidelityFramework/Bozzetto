@@ -2,11 +2,10 @@ module Bozzetto.Composer.Program
 
 open System
 open System.IO
-open System.IO.Pipes
-open System.Text
-open System.Text.Json
+open System.Net.Sockets
 open System.Threading
 open System.Threading.Tasks
+open Bozzetto.Composer.Protocol
 open Bozzetto.Composer.WorkerProtocol
 
 let private cacheRoot () =
@@ -16,47 +15,27 @@ let private cacheRoot () =
     | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache")
   Path.Combine(root, "bozzetto", "provider-sessions")
 
-let private describeCompiler () =
+let private describeCompiler () : CompilerIdentity =
   let compiler = typeof<Core.CompilationOrchestrator.ProjectSession>.Assembly
   { AssemblyPath = compiler.Location
     Sha256 = File.ReadAllBytes compiler.Location |> Security.Cryptography.SHA256.HashData |> Convert.ToHexString
     Version = compiler.GetName().Version.ToString() }
 
-let private readLine (reader: TextReader) =
-  let line = StringBuilder()
-  let mutable finished = false
-  let mutable eof = false
-  while not finished do
-    let next = reader.Read()
-    if next = -1 then
-      eof <- true
-      finished <- true
-    elif next = int '\n' then finished <- true
-    elif line.Length >= 1024 * 1024 then raise (InvalidDataException "Provider request exceeds 1 MiB.")
-    else line.Append(char next) |> ignore
-  if eof && line.Length = 0 then None else Some(line.ToString())
-
 [<EntryPoint>]
 let main argv =
   if argv = [| "--help" |] then
-    printfn "Bozzetto Composer worker: --stdio or --read-handle HANDLE --write-handle HANDLE"
-    printfn "Versioned JSON lines. Start with {\"protocolVersion\":1,\"requestId\":\"hello\",\"operation\":\"hello\"}."
+    printfn "Composer workspace host (Bozzetto.Composer): --socket ABSOLUTE_UNIX_SOCKET_PATH"
+    printfn "Explicit binary protocol2/BAREWire agreement required; stdout/stderr are diagnostics only."
     0
   else
     try
-      use input: Stream =
+      let path =
         match argv with
-        | [| "--stdio" |] -> Console.OpenStandardInput()
-        | [| "--read-handle"; readHandle; "--write-handle"; _ |] -> new AnonymousPipeClientStream(PipeDirection.In, readHandle)
-        | _ -> invalidArg "arguments" "Use --stdio or --read-handle HANDLE --write-handle HANDLE."
-      use output: Stream =
-        match argv with
-        | [| "--stdio" |] -> Console.OpenStandardOutput()
-        | [| "--read-handle"; _; "--write-handle"; writeHandle |] -> new AnonymousPipeClientStream(PipeDirection.Out, writeHandle)
-        | _ -> failwith "Invalid transport arguments"
-      use reader = new StreamReader(input, Encoding.UTF8)
-      use writer = new StreamWriter(output, UTF8Encoding(false), AutoFlush = true)
-      Console.SetOut(Console.Error)
+        | [| "--socket"; path |] when Path.IsPathFullyQualified path -> path
+        | _ -> invalidArg "arguments" "Use --socket ABSOLUTE_UNIX_SOCKET_PATH. No other transport is supported."
+      use socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
+      socket.ConnectAsync(UnixDomainSocketEndPoint path).WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
+      use stream = new NetworkStream(socket, ownsSocket = false)
       let requestCancellation = Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource>()
       let cancelRequest requestId =
         match requestCancellation.TryGetValue requestId with
@@ -65,54 +44,69 @@ let main argv =
           with :? ObjectDisposedException -> false
         | false, _ -> false
       use worker = new Worker<Core.IncrementalBuild.Ticket>(cacheRoot (), ComposerAdapter.create, describeCompiler, cancelRequest = cancelRequest)
-      let writes = obj ()
+      use writes = new SemaphoreSlim(1, 1)
       let running = Collections.Concurrent.ConcurrentDictionary<string, Task>()
-      let emit value = lock writes (fun () -> writer.WriteLine(JsonSerializer.Serialize(value, jsonOptions)))
-      let mutable reading = true
       let mutable cleanupFailed = false
+      let emit (reply: Reply) = task {
+        // Encode before writer admission; exactly one complete frame owns output.
+        let bytes =
+          match StreamFrames.encodeReply reply with
+          | Result.Ok bytes -> bytes
+          | Result.Error error ->
+            let failure: Refusal = {
+              Code = (match error with CodecFailure.FrameTooLarge -> RefusalCode.FrameTooLarge | _ -> RefusalCode.MalformedPayload)
+              Message = sprintf "The reply has no admitted binary representation: %A" error }
+            let refusal = { reply with Outcome = Result.Error failure }
+            match StreamFrames.encodeReply refusal with
+            | Result.Ok bytes -> bytes
+            | Result.Error failure -> raise (InvalidDataException(sprintf "Cannot encode reply refusal: %A" failure))
+        do! writes.WaitAsync()
+        try
+          do! stream.WriteAsync(bytes.AsMemory(), CancellationToken.None)
+          do! stream.FlushAsync CancellationToken.None
+        finally writes.Release() |> ignore
+      }
       try
+        let mutable reading = true
         while reading do
-          match readLine reader with
-          | None -> reading <- false
-          | Some line ->
-            try
-              use doc = JsonDocument.Parse line
-              let request = doc.RootElement.Clone()
-              let requestId = text "requestId" request
-              let completion = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
-              if not (running.TryAdd(requestId, completion.Task)) then
-                emit (worker.RejectFrame(requestId, "duplicate_request", "This requestId is already in flight."))
-              else
-                // The input reader installs cancellation before dispatch, so
-                // even a queued build can be canceled by the next wire frame.
-                let cancellation = new CancellationTokenSource()
-                requestCancellation[requestId] <- cancellation
-                Task.Run(Func<Task>(fun () -> (task {
+          match (StreamFrames.readRequestAsync stream CancellationToken.None).GetAwaiter().GetResult() with
+          | Result.Error failure -> raise (InvalidDataException(sprintf "Binary request refused: %A" failure))
+          | Result.Ok None -> reading <- false
+          | Result.Ok(Some request) ->
+            let completion = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+            if not (running.TryAdd(request.RequestId, completion.Task)) then
+              (emit (worker.RejectFrame(request.RequestId, RefusalCode.DuplicateRequest, "This requestId is already in flight."))).GetAwaiter().GetResult()
+            else
+              // Install cancellation before cold scheduling; a following frame
+              // can cancel even work whose evaluator has not started.
+              let cancellation = new CancellationTokenSource()
+              requestCancellation[request.RequestId] <- cancellation
+              Task.Run(Func<Task>(fun () -> task {
+                try
                   try
-                    let! response = worker.Handle(request, cancellation = cancellation.Token)
-                    emit response
-                  finally
-                    // Remove the old token before permitting request-id reuse.
-                    requestCancellation.TryRemove requestId |> ignore
-                    cancellation.Dispose()
-                    running.TryRemove requestId |> ignore
-                    completion.SetResult()
-                } :> Task))) |> ignore
-            with :? JsonException as error ->
-              emit (worker.RejectFrame("", "invalid_json", error.Message))
+                    let! reply = worker.Handle(request, cancellation = cancellation.Token)
+                    do! emit reply
+                  with error ->
+                    eprintfn "Composer request failed: %s" error.Message
+                    cleanupFailed <- true
+                    // A partially written frame has no recoverable interpretation.
+                    try socket.Shutdown(SocketShutdown.Both) with _ -> ()
+                finally
+                  requestCancellation.TryRemove request.RequestId |> ignore
+                  cancellation.Dispose()
+                  running.TryRemove request.RequestId |> ignore
+                  completion.SetResult()
+              })) |> ignore
       finally
-        // Include retirement (lock acquisition and disposal) in the deadline.
-        let retirement = Task.Run(Func<Task>(fun () -> (task {
+        let retirement = Task.Run(Func<Task>(fun () -> task {
           let! result = worker.RetireAsync()
           match result with
           | Result.Ok () -> ()
-          | Result.Error error ->
-            cleanupFailed <- true
-            eprintfn "%s: %s" error.Code error.Message
-        } :> Task)))
+          | Result.Error error -> cleanupFailed <- true; eprintfn "%s: %s" error.Code error.Message
+        }))
         let pending = Task.WhenAll(Array.append [| retirement |] (running.Values |> Seq.toArray))
-        if not (pending.Wait(TimeSpan.FromSeconds 5.0)) then
-          eprintfn "Provider shutdown exceeded five seconds; terminating its owned process tree."
+        if not (pending.Wait(TimeSpan.FromSeconds 5.)) then
+          eprintfn "Provider socket shutdown exceeded five seconds; terminating its owned process tree."
           Diagnostics.Process.GetCurrentProcess().Kill(true)
       if cleanupFailed then 1 else 0
     with error ->

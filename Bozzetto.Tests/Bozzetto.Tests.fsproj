@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+    <Import Project="../build/ComposerContract.props" />
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
@@ -14,11 +15,13 @@
         <Compile Include="../Bozzetto.Composer/ProviderSession.fs" Link="Composer/ProviderSession.fs" />
         <Compile Include="../Bozzetto.Composer/Worker.fs" Link="Composer/Worker.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/WorkerCancellationTests.fs" Link="Composer/WorkerCancellationTests.fs" />
+        <Compile Include="../Bozzetto.Composer.Tests/WorkerProtocolTests.fs" Link="Composer/WorkerProtocolTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/ProviderSessionTests.fs" Link="Composer/ProviderSessionTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/NativeProviderTests.fs" Link="Composer/NativeProviderTests.fs" />
         <Compile Include="../Bozzetto.Composer.Tests/LiveProviderTests.fs" Link="Composer/LiveProviderTests.fs" />
         <Compile Include="ComposerSupervisorTests.fs" />
         <Compile Include="ComposerWorkerClientTests.fs" />
+        <Compile Include="ComposerBinaryProtocolTests.fs" />
         <Compile Include="TestCountBadge.fs" />
         <Compile Include="BozzettoConfigTests.fs" />
         <Compile Include="AppStateCustomTests.fs" />
@@ -282,8 +285,6 @@
         <Compile Include="LiveValueTreeReference.fs" />
         <Compile Include="LiveValueTreeTests.fs" />
         <Compile Include="LiveBindingsAdaptiveTests.fs" />
-        <Compile Include="StreamingProxyTests.fs" />
-        <Compile Include="StreamingProxySimTests.fs" />
         <Compile Include="McpStateHandlerTests.fs" />
         <Compile Include="CompilationContextTests.fs" />
         <Compile Include="CompilationContextPropertyTests.fs" />
@@ -475,7 +476,6 @@
         <Compile Include="LiveTestWatcherScopeTests.fs" />
         <Compile Include="LiveTestWatcherAtomicSaveTests.fs" />
         <Compile Include="RestartPolicyCircuitBreakerTests.fs" />
-        <Compile Include="HostManifestTests.fs" />
         <Compile Include="VariantSelectorTests.fs" />
         <Compile Include="HostAdaptationTests.fs" />
         <Compile Include="HostCoreAdoptionTests.fs" />

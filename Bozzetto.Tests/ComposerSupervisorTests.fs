@@ -4,24 +4,31 @@ open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.IO
-open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
+open Bozzetto.Providers
+open Bozzetto.Composer.Protocol
 open Bozzetto.ComposerIntegration
 open Expecto
 open Expecto.Flip
 
-let private json value = JsonSerializer.SerializeToElement value
-let private empty = json {| |}
-let private field name (value: JsonElement) = value.GetProperty(name: string)
-let private text name value = (field name value).GetString()
-let private success response =
-  (field "success" response).GetBoolean() |> Expect.isTrue ("successful response: " + response.GetRawText())
-  field "result" response
-let private refused code response =
-  (field "success" response).GetBoolean() |> Expect.isFalse ("refused response: " + response.GetRawText())
-  text "code" (field "error" response) |> Expect.equal "refusal classification" code
-let private sessionOf response = text "session" (field "authority" response)
+let private success (response: ComposerResponse) =
+  match response.Reply.Outcome with
+  | Result.Ok _ -> response
+  | Result.Error refusal -> failtestf "Unexpected refusal %A: %s" refusal.Code refusal.Message
+let private observed response =
+  match (success response).Reply.Outcome with
+  | Result.Ok(Observed status) -> status
+  | other -> failtestf "Expected observed session, got %A" other
+let private artifact response =
+  match (success response).Reply.Outcome with
+  | Result.Ok(Built accepted) -> accepted
+  | other -> failtestf "Expected accepted artifact, got %A" other
+let private refused code (response: ComposerResponse) =
+  match response.Reply.Outcome with
+  | Result.Error refusal -> refusal.Code |> Expect.equal "refusal classification" code
+  | Result.Ok value -> failtestf "Expected refusal %A, got %A" code value
+let private sessionOf (response: ComposerResponse) = response.Reply.Authority.Session
 let private completion<'a> () = TaskCompletionSource<'a>(TaskCreationOptions.RunContinuationsAsynchronously)
 let private bounded (work: Task<'a>) = work.WaitAsync(TimeSpan.FromSeconds 5.)
 let private taskCase name work = testCaseAsync name (async { do! work () |> bounded |> Async.AwaitTask })
@@ -29,43 +36,42 @@ let private taskCase name work = testCaseAsync name (async { do! work () |> boun
 type private SessionState = {
   mutable Generation: int64
   mutable Observation: uint64
-  mutable Current: JsonElement
+  mutable Current: AcceptedArtifact option
   mutable Closed: bool
   mutable Busy: bool
 }
 
-/// In-memory process boundary with controllable responses and termination.
-/// The supervisor still receives full worker protocol envelopes and owns all
-/// routing, cache withdrawal and lifecycle decisions exercised below.
+/// Typed process boundary; these tests exercise actual supervisor ownership,
+/// ordering and reconciliation without relying on a JSON-shaped fake protocol.
 type private Worker(host: string, pid: int) =
   let gate = obj ()
   let exited = Event<string>()
-  let requests = ConcurrentQueue<string * string>()
-  let tokens = ConcurrentQueue<string * CancellationToken>()
+  let requests = ConcurrentQueue<Operation * string>()
+  let tokens = ConcurrentQueue<Operation * CancellationToken>()
   let sessions = Dictionary<string, SessionState>()
   let mutable alive = true
   let mutable stops = 0
-  let identity session generation =
-    {| host = host; session = session; epoch = host + "-epoch"
-       provider = "clef-composer"; generation = generation |}
-  let reply session generation (result: JsonElement) (error: JsonElement option) =
-    json {| protocolVersion = 1; requestId = Guid.NewGuid().ToString("N")
-            authority = identity session generation
-            success = error.IsNone; result = result
-            error = error |> Option.defaultValue empty |}
-  let accepted generation =
-    json {| generation = generation; sourceVersion = "source-" + string generation
-            artifactPath = "/external/provider/program"; artifactSha256 = "artifact-digest"
-            objectManifest = "/external/provider/objects.json"
-            changedWitnesses = [||]; retainedWitnesses = [||]; retiredWitnesses = [||]
-            witnessVisits = [||]; compiledObjects = [||]; reusedObjects = [||]; retiredObjects = [||] |}
+  let identity session generation : Authority =
+    { Host = host; Session = session; Epoch = host + "-epoch"
+      Provider = ProviderIdentity.ClefComposer; Generation = generation }
+  let reply session generation outcome : Reply =
+    { ProtocolVersion = BAREWireCodec.ProtocolVersion; RequestId = Guid.NewGuid().ToString("N")
+      Authority = identity session generation; Outcome = outcome }
+  let accepted generation : AcceptedArtifact =
+    { Generation = generation; SourceVersion = "source-" + string generation
+      ArtifactPath = "/external/provider/program"; ArtifactSha256 = "artifact-digest"
+      ObjectManifest = "/external/provider/objects.json"
+      ChangedWitnesses = [||]; RetainedWitnesses = [||]; RetiredWitnesses = [||]
+      WitnessVisits = [||]; CompiledObjects = [||]; ReusedObjects = [||]; RetiredObjects = [||] }
   member _.Host = host
   member _.Epoch = host + "-epoch"
+  member _.Address: WorkerAddress = { Host = host; Epoch = host + "-epoch"; Provider = ProviderIdentity.ClefComposer }
+  member this.SessionAddress session: SessionAddress = { Worker = this.Address; Session = session }
   member _.Requests = requests.ToArray()
   member _.Tokens = tokens.ToArray()
   member _.StopCount = Volatile.Read &stops
   member _.Alive = lock gate (fun () -> alive)
-  member val Intercept: string -> string -> Task<JsonElement> option = (fun _ _ -> None) with get, set
+  member val Intercept: Operation -> string -> Task<Reply> option = (fun _ _ -> None) with get, set
   member val CleanupFails = false with get, set
   member val StopThrows = false with get, set
   member val StopLeavesAlive = false with get, set
@@ -76,58 +82,67 @@ type private Worker(host: string, pid: int) =
     lock gate (fun () ->
       let state = sessions[session]
       state.Generation <- state.Generation + 1L
-      state.Current <- json (null: obj)
+      state.Current <- None
       state.Busy <- busy)
   member _.SetBusy(session, busy) = lock gate (fun () -> sessions[session].Busy <- busy)
   member this.Response(operation, session) =
     lock gate (fun () ->
-      if operation = "open" then
+      match operation with
+      | Operation.Open ->
         let id = sprintf "%s-session-%d" host (sessions.Count + 1)
-        sessions.Add(id, { Generation = 0L; Observation = 0UL; Current = json (null: obj); Closed = false; Busy = false })
-        reply id 0L (json {| session = id; project = "/project/fixture.fidproj" |}) None
-      elif operation = "prepare_compiler_change" then
+        sessions.Add(id, { Generation = 0L; Observation = 0UL; Current = None; Closed = false; Busy = false })
+        reply id 0L (Result.Ok(Opened { Observation = 0UL; Project = "/project/fixture.fidproj"; ManifestPath = "/external/provider/current.json" }))
+      | Operation.PrepareCompilerChange ->
         for state in sessions.Values do
           state.Closed <- true
-          state.Current <- json (null: obj)
+          state.Current <- None
         if this.CleanupFails then
-          reply "" 0L empty (Some(json {| code = "cleanup_failed"; message = "status persistence failed" |}))
-        else reply "" 0L (json {| restartRequired = true; inMemoryPatchAllowed = false |}) None
-      else
+          reply "" 0L (Result.Error { Code = RefusalCode.CleanupFailed; Message = "status persistence failed" })
+        else reply "" 0L (Result.Ok(CompilerRetired { RestartRequired = true; InMemoryPatchAllowed = false }))
+      | _ ->
         let state = sessions[session]
-        match operation with
-        | "reserve" ->
-          state.Generation <- state.Generation + 1L
-          state.Current <- json (null: obj)
-          reply session state.Generation (json {| reservation = "opaque-ticket" |}) None
-        | "build" ->
-          state.Current <- accepted state.Generation
-          reply session state.Generation state.Current None
-        | "run" ->
-          reply session state.Generation
-            (json {| generation = state.Generation; sourceVersion = "source-" + string state.Generation
-                     exitCode = 0; standardOutput = "native result\n"; standardError = "" |}) None
-        | "cancel" | "close" ->
-          state.Current <- json (null: obj)
-          if operation = "close" then state.Closed <- true
-          reply session state.Generation empty None
-        | "status" ->
-          state.Observation <- state.Observation + 1UL
-          reply session state.Generation
-            (json {| observation = state.Observation; project = "/project/fixture.fidproj"; manifestPath = "/external/provider/current.json"
-                     closed = state.Closed; busy = state.Busy; current = state.Current
-                     revocationPending = false; backendError = (null: string)
-                     cleanupPending = false; cleanupError = (null: string)
-                     executionRequiresRevalidation = true |}) None
-        | other -> failwith ("Unexpected fake-worker operation: " + other))
+        let value =
+          match operation with
+          | Operation.Reserve ->
+            state.Generation <- state.Generation + 1L
+            state.Current <- None
+            Reserved { Reservation = "opaque-ticket" }
+          | Operation.Build ->
+            let value = accepted state.Generation
+            state.Current <- Some value
+            Built value
+          | Operation.Run ->
+            Ran { Generation = state.Generation; SourceVersion = "source-" + string state.Generation
+                  ExitCode = 0; StandardOutput = "native result\n"; StandardError = "" }
+          | Operation.Cancel -> state.Current <- None; Canceled
+          | Operation.Close ->
+            state.Current <- None
+            state.Closed <- true
+            state.Observation <- state.Observation + 1UL
+            Closed { Observation = state.Observation; Closed = true; CleanupPending = false; CleanupError = None }
+          | Operation.Status ->
+            state.Observation <- state.Observation + 1UL
+            Observed { Observation = state.Observation; Project = "/project/fixture.fidproj"; ManifestPath = "/external/provider/current.json"
+                       Closed = state.Closed; Busy = state.Busy; Current = state.Current
+                       RevocationPending = false; BackendError = None; CleanupPending = false; CleanupError = None }
+          | other -> failwithf "Unexpected fake-worker operation: %A" other
+        reply session state.Generation (Result.Ok value))
   interface IComposerWorker with
     member _.Handshake =
-      reply "" 0L
-        (json {| protocolVersion = 1; provider = "clef-composer"; inMemoryPatchAllowed = false
-                 operations = [| "open"; "reserve"; "build"; "status"; "run"; "cancel"; "close"; "prepare_compiler_change" |] |}) None
+      reply "" 0L (Result.Ok(HelloAccepted {
+        Agreement = BAREWireCodec.agreement
+        Compiler = { AssemblyPath = "/external/Composer.dll"; Sha256 = "compiler-digest"; Version = "test" }
+        Psg = { Schema = Fidelity.PSG.Revision.Schema; AssemblySha256 = "psg-digest"
+                FormatVersion = Fidelity.PSG.Binary.FormatVersion; ContractFingerprint = Fidelity.PSG.Binary.ContractFingerprint }
+        Operations = [| Operation.Open; Operation.Reserve; Operation.Build; Operation.Status; Operation.Run
+                        Operation.Cancel; Operation.Close; Operation.PrepareCompilerChange |]
+        InMemoryPatchAllowed = false }))
     member _.ProcessId = pid
     member this.IsAlive = this.Alive
     member _.Exited = exited.Publish
-    member this.RequestAsync(operation, session, _, cancellation) =
+    member this.RequestAsync(body, cancellation) =
+      let operation = BAREWireCodec.requestOperation body
+      let session = ComposerWire.session body
       requests.Enqueue(operation, session)
       tokens.Enqueue(operation, cancellation)
       match this.Intercept operation session with
@@ -137,29 +152,35 @@ type private Worker(host: string, pid: int) =
       Interlocked.Increment &stops |> ignore
       if this.StopThrows then Task.FromException(InvalidOperationException "termination failed; process still alive")
       elif this.StopLeavesAlive then Task.CompletedTask
-      else
-        this.Die()
-        Task.CompletedTask
+      else this.Die(); Task.CompletedTask
 
-let private request operation (worker: Worker) session : ComposerRequest = {
-  Operation = operation; Session = session; Host = worker.Host; Epoch = worker.Epoch
-  Provider = "clef-composer"; Parameters = []
-}
+let private request operation (worker: Worker) session : RequestBody =
+  let address = worker.SessionAddress session
+  match operation with
+  | Operation.Open -> Open(worker.Address, "/project/fixture.fidproj")
+  | Operation.Reserve -> Reserve(address, "edit")
+  | Operation.Build -> Build(address, "opaque-ticket")
+  | Operation.Status -> Status address
+  | Operation.Run -> RequestBody.Run(address, [||])
+  | Operation.Cancel -> Cancel address
+  | Operation.Close -> Close address
+  | Operation.PrepareCompilerChange -> PrepareCompilerChange worker.Address
+  | other -> failwithf "Unexpected test request: %A" other
 let private execute (owner: ComposerSupervisor) request = owner.ExecuteAsync(request, CancellationToken.None)
 let private openSession owner worker = task {
-  let! response = execute owner (request "open" worker "")
+  let! response = execute owner (request Operation.Open worker "")
   success response |> ignore
   return sessionOf response
 }
 let private snapshots (owner: ComposerSupervisor) = task {
   let! view = owner.SessionsAsync CancellationToken.None
-  return field "sessions" view |> fun entries -> entries.EnumerateArray() |> Seq.toArray
+  return view.Sessions
 }
 let private snapshot session entries = entries |> Array.find (fun entry -> sessionOf entry = session)
 let private assertWithdrawn response =
-  let status = success response
-  (field "closed" status).GetBoolean() |> Expect.isTrue "session is terminal"
-  (field "current" status).ValueKind |> Expect.equal "terminal session has no runnable artifact" JsonValueKind.Null
+  let status = observed response
+  status.Closed |> Expect.isTrue "session is terminal"
+  status.Current |> Expect.isNone "terminal session has no runnable artifact"
 
 let private lateReplyDuringReplacement holdRefresh () = task {
   let old = Worker("old", 101)
@@ -170,26 +191,26 @@ let private lateReplyDuringReplacement holdRefresh () = task {
     Task.FromResult((if count = 1 then old else fresh) :> IComposerWorker)), true)
   let! session = openSession owner old
   let entered = completion<unit> ()
-  let released = completion<JsonElement> ()
+  let released = completion<Reply> ()
   old.Intercept <- fun operation current ->
-    if current = session && operation = (if holdRefresh then "status" else "build") then
+    if current = session && operation = (if holdRefresh then Operation.Status else Operation.Build) then
       entered.TrySetResult() |> ignore
       Some released.Task
     else None
-  let pending = execute owner (request "build" old session)
+  let pending = execute owner (request Operation.Build old session)
   do! entered.Task
   // Capture the old successful reply before retirement; delivery is delayed.
-  let late = old.Response((if holdRefresh then "status" else "build"), session)
-  let! retired = execute owner (request "prepare_compiler_change" old "")
+  let late = old.Response((if holdRefresh then Operation.Status else Operation.Build), session)
+  let! retired = execute owner (request Operation.PrepareCompilerChange old "")
   success retired |> ignore
   let! replacement = openSession owner fresh
   released.TrySetResult late |> ignore
   let! response = pending
-  response |> refused "closed"
+  response |> refused RefusalCode.Closed
   let! entries = snapshots owner
   snapshot session entries |> assertWithdrawn
-  let current = snapshot replacement entries |> success |> field "current"
-  current.ValueKind |> Expect.equal "late old success cannot lend an artifact to the replacement" JsonValueKind.Null
+  let current = snapshot replacement entries |> observed
+  current.Current |> Expect.isNone "late old success cannot lend an artifact to the replacement"
   creations |> Expect.equal "replacement uses one fresh worker" 2
   do! owner.StopAsync()
 }
@@ -199,40 +220,39 @@ let private delayedSameGenerationStatus humanView duringBuild failedRead () = ta
   let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
   let! session = openSession owner worker
   let entered = completion<unit> ()
-  let released = completion<JsonElement> ()
+  let released = completion<Reply> ()
   let buildEntered = completion<unit> ()
-  let buildReleased = completion<JsonElement> ()
+  let buildReleased = completion<Reply> ()
   let mutable calls = 0
   worker.Intercept <- fun operation _ ->
-    if operation = "status" && Interlocked.Increment &calls = 1 then
+    if operation = Operation.Status && Interlocked.Increment &calls = 1 then
       entered.TrySetResult() |> ignore
       Some released.Task
-    elif operation = "build" && duringBuild then
+    elif operation = Operation.Build && duringBuild then
       buildEntered.TrySetResult() |> ignore
       Some buildReleased.Task
     else None
-  let build =
-    if duringBuild then execute owner (request "build" worker session)
-    else Task.FromResult empty
+  let build = if duringBuild then Some(execute owner (request Operation.Build worker session)) else None
   if duringBuild then do! buildEntered.Task
-  let oldStatus = worker.Response("status", session)
+  let oldStatus = worker.Response(Operation.Status, session)
   let delayed =
-    if humanView then owner.SessionsAsync CancellationToken.None
-    else execute owner (request "status" worker session)
+    if humanView then Choice1Of2(owner.SessionsAsync CancellationToken.None)
+    else Choice2Of2(execute owner (request Operation.Status worker session))
   do! entered.Task
-  if duringBuild then buildReleased.TrySetResult(worker.Response("build", session)) |> ignore
-  let! built = if duringBuild then build else execute owner (request "build" worker session)
+  if duringBuild then buildReleased.TrySetResult(worker.Response(Operation.Build, session)) |> ignore
+  let! built = match build with Some pending -> pending | None -> execute owner (request Operation.Build worker session)
   success built |> ignore
   if failedRead then released.TrySetException(IOException "old status read failed") |> ignore
   else released.TrySetResult oldStatus |> ignore
-  let! response = delayed
-  if humanView then
-    let entries = field "sessions" response |> fun values -> values.EnumerateArray() |> Seq.toArray
-    let current = snapshot session entries |> success
-    (field "current" current).ValueKind |> Expect.equal "late read preserves the accepted artifact" JsonValueKind.Object
-    (field "statusFresh" current).GetBoolean() |> Expect.isTrue "late read cannot erase a newer successful observation"
-  else
-    response |> refused "superseded"
+  match delayed with
+  | Choice1Of2 pending ->
+    let! response = pending
+    let current = snapshot session response.Sessions |> success
+    (observed current).Current.IsSome |> Expect.equal "late read preserves the accepted artifact" true
+    current.StatusFresh |> Expect.isTrue "late read cannot erase a newer successful observation"
+  | Choice2Of2 pending ->
+    let! response = pending
+    response |> refused RefusalCode.Superseded
   do! owner.StopAsync()
 }
 
@@ -248,26 +268,26 @@ let tests =
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
       let! session = openSession owner worker
       let entered = completion<unit> ()
-      let released = completion<JsonElement> ()
+      let released = completion<Reply> ()
       worker.Intercept <- fun operation _ ->
-        if operation = "build" then
+        if operation = Operation.Build then
           entered.TrySetResult() |> ignore
           Some released.Task
         else None
-      let pending = execute owner (request "build" worker session)
+      let pending = execute owner (request Operation.Build worker session)
       do! entered.Task
       worker.SetBusy(session, true)
-      let! response = execute owner (request "status" worker session)
+      let! response = execute owner (request Operation.Status worker session)
       let progress = success response
-      (field "busy" progress).GetBoolean() |> Expect.isTrue "clients can observe provider progress before canceling work"
-      (field "statusFresh" progress).GetBoolean() |> Expect.isFalse "progress does not grant fresh artifact authority"
-      (field "current" progress).ValueKind |> Expect.equal "progress never presents a cached artifact as current" JsonValueKind.Null
+      (observed progress).Busy |> Expect.isTrue "clients can observe provider progress before canceling work"
+      progress.StatusFresh |> Expect.isFalse "progress does not grant fresh artifact authority"
+      (observed progress).Current.IsSome |> Expect.equal "progress never presents a cached artifact as current" false
       let! entries = snapshots owner
       let current = snapshot session entries |> success
-      (field "statusFresh" current).GetBoolean() |> Expect.isFalse "in-flight work retains uncertainty"
-      (field "current" current).ValueKind |> Expect.equal "no cached artifact is presented as current" JsonValueKind.Null
+      current.StatusFresh |> Expect.isFalse "in-flight work retains uncertainty"
+      (observed current).Current.IsSome |> Expect.equal "no cached artifact is presented as current" false
       worker.SetBusy(session, false)
-      released.TrySetResult(worker.Response("build", session)) |> ignore
+      released.TrySetResult(worker.Response(Operation.Build, session)) |> ignore
       let! result = pending
       success result |> ignore
       do! owner.StopAsync()
@@ -276,59 +296,57 @@ let tests =
       let worker = Worker("snapshot-order", 123)
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
       let! session = openSession owner worker
-      let firstReply = completion<JsonElement> ()
-      let secondReply = completion<JsonElement> ()
+      let firstReply = completion<Reply> ()
+      let secondReply = completion<Reply> ()
       let mutable calls = 0
       worker.Intercept <- fun operation _ ->
-        if operation = "status" then
+        if operation = Operation.Status then
           match Interlocked.Increment &calls with
           | 1 -> Some firstReply.Task
           | 2 -> Some secondReply.Task
           | _ -> None
         else None
-      let first = execute owner (request "status" worker session)
-      let second = execute owner (request "status" worker session)
+      let first = execute owner (request Operation.Status worker session)
+      let second = execute owner (request Operation.Status worker session)
       // The later-dispatched request captures first. A producer then settles;
       // the earlier-dispatched request captures the newer provider state.
-      let oldStatus = worker.Response("status", session)
-      worker.Response("build", session) |> ignore
-      let newerStatus = worker.Response("status", session)
+      let oldStatus = worker.Response(Operation.Status, session)
+      worker.Response(Operation.Build, session) |> ignore
+      let newerStatus = worker.Response(Operation.Status, session)
       firstReply.TrySetResult newerStatus |> ignore
       let! current = first
-      (success current |> field "current").ValueKind |> Expect.equal "newer capture is accepted" JsonValueKind.Object
+      (observed current).Current |> Expect.isSome "newer capture is accepted"
       secondReply.TrySetResult oldStatus |> ignore
       let! late = second
-      late |> refused "superseded"
+      late |> refused RefusalCode.Superseded
       do! owner.StopAsync()
     }
-    taskCase "status without provider observation cannot retain a fresh cached artifact" <| fun () -> task {
-      let worker = Worker("unsequenced-status", 124)
+    taskCase "a status response of the wrong typed operation cannot retain fresh cached authority" <| fun () -> task {
+      let worker = Worker("wrong-status-operation", 124)
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
       let! session = openSession owner worker
-      let! built = execute owner (request "build" worker session)
+      let! built = execute owner (request Operation.Build worker session)
       success built |> ignore
-      let node = System.Text.Json.Nodes.JsonNode.Parse((worker.Response("status", session)).GetRawText())
-      node["result"].AsObject().Remove "observation" |> ignore
-      let unsequenced = JsonSerializer.SerializeToElement node
+      let wrong = worker.Response(Operation.Run, session)
       worker.Intercept <- fun operation _ ->
-        if operation = "status" then Some(Task.FromResult unsequenced) else None
-      let! response = execute owner (request "status" worker session)
-      response |> refused "superseded"
+        if operation = Operation.Status then Some(Task.FromResult wrong) else None
+      let! response = execute owner (request Operation.Status worker session)
+      response |> refused RefusalCode.ProviderUnavailable
       let! entries = snapshots owner
       let current = snapshot session entries |> success
-      (field "statusFresh" current).GetBoolean() |> Expect.isFalse "unsequenced response leaves status uncertain"
-      (field "current" current).ValueKind |> Expect.equal "no artifact is inferred from unsequenced status" JsonValueKind.Null
+      current.StatusFresh |> Expect.isFalse "wrong operation leaves status uncertain"
+      (observed current).Current |> Expect.isNone "no artifact is inferred from a non-status reply"
       do! owner.StopAsync()
     }
     taskCase "disabled provider refuses open without invoking its worker factory" <| fun () -> task {
       let mutable calls = 0
       let worker = Worker("disabled", 100)
       let owner = ComposerSupervisor((fun () -> calls <- calls + 1; Task.FromResult(worker :> IComposerWorker)), false)
-      let! response = execute owner (request "open" worker "")
-      response |> refused "provider_unavailable"
+      let! response = execute owner (request Operation.Open worker "")
+      response |> refused RefusalCode.ProviderUnavailable
       calls |> Expect.equal "disabled provider allocates no process" 0
       let! view = owner.SessionsAsync CancellationToken.None
-      (field "configured" view).GetBoolean() |> Expect.isFalse "availability is visible to both client surfaces"
+      view.Configured |> Expect.isFalse "availability is visible to both client surfaces"
       do! owner.StopAsync()
     }
 
@@ -358,19 +376,19 @@ let tests =
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
       let! first = openSession owner worker
       let! second = openSession owner worker
-      let! reservation = execute owner (request "reserve" worker first)
+      let! reservation = execute owner (request Operation.Reserve worker first)
       success reservation |> ignore
-      let! built = execute owner (request "build" worker first)
+      let! built = execute owner (request Operation.Build worker first)
       success built |> ignore
-      let! toolStatus = execute owner (request "status" worker first)
+      let! toolStatus = execute owner (request Operation.Status worker first)
       let! humanView = snapshots owner
       let displayed = snapshot first humanView
-      (field "authority" displayed).GetRawText()
-      |> Expect.equal "human and tool response carry identical host/session/epoch/generation" ((field "authority" toolStatus).GetRawText())
-      (success displayed |> field "current").GetRawText()
-      |> Expect.equal "human sees the accepted artifact returned to the tool" ((success built).GetRawText())
-      (snapshot second humanView |> success |> field "current").ValueKind
-      |> Expect.equal "other project's current artifact stays absent" JsonValueKind.Null
+      displayed.Reply.Authority
+      |> Expect.equal "human and tool response carry identical host/session/epoch/generation" toolStatus.Reply.Authority
+      (observed displayed).Current
+      |> Expect.equal "human sees the accepted artifact returned to the tool" (Some(artifact built))
+      (snapshot second humanView |> observed).Current
+      |> Expect.isNone "other project's current artifact stays absent"
       do! owner.StopAsync()
     }
 
@@ -378,12 +396,12 @@ let tests =
       let worker = Worker("owner", 103)
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
       let! session = openSession owner worker
-      let original = request "run" worker session
+      let original = worker.SessionAddress session
       let before = worker.Requests.Length
-      for invalid, code in [ { original with Host = "foreign" }, "wrong_authority"
-                             { original with Epoch = "retired" }, "wrong_authority"
-                             { original with Provider = "fsharp" }, "wrong_provider" ] do
-        let! response = execute owner invalid
+      for invalid, code in [ { original.Worker with Host = "foreign" }, RefusalCode.WrongAuthority
+                             { original.Worker with Epoch = "retired" }, RefusalCode.WrongAuthority
+                             { original.Worker with Provider = ProviderIdentity.FSharp }, RefusalCode.WrongProvider ] do
+        let! response = execute owner (RequestBody.Run({ original with Worker = invalid }, [||]))
         response |> refused code
       worker.Requests.Length |> Expect.equal "invalid authority never reaches backend" before
       do! owner.StopAsync()
@@ -399,8 +417,8 @@ let tests =
         if count > 1 then old.Alive |> Expect.isFalse "old process must exit before replacement factory runs"
         Task.FromResult((if count = 1 then old else fresh) :> IComposerWorker)), true)
       let! session = openSession owner old
-      let! response = execute owner (request "prepare_compiler_change" old "")
-      response |> refused "cleanup_failed"
+      let! response = execute owner (request Operation.PrepareCompilerChange old "")
+      response |> refused RefusalCode.CleanupFailed
       old.StopCount |> Expect.equal "physical process stop follows failed compiler cleanup" 1
       let! _ = openSession owner fresh
       let! view = snapshots owner
@@ -417,15 +435,15 @@ let tests =
       let worker = Worker("dies", 106)
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
       let! session = openSession owner worker
-      let! built = execute owner (request "build" worker session)
+      let! built = execute owner (request Operation.Build worker session)
       success built |> ignore
       worker.Die()
       let! view = snapshots owner
       snapshot session view |> assertWithdrawn
       owner.WorkerPid |> Expect.isNone "dead worker is unavailable"
       let before = worker.Requests.Length
-      let! run = execute owner (request "run" worker session)
-      run |> refused "provider_unavailable"
+      let! run = execute owner (request Operation.Run worker session)
+      run |> refused RefusalCode.ProviderUnavailable
       worker.Requests.Length |> Expect.equal "dead worker receives no execution request" before
       do! owner.StopAsync()
     }
@@ -439,18 +457,18 @@ let tests =
         Interlocked.Increment &calls |> ignore
         entered.TrySetResult() |> ignore
         released.Task), true)
-      let opening = execute owner (request "open" worker "")
+      let opening = execute owner (request Operation.Open worker "")
       do! entered.Task
       let stopping = owner.StopAsync()
       released.TrySetResult(worker :> IComposerWorker) |> ignore
       let! response = opening
-      response |> refused "provider_unavailable"
+      response |> refused RefusalCode.ProviderUnavailable
       do! stopping
       worker.Alive |> Expect.isFalse "unpublished worker cannot outlive shutdown"
       worker.StopCount |> Expect.equal "overtaken connection was explicitly stopped" 1
       worker.Requests.Length |> Expect.equal "shutdown prevents forwarding the pending open" 0
-      let! retry = execute owner (request "open" worker "")
-      retry |> refused "provider_unavailable"
+      let! retry = execute owner (request Operation.Open worker "")
+      retry |> refused RefusalCode.ProviderUnavailable
       calls |> Expect.equal "stopped owner never starts another worker" 1
     }
 
@@ -464,10 +482,10 @@ let tests =
       (before, 0) |> Expect.isGreaterThan "opening produces an observable change"
       let! initial = owner.SessionsAsync CancellationToken.None
       for _ in 1 .. 3 do
-        let! status = execute owner (request "status" worker session)
+        let! status = execute owner (request Operation.Status worker session)
         success status |> ignore
         let! view = owner.SessionsAsync CancellationToken.None
-        (field "revision" view).GetInt64() |> Expect.equal "reads preserve revision" ((field "revision" initial).GetInt64())
+        view.Revision |> Expect.equal "reads preserve revision" (initial.Revision)
       changes |> Expect.equal "reads do not recursively trigger more reads" before
       do! owner.StopAsync()
     }
@@ -480,13 +498,13 @@ let tests =
         let mutable calls = 0
         let owner = ComposerSupervisor((fun () -> calls <- calls + 1; Task.FromResult(worker :> IComposerWorker)), true)
         let! session = openSession owner worker
-        let! retirement = execute owner (request "prepare_compiler_change" worker "")
-        (field "success" retirement).GetBoolean() |> Expect.isFalse "live process is never reported successfully retired"
+        let! retirement = execute owner (request Operation.PrepareCompilerChange worker "")
+        Result.isOk retirement.Reply.Outcome |> Expect.isFalse "live process is never reported successfully retired"
         let before = worker.Requests.Length
-        let! run = execute owner (request "run" worker session)
-        (field "success" run).GetBoolean() |> Expect.isFalse "failed stop cannot restore execution authority"
-        let! opening = execute owner (request "open" worker "")
-        (field "success" opening).GetBoolean() |> Expect.isFalse "failed stop cannot restore open authority"
+        let! run = execute owner (request Operation.Run worker session)
+        Result.isOk run.Reply.Outcome |> Expect.isFalse "failed stop cannot restore execution authority"
+        let! opening = execute owner (request Operation.Open worker "")
+        Result.isOk opening.Reply.Outcome |> Expect.isFalse "failed stop cannot restore open authority"
         calls |> Expect.equal "no replacement may overlap a worker which failed to stop" 1
         worker.Requests.Length |> Expect.equal "fenced process receives no subsequent operation" before
         let! view = snapshots owner
@@ -499,15 +517,15 @@ let tests =
     taskCase "an opened session remains discoverable when its first status refresh fails" <| fun () -> task {
       let worker = Worker("open-status-failure", 110)
       worker.Intercept <- fun operation _ ->
-        if operation = "status" then Some(Task.FromException<JsonElement>(IOException "status temporarily unavailable")) else None
+        if operation = Operation.Status then Some(Task.FromException<Reply>(IOException "status temporarily unavailable")) else None
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
       let! session = openSession owner worker
       let! view = snapshots owner
       view.Length |> Expect.equal "successful open remains registered despite failed refresh" 1
       let status = snapshot session view |> success
-      (field "current" status).ValueKind |> Expect.equal "unknown status claims no artifact" JsonValueKind.Null
-      (field "statusFresh" status).GetBoolean() |> Expect.isFalse "unavailable status is explicit"
-      (field "closed" status).GetBoolean() |> Expect.isFalse "temporary status failure does not fabricate session closure"
+      (observed status).Current.IsSome |> Expect.equal "unknown status claims no artifact" false
+      status.StatusFresh |> Expect.isFalse "unavailable status is explicit"
+      (observed status).Closed |> Expect.isFalse "temporary status failure does not fabricate session closure"
       do! owner.StopAsync()
     }
 
@@ -515,19 +533,19 @@ let tests =
       let worker = Worker("mutated-status-failure", 111)
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
       let! session = openSession owner worker
-      let! built = execute owner (request "build" worker session)
+      let! built = execute owner (request Operation.Build worker session)
       success built |> ignore
       worker.Intercept <- fun operation _ ->
-        if operation = "status" then Some(Task.FromException<JsonElement>(IOException "status temporarily unavailable")) else None
-      let! reserved = execute owner (request "reserve" worker session)
+        if operation = Operation.Status then Some(Task.FromException<Reply>(IOException "status temporarily unavailable")) else None
+      let! reserved = execute owner (request Operation.Reserve worker session)
       success reserved |> ignore
       let! view = snapshots owner
       let cached = snapshot session view
-      (field "generation" (field "authority" cached)).GetInt64()
+      cached.Reply.Authority.Generation
       |> Expect.equal "acknowledged mutation revision survives a failed status refresh" 1L
       let status = success cached
-      (field "current" status).ValueKind |> Expect.equal "old artifact cannot survive an unknown newer status" JsonValueKind.Null
-      (field "statusFresh" status).GetBoolean() |> Expect.isFalse "newer status is explicitly unknown"
+      (observed status).Current.IsSome |> Expect.equal "old artifact cannot survive an unknown newer status" false
+      status.StatusFresh |> Expect.isFalse "newer status is explicitly unknown"
       do! owner.StopAsync()
     }
 
@@ -536,32 +554,32 @@ let tests =
         let worker = Worker("canceled-" + string timeout, 112)
         let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
         let! session = openSession owner worker
-        let! built = execute owner (request "build" worker session)
+        let! built = execute owner (request Operation.Build worker session)
         success built |> ignore
         use cancellation = new CancellationTokenSource()
         let mutable statusCalls = 0
         worker.Intercept <- fun operation current ->
-          if operation = "status" then
+          if operation = Operation.Status then
             Interlocked.Increment &statusCalls |> ignore
             None
-          elif operation = "build" then
+          elif operation = Operation.Build then
             worker.Withdraw(current, false)
-            if timeout then Some(Task.FromException<JsonElement>(TimeoutException "worker request deadline elapsed"))
+            if timeout then Some(Task.FromException<Reply>(TimeoutException "worker request deadline elapsed"))
             else
               cancellation.Cancel()
-              Some(Task.FromCanceled<JsonElement>(cancellation.Token))
+              Some(Task.FromCanceled<Reply>(cancellation.Token))
           else None
-        let! response = owner.ExecuteAsync(request "build" worker session, cancellation.Token)
-        response |> refused (if timeout then "timeout" else "canceled")
+        let! response = owner.ExecuteAsync(request Operation.Build worker session, cancellation.Token)
+        response |> refused (if timeout then RefusalCode.Timeout else RefusalCode.Canceled)
         (statusCalls, 0) |> Expect.isGreaterThan "refusal follows actual status reconciliation"
         worker.Intercept <- fun operation _ ->
-          if operation = "status" then Some(Task.FromException<JsonElement>(IOException "later observer cannot refresh")) else None
+          if operation = Operation.Status then Some(Task.FromException<Reply>(IOException "later observer cannot refresh")) else None
         let! view = snapshots owner
         let cached = snapshot session view
-        (field "generation" (field "authority" cached)).GetInt64()
+        cached.Reply.Authority.Generation
         |> Expect.equal "withdrawn revision was cached before returning" 1L
-        (cached |> success |> field "current").ValueKind
-        |> Expect.equal "refusal never leaves prior artifact runnable in shared cache" JsonValueKind.Null
+        (observed cached).Current
+        |> Expect.isNone "refusal never leaves prior artifact runnable in shared cache"
         do! owner.StopAsync()
     }
 
@@ -569,33 +587,33 @@ let tests =
       let worker = Worker("generation-order", 113)
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
       let! session = openSession owner worker
-      let! built = execute owner (request "build" worker session)
+      let! built = execute owner (request Operation.Build worker session)
       success built |> ignore
-      let oldStatus = worker.Response("status", session)
+      let oldStatus = worker.Response(Operation.Status, session)
       let entered = completion<unit> ()
-      let released = completion<JsonElement> ()
+      let released = completion<Reply> ()
       let mutable calls = 0
       worker.Intercept <- fun operation _ ->
-        if operation = "status" && Interlocked.Increment &calls = 1 then
+        if operation = Operation.Status && Interlocked.Increment &calls = 1 then
           entered.TrySetResult() |> ignore
           Some released.Task
         else None
-      let delayed = execute owner (request "status" worker session)
+      let delayed = execute owner (request Operation.Status worker session)
       do! entered.Task
-      let! reserved = execute owner (request "reserve" worker session)
+      let! reserved = execute owner (request Operation.Reserve worker session)
       success reserved |> ignore
       released.TrySetResult oldStatus |> ignore
       let! response = delayed
-      if (field "success" response).GetBoolean() then
-        (field "generation" (field "authority" response)).GetInt64()
+      if Result.isOk response.Reply.Outcome then
+        response.Reply.Authority.Generation
         |> Expect.equal "successful late status cannot claim older authority" 1L
       worker.Intercept <- fun operation _ ->
-        if operation = "status" then Some(Task.FromException<JsonElement>(IOException "inspect cache without refresh")) else None
+        if operation = Operation.Status then Some(Task.FromException<Reply>(IOException "inspect cache without refresh")) else None
       let! view = snapshots owner
       let cached = snapshot session view
-      (field "generation" (field "authority" cached)).GetInt64()
+      cached.Reply.Authority.Generation
       |> Expect.equal "late status cannot move cache backwards" 1L
-      (cached |> success |> field "current").ValueKind |> Expect.equal "old current never reappears" JsonValueKind.Null
+      (observed cached).Current |> Expect.isNone "old current never reappears"
       do! owner.StopAsync()
     }
 
@@ -618,38 +636,38 @@ let tests =
         use subscription = owner.Changed.Subscribe(fun () ->
           if successorRead.Task.IsCompleted then settledNotice.TrySetResult() |> ignore)
         worker.Intercept <- fun operation current ->
-          if operation = "build" then
+          if operation = Operation.Build then
             worker.Withdraw(current, true)
-            Some(Task.FromException<JsonElement>(OperationCanceledException "withdraw exact demand"))
-          elif operation = "status" && Volatile.Read &phase = 1 then
+            Some(Task.FromException<Reply>(OperationCanceledException "withdraw exact demand"))
+          elif operation = Operation.Status && Volatile.Read &phase = 1 then
             worker.SetBusy(current, false)
-            Some(Task.FromResult(worker.Response("status", current)))
-          elif operation = "status" && Volatile.Read &phase = 3 then
+            Some(Task.FromResult(worker.Response(Operation.Status, current)))
+          elif operation = Operation.Status && Volatile.Read &phase = 3 then
             worker.SetBusy(current, false)
-            let response = worker.Response("status", current)
+            let response = worker.Response(Operation.Status, current)
             successorRead.TrySetResult() |> ignore
             Some(Task.FromResult response)
           else None
-        let! first = execute owner (request "build" worker session)
-        first |> refused "canceled"
+        let! first = execute owner (request Operation.Build worker session)
+        first |> refused RefusalCode.Canceled
         Volatile.Write(&phase, 1)
         do! idleObserved.Task |> bounded
         // The first monitor has observed idle, but still owns its registry key.
         Volatile.Write(&phase, 2)
-        let! second = execute owner (request "build" worker session)
-        second |> refused "canceled"
+        let! second = execute owner (request Operation.Build worker session)
+        second |> refused RefusalCode.Canceled
         Volatile.Write(&phase, 3)
         removeAllowed.TrySetResult() |> ignore
         // No SessionsAsync/status request may restart monitoring for this wait.
         do! successorRead.Task.WaitAsync(TimeSpan.FromSeconds 2.)
         do! settledNotice.Task |> bounded
         worker.Intercept <- fun operation _ ->
-          if operation = "status" then Some(Task.FromException<JsonElement>(IOException "inspect retained background result"))
+          if operation = Operation.Status then Some(Task.FromException<Reply>(IOException "inspect retained background result"))
           else None
         let! view = snapshots owner
         let status = snapshot session view |> success
-        (field "busy" status).GetBoolean() |> Expect.isFalse "The successor published settled cleanup."
-        (field "current" status).ValueKind |> Expect.equal "Reconciliation does not recreate execution authority." JsonValueKind.Null
+        (observed status).Busy |> Expect.isFalse "The successor published settled cleanup."
+        (observed status).Current.IsSome |> Expect.equal "Reconciliation does not recreate execution authority." false
       finally
         removeAllowed.TrySetResult() |> ignore
         owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult()
@@ -659,57 +677,57 @@ let tests =
       let worker = Worker("busy-cancel", 114)
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
       let! session = openSession owner worker
-      let! built = execute owner (request "build" worker session)
+      let! built = execute owner (request Operation.Build worker session)
       success built |> ignore
       let monitorEntered = completion<unit> ()
-      let monitorReleased = completion<JsonElement> ()
+      let monitorReleased = completion<Reply> ()
       let settledNotice = completion<unit> ()
       let mutable statusCalls = 0
       let mutable allowSettledNotice = 0
       use subscription = owner.Changed.Subscribe(fun () ->
         if Volatile.Read &allowSettledNotice = 1 then settledNotice.TrySetResult() |> ignore)
       worker.Intercept <- fun operation current ->
-        if operation = "build" then
+        if operation = Operation.Build then
           worker.Withdraw(current, true)
-          Some(Task.FromException<JsonElement>(OperationCanceledException "exact request cancellation acknowledged"))
-        elif operation = "status" && Interlocked.Increment &statusCalls = 2 then
+          Some(Task.FromException<Reply>(OperationCanceledException "exact request cancellation acknowledged"))
+        elif operation = Operation.Status && Interlocked.Increment &statusCalls = 2 then
           monitorEntered.TrySetResult() |> ignore
           Some monitorReleased.Task
         else None
-      let! canceled = execute owner (request "build" worker session)
-      canceled |> refused "canceled"
+      let! canceled = execute owner (request Operation.Build worker session)
+      canceled |> refused RefusalCode.Canceled
       do! monitorEntered.Task
       worker.SetBusy(session, false)
       Volatile.Write(&allowSettledNotice, 1)
-      monitorReleased.TrySetResult(worker.Response("status", session)) |> ignore
+      monitorReleased.TrySetResult(worker.Response(Operation.Status, session)) |> ignore
       do! settledNotice.Task
       worker.Intercept <- fun operation _ ->
-        if operation = "status" then Some(Task.FromException<JsonElement>(IOException "inspect settled cache")) else None
+        if operation = Operation.Status then Some(Task.FromException<Reply>(IOException "inspect settled cache")) else None
       let! view = snapshots owner
       let status = snapshot session view |> success
-      (field "busy" status).GetBoolean() |> Expect.isFalse "background reconciliation published completion"
-      (field "current" status).ValueKind |> Expect.equal "canceled operation remains withdrawn" JsonValueKind.Null
+      (observed status).Busy |> Expect.isFalse "background reconciliation published completion"
+      (observed status).Current.IsSome |> Expect.equal "canceled operation remains withdrawn" false
       do! owner.StopAsync()
     }
 
     taskCase "caller disconnect after open dispatch cannot orphan the newly created session" <| fun () -> task {
       let worker = Worker("open-disconnect", 115)
       let entered = completion<unit> ()
-      let released = completion<JsonElement> ()
+      let released = completion<Reply> ()
       worker.Intercept <- fun operation _ ->
-        if operation = "open" then
+        if operation = Operation.Open then
           entered.TrySetResult() |> ignore
           Some released.Task
         else None
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
       use cancellation = new CancellationTokenSource()
-      let opening = owner.ExecuteAsync(request "open" worker "", cancellation.Token)
+      let opening = owner.ExecuteAsync(request Operation.Open worker "", cancellation.Token)
       do! entered.Task
       cancellation.Cancel()
-      released.TrySetResult(worker.Response("open", "")) |> ignore
+      released.TrySetResult(worker.Response(Operation.Open, "")) |> ignore
       let! response = opening
       success response |> ignore
-      let dispatchedToken = worker.Tokens |> Array.find (fun (operation, _) -> operation = "open") |> snd
+      let dispatchedToken = worker.Tokens |> Array.find (fun (operation, _) -> operation = Operation.Open) |> snd
       dispatchedToken.CanBeCanceled |> Expect.isFalse "sent open remains observable independently of disconnected caller"
       let! view = snapshots owner
       view.Length |> Expect.equal "created session is retained for shared inspection and cleanup" 1
@@ -727,26 +745,27 @@ let tests =
           if count > 1 then old.Alive |> Expect.isFalse "unknown open cannot survive into a replacement worker"
           Task.FromResult((if count = 1 then old else fresh) :> IComposerWorker)), true)
         let! known = openSession owner old
-        let! accepted = execute owner (request "build" old known)
+        let! accepted = execute owner (request Operation.Build old known)
         success accepted |> ignore
         old.StopThrows <- stopFails
         old.Intercept <- fun operation _ ->
-          if operation = "open" then
+          if operation = Operation.Open then
             // The compiler accepted an additional session, but its successful
             // response was lost. The supervisor cannot address that session.
-            old.Response("open", "") |> ignore
-            Some(Task.FromException<JsonElement>(TimeoutException "open reply lost after acceptance"))
+            old.Response(Operation.Open, "") |> ignore
+            Some(Task.FromException<Reply>(TimeoutException "open reply lost after acceptance"))
           else None
-        // A supplied old session must not disguise the unknown new session.
-        let! refusedOpen = execute owner (request "open" old known)
-        refusedOpen |> refused (if stopFails then "retirement_failed" else "timeout")
+        // Unknown open outcome retires the known sessions as well; the typed
+        // Open request carries no preexisting session identity to disguise it.
+        let! refusedOpen = execute owner (request Operation.Open old "")
+        refusedOpen |> refused (if stopFails then RefusalCode.RetirementFailed else RefusalCode.Timeout)
         old.StopCount |> Expect.equal "ambiguous open requires physical process cleanup" 1
         let! view = snapshots owner
         snapshot known view |> assertWithdrawn
         if stopFails then
           let before = old.Requests.Length
-          let! denied = execute owner (request "open" fresh "")
-          (field "success" denied).GetBoolean() |> Expect.isFalse "failed process stop prohibits another open"
+          let! denied = execute owner (request Operation.Open fresh "")
+          Result.isOk denied.Reply.Outcome |> Expect.isFalse "failed process stop prohibits another open"
           creations |> Expect.equal "failed stop never invokes replacement factory" 1
           old.Requests.Length |> Expect.equal "fenced old process receives no more operations" before
           old.StopThrows <- false

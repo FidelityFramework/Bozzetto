@@ -4,7 +4,7 @@
 /// `switchWorkflow` functions — no network, no daemon, no Kestrel host —
 /// mirroring `McpServerOversizedRequestTests.fs`'s established pattern for
 /// testing a Falco `HttpHandler` (`HttpContext -> Task`) as a plain function.
-/// The real network call (`switchWorkflowViaApi`) is exercised separately in
+/// The typed session-owner wiring is exercised separately in
 /// `DashboardWorkflowSwitchApiWiringTests.fs`.
 module Bozzetto.Tests.DashboardWorkflowSwitchHandlerTests
 

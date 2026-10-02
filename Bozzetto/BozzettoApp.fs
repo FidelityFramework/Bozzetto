@@ -2249,7 +2249,7 @@ type EffectDeps = {
   GetProxy: SessionId -> SessionProxy option
   /// Get a streaming test execution proxy for a session.
   /// The proxy streams test results and IL coverage hits.
-  GetStreamingTestProxy: SessionId -> (Features.LiveTesting.TestCase array -> int -> (Features.LiveTesting.TestRunResult -> unit) -> (bool array -> unit) -> System.Threading.CancellationToken -> Async<HttpWorkerClient.StreamOutcome>) option
+  GetStreamingTestProxy: SessionId -> (Features.LiveTesting.TestCase array -> int -> (Features.LiveTesting.TestRunResult -> unit) -> (bool array -> unit) -> System.Threading.CancellationToken -> Async<WorkerStream.StreamOutcome>) option
   /// Create a new session
   CreateSession: SessionProjectTarget list -> string -> WorkflowTypes.SessionWorkflow -> Async<Result<SessionInfo, BozzettoError>>
   /// Ensure the working directory has warmup auto-open disabled.
@@ -2967,14 +2967,14 @@ module BozzettoEffectHandler =
                         | false -> ()
                       | false -> ()
                     let parallelism = max 4 (Environment.ProcessorCount / 2)
-                    let! outcome = streamProxy tests parallelism onResult onCoverage ct // ct explicit, not ambient — see HttpWorkerClient.fs's safeAwait
+                    let! outcome = streamProxy tests parallelism onResult onCoverage ct // producer cancellation is explicit, not ambient
                     // Whichever way the stream ended — a clean end with gaps, a
                     // stall, a cancellation — every requested test that never
                     // reported gets a truthful NoResult saying why, so none is
                     // left spinning and none gets a fabricated failure. Tests that
                     // did report are excluded: their outcome is never replaced.
                     // BatchFlusher's Dispose (via 'use') flushes the reported ones.
-                    let reason = HttpWorkerClient.noResultReason outcome
+                    let reason = WorkerStream.noResultReason outcome
                     let missing =
                       Features.LiveTesting.TestRunResult.neverReported
                         reason System.DateTimeOffset.UtcNow tests (receivedIds |> Set.ofSeq)
@@ -2986,10 +2986,10 @@ module BozzettoEffectHandler =
                         "[LiveTesting] %d of %d tests never reported: %s"
                         missing.Length tests.Length (Features.LiveTesting.NoResultReason.describe reason)
                     match outcome with
-                    | HttpWorkerClient.StreamOutcome.Cancelled ->
+                    | WorkerStream.StreamOutcome.Cancelled ->
                       handoff <- RunHandoff.LeavesCompletionToSuccessor
-                    | HttpWorkerClient.StreamOutcome.Completed
-                    | HttpWorkerClient.StreamOutcome.TimedOut _ -> ()
+                    | WorkerStream.StreamOutcome.Completed
+                    | WorkerStream.StreamOutcome.TimedOut _ -> ()
                   | None ->
                     let notRunResults =
                       tests |> Array.map (fun tc ->

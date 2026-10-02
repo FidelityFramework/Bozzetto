@@ -3,97 +3,69 @@ namespace Bozzetto.ComposerIntegration
 open System
 open System.Collections.Generic
 open System.IO
-open System.Text.Json
-open System.Text.Json.Nodes
 open System.Threading
 open System.Threading.Tasks
+open Bozzetto.Providers
+open Bozzetto.Composer.Protocol
 
-type ComposerRequest = {
-  Operation: string
-  Session: string
-  Host: string
-  Epoch: string
-  Provider: string
-  Parameters: (string * obj) list
+/// Projection metadata is local observation state, never compiler authority.
+type ComposerResponse = {
+  Reply: Reply
+  StatusFresh: bool
+  StatusError: string option
+  WorkerAvailable: bool
+  WorkerError: string option
 }
 
-type private StatusObservation = {
-  Activity: int64
-  Active: int
-  Last: uint64 option
+type ComposerDirectory = {
+  Configured: bool
+  Revision: int64
+  Worker: Reply option
+  Sessions: ComposerResponse array
 }
 
-module private ComposerJson =
-  let options = JsonSerializerOptions(PropertyNamingPolicy = JsonNamingPolicy.CamelCase)
-  let value data = JsonSerializer.SerializeToElement(data, options)
-  let empty = value {| |}
-  let field name (json: JsonElement) =
-    match json.TryGetProperty(name: string) with
-    | true, item -> item
-    | _ -> empty
-  let text name json =
-    let item = field name json
-    if item.ValueKind = JsonValueKind.String then item.GetString() |> Option.ofObj |> Option.defaultValue "" else ""
-  let success json = (field "success" json).ValueKind = JsonValueKind.True
-  let failure identity code message =
-    value {| protocolVersion = 1; requestId = Guid.NewGuid().ToString("N")
-             authority = identity; success = false; result = empty
-             error = {| code = code; message = message |} |}
-  let hostIdentity worker = field "authority" worker
-  let generation identity =
-    let number = field "generation" identity
-    if number.ValueKind <> JsonValueKind.Number then -1L
-    else match number.TryGetInt64() with true, value -> value | _ -> -1L
-  let sameState left right =
-    let visibleResult response =
-      (field "result" response).EnumerateObject()
-      |> Seq.filter (fun property -> property.Name <> "observation")
-      |> Seq.map (fun property -> property.Name, property.Value.GetRawText())
-      |> Map.ofSeq
-    (field "authority" left).GetRawText() = (field "authority" right).GetRawText()
-    && visibleResult left = visibleResult right
-  let unknownIdentity (request: ComposerRequest) =
-    value {| host = request.Host; session = request.Session; epoch = request.Epoch
-             provider = "clef-composer"; generation = 0L |}
-  let terminal reason (snapshot: JsonElement) =
-    let node = JsonNode.Parse(snapshot.GetRawText()) |> Option.ofObj |> Option.defaultWith (fun () -> invalidOp "Missing snapshot.")
-    let result = node["result"] |> Option.ofObj |> Option.defaultWith (fun () -> invalidOp "Missing snapshot result.")
-    result["closed"] <- JsonValue.Create true
-    result["busy"] <- JsonValue.Create false
-    result["current"] <- null
-    result["workerAvailable"] <- JsonValue.Create false
-    result["workerError"] <- JsonValue.Create(reason: string)
-    JsonSerializer.SerializeToElement node
-  let projection fresh reason (snapshot: JsonElement) =
-    let node = JsonNode.Parse(snapshot.GetRawText()) |> Option.ofObj |> Option.get
-    let result = node["result"] |> Option.ofObj |> Option.get
-    for name in [ "closed"; "busy"; "revocationPending"; "cleanupPending" ] do
-      if isNull result[name] then result[name] <- JsonValue.Create false
-    if not fresh then result["current"] <- null
-    result["statusFresh"] <- JsonValue.Create fresh
-    result["statusError"] <- (if fresh then null else JsonValue.Create(reason: string))
-    result["executionRequiresRevalidation"] <- JsonValue.Create true
-    JsonSerializer.SerializeToElement node
-  let withAuthority authority (snapshot: JsonElement) =
-    let node = JsonNode.Parse(snapshot.GetRawText()) |> Option.ofObj |> Option.get
-    node["authority"] <- JsonNode.Parse((authority: JsonElement).GetRawText())
-    JsonSerializer.SerializeToElement node
+type private StatusObservation = { Activity: int64; Active: int; Last: uint64 option }
+
+module ComposerState =
+  let response reply =
+    { Reply = reply; StatusFresh = true; StatusError = None; WorkerAvailable = true; WorkerError = None }
+  let failure authority code message =
+    response { ProtocolVersion = BAREWireCodec.ProtocolVersion; RequestId = Guid.NewGuid().ToString("N")
+               Authority = authority; Outcome = Result.Error { Code = code; Message = message } }
+  let projection fresh reason snapshot =
+    let reply =
+      match snapshot.Reply.Outcome with
+      | Result.Ok(Observed status) when not fresh -> { snapshot.Reply with Outcome = Result.Ok(Observed { status with Current = None }) }
+      | _ -> snapshot.Reply
+    { snapshot with Reply = reply; StatusFresh = fresh; StatusError = if fresh then None else Some reason }
+  let terminal reason snapshot =
+    let reply =
+      match snapshot.Reply.Outcome with
+      | Result.Ok(Observed status) ->
+        { snapshot.Reply with Outcome = Result.Ok(Observed { status with Closed = true; Busy = false; Current = None }) }
+      | _ -> snapshot.Reply
+    { snapshot with Reply = reply; WorkerAvailable = false; WorkerError = Some reason; StatusFresh = false }
   let needsReconciliation snapshot =
-    let result = field "result" snapshot
-    let enabled name = (field name result).ValueKind = JsonValueKind.True
-    (field "statusFresh" result).ValueKind = JsonValueKind.False
-    || enabled "busy" || enabled "revocationPending"
-    || (enabled "cleanupPending" && (field "cleanupError" result).ValueKind <> JsonValueKind.String)
+    match snapshot.Reply.Outcome with
+    | Result.Ok(Observed status) ->
+      not snapshot.StatusFresh || status.Busy || status.RevocationPending || (status.CleanupPending && status.CleanupError.IsNone)
+    | _ -> false
+  let sameState left right =
+    let normalize value =
+      match value.Reply.Outcome with
+      | Result.Ok(Observed status) -> { value with Reply = { value.Reply with RequestId = ""; Outcome = Result.Ok(Observed { status with Observation = 0UL }) } }
+      | _ -> { value with Reply = { value.Reply with RequestId = "" } }
+    normalize left = normalize right
 
-/// One daemon owner, shared by HTTP, MCP tools and resources. Compiler authority
-/// remains in the worker; the daemon never loads Composer or artifact assemblies.
+/// Shared typed compiler owner. JSON exists only at external client adapters.
 type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, configured: bool, beforeMonitorExit: unit -> Task) =
   let gate = obj ()
   let lifecycle = new SemaphoreSlim(1, 1)
+  let lifetime = new CancellationTokenSource()
   let changedEvent = Event<unit>()
-  let snapshots = Dictionary<string, JsonElement>()
+  let snapshots = Dictionary<string, ComposerResponse>()
   let observations = Dictionary<string, StatusObservation>()
-  let monitors = HashSet<string * string * string>()
+  let monitors = Dictionary<string * string * string, TaskCompletionSource<unit>>()
   let mutable worker: IComposerWorker option = None
   let mutable retiring = false
   let mutable stopped = false
@@ -102,87 +74,60 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
   let changed () =
     lock gate (fun () -> revision <- revision + 1L)
     try changedEvent.Trigger() with _ -> ()
-
-  let isOwner (connection: IComposerWorker) =
-    worker |> Option.exists (fun current -> obj.ReferenceEquals(current, connection))
-
-  let withdrawOwned (connection: IComposerWorker) reason =
-    let identity = ComposerJson.hostIdentity connection.Handshake
-    lock gate (fun () ->
-      for session in snapshots.Keys |> Seq.toArray do
-        let snapshot = snapshots[session]
-        let authority = ComposerJson.field "authority" snapshot
-        if ComposerJson.text "host" authority = ComposerJson.text "host" identity
-           && ComposerJson.text "epoch" authority = ComposerJson.text "epoch" identity then
-          snapshots[session] <- ComposerJson.terminal reason snapshot)
-    changed ()
-
-  let remember (connection: IComposerWorker) (snapshot: JsonElement) =
-    if ComposerJson.success snapshot then
-      let identity = ComposerJson.field "authority" snapshot
-      let session = ComposerJson.text "session" identity
-      let expected = ComposerJson.hostIdentity connection.Handshake
-      lock gate (fun () ->
-        let currentEnough =
-          match snapshots.TryGetValue session with
-          | true, previous -> ComposerJson.generation identity >= ComposerJson.generation (ComposerJson.field "authority" previous)
-          | _ -> true
-        if isOwner connection && connection.IsAlive && not stopped && not retiring && session <> ""
-           && ComposerJson.text "host" identity = ComposerJson.text "host" expected
-           && ComposerJson.text "epoch" identity = ComposerJson.text "epoch" expected && currentEnough then
-          snapshots[session] <- snapshot
-          true
-        else false)
-    else false
-
-  let uncertain (connection: IComposerWorker) session reason =
-    lock gate (fun () ->
-      match snapshots.TryGetValue session with
-      | true, previous when isOwner connection && connection.IsAlive && not stopped && not retiring ->
-        snapshots[session] <- ComposerJson.projection false reason previous
-      | _ -> ())
-
-  let cached session =
-    lock gate (fun () ->
-      match snapshots.TryGetValue session with
-      | true, snapshot -> Some snapshot
-      | _ -> None)
-
+  let isOwner connection = worker |> Option.exists (fun current -> obj.ReferenceEquals(current, connection))
+  let active (connection: IComposerWorker) = isOwner connection && connection.IsAlive && not stopped && not retiring
+  let address (connection: IComposerWorker) session = { Worker = ComposerWire.workerAddress connection.Handshake.Authority; Session = session }
   let observation session =
     match observations.TryGetValue session with
-    | true, state -> state
+    | true, value -> value
     | _ -> { Activity = 0L; Active = 0; Last = None }
+  let cached session = lock gate (fun () -> match snapshots.TryGetValue session with true, snapshot -> Some snapshot | _ -> None)
+  let unknownAuthority request =
+    let target = ComposerWire.target request |> Option.defaultValue { Host = ""; Epoch = ""; Provider = ProviderIdentity.ClefComposer }
+    { Host = target.Host; Epoch = target.Epoch; Provider = target.Provider; Session = ComposerWire.session request; Generation = 0L }
+  let refusal request code message =
+    let authority = cached (ComposerWire.session request) |> Option.map _.Reply.Authority |> Option.defaultValue (unknownAuthority request)
+    ComposerState.failure authority code message
 
-  // This fence orders the daemon's observations, not compiler work. In-flight
-  // operations leave the projection uncertain until their completion is read.
+  let withdrawOwned (connection: IComposerWorker) reason =
+    let owner = ComposerWire.workerAddress connection.Handshake.Authority
+    lock gate (fun () ->
+      for session in snapshots.Keys |> Seq.toArray do
+        if ComposerWire.workerAddress snapshots[session].Reply.Authority = owner then
+          snapshots[session] <- ComposerState.terminal reason snapshots[session])
+    changed ()
+  let remember (connection: IComposerWorker) snapshot =
+    let identity = snapshot.Reply.Authority
+    lock gate (fun () ->
+      let currentEnough = cached identity.Session |> Option.forall (fun previous -> identity.Generation >= previous.Reply.Authority.Generation)
+      if Result.isOk snapshot.Reply.Outcome && active connection && identity.Session <> "" && currentEnough
+         && ComposerWire.workerAddress identity = ComposerWire.workerAddress connection.Handshake.Authority then
+        snapshots[identity.Session] <- snapshot
+        true
+      else false)
+  let uncertain connection session reason =
+    lock gate (fun () ->
+      match cached session with
+      | Some previous when active connection -> snapshots[session] <- ComposerState.projection false reason previous
+      | _ -> ())
   let activity connection session delta =
-    if session <> "" then
-      lock gate (fun () ->
-        let previous = observation session
-        observations[session] <- { previous with Activity = previous.Activity + 1L; Active = previous.Active + delta }
-        uncertain connection session "Session activity requires a new status observation.")
-
+    if session <> "" then lock gate (fun () ->
+      let previous = observation session
+      observations[session] <- { previous with Activity = previous.Activity + 1L; Active = previous.Active + delta }
+      uncertain connection session "Session activity requires a new status observation.")
   let stale response =
-    let identity = ComposerJson.field "authority" response
-    match cached (ComposerJson.text "session" identity) with
-    | Some previous when ComposerJson.generation identity < ComposerJson.generation (ComposerJson.field "authority" previous) ->
-      Some(ComposerJson.failure (ComposerJson.field "authority" previous) "superseded" "A newer session generation has already been observed.")
-    | _ -> None
-
-  let refusal (request: ComposerRequest) code message =
-    let identity = lock gate (fun () ->
-      match snapshots.TryGetValue request.Session with
-      | true, snapshot -> ComposerJson.field "authority" snapshot
-      | _ -> ComposerJson.unknownIdentity request)
-    ComposerJson.failure identity code message
+    let identity = response.Reply.Authority
+    match cached identity.Session with
+    | Some previous when identity.Generation < previous.Reply.Authority.Generation ->
+      ComposerState.failure previous.Reply.Authority RefusalCode.Superseded "A newer session generation has already been observed."
+    | _ -> response
 
   let ensureWorker cancellation = task {
     do! lifecycle.WaitAsync(cancellation: CancellationToken)
     try
       let existing, denied = lock gate (fun () -> worker, stopped || retiring)
       if denied then return Result.Error "The Composer owner is retiring or has stopped."
-      elif not configured then
-        return Result.Error "Set BOZZETTO_COMPOSER_WORKER to an absolute built worker path before starting Bozzetto."
+      elif not configured then return Result.Error "Set BOZZETTO_COMPOSER_WORKER to an absolute built worker path."
       else
         match existing with
         | Some connection when connection.IsAlive -> return Result.Ok connection
@@ -204,102 +149,87 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
             if not connection.IsAlive then withdrawOwned connection "Worker exited during startup."
             changed ()
             return Result.Ok connection
-    finally
-      lifecycle.Release() |> ignore
+    finally lifecycle.Release() |> ignore
   }
 
   let refresh (connection: IComposerWorker) session cancellation = task {
     let started = lock gate (fun () -> observation session)
-    let applicable () =
+    let applicable () = active connection && started.Activity = (observation session).Activity
+    let failed reason = lock gate (fun () ->
       let current = observation session
-      isOwner connection && connection.IsAlive && not stopped && not retiring
-      && started.Activity = current.Activity
-    let failed reason =
-      lock gate (fun () ->
-        let current = observation session
-        if applicable () && current.Last = started.Last then
-          uncertain connection session reason
-          observations[session] <- { current with Activity = current.Activity + 1L })
-    let superseded snapshot =
-      ComposerJson.failure (ComposerJson.field "authority" snapshot) "superseded"
-        "Session activity or a newer provider observation superseded this status read."
+      if applicable () && current.Last = started.Last then
+        uncertain connection session reason
+        observations[session] <- { current with Activity = current.Activity + 1L })
     try
-      let! snapshot = connection.RequestAsync("status", session, [], cancellation)
-      if ComposerJson.success snapshot then
-        let serial = ComposerJson.field "observation" (ComposerJson.field "result" snapshot)
-        let parsed = if serial.ValueKind = JsonValueKind.Number then serial.TryGetUInt64() else false, 0UL
-        if not (fst parsed) then
-          failed "The worker did not provide a valid status observation sequence."
+      let! reply = connection.RequestAsync(Status(address connection session), cancellation)
+      match reply.Outcome with
+      | Result.Ok(Observed status) ->
         let observed = lock gate (fun () ->
           let current = observation session
-          match parsed with
-          | true, value when applicable () && (current.Last |> Option.forall (fun previous -> value > previous))
-                             && ComposerJson.text "session" (ComposerJson.field "authority" snapshot) = session ->
-            // A stable observation of admitted work can report progress, but
-            // cannot claim a fresh artifact until the mutation has completed.
-            let projected = ComposerJson.projection (current.Active = 0) "Session activity is still in progress." snapshot
+          if applicable () && (current.Last |> Option.forall (fun previous -> status.Observation > previous)) && reply.Authority.Session = session then
+            let projected = ComposerState.response reply |> ComposerState.projection (current.Active = 0) "Session activity is still in progress."
             if remember connection projected then
-              observations[session] <- { current with Last = Some value }
+              observations[session] <- { current with Last = Some status.Observation }
               Some projected
             else None
-          | _ -> None)
-        return observed |> Option.defaultWith (fun () -> superseded snapshot)
-      else
+          else None)
+        return observed |> Option.defaultWith (fun () -> ComposerState.failure reply.Authority RefusalCode.Superseded "Session activity or a newer observation superseded this read.")
+      | Result.Ok _ -> return raise (InvalidDataException "Worker returned a non-status reply to a status request.")
+      | Result.Error _ ->
         failed "The worker refused its session status."
-        return snapshot
+        return ComposerState.response reply
     with error ->
       failed error.Message
       return raise error
   }
 
   let rec reconcile (connection: IComposerWorker) session =
-    let identity = ComposerJson.hostIdentity connection.Handshake
-    let key = ComposerJson.text "host" identity, ComposerJson.text "epoch" identity, session
-    let active () = lock gate (fun () -> isOwner connection && connection.IsAlive && not stopped && not retiring)
-    let needed () = cached session |> Option.exists ComposerJson.needsReconciliation
-    let admitted = lock gate (fun () -> if active () && needed () then monitors.Add key else false)
+    let owner = connection.Handshake.Authority
+    let key = owner.Host, owner.Epoch, session
+    let needed () = cached session |> Option.exists ComposerState.needsReconciliation
+    let completion = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let admitted = lock gate (fun () ->
+      if active connection && needed () && not (monitors.ContainsKey key) then
+        monitors.Add(key, completion)
+        true
+      else false)
     if admitted then
-      Task.Run(Func<Task>(fun () -> task {
-        use deadline = new CancellationTokenSource(TimeSpan.FromMinutes 8.)
+      let run = task {
+        use deadline = CancellationTokenSource.CreateLinkedTokenSource lifetime.Token
+        deadline.CancelAfter(TimeSpan.FromMinutes 8.)
         let mutable observedIdle = false
         try
           try
             let mutable polling = true
-            while polling && active () && not deadline.IsCancellationRequested do
+            while polling && lock gate (fun () -> active connection) && not deadline.IsCancellationRequested do
               do! Task.Delay(100, deadline.Token)
-              if active () then
-                let previous = cached session
-                try
-                  let! _ = refresh connection session deadline.Token
-                  ()
-                with _ -> ()
-                let current = cached session
-                match previous, current with
-                | Some before, Some after when not (ComposerJson.sameState before after) -> changed ()
-                | _ -> ()
-                polling <- needed ()
-              else polling <- false
+              let previous = cached session
+              if lock gate (fun () -> active connection) then
+                try let! _ = refresh connection session deadline.Token in () with _ -> ()
+              match previous, cached session with
+              | Some before, Some after when not (ComposerState.sameState before after) -> changed ()
+              | _ -> ()
+              polling <- needed ()
             if not polling then
               observedIdle <- true
-              do! beforeMonitorExit ()
+              do! (beforeMonitorExit ()).WaitAsync(deadline.Token)
           with :? OperationCanceledException -> ()
         finally
-          // A new reconciliation request may have found our key after the
-          // idle observation. Remove and recheck together; a competing starter
-          // and this handoff still share the ordinary one-monitor admission.
           let restart = lock gate (fun () ->
             monitors.Remove key |> ignore
-            observedIdle && not deadline.IsCancellationRequested && active () && needed ())
+            observedIdle && not deadline.IsCancellationRequested && active connection && needed ())
+          completion.TrySetResult() |> ignore
           if restart then reconcile connection session
-      })) |> ignore
+      }
+      run |> ignore
 
-  let retire request connection = task {
+  let retire request (connection: IComposerWorker) = task {
     let admitted = lock gate (fun () ->
       if stopped || retiring || not (isOwner connection) then false
       else
         retiring <- true
         true)
-    if not admitted then return refusal request "provider_retiring" "The Composer worker is already retiring."
+    if not admitted then return refusal request RefusalCode.ProviderRetiring "The Composer worker is already retiring."
     else
       withdrawOwned connection "Compiler retirement requested."
       do! lifecycle.WaitAsync()
@@ -307,199 +237,152 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
       try
         let! result = task {
           try
-            return! (connection.RequestAsync("prepare_compiler_change", "", [], CancellationToken.None)).WaitAsync(TimeSpan.FromSeconds 10.)
-          with error -> return refusal request "retirement_failed" error.Message
+            let! reply = connection.RequestAsync(PrepareCompilerChange(ComposerWire.workerAddress connection.Handshake.Authority), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds 10.)
+            return ComposerState.response reply
+          with error -> return refusal request RefusalCode.RetirementFailed error.Message
         }
-        // Reopening cannot race the old process, including after failed cleanup.
         do! connection.StopAsync()
         if connection.IsAlive then invalidOp "The retired Composer process did not exit."
         exited <- true
         lock gate (fun () -> if isOwner connection then worker <- None)
         return result
       finally
-        // A failed process stop keeps the owner fenced. Never reopen against
-        // an old process merely because the caller received a failure.
         if exited then lock gate (fun () -> retiring <- false)
         lifecycle.Release() |> ignore
         changed ()
   }
 
   new(factory, configured) = ComposerSupervisor(factory, configured, fun () -> Task.CompletedTask)
-
   member _.Changed = changedEvent.Publish
   member _.WorkerPid = lock gate (fun () -> worker |> Option.filter _.IsAlive |> Option.map _.ProcessId)
 
-  member _.ExecuteAsync(request: ComposerRequest, cancellation: CancellationToken) = task {
-    let allowed = set [ "open"; "reserve"; "build"; "status"; "run"; "cancel"; "close"; "prepare_compiler_change" ]
-    if request.Provider <> "clef-composer" then
-      return refusal request "wrong_provider" "Composer operations require provider clef-composer."
-    elif not (Set.contains request.Operation allowed) then
-      return refusal request "unsupported_operation" "Unknown Composer operation."
+  member _.ExecuteAsync(request: RequestBody, cancellation: CancellationToken): Task<ComposerResponse> = task {
+    let operation = BAREWireCodec.requestOperation request
+    let target = ComposerWire.target request
+    if target |> Option.exists (fun value -> value.Provider <> ProviderIdentity.ClefComposer) then
+      return refusal request RefusalCode.WrongProvider "Composer operations require provider clef-composer."
+    elif operation = Operation.Hello || operation = Operation.CancelRequest then
+      return refusal request RefusalCode.UnsupportedOperation "This control is private to the socket owner."
     else
       let mutable selectedOwner: IComposerWorker option = None
-      let mutable resolvedSession = if request.Operation = "open" then "" else request.Session
+      let mutable resolvedSession = ComposerWire.session request
       let mutable openDispatched = false
       let interrupted code message = task {
         match selectedOwner with
-        | Some current when resolvedSession <> "" && current.IsAlive
-                            && lock gate (fun () -> isOwner current && not stopped && not retiring) ->
-          try
-            let! _ = refresh current resolvedSession CancellationToken.None
-            ()
-          with _ -> ()
+        | Some current when resolvedSession <> "" && lock gate (fun () -> active current) ->
+          try let! _ = refresh current resolvedSession CancellationToken.None in () with _ -> ()
           reconcile current resolvedSession
         | _ -> ()
         changed ()
-        return refusal { request with Session = resolvedSession } code message
+        return refusal request code message
       }
       try
         let! selected =
-          if request.Operation = "open" then ensureWorker cancellation
-          else Task.FromResult(lock gate (fun () ->
-            match worker with
-            | Some connection when not stopped && not retiring && connection.IsAlive -> Result.Ok connection
-            | _ -> Result.Error "No active Composer worker owns this operation."))
+          if operation = Operation.Open then ensureWorker cancellation
+          else Task.FromResult(lock gate (fun () -> match worker with Some connection when active connection -> Result.Ok connection | _ -> Result.Error "No active Composer worker owns this operation."))
         match selected with
-        | Result.Error message -> return refusal request "provider_unavailable" message
+        | Result.Error message -> return refusal request RefusalCode.ProviderUnavailable message
         | Result.Ok connection ->
           selectedOwner <- Some connection
-          let identity = ComposerJson.hostIdentity connection.Handshake
-          let scopeMatches =
-            request.Host = ComposerJson.text "host" identity && request.Epoch = ComposerJson.text "epoch" identity
-          if request.Operation <> "open" && not scopeMatches then
-            return refusal request "wrong_authority" "Use the owning host and epoch from the Composer session response."
-          elif request.Operation = "prepare_compiler_change" then
-            return! retire request connection
-          elif request.Operation <> "open" && String.IsNullOrWhiteSpace request.Session then
-            return refusal request "invalid_request" "An explicit Composer session is required."
+          let workerAddress = ComposerWire.workerAddress connection.Handshake.Authority
+          if operation <> Operation.Open && target <> Some workerAddress then
+            return refusal request RefusalCode.WrongAuthority "Use the owning host and epoch from the Composer session response."
+          elif operation = Operation.PrepareCompilerChange then return! retire request connection
+          elif operation <> Operation.Open && String.IsNullOrWhiteSpace resolvedSession then
+            return refusal request RefusalCode.InvalidRequest "An explicit Composer session is required."
           else
-            let parameters = request.Parameters |> List.filter (fun (name, _) ->
-              Set.contains name (set [ "project"; "label"; "reservation"; "arguments" ]))
-            // Once an open is dispatched, finish registering its session even
-            // if the requesting observer disconnects before the reply arrives.
             cancellation.ThrowIfCancellationRequested()
-            let operationCancellation = if request.Operation = "open" then CancellationToken.None else cancellation
-            openDispatched <- request.Operation = "open"
+            let body = match request with Open(_, project) -> Open(workerAddress, project) | _ -> request
+            let operationCancellation = if operation = Operation.Open then CancellationToken.None else cancellation
+            openDispatched <- operation = Operation.Open
             let! response = task {
-              if request.Operation = "status" then
-                return! refresh connection request.Session operationCancellation
+              if operation = Operation.Status then return! refresh connection resolvedSession operationCancellation
               else
-                activity connection request.Session 1
+                activity connection resolvedSession 1
                 try
-                  return! connection.RequestAsync(request.Operation, request.Session, parameters, operationCancellation)
-                finally
-                  activity connection request.Session -1
+                  let! reply = connection.RequestAsync(body, operationCancellation)
+                  return ComposerState.response reply
+                finally activity connection resolvedSession -1
             }
-            let session = ComposerJson.text "session" (ComposerJson.field "authority" response)
+            let session = response.Reply.Authority.Session
             resolvedSession <- session
-            let active = lock gate (fun () -> isOwner connection && not retiring && not stopped && connection.IsAlive)
-            if not active then
-              return ComposerJson.failure (ComposerJson.field "authority" response) "closed" "The response belongs to a retired worker."
+            if not (lock gate (fun () -> active connection)) then
+              return ComposerState.failure response.Reply.Authority RefusalCode.Closed "The response belongs to a retired worker."
             else
               if session <> "" then
-                if request.Operation <> "status" then
-                  if request.Operation = "open" && ComposerJson.success response then
-                    remember connection (ComposerJson.projection false "Initial status has not yet been read." response) |> ignore
-                  elif ComposerJson.success response then
+                if operation <> Operation.Status then
+                  match response.Reply.Outcome with
+                  | Result.Ok(Opened opened) ->
+                    let status: SessionSnapshot =
+                      { Observation = opened.Observation; Project = opened.Project; ManifestPath = opened.ManifestPath
+                        Closed = false; Busy = false; Current = None; RevocationPending = false; BackendError = None; CleanupPending = false; CleanupError = None }
+                    { response with Reply = { response.Reply with Outcome = Result.Ok(Observed status) } }
+                    |> ComposerState.projection false "Initial status has not yet been read." |> remember connection |> ignore
+                  | Result.Ok _ ->
                     cached session |> Option.iter (fun previous ->
-                      previous
-                      |> ComposerJson.withAuthority (ComposerJson.field "authority" response)
-                      |> ComposerJson.projection false "Session status requires refresh."
-                      |> remember connection |> ignore)
-                  try
-                    let! _ = refresh connection session CancellationToken.None
-                    ()
-                  with _ -> ()
+                      { previous with Reply = { previous.Reply with Authority = response.Reply.Authority } }
+                      |> ComposerState.projection false "Session status requires refresh." |> remember connection |> ignore)
+                  | _ -> ()
+                  try let! _ = refresh connection session CancellationToken.None in () with _ -> ()
                 reconcile connection session
-              let stillActive = lock gate (fun () -> isOwner connection && not retiring && not stopped && connection.IsAlive)
-              if not stillActive then
-                return ComposerJson.failure (ComposerJson.field "authority" response) "closed" "The response belongs to a retired worker."
+              if not (lock gate (fun () -> active connection)) then
+                return ComposerState.failure response.Reply.Authority RefusalCode.Closed "The response belongs to a retired worker."
               else
-                if request.Operation <> "status" then changed ()
-                return stale response |> Option.defaultValue response
+                if operation <> Operation.Status then changed ()
+                return stale response
       with
-      | :? OperationCanceledException ->
-        // The client requested cancellation of this exact wire operation.
-        // Refresh actual state: another demand may keep the producer and its
-        // authority alive, and physical cleanup can still be pending.
-        return! interrupted "canceled" "The caller canceled this operation."
+      | :? OperationCanceledException -> return! interrupted RefusalCode.Canceled "The caller canceled this operation."
       | :? TimeoutException as error ->
         match selectedOwner with
         | Some connection when openDispatched && resolvedSession = "" ->
-          // A late open may already own compiler state without a session ID
-          // known to this daemon. Retire that exact process before returning;
-          // neither a lost reply nor failed cleanup may leave an orphan owner.
           try
             let! _ = retire request connection
-            return refusal request "timeout" (error.Message + " The worker was retired because the open outcome was unknown.")
-          with retirementError ->
-            return refusal request "retirement_failed" (error.Message + " Worker retirement failed: " + retirementError.Message)
-        | _ -> return! interrupted "timeout" error.Message
+            return refusal request RefusalCode.Timeout (error.Message + " Worker retired because the open outcome was unknown.")
+          with cleanup -> return refusal request RefusalCode.RetirementFailed (error.Message + " Worker retirement failed: " + cleanup.Message)
+        | _ -> return! interrupted RefusalCode.Timeout error.Message
       | error ->
         changed ()
-        return refusal request "provider_unavailable" error.Message
+        return refusal request RefusalCode.ProviderUnavailable error.Message
   }
 
-  member _.SessionsAsync(cancellation: CancellationToken) = task {
-    let connection, owned = lock gate (fun () ->
-      (if stopped || retiring then None else worker), snapshots.Keys |> Seq.toArray)
+  member _.SessionsAsync(cancellation: CancellationToken): Task<ComposerDirectory> = task {
+    let connection, owned = lock gate (fun () -> (if stopped || retiring then None else worker), snapshots.Keys |> Seq.toArray)
     match connection with
     | Some current when current.IsAlive ->
-      let currentHost = ComposerJson.text "host" (ComposerJson.hostIdentity current.Handshake)
-      let currentEpoch = ComposerJson.text "epoch" (ComposerJson.hostIdentity current.Handshake)
-      let relevant = lock gate (fun () -> owned |> Array.filter (fun session ->
-        let identity = ComposerJson.field "authority" snapshots[session]
-        ComposerJson.text "host" identity = currentHost && ComposerJson.text "epoch" identity = currentEpoch))
-      let pending =
-        relevant |> Array.map (fun session -> task {
-          try
-            let! _ = refresh current session cancellation
-            ()
-          with _ -> ()
-          reconcile current session
-        })
+      let owner = ComposerWire.workerAddress current.Handshake.Authority
+      let relevant = lock gate (fun () -> owned |> Array.filter (fun session -> ComposerWire.workerAddress snapshots[session].Reply.Authority = owner))
+      let pending = relevant |> Array.map (fun session -> task {
+        try let! _ = refresh current session cancellation in () with _ -> ()
+        reconcile current session
+      })
       let! _ = Task.WhenAll pending
       ()
     | _ -> ()
-    return lock gate (fun () ->
-      ComposerJson.value {|
-        protocolVersion = 1; provider = "clef-composer"; configured = configured; revision = revision
-        worker = worker |> Option.filter _.IsAlive |> Option.map _.Handshake |> Option.defaultValue (ComposerJson.value (null: objnull))
-        sessions = snapshots.Values |> Seq.toArray |})
+    return lock gate (fun () -> { Configured = configured; Revision = revision; Worker = worker |> Option.filter _.IsAlive |> Option.map _.Handshake; Sessions = snapshots.Values |> Seq.toArray })
   }
 
   member _.StopAsync() = task {
     let connection = lock gate (fun () -> stopped <- true; retiring <- true; worker)
+    lifetime.Cancel()
     connection |> Option.iter (fun current -> withdrawOwned current "Daemon stopped.")
     do! lifecycle.WaitAsync()
     try
       match lock gate (fun () -> worker) with
       | Some current -> do! current.StopAsync()
       | None -> ()
+      let owned = lock gate (fun () -> monitors.Values |> Seq.map (fun value -> value.Task :> Task) |> Seq.toArray)
+      do! Task.WhenAll owned
       lock gate (fun () -> worker <- None)
-    finally
-      lifecycle.Release() |> ignore
+    finally lifecycle.Release() |> ignore
   }
 
 module ComposerSupervisor =
-  let disabled () =
-    ComposerSupervisor((fun () -> Task.FromException<IComposerWorker>(InvalidOperationException "Composer is not configured.")), false)
-
+  let disabled () = ComposerSupervisor((fun () -> Task.FromException<IComposerWorker>(InvalidOperationException "Composer is not configured.")), false)
   let fromEnvironment () =
     let environment name = Environment.GetEnvironmentVariable name |> Option.ofObj |> Option.defaultValue ""
     let worker = environment "BOZZETTO_COMPOSER_WORKER"
     if String.IsNullOrWhiteSpace worker then disabled ()
     else
-      let dotnet =
-        match environment "DOTNET_HOST_PATH" with
-        | value when not (String.IsNullOrWhiteSpace value) -> value
-        | _ -> "dotnet"
-      let cache =
-        match environment "XDG_CACHE_HOME" with
-        | value when not (String.IsNullOrWhiteSpace value) && Path.IsPathFullyQualified value -> value
-        | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache")
-      let factory () =
-        ComposerWorkerClient.start {
-          WorkerPath = worker; DotnetPath = dotnet
-          EvidenceDirectory = Path.Combine(cache, "bozzetto", "composer-workers", Guid.NewGuid().ToString("N")) }
-      ComposerSupervisor(factory, true)
+      let dotnet = match environment "DOTNET_HOST_PATH" with value when not (String.IsNullOrWhiteSpace value) -> value | _ -> "dotnet"
+      let cache = match environment "XDG_CACHE_HOME" with value when not (String.IsNullOrWhiteSpace value) && Path.IsPathFullyQualified value -> value | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache")
+      ComposerSupervisor((fun () -> ComposerWorkerClient.start { WorkerPath = worker; DotnetPath = dotnet; EvidenceDirectory = Path.Combine(cache, "bozzetto", "composer-workers", Guid.NewGuid().ToString("N")) }), true)

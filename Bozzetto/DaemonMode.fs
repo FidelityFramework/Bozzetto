@@ -533,20 +533,10 @@ let createSessionOpsWithRecovery
         return
           ExternalFSharpService.refuse ()
       }
-    GetProxy = fun sessionId ->
-      // The one place SessionManagementOps hands out a session's proxy —
-      // every route into a worker (eval, check, load-script, run-tests,
-      // run_app, MCP, dashboard) resolves it here, so wrapping it with
-      // `SessionProxy.touching` is enough to keep LastActivity honest for
-      // all of them without threading a touch call through each call site.
-      let snapshot = readSnapshot()
-      let sidStr = WorkerProtocol.SessionId.value sessionId
-      let urlMap = snapshot.WorkerBaseUrls |> Map.fold (fun acc k v -> Map.add (WorkerProtocol.SessionId.value k) v acc) Map.empty
+    GetProxy = fun _sessionId ->
       task {
-        return
-          HttpWorkerClient.proxyFromUrls sidStr urlMap
-          |> Option.map (WorkerProtocol.SessionProxy.touching (fun () ->
-            sessionManager.Post(SessionManager.SessionCommand.TouchSession sessionId)))
+        Log.warn "%s" ExternalFSharpService.message
+        return None
       }
     GetSessionInfo = fun sessionId ->
       task { return SessionManager.QuerySnapshot.tryGetSession sessionId (readSnapshot()) }
@@ -1518,25 +1508,9 @@ let createElmRuntime
   let effectDeps =
     { ElmDaemon.createEffectDeps sessionManager readSnapshot DirectoryConfig.autoOpenNamespacesForDirectory configureWarmupAutoOpen with
         GetWarmupContext = Some (fun sid -> getWarmupContextForElm (WorkerProtocol.SessionId.value sid))
-        GetStreamingTestProxy = fun sid ->
-          let snapshot = readSnapshot()
-          match Map.tryFind sid snapshot.WorkerBaseUrls with
-          | Some url when url.Length > 0 ->
-            Some (HttpWorkerClient.streamingTestProxyWithCoverage Timeouts.workerHttpRead url)
-          | _ ->
-            // The run is dispatched and then every test comes back NotRun,
-            // which reads downstream as "0 passed, 0 failed" — indistinguishable
-            // from "nothing happened". Name the session that was asked for and
-            // what the map actually held, so the failure says WHICH piece is
-            // missing instead of leaving it to be inferred from a summary.
-            Log.warn
-              "[LiveTesting] no streaming test proxy for session %s: WorkerBaseUrls holds [%s]"
-              (WorkerProtocol.SessionId.value sid)
-              (snapshot.WorkerBaseUrls
-               |> Seq.map (fun (kv: System.Collections.Generic.KeyValuePair<WorkerProtocol.SessionId, string>) ->
-                 sprintf "%s=%s" (WorkerProtocol.SessionId.value kv.Key) kv.Value)
-               |> String.concat ", ")
-            None
+        GetStreamingTestProxy = fun _sid ->
+          Log.warn "%s" ExternalFSharpService.message
+          None
         RegisterFileWatcher = fun sessionIdStr directory ->
           match !watcherManagerRef with
           | Some mgr ->
@@ -3237,6 +3211,7 @@ let run
   }
 
   let dashboardActions : DashboardActions = {
+    SwitchWorkflow = Dashboard.switchWorkflow sessionOps
     EvalCode = fun sid code -> task {
       let sidStr = WorkerProtocol.SessionId.value sid
       let! result = proxyToSession getProxyStr notifyWorkerDiedStr sidStr (WorkerProtocol.WorkerMessage.EvalCode(code, "dash"))

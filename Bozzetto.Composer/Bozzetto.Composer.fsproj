@@ -14,6 +14,7 @@
       Text="The Composer distribution must include its pinned Fidelity.FSharp.Incremental core and Hosting assemblies. Rebuild the reviewed compiler closure before building this provider." />
   </Target>
   <ItemGroup>
+    <ProjectReference Include="../Bozzetto.Composer.Protocol/Bozzetto.Composer.Protocol.fsproj" />
     <Reference Include="$(ComposerDistribution)/*.dll" />
     <Compile Include="ProviderContracts.fs" />
     <Compile Include="ProviderSession.fs" />

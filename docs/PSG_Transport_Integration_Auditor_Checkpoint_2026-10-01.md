@@ -1,214 +1,182 @@
-# Binary PSG integration: auditor handback — 2026-10-01
+# Scoped PSG integration: implementor checkpoint — 2026-10-01
 
-**Not integrated.** The running Bozzetto daemon talks to `Bozzetto.Composer`
-using JSON over stdio. The BAREWire control protocol and Fidelity.PSG revision
-codec are committed drafts, excluded from the production build. Neither the
-purge tests nor the installed native workflow exercised those drafts.
+**Scoped service integration remains unfinished. No new distribution has been
+promoted.** The attempted complete-revision service operation was architecturally
+wrong. Its capacity failure exposed retained library bodies and repeated global
+analysis premises; raising its frame cap did not repair that defect. The source
+operation and its complete-graph projection are removed from source, with no alternate
+full-graph path. This checkpoint supersedes the earlier whole-delivery description.
 
-This is the current transport audit entry. It supplements the
-[purge checkpoint](Bozzetto_Minimal_Host_Auditor_Checkpoint_2026-10-01.md),
-[Bozzetto draft checkpoint](PSG_Binary_Transport_Draft_Checkpoint_2026-10-01.md)
-and [PSG draft checkpoint](../../Fidelity.PSG/docs/Binary_Transport_Draft_Checkpoint_2026-10-01.md).
-Their evidence remains scoped to the source and binaries they actually tested.
-This handback changes documentation only; it does not promote a compiler or daemon.
+## Required behavior
 
-## Implementation accountability
+The owner prohibits full retained graph transmission and soft-deleted node
+bodies, on initial attachment, update and reconnection. An `open` changes lookup
+visibility; it is not a demand for every member of a library or permission to
+map them eagerly. A visibility change can affect binding selection or an absence
+judgment; Baker must reconsider the affected support. Actual references demand
+only their required semantic closure. Settled unrelated content stays resident.
+Debouncing complete-graph pushes is not incremental compilation.
 
-The implementor preserved runtime patching when the requested architecture
-required its removal, deferred the shared transport boundary, and initially
-omitted draft files from the synchronized source checkpoint. Later removal
-repaired the patching decision, but did not complete transport. Leaving the JSON
-client, worker and fixtures in place increased the later migration work.
-These were implementation and sequencing errors, not an owner-approved design.
+Reachability already belongs to the CCS frontend: [Phase 4](../../clef/src/Compiler/NativeTypedTree/NativeService.fs)
+precedes intrinsic elaboration and Baker saturation; Pass 4.5 refreshes it after
+fold-in, with additional refreshes in rewriting nanopasses. Soft deletion retains
+source-internal analysis material. It does not authorize transmitting those bodies.
 
-Resource use also fell short of the owner's repeated direction. A returned worker
-answer is not useful evidence unless its repository, source revision and claims
-match the task. This handback records fresh retrieval and review outcomes below;
-the implementor remains responsible for integration and repair. The auditor is
-asked to challenge the boundaries and tests, not to assume implementation ownership.
+The normative specification is `clef-lang-spec` revision
+`44fd9890e4332c4e60e84f93031cbd757cca0d6c`, especially
+[program-hypergraph §5–5.1](../../clef-lang-spec/spec/program-hypergraph.md#51-scoped-re-evaluation-and-witness-authorization).
+Section 5 prohibits emission queries of analysis hyperedges. Section 5.1 assigns
+scope closure and accepted-revision authorization to source analysis, including
+joint participants, rule/declaration identity, collection membership and absence.
+It requires complete replacement/retirement accounting and support revalidation
+for reuse. The stricter prohibition on full retained service transfer is an
+explicit owner requirement; it is not a quotation from §5.
 
-## Verified source and installed boundary
+## Owners and representations
 
-Before this documentation edit, all ten checkouts below were clean and their
-heads matched the named branch returned by `git ls-remote origin`. This is a
-source synchronization check, not a compilation or deployment check.
+| Responsibility | Owner |
+| --- | --- |
+| Lookup support, reachability, affected semantic closure, settlement and complete proof premises | CCS/Baker ingredients and recipes. |
+| Assembling the published revision | The single CCS publication boundary copies Baker-stored rows; selection or computation here remains debt. |
+| Immutable scoped facts, authorization/delta data and structural validation | Fidelity.PSG over BAREWire. No compiler reference or semantic inference. |
+| Passive witnessing of authorized occurrences and settled boundaries | Alex. No consumer pruning or dependency reconstruction. |
+| Source capture, proof discharge, artifact acceptance and actual launch | Composer. |
+| Subscription delivery, socket/process lifetime and supervision | Composer workspace host (`Bozzetto.Composer`) and Bozzetto. |
+| Demand, invalidation and work eligibility | Fidelity.FSharp.Incremental; eligibility is not proof or execution authority. |
+| Stable bytes and mapping lifetime | BAREWire ByteSource and the separate PSG hosting assembly. |
 
-| Repository | Branch / source anchor | Relevant state |
-| --- | --- | --- |
-| Bozzetto | main / `93f012d3` | Draft preserved after deployed purge `e971e3fa`; production transport remains JSON. |
-| Fidelity.PSG | main / `63b8df4` | Schema 12; binary source exists outside the compiled project. |
-| Clef | main / `ba694e1` | Owns publication of settled revisions. |
-| Composer | main / `723e900` | Implementation `c1e3ff6`; receives the revision in process. |
-| Alex | main / `9d53b9e` | Passive reader; transport is not its responsibility. |
-| Fidelity.FSharp.Incremental | main / `d476aea` | Demand, invalidation and owned lifetime; no compiler authority. |
-| BAREWire | main / `61b0bf7` | Shared encoding/framing foundation. |
-| Thuja | fidelity / `e1b855d` | No change in this handback. |
-| Fidelity.Data | main / `213918a` | No change in this handback. |
-| lattice-vscode | fidelity / `1e60988` | No editor integration change in this handback. |
+A correct payload distinguishes live occurrence bodies, settled imported boundary
+facts and historical identity references. The existing `Revision` integrity rule
+requires every named identity to have a resident body; its role-aware replacement
+is unfinished. Alex's scoped traversal migration is also incomplete. A filtered
+map wrapped in that type cannot establish a scoped contract. Whole-domain premise censuses remain source-owned analysis support,
+with complete conservative validation until precise support is implemented.
+Their retention inside CCS does not require delivery of their node bodies.
 
-`boz status` still identifies daemon PID 215237. Its child PID 216737 was observed
-running `Bozzetto.Composer.dll --stdio`. The installed daemon, worker and Composer
-DLL hashes still match the three hashes in the purge checkpoint. `/health`
-returned HTTP 200, API 4, and reported tight memory/degraded overall status.
-This observation neither reran the native workflow nor established transport
-acceptance. No service was restarted for this audit.
+Checked revision, region/content version, traversal identity and subscription
+cursor remain separate. A hash, contract schema or producer name grants no
+accepted-revision permission. Unchanged content needs explicit current source
+reauthorization after its complete support validates. A structural catalog
+validator can compare those declarations; it cannot establish their source truth.
 
-| Boundary | Current source evidence | Missing work |
-| --- | --- | --- |
-| Daemon → worker | [ComposerWorkerClient.fs](../Bozzetto/ComposerWorkerClient.fs) exposes `JsonElement`, operation strings and boxed parameters; writes serialized requests to child stdin. [Program.fs](../Bozzetto.Composer/Program.fs) reads JSON lines and emits serialized replies. | Replace both ends and their internal API with the shared typed socket protocol. Remove stdio/pipe JSON command modes. |
-| Worker dispatch | [Worker.fs](../Bozzetto.Composer/Worker.fs) accepts `JsonElement` and checks protocol 1. | Typed dispatch, explicit incompatible-peer refusal and retained authority/lifetime checks. |
-| Shared protocol | [Protocol.fs](../Bozzetto.Composer.Protocol/Protocol.fs) defines ten control operations. `PsgIdentity` carries only schema and assembly hash. The project and [draft tests](../Bozzetto.Tests/ComposerBinaryProtocolTests.fs) are unreferenced. | Consolidate duplicated provider data; compile one shared contract; add actual revision delivery. A hello digest is not graph transport. |
-| Revision codec | [Fidelity.PSG.fsproj](../../Fidelity.PSG/src/Fidelity.PSG/Fidelity.PSG.fsproj) excludes `Binary*.fs`. [Binary.fs](../../Fidelity.PSG/src/Fidelity.PSG/Binary.fs) is draft encode/decode source. | Compiled codec, reproducible generation, independent format controls and real published-revision coverage. |
-| Accepted revision | [IncrementalBuild.fs](../../Composer/src/Core/IncrementalBuild.fs) carries a revision in its build request; accepted state exposes artifact metadata. | Compiler-owned, revocable access to the exact revision, bound to session/generation and build evidence. No reconstruction from artifact paths or a status cache. |
+## Delivery and lifetime requirements
 
-Two identity gaps require explicit treatment. `RevisionHeader` currently contains
-schema and producer, not a unique revision identifier. Composer's build gate uses
-`Object.ReferenceEquals(request.Revision, request.SourceProof.Revision)` to reject
-a foreign proof receipt. Serialization creates a new object: do not copy that
-receipt, deserialize it as trusted, or weaken the gate to a hash comparison.
-Passive observation of a revision does not require another solver run. For a new
-compilation using decoded data, Composer must obtain a fresh `SourceProofReceipt`
-for that exact decoded object through its existing discharge path, and separately
-establish source provenance and current-generation authority. CCS/Baker owns the
-premises; Composer performs external discharge. Solver success and transport
-success alone establish neither provenance nor execution permission.
+Initial attachment obtains only demanded source-authorized scopes. Updates use
+an exact resident base and explicitly identify affected additions, replacements,
+withdrawals and retirements. A missing or foreign base produces a diagnostic,
+never a full-corpus resend. A fresh attachment also stays demand-scoped.
 
-The broader source inventory also found:
+Resident bytes, a pending delivery and current source eligibility are distinct
+states. Edit reservation withdraws eligibility before source-write permission.
+Retained bytes may remain an ineligible base for a later delta. Acknowledgement
+advances a verified installed delivery base; it grants no proof or execution
+permission and cannot restore withdrawn source authority. Source edits must not
+wait for arbitrary browser acknowledgements.
 
-- [Dashboard.fs](../Bozzetto/Dashboard.fs) sends a loopback JSON workflow request
-  to the daemon. Calling that endpoint public does not exempt an internal
-  server-to-server hop: use the shared typed operation in process, or the binary
-  contract when crossing a process boundary.
-- [HttpWorkerClient.fs](../Bozzetto.Core/HttpWorkerClient.fs) retains compiled
-  legacy F# HTTP/JSON adapters. Production worker spawning currently refuses in
-  [SessionManager.fs](../Bozzetto.Core/SessionManager.fs); this is not an active
-  Composer fallback. Audit removal of unused production adapters and their
-  dedicated fixtures instead of treating refusal as permanent architecture.
-- [McpStdioBridge.fs](../Bozzetto/McpStdioBridge.fs) carries external MCP JSON-RPC.
-  CLI health/shutdown and browser requests are client protocols. A user-triggered
-  friction-report POST also sends JSON externally. These are named boundaries,
-  not evidence that all JSON network traffic has been eliminated. The source
-  inventory does not substitute for a complete runtime traffic audit.
+The previous path encoded after releasing the provider invocation gate, then
+waited for writer admission. A reservation could overtake that delivery. The new
+path must fence staging and receiver installation against current authorization,
+while actual execution remains fenced by Composer. Canceling an observation is
+not a physical join. Close/retirement must join admitted work, callbacks, socket
+activity, process exit and diagnostic drains and preserve cleanup failures.
 
-## Required ownership and data path
+## Retooling evidence
 
-CCS/Baker owns semantic settlement, SSA, ABI, proof premises and dependency scope.
-Its single publication boundary copies those facts into `Fidelity.PSG.Revision`.
-Composer owns build acceptance and execution permission. Alex reads the revision
-passively; it must not gain compiler references, inference, repair or socket code.
+These compiled gates establish the tested source changes, not a promoted
+distribution or receiving-scope/native acceptance:
 
-The current [publication implementation](../../clef/src/Compiler/PSGSaturation/Publication/RevisionPublication.fs)
-itself records remaining Baker-recipe debt in borrowed views, mapped spans and
-bindings, MMIO, explicit demand and implied structural edges. That existing debt
-must not migrate into a decoder or reader. This transport handback does not claim
-that publication has already become a pure copy for every field.
+| Gate | Result and discriminating purpose |
+| --- | --- |
+| PSG contract/codec/hosting/inspection suite | 192 passed, no failures/skips, at Schema 14. Includes 25 catalog, 21 occurrence/delivery and nine scoped-codec controls. |
+| Bozzetto complete default suite, before the Schema 14 extension | 8,934 passed, three ignored, no failures/errors; includes all 78 changed protocol/provider/worker/supervisor controls. Source closure built with zero warnings/errors against Schema 13; the newly aligned distribution is still unrun. |
+| Clef compiled open-demand controls | 4 passed, no failures/skips. An unused `open` leaves the pure library unreachable; actual use activates its dependency closure; a shadowing `open` replaces the consumed binding; 64 unused declarations increase retained nodes without increasing demanded library bodies. |
 
-Fidelity.PSG owns immutable graph data and its pure BAREWire encoding/decoding.
-It must not open sockets, retain compiler sessions or contain deferred callbacks.
-Bozzetto's shared protocol owns typed orchestration envelopes. Explicit host
-adapters own socket/process IO and cleanup. Incremental owns demand, invalidation
-and result eligibility; none of those responsibilities certifies a proof.
+The retired full-revision protocol tag is refused. Public adapters no longer
+offer that operation, and the special large-reply cap is removed. These repairs
+do not silently replace it with a filtered `Revision`.
 
-The required service path carries **typed control messages and complete published
-PSG revisions over sockets using BAREWire**. In-process consumers can receive the
-same revision directly; serialization is required where a service boundary is
-crossed, not between every assembly. Do not add an encode/decode roundtrip inside
-one process merely to manufacture a transport demonstration.
+Baker now stores a source-owned live occurrence plan during prepared-root
+settlement. Child-position dispositions and typed context ports distinguish live
+execution children from declaration membership and inactive identity handles.
+The recipe does not recompute reachability or make an `open` an execution root.
+It keeps complete conservative source analysis support. Its nine isolated source
+controls and the first 15 compiled producer/reachability controls pass; broader
+compiler comparison remains in progress.
 
-The delivery contract must bind the exact revision and observed evidence across
-two authority domains: Bozzetto's provider host/epoch/session and adapter generation,
-and Composer's compiler generation/source identity and build acceptance. These
-counters are not interchangeable. Define their binding explicitly before wiring
-callers. Structural integrity, content hashes
-and schema agreement cannot grant freshness or execution permission. Reservation
-withdraws affected current authority before source mutation; a deferred read or
-late reply cannot restore it. Recheck at observation/acceptance and actual launch.
-Preserve dependency-backed reuse in unaffected settled regions.
+The new `OccurrenceBinary` codec carries changed live-occurrence sections and
+their metadata transaction; unchanged reauthorization and retirement carry no
+bodies. Its distinct `FPSGOCC1` envelope refuses complete-revision images. This
+occurrence foundation does not yet supply the complete settled emission/import/
+storage/proof payload or a receiving socket/native gate. It is not a substitute
+executable revision.
 
-There is no JSON compatibility mode or automatic encoding substitution on private
-compiler service links. Decode/version/limit failures produce an error and
-diagnostic, never a partial revision or inferred missing facts. External MCP and
-browser encodings are distinct client boundaries; their JSON must not be forwarded
-as an internal worker protocol. Persistence and diagnostic files are not service
-transport. These distinctions must be established by call sites, not filenames.
+Schema 15 now replaces sibling identity lists with source-stamped ordinal/extent
+accounts and sparse positions. Baker stores complete occurrence paths, explicit
+witness entries, binding-use contracts and current claim facts. Selected leaf
+tables are frozen in Baker; publication copies them into the revision. Full owner
+support inventories and analysis incidence stay source-private. Authorization
+metadata can still grow with resident scopes; byte-size invariance and continuity
+remain receiving acceptance requirements.
 
-## Repair order and acceptance
+The installed workspace host remains the earlier validated distribution. Its
+private stdio control path has not been replaced by the unpromoted socket source.
+The source purge and the installed process are distinct evidence.
 
-1. **PSG + BAREWire:** settle format/version/fingerprint and resource limits;
-   wire the codec into the project. Cover every supported shape, duplicate keys,
-   strict text, exact extent, malformed input and generator drift. The draft's
-   1 MiB control-frame limit is not automatically a suitable graph limit; define
-   bounded revision delivery and refuse excess before allocation or publication.
-2. **Composer:** retain and expose the authoritative revision with an explicit
-   lifetime. Test refusal after reservation, failed build, withdrawal and retirement.
-   Keep source/proof admission in its existing owners; a transport API is not a
-   second publication or acceptance path. When decoded data enters compilation,
-   exercise the proof-receipt boundary above, including refusal of the original
-   object's receipt; passive observation must not demand unnecessary proof dispatch.
-3. **Bozzetto:** integrate the single typed contract, socket client/server,
-   supervisor and fixtures together. Preserve full request identity, monotonic
-   observations, reserved control capacity, cold admission and joined cleanup.
-   Remove the old JSON worker modes rather than retaining a selectable path.
-   Include the dashboard loopback and retained private adapters in that inventory;
-   migrating the worker alone does not establish all-service conformance.
-4. **Cross-project gate:** send an actual nonempty compiler-published revision
-   through the service socket. Feed the decoded revision into the existing
-   Composer/Alex path in the acceptance fixture and compare witnessing, native
-   output, proof scope and unchanged-region/object reuse with the direct path.
-   Bozzetto does not become a second compiler to perform this check.
-5. **Delivery:** run the whole registered suites and native provider tier against
-   one matched distribution. Repeat live cold/unchanged/edited builds, prewrite
-   revocation and cleanup against recorded DLL/contract hashes. Commit and push
-   all changed producer/contract/consumer repositories at each usable anchor;
-   source anchors may retain explicitly named failures, but are not runtime acceptance.
+## Earlier evidence
 
-The discriminating controls must include:
+These results precede the scoped retooling and do not establish its acceptance:
 
-- Hold an old revision reply, acknowledge edit reservation while the source is
-  still unchanged, then release the reply. It must not become current or authorize
-  execution. A new generation can proceed; stale data must not revoke that generation.
-- Transfer a structurally valid old or foreign revision with a correct content
-  digest. Decoding may succeed; the current-authority gate must refuse its use.
-  Separately change a proof premise at its owning scope and require reanalysis
-  before affected output is accepted, while justified unrelated reuse survives.
-- Cancel one observer of shared work and cancel a never-written request. The peer
-  must complete, admission capacity must recover, and close must join held work,
-  callbacks, socket IO and the owned process. Inject cleanup failure and retain
-  its failure classification and diagnostic.
-- Fragment frames, truncate every boundary, supply unknown tags/version/digest,
-  exceed limits and break the socket during delivery. No partial graph becomes
-  visible, no alternate encoding is attempted, and cleanup remains bounded and joined.
+| Observation | Exact result and limit |
+| --- | --- |
+| Complete PSG codec, mapping and inspection suite | 137/137 passed; no failures/skips. Representation controls only. |
+| First native integration tier | 44/46 passed; one failed and one errored at the image cap. No receiving-image acceptance. |
+| Measured native sample complete image | 88,482,120 bytes; 5,825 nodes; 6,906 edges; 43 obligations. This was a direct codec measurement, not successful socket delivery. |
+| Edge bytes | 67,275,998; four global Numeric/Spatial/Boundary/Memory domains accounted for 63,572,236. |
+| Latest preceding Composer whole suite | 386/387 passed; the callable `Result` native-transport test failed. This is a concrete compiler defect, not exempted by these changes. |
 
-The earlier default **8,954 passes / three ignores** and native **40/40** results
-apply to the purge distribution only. Compiler failures and their precise scope
-remain in the linked checkpoint. No new compiler test results are claimed here.
+An independent two-node format probe measured 10,950 bytes, including 10,384 of
+nested directory overhead. That ratio is not the large-image ratio. Indexing every
+wrapper is an implementation choice, not a requirement to retain that overhead.
+No binary-versus-JSON compactness or timing claim is established.
 
-## Resource evidence and auditor return
+## Required receiving acceptance
 
-Fresh retrieval snapshot
-`c697e553e252667ca1bf9ce73706847d2699e6ed80cdb386c1afe2f98bc206fe`
-(generation 16) contains the Clef, Composer, PSG, Alex and Incremental source
-anchors above. `find → sources` retrieved the PSG codec; a PGQ query returned
-project-reference relationships. Such edges do not demonstrate that the codec
-is compiled or called. The repository list does **not** contain Bozzetto or
-BAREWire, so their current evidence comes from local source, not an assumed index.
+- Unused library growth and an unused `open` add no delivered/mapped bodies.
+- Actual newly demanded declarations deliver only their necessary scoped facts.
+- Lookup changes and newly present participants invalidate dependent judgments,
+  including previously absent support; unchanged ABI shape cannot authorize reuse.
+- An unchanged build sends no repeated settled bodies. A one-callable edit retains
+  another callable's resident facts, witness and object after source reauthorization.
+- Wrong base, reversed delivery and foreign session/epoch/subscription are refused
+  atomically. Reservation overtakes held delivery and late acknowledgements.
+- Splits, merges and retirement account for definition, storage and activation
+  owners. Cleanup joins actual work and processes, including injected faults.
+- The actual receiving scope packet feeds independent proof, passive witnessing
+  and native execution checks; a direct local encode/decode cannot replace that gate.
 
-LAN worker two reviewed the supplied, explicitly scoped boundary description and
-returned useful stale-delivery and shared-demand test suggestions. These inform
-the controls above; they are not independently executed tests. Lemonade/Nemotron
-was asked for one delayed-delivery race review but returned no bytes within the
-45-second deadline; no finding is attributed to that attempt. Local source
-reviews independently checked producer and host call sites.
+## Research and audit trail
 
-Receipts remain outside the repositories at
-`~/.codex/work/incremental-audit-repairs-2026-10-01/transport-audit-handback/`:
-`*.source.json`, `installed.sha256`, `boz-status.txt`, `live-health.json`, retrieval
-requests/responses, `worker-review.status.json` and `local-outcome.json`.
-This document contains the interpretation; raw logs are not added to the docs tree.
+Raw evidence remains external under `~/.codex/work/psg-scope-retool-2026-10-01/`
+and `~/.codex/work/psg-socket-integration-2026-10-01/`. Retrieval snapshot
+`bd2b85b4bde7c85b4c60a804f660e2c299e6f9d469548e111426b92b7ec2b383`
+was refreshed as current. Hybrid public search, graph queries and hydrated spec
+sources were used. Current uncommitted source was supplied directly to reviewers;
+it was not represented as indexed committed evidence.
 
-Please return findings in `docs/PSG_Transport_Integration_Auditor_Assessment_2026-10-01.md`.
-For each finding, identify the repository and revision, owning boundary,
-reproduction or source evidence, and a discriminating acceptance condition.
-Prioritize missing authority/lifetime guarantees and any surviving private JSON
-service path. Assess a future implementation against its matched binaries;
-this documentation checkpoint is not a claim that those repairs have landed.
+LAN ONE reviewed normative/public documentation; LAN TWO reviewed Baker support;
+LAN THREE reviewed subscription lifetime; local Lemonade/Nemotron supplied contract
+and prose drafts. Some drafts conflated schema with revision authority, asked the
+receiver to infer invalidation, or treated ABI refusal checks as absence dependencies.
+Those suggestions were rejected. Model output is neither an executed gate nor
+independent compiler acceptance. SageFS became unavailable on port 37749 during
+the resumed source loop; individual .NET source probes record that limitation.
+
+The [interim repository anchor](PSG_Scoped_Integration_Interim_2026-10-01.md)
+records the Schema 15 migration and its unfinished consumer boundaries separately
+from the preceding compiled evidence.
+
+The audit-ready handoff must bind matched producer/contract/consumer commits,
+actual scope/delta receipts and installed identities. It is not ready yet.
+Return the eventual assessment in
+`docs/PSG_Transport_Integration_Auditor_Assessment_2026-10-01.md`; existing
+independent assessments remain unchanged.

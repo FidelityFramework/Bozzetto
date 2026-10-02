@@ -20,7 +20,7 @@ That relationship is a design direction, with the current Composer foundation de
 
 ## The Working Foundation
 
-Bozzetto's daemon owns one Composer supervisor shared by MCP tools, the `composer://sessions` resource and the `/composer` browser page. Each project is opened explicitly from an absolute `.fidproj` path. Operations carry host, session and compiler epoch identity.
+Bozzetto's daemon owns one Composer supervisor shared by MCP tools, the `composer://sessions` resource and the `/composer` browser page. The **Composer workspace host (`Bozzetto.Composer`)** owns the live compiler project sessions behind those interfaces. Each project is opened explicitly from an absolute `.fidproj` path. Operations carry host, session and compiler epoch identity.
 
 | Operation | Current behavior |
 |---|---|

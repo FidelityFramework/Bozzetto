@@ -38,14 +38,15 @@ let private reply body: Reply = { ProtocolVersion = 2us; RequestId = "same-full-
 let private requests = [
   Hello BAREWireCodec.agreement; Open(worker, "/tmp/with spaces/项目.fidproj")
   Reserve(session, "before write"); Build(session, "opaque-reservation")
-  Status session; Run(session, [| ""; "a\000b"; "λ" |]); Cancel session
+  Status session; RequestBody.Run(session, [| ""; "a\000b"; "λ" |]); Cancel session
   CancelRequest(worker, "full-target-id"); Close session; PrepareCompilerChange worker
 ]
 let private replies = [
   HelloAccepted {
     Agreement = BAREWireCodec.agreement
     Compiler = { AssemblyPath = "/compiler/Composer.dll"; Sha256 = "compiler-hash"; Version = "1" }
-    Psg = { Schema = 12; AssemblySha256 = "psg-hash" }
+    Psg = { Schema = Fidelity.PSG.Revision.Schema; AssemblySha256 = "psg-hash"
+            FormatVersion = Fidelity.PSG.Binary.FormatVersion; ContractFingerprint = Fidelity.PSG.Binary.ContractFingerprint }
     Operations = [| Operation.Hello; Operation.Open; Operation.Reserve; Operation.Build; Operation.Status
                     Operation.Run; Operation.Cancel; Operation.CancelRequest; Operation.Close; Operation.PrepareCompilerChange |]
     InMemoryPatchAllowed = false
@@ -65,7 +66,40 @@ let private refusals = [
   RefusalCode.CompilerRefused; RefusalCode.Canceled; RefusalCode.ObservationCapacity; RefusalCode.Busy
   RefusalCode.SessionCapacity; RefusalCode.BackendFailed; RefusalCode.InvalidReservation; RefusalCode.NotAccepted
   RefusalCode.FrameTooLarge; RefusalCode.MalformedPayload
+  RefusalCode.ProviderRetiring; RefusalCode.ProviderUnavailable; RefusalCode.RetirementFailed; RefusalCode.Timeout
 ]
+
+/// Test/build-time reflection only. The production codec contains no discovery.
+/// Include every reachable declared record field and union case.
+let contractShape () =
+  let rows = Collections.Generic.SortedDictionary<string, string>(StringComparer.Ordinal)
+  let rec shape (kind: Type) =
+    if kind.IsArray then "array<" + shape (kind.GetElementType()) + ">"
+    elif Microsoft.FSharp.Reflection.FSharpType.IsTuple kind then
+      "tuple<" + (Microsoft.FSharp.Reflection.FSharpType.GetTupleElements kind |> Array.map shape |> String.concat ",") + ">"
+    elif kind.IsGenericType then
+      let definition = kind.GetGenericTypeDefinition()
+      let arguments = kind.GetGenericArguments() |> Array.map shape |> String.concat ","
+      definition.FullName + "<" + arguments + ">"
+    elif kind.FullName.Contains("Bozzetto.", StringComparison.Ordinal) then
+      let name = kind.FullName.Substring(kind.FullName.IndexOf("Bozzetto.", StringComparison.Ordinal))
+      if not (rows.ContainsKey name) then
+        rows.Add(name, "")
+        let field (value: Reflection.PropertyInfo) = value.Name + ":" + shape value.PropertyType
+        let body =
+          if Microsoft.FSharp.Reflection.FSharpType.IsRecord kind then
+            "record " + (Microsoft.FSharp.Reflection.FSharpType.GetRecordFields kind |> Array.map field |> String.concat ";")
+          elif Microsoft.FSharp.Reflection.FSharpType.IsUnion kind then
+            Microsoft.FSharp.Reflection.FSharpType.GetUnionCases kind
+            |> Array.map (fun case -> sprintf "%d:%s(%s)" case.Tag case.Name (case.GetFields() |> Array.map field |> String.concat ";"))
+            |> String.concat "|"
+          else failtestf "Wire contract contains unsupported CLR shape %O" kind
+        rows[name] <- name + "=" + body
+      name
+    else kind.FullName
+  shape typeof<Request> |> ignore
+  shape typeof<Reply> |> ignore
+  (rows.Values |> String.concat "\n") + "\n"
 
 /// Force real fragmented Stream.ReadAsync without timer-based readiness claims.
 type private FragmentedStream(bytes: byte array) =
@@ -75,6 +109,32 @@ type private FragmentedStream(bytes: byte array) =
 
 [<Tests>]
 let tests = testList "Composer typed binary worker protocol" [
+  testCase "schema digest includes every declared nested contract field and union tag" <| fun _ ->
+    let path = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Bozzetto.Composer.Protocol", "WireSchema.txt"))
+    let bytes = File.ReadAllBytes path
+    let source = Encoding.UTF8.GetString bytes
+    let marker = "\n# Derived closed CLR contract shape\n"
+    let index = source.IndexOf(marker, StringComparison.Ordinal)
+    index >= 0 |> Expect.isTrue "schema includes the generated type-shape section"
+    source.Substring(index + marker.Length) |> Expect.equal "schema shape must track actual declared fields and order" (contractShape ())
+    bytes |> Security.Cryptography.SHA256.HashData |> Convert.ToHexString
+    |> Expect.equal "negotiated digest covers schema bytes and actual type shape" BAREWireCodec.ContractDigest
+
+  testCase "request and reply tags follow shared declaration order" <| fun _ ->
+    for index, body in List.indexed requests do
+      let case, _ = Microsoft.FSharp.Reflection.FSharpValue.GetUnionFields(body, typeof<RequestBody>)
+      case.Tag |> Expect.equal "request declaration order" index
+      let bytes = { request body with RequestId = "" } |> BAREWireCodec.encodeRequest |> mustSucceed
+      bytes[3] |> Expect.equal "request encoded tag" (byte case.Tag)
+    for index, body in List.indexed replies do
+      let case, _ = Microsoft.FSharp.Reflection.FSharpValue.GetUnionFields(body, typeof<ReplyBody>)
+      case.Tag |> Expect.equal "reply declaration order" index
+      let operation, _ = Microsoft.FSharp.Reflection.FSharpValue.GetUnionFields(BAREWireCodec.replyOperation body, typeof<Operation>)
+      operation.Tag |> Expect.equal "reply operation follows its matching request declaration" index
+      let offset = (reply Canceled |> BAREWireCodec.encodeReply |> mustSucceed).Length - 1
+      let bytes = reply body |> BAREWireCodec.encodeReply |> mustSucceed
+      bytes[offset] |> Expect.equal "reply encoded tag" (byte case.Tag)
+
   testCase "every request case roundtrips full string identity and payload" <| fun _ ->
     requests.Length |> Expect.equal "all closed request cases covered" (Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<RequestBody>).Length)
     for body in requests do
@@ -91,7 +151,7 @@ let tests = testList "Composer typed binary worker protocol" [
 
   testCase "all refusal codes preserve typed identity and stable explicit tags" <| fun _ ->
     refusals.Length |> Expect.equal "all closed refusals covered" (Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<RefusalCode>).Length)
-    refusals |> List.map BAREWireCodec.refusalTag |> Expect.equal "wire tags are an explicit contiguous inventory" [0 .. 25]
+    refusals |> List.map BAREWireCodec.refusalTag |> Expect.equal "wire tags are an explicit contiguous inventory" [0 .. 29]
     for code in refusals do
       let original = { reply Canceled with Outcome = Result.Error { Code = code; Message = "specific α refusal" } }
       original |> BAREWireCodec.encodeReply |> mustSucceed |> BAREWireCodec.decodeReply
@@ -116,7 +176,7 @@ let tests = testList "Composer typed binary worker protocol" [
     let bytes = reply Canceled |> BAREWireCodec.encodeReply |> mustSucceed
     bytes[bytes.Length - 2] <- 2uy
     BAREWireCodec.decodeReply bytes |> Expect.equal "result option tag is strict" (Result.Error CodecFailure.InvalidPayload)
-    let run = request (Run(session, [||])) |> BAREWireCodec.encodeRequest |> mustSucceed
+    let run = request (RequestBody.Run(session, [||])) |> BAREWireCodec.encodeRequest |> mustSucceed
     run[run.Length - 1] <- 127uy
     BAREWireCodec.decodeRequest run |> Expect.equal "array count exceeds its actual extent" (Result.Error CodecFailure.InvalidPayload)
 
@@ -146,6 +206,22 @@ let tests = testList "Composer typed binary worker protocol" [
     let bytes = BAREWireCodec.encodeRequest current |> mustSucceed
     bytes[0] <- 1uy
     BAREWireCodec.decodeRequest bytes |> Expect.equal "old version inbound is refused" (Result.Error(CodecFailure.UnsupportedVersion 1us))
+
+  testCase "retired full-revision operation tags have no request or reply decoder" <| fun _ ->
+    let requestBytes = { request (Status session) with RequestId = "" } |> BAREWireCodec.encodeRequest |> mustSucceed
+    requestBytes[3] <- 10uy
+    BAREWireCodec.decodeRequest requestBytes |> Expect.equal "retired request tag is refused" (Result.Error CodecFailure.InvalidPayload)
+    let replyBytes = reply Canceled |> BAREWireCodec.encodeReply |> mustSucceed
+    replyBytes[replyBytes.Length - 1] <- 10uy
+    BAREWireCodec.decodeReply replyBytes |> Expect.equal "retired reply tag is refused" (Result.Error CodecFailure.InvalidPayload)
+
+  testCaseAsync "reply prefix exceeding the control cap is refused before its body" <| async {
+    let prefix = BitConverter.GetBytes(uint32 BAREWireCodec.MaximumBody + 1u)
+    use stream = new MemoryStream(Array.append prefix [| 99uy |], false)
+    let! result = StreamFrames.readReplyAsync stream CancellationToken.None |> Async.AwaitTask
+    result |> Expect.equal "hard reply bound" (Result.Error(FrameFailure.InvalidLength(uint32 BAREWireCodec.MaximumBody + 1u)))
+    stream.Position |> Expect.equal "no declared body consumed" 4L
+  }
 
   testCaseAsync "fragmented binary stream preserves adjacent frames and clean EOF" <| async {
     let first = request (Status session)

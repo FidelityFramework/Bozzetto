@@ -386,6 +386,6 @@ let runTests argv =
 [<EntryPoint>]
 let main argv =
   match argv with
-  | [| "--composer-worker-client-fixture"; "--stdio" |] ->
-    Bozzetto.Tests.ComposerWorkerClientTests.runFixture ()
+  | [| "--composer-worker-client-fixture"; "--socket"; socketPath |] ->
+    Bozzetto.Tests.ComposerWorkerClientTests.runFixture socketPath
   | _ -> runTests argv

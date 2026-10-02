@@ -5,6 +5,7 @@ open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Net.Sockets
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
@@ -13,6 +14,9 @@ open System.Threading
 open System.Threading.Tasks
 open Expecto
 open Expecto.Flip
+open Bozzetto.Providers
+open Bozzetto.Composer.Protocol
+open Bozzetto.ComposerIntegration
 
 let private required name =
   match Environment.GetEnvironmentVariable name with
@@ -51,13 +55,17 @@ let private stringArray name value =
 /// responses. Each request has its own correlation slot and bounded lifetime.
 type private Client(directory: string, name: string) =
   let wireGate = obj ()
-  let writeGate = obj ()
-  let pending = ConcurrentDictionary<string, TaskCompletionSource<JsonElement>>()
-  let wire = new StreamWriter(Path.Combine(directory, name + "-wire.jsonl"), false, UTF8Encoding(false), AutoFlush = true)
+  let writeGate = new SemaphoreSlim(1, 1)
+  let pending = ConcurrentDictionary<string, TaskCompletionSource<Bozzetto.Composer.Protocol.Reply>>()
+  let wire = new StreamWriter(Path.Combine(directory, name + "-wire.tsv"), false, UTF8Encoding(false), AutoFlush = true)
+  let stdout = new StreamWriter(Path.Combine(directory, name + "-stdout.log"), false, UTF8Encoding(false), AutoFlush = true)
   let stderr = new StreamWriter(Path.Combine(directory, name + "-stderr.log"), false, UTF8Encoding(false), AutoFlush = true)
   let mutable sequence = 0
   let mutable host = ""
   let mutable epoch = ""
+  let socketDirectory = Path.Combine(Path.GetTempPath(), "boz-test-" + Guid.NewGuid().ToString("N"))
+  let socketPath = Path.Combine(socketDirectory, "worker.sock")
+  let listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
   let info = ProcessStartInfo()
   do
     let worker = required "BOZZETTO_COMPOSER_WORKER"
@@ -69,63 +77,110 @@ type private Client(directory: string, name: string) =
         | _ -> "dotnet"
       info.ArgumentList.Add worker
     else info.FileName <- worker
-    info.ArgumentList.Add "--stdio"
+    Directory.CreateDirectory socketDirectory |> ignore
+    File.SetUnixFileMode(socketDirectory, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+    listener.Bind(UnixDomainSocketEndPoint socketPath)
+    listener.Listen 1
+    info.ArgumentList.Add "--socket"
+    info.ArgumentList.Add socketPath
     info.UseShellExecute <- false
-    info.RedirectStandardInput <- true
     info.RedirectStandardOutput <- true
     info.RedirectStandardError <- true
     info.WorkingDirectory <- directory
   let workerProcess = Process.Start info
-  let record direction (line: string) =
+  let record direction requestId operation =
     lock wireGate (fun () ->
-      wire.WriteLine(JsonSerializer.Serialize {| direction = direction; at = DateTimeOffset.UtcNow; payload = line |}))
+      wire.WriteLine(sprintf "%O\t%s\t%s\t%s" DateTimeOffset.UtcNow direction requestId operation))
   let failPending (error: exn) =
     for KeyValue(_, completion) in pending do completion.TrySetException error |> ignore
+  let drain (reader: StreamReader) (writer: StreamWriter) = task {
+    let mutable reading = true
+    while reading do
+      let! line = reader.ReadLineAsync()
+      if isNull line then reading <- false
+      else do! writer.WriteLineAsync line
+  }
+  let logs = Task.WhenAll(drain workerProcess.StandardOutput stdout, drain workerProcess.StandardError stderr)
+  let socket =
+    try
+      use deadline = new CancellationTokenSource(TimeSpan.FromSeconds 20.)
+      listener.AcceptAsync(deadline.Token).AsTask().GetAwaiter().GetResult()
+    with error ->
+      if not workerProcess.HasExited then workerProcess.Kill true
+      workerProcess.WaitForExit()
+      logs.GetAwaiter().GetResult() |> ignore
+      stdout.Dispose()
+      stderr.Dispose()
+      wire.Dispose()
+      workerProcess.Dispose()
+      listener.Dispose()
+      Directory.Delete(socketDirectory, true)
+      raise error
+  let stream = new NetworkStream(socket, ownsSocket = true)
+  do listener.Dispose()
   let output = Task.Run(Func<Task>(fun () -> task {
     try
       let mutable reading = true
       while reading do
-        let! line = workerProcess.StandardOutput.ReadLineAsync()
-        if isNull line then
-          reading <- false
-          failPending (EndOfStreamException "Provider closed stdout")
-        else
-          record "response" line
-          use document = JsonDocument.Parse line
-          let response = document.RootElement.Clone()
-          match pending.TryRemove(stringField "requestId" response) with
+        let! response = StreamFrames.readReplyAsync stream CancellationToken.None
+        match response with
+        | Result.Ok(Some response) ->
+          record "response" response.RequestId (sprintf "%A" (Result.map BAREWireCodec.replyOperation response.Outcome))
+          match pending.TryRemove response.RequestId with
           | true, completion -> completion.TrySetResult response |> ignore
-          | _ -> failPending (InvalidDataException("Uncorrelated response: " + line))
+          | _ -> raise (InvalidDataException("Uncorrelated response: " + response.RequestId))
+        | Result.Ok None ->
+          reading <- false
+          failPending (EndOfStreamException "Provider closed socket")
+        | Result.Error error -> raise (InvalidDataException(sprintf "Malformed provider frame: %A" error))
     with error -> failPending error
   }))
-  let errors = Task.Run(Func<Task>(fun () -> task {
-    let mutable reading = true
-    while reading do
-      let! line = workerProcess.StandardError.ReadLineAsync()
-      if isNull line then reading <- false
-      else do! stderr.WriteLineAsync line
-  }))
+  let call body =
+    let id = string (Interlocked.Increment &sequence)
+    let request = { ProtocolVersion = BAREWireCodec.ProtocolVersion; RequestId = id; Body = body }
+    let completion = TaskCompletionSource<Bozzetto.Composer.Protocol.Reply>(TaskCreationOptions.RunContinuationsAsynchronously)
+    pending[id] <- completion
+    try
+      record "request" id (sprintf "%A" (BAREWireCodec.requestOperation body))
+      writeGate.Wait()
+      try
+        StreamFrames.writeRequestAsync stream CancellationToken.None request
+        |> fun work -> work.GetAwaiter().GetResult()
+        |> Result.defaultWith (fun error -> failtestf "Request encoding refused: %A" error)
+      finally writeGate.Release() |> ignore
+      let timeout = match body with Build _ -> TimeSpan.FromMinutes 8. | _ -> TimeSpan.FromSeconds 30.
+      completion.Task.WaitAsync(timeout).GetAwaiter().GetResult()
+    finally pending.TryRemove id |> ignore
 
   member _.Host = host
   member _.Epoch = epoch
   /// Test-only prediction used by a single-threaded self-cancellation probe.
   member _.NextRequestId = string (Volatile.Read(&sequence) + 1)
   member _.Call(operation: string, session: string, extra: (string * obj) list) =
-    let id = string (Interlocked.Increment &sequence)
-    let request = Dictionary<string, obj>()
-    for key, value in [ "protocolVersion", box 1; "requestId", box id; "operation", box operation
-                        "host", box host; "epoch", box epoch; "provider", box "clef-composer"; "session", box session ] @ extra do
-      request[key] <- value
-    let completion = TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously)
-    pending[id] <- completion
-    try
-      let line = JsonSerializer.Serialize request
-      record "request" line
-      lock writeGate (fun () -> workerProcess.StandardInput.WriteLine line; workerProcess.StandardInput.Flush())
-      let timeout = if operation = "build" then TimeSpan.FromMinutes 8. else TimeSpan.FromSeconds 30.
-      completion.Task.WaitAsync(timeout).GetAwaiter().GetResult()
-    finally
-      pending.TryRemove id |> ignore
+    // Test conveniences construct closed requests; JSON is only the external
+    // client projection used by these existing acceptance assertions.
+    let text name defaultValue =
+      extra |> List.tryFind (fst >> (=) name) |> Option.map (snd >> unbox<string>) |> Option.defaultValue defaultValue
+    let target = {
+      Host = text "host" host; Epoch = text "epoch" epoch
+      Provider = ProviderIdentity.parse (text "provider" "clef-composer") |> Result.defaultWith failwith }
+    let address = { Worker = target; Session = session }
+    let body =
+      match operation with
+      | "hello" -> Hello BAREWireCodec.agreement
+      | "open" -> Open(target, text "project" "")
+      | "reserve" -> Reserve(address, text "label" "")
+      | "build" -> Build(address, text "reservation" "")
+      | "status" -> Status address
+      | "run" ->
+        let arguments = extra |> List.tryFind (fst >> (=) "arguments") |> Option.map (snd >> unbox<string array>) |> Option.defaultValue [||]
+        Run(address, arguments)
+      | "cancel" -> Cancel address
+      | "cancel_request" -> CancelRequest(target, text "targetRequestId" "")
+      | "close" -> Close address
+      | "prepare_compiler_change" -> PrepareCompilerChange target
+      | _ -> failtestf "Operation has no binary request case: %s" operation
+    call body |> ComposerClientJson.wireReply
 
   member this.Hello() =
     let response = this.Call("hello", "", [])
@@ -138,15 +193,20 @@ type private Client(directory: string, name: string) =
   interface IDisposable with
     member _.Dispose() =
       try
-        workerProcess.StandardInput.Close()
+        socket.Shutdown SocketShutdown.Both
+        stream.Dispose()
         if not (workerProcess.WaitForExit 5000) then
           workerProcess.Kill true
           if not (workerProcess.WaitForExit 5000) then failtest "Owned provider process did not terminate after kill"
-        if not (Task.WhenAll(output, errors).Wait 5000) then failtest "Provider log drains did not terminate"
+        if not (Task.WhenAll(output, logs).Wait 5000) then failtest "Provider socket/log drains did not terminate"
       finally
+        stream.Dispose()
+        writeGate.Dispose()
         wire.Dispose()
+        stdout.Dispose()
         stderr.Dispose()
         workerProcess.Dispose()
+        Directory.Delete(socketDirectory, true)
 
 type internal Fixture = { Project: string; Source: string; Dependency: string; OriginalSource: string }
 
@@ -262,7 +322,6 @@ let tests =
       client.Call("prepare_compiler_change", "", [ "provider", box "fsharp" ]) |> refused "wrong_provider"
       client.Call("status", first, [ "host", box "foreign-host" ]) |> refused "wrong_authority"
       client.Call("status", first, [ "epoch", box "foreign-epoch" ]) |> refused "wrong_authority"
-      client.Call("eval", first, []) |> refused "unsupported_operation"
       let token = reserve client first "first edit"
       let missing = client.Call("cancel_request", "", [ "targetRequestId", box "no-such-request" ]) |> succeeded
       (field "cancellationRequested" missing).GetBoolean() |> Expect.isFalse "missing target is an idempotent no-op"
@@ -280,7 +339,7 @@ let tests =
       client.Call("run", first, []) |> refused "closed"
       client.Call("reserve", second, [ "label", box "surviving session" ]) |> succeeded |> ignore
   
-    testCase "pre-patch fence retires the process epoch and requires a fresh worker" <| fun _ ->
+    testCase "compiler retirement requires a fresh worker epoch" <| fun _ ->
       let directory = evidenceRoot ()
       let fixture = fixture directory
       use oldWorker = new Client(directory, "retired")
@@ -313,12 +372,8 @@ let tests =
       build client second "accepted surviving project" |> ignore
       run client second "stable\nbefore\n"
 
-      // Argument validation fails after session resolution, so its refusal must
-      // retain the accepted session's complete authority rather than host-only identity.
-      let malformed = client.Call("run", second, [ "arguments", box [| 1 |] ])
-      malformed |> refused "request_refused"
-      expectAuthority client second 1L malformed
-      run client second "stable\nbefore\n"
+      // Malformed JSON arguments are checked at the external client adapter in
+      // LiveProviderTests. They cannot inhabit this closed binary request type.
 
       File.Delete manifest
       Directory.CreateDirectory manifest |> ignore
@@ -419,6 +474,7 @@ let tests =
         stringArray "reusedObjects" unchanged |> List.contains identity |> Expect.isTrue ("compiler reports reuse: " + identity)
       let edit = reserve client session "changeable edit"
       noCurrent client session
+      client.Call("run", session, []) |> refused "not_accepted"
       let changedSource = fixture.OriginalSource.Replace("let changeable () = false", "let changeable () = true")
       File.WriteAllText(fixture.Source, changedSource)
       let edited = buildReserved client session edit |> succeeded
@@ -436,6 +492,7 @@ let tests =
   
       File.WriteAllText(fixture.Source, fixture.OriginalSource)
       client.Call("run", session, []) |> refused "compiler_refused"
+      client.Call("run", session, []) |> refused "not_accepted"
       noCurrent client session
       let invalid = reserve client session "invalid source"
       File.WriteAllText(fixture.Source, fixture.OriginalSource.Replace("let changeable () = false", "let changeable () = missingName"))

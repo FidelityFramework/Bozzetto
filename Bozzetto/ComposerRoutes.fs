@@ -100,7 +100,7 @@ let mapRoutes (app: WebApplication) (supervisor: ComposerSupervisor) =
 
   app.MapGet("/api/composer/sessions", RequestDelegate(fun (ctx: HttpContext) -> task {
     let! response = supervisor.SessionsAsync ctx.RequestAborted
-    do! writeJson ctx 200 response
+    do! writeJson ctx 200 (ComposerClientJson.directory response)
   })) |> ignore
 
   app.MapPost("/api/composer/{operation}", RequestDelegate(fun (ctx: HttpContext) -> task {
@@ -114,18 +114,11 @@ let mapRoutes (app: WebApplication) (supervisor: ComposerSupervisor) =
           match body.TryGetProperty "provider" with
           | false, _ -> "clef-composer"
           | _ -> field "provider" body
-        let reserved = set [ "operation"; "host"; "session"; "epoch"; "provider"; "requestId"; "protocolVersion" ]
-        let parameters =
-          body.EnumerateObject()
-          |> Seq.filter (fun item -> not (Set.contains item.Name reserved))
-          |> Seq.map (fun item -> item.Name, box (item.Value.Clone()))
-          |> Seq.toList
-        let request: ComposerRequest = {
-          Operation = string ctx.Request.RouteValues["operation"]
-          Host = field "host" body; Session = field "session" body; Epoch = field "epoch" body
-          Provider = provider; Parameters = parameters }
-        let! response = supervisor.ExecuteAsync(request, ctx.RequestAborted)
-        do! writeJson ctx 200 response
+        match ComposerClientJson.request (string ctx.Request.RouteValues["operation"]) body with
+        | Result.Error(code, message) -> do! writeJson ctx 400 (framingError (ComposerClientJson.refusalCode code) message)
+        | Result.Ok request ->
+          let! response = supervisor.ExecuteAsync(request, ctx.RequestAborted)
+          do! writeJson ctx 200 (ComposerClientJson.reply response)
     with
     | :? JsonException as error -> do! writeJson ctx 400 (framingError "invalid_json" error.Message)
     | :? InvalidDataException as error -> do! writeJson ctx 413 (framingError "request_too_large" error.Message)

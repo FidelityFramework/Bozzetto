@@ -2,239 +2,248 @@ module Bozzetto.Tests.ComposerWorkerClientTests
 
 open System
 open System.IO
-open System.Text.Json
+open System.Net.Sockets
 open System.Threading
 open System.Threading.Tasks
 open Expecto
 open Expecto.Flip
+open Bozzetto.Providers
+open Bozzetto.Composer.Protocol
 open Bozzetto.ComposerIntegration
 
 type private FixtureMarker = class end
 
-type CancelWhenSerialized(source: CancellationTokenSource, observed: unit -> unit) =
-  member _.Value =
-    observed ()
-    source.Cancel()
-    "canceled-before-send"
+let private workerAddress: WorkerAddress =
+  { Host = "transport-fixture"; Epoch = "transport-fixture-epoch"; Provider = ProviderIdentity.ClefComposer }
+let private address session = { Worker = workerAddress; Session = session }
+let private status session count: SessionSnapshot =
+  { Observation = uint64 count; Project = "fixture.fidproj"; ManifestPath = "fixture.manifest"
+    Closed = false; Busy = false; Current = None; RevocationPending = false; BackendError = None
+    CleanupPending = false; CleanupError = None }
+let private artifact: AcceptedArtifact =
+  { Generation = 0L; SourceVersion = "fixture"; ArtifactPath = "fixture"; ArtifactSha256 = "fixture"
+    ObjectManifest = "fixture"; ChangedWitnesses = [||]; RetainedWitnesses = [||]; RetiredWitnesses = [||]
+    WitnessVisits = [||]; CompiledObjects = [||]; ReusedObjects = [||]; RetiredObjects = [||] }
 
-/// Runs only through the test executable's explicit child-fixture branch.
-let runFixture () =
-  let held = ResizeArray<JsonElement>()
-  let reply (request: JsonElement) (result: obj) =
-    let frame =
-      {| protocolVersion = 1
-         requestId = request.GetProperty("requestId").GetString()
-         authority =
-          {| host = "transport-fixture"; epoch = "transport-fixture-epoch"
-             provider = "clef-composer"; generation = 0L
-             session = request.GetProperty("session").GetString() |}
-         success = true; result = result |}
-    Console.Out.WriteLine(JsonSerializer.Serialize frame)
-    Console.Out.Flush()
+/// Child-only typed transport fixture; control barriers use fixture session IDs.
+let runFixture socketPath =
+  use socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
+  socket.Connect(UnixDomainSocketEndPoint socketPath)
+  use stream = new NetworkStream(socket, ownsSocket = false)
+  let held = ResizeArray<Request>()
+  let reply (request: Request) result =
+    let response: Reply =
+      { ProtocolVersion = BAREWireCodec.ProtocolVersion; RequestId = request.RequestId
+        Authority = { Host = workerAddress.Host; Epoch = workerAddress.Epoch; Provider = workerAddress.Provider
+                      Generation = 0L; Session = ComposerWire.session request.Body }
+        Outcome = Result.Ok result }
+    StreamFrames.writeReplyAsync stream CancellationToken.None response |> fun work -> work.GetAwaiter().GetResult()
+    |> Result.defaultWith (fun error -> failwithf "Fixture encoding: %A" error)
+  let complete (request: Request) =
+    match request.Body with
+    | Build _ -> reply request (Built artifact)
+    | Run _ -> reply request (Ran { Generation = 0L; SourceVersion = "fixture"; ExitCode = 0; StandardOutput = ""; StandardError = "" })
+    | Status target -> reply request (Observed(status target.Session 0))
+    | _ -> failwith "Unexpected held fixture operation."
   let mutable reading = true
   while reading do
-    match Console.ReadLine() with
-    | null -> reading <- false
-    | line ->
-      use document = JsonDocument.Parse line
-      let request = document.RootElement
-      match request.GetProperty("operation").GetString() with
-      | "hello" -> reply request (box {| ready = true |})
-      | "barrier" -> reply request (box {| held = held.Count |})
-      | "cancel_request" ->
-        let result =
-          {| targetRequestId = request.GetProperty("targetRequestId").GetString()
-             cancellationRequested = true |}
-        reply request (box result)
-      | "release" ->
+    match StreamFrames.readRequestAsync stream CancellationToken.None |> fun work -> work.GetAwaiter().GetResult() with
+    | Result.Ok None -> reading <- false
+    | Result.Error error -> failwithf "Fixture framing: %A" error
+    | Result.Ok(Some request) ->
+      match request.Body with
+      | Hello agreement ->
+        reply request (HelloAccepted {
+          Agreement = agreement; Compiler = { AssemblyPath = "fixture"; Sha256 = "fixture"; Version = "fixture" }
+          Psg = { Schema = Fidelity.PSG.Revision.Schema; AssemblySha256 = "fixture"
+                  FormatVersion = Fidelity.PSG.Binary.FormatVersion; ContractFingerprint = Fidelity.PSG.Binary.ContractFingerprint }
+          Operations = [|Operation.Hello; Operation.Status; Operation.Build; Operation.Run; Operation.CancelRequest|]
+          InMemoryPatchAllowed = false })
+      | Status target when target.Session = "barrier" -> reply request (Observed(status target.Session held.Count))
+      | CancelRequest(_, id) -> reply request (RequestCanceled { TargetRequestId = id; CancellationRequested = true })
+      | Status target when target.Session = "release" ->
         let count = held.Count
-        for item in held do reply item (box {| completed = true |})
+        for request in held do complete request
         held.Clear()
-        reply request (box {| released = count |})
-      | "build" | "run" | "status" -> held.Add(request.Clone())
-      | operation -> invalidOp ("Unexpected transport fixture operation: " + operation)
+        reply request (Observed(status target.Session count))
+      | Build _ | Run _ | Status _ -> held.Add request
+      | _ -> failwith "Unexpected fixture request."
   0
 
-let private bounded (work: Task<'T>) = work.WaitAsync(TimeSpan.FromSeconds 10.)
+let private bounded (work: Task<'T>) = work.WaitAsync(TimeSpan.FromSeconds 20.)
+let private request session = Status(address session)
+let private count (reply: Reply) =
+  match reply.Outcome with Result.Ok(Observed value) -> int value.Observation | _ -> failtestf "Expected fixture count: %A" reply
+let private succeeded (reply: Reply) = Result.isOk reply.Outcome
+let private canceled (work: Task<Reply>) = task {
+  try let! _ = bounded work in return false
+  with :? OperationCanceledException -> return true
+}
+let private config () =
+  let dotnet = Environment.GetEnvironmentVariable "DOTNET_HOST_PATH" |> Option.ofObj |> Option.defaultValue "dotnet"
+  { WorkerPath = typeof<FixtureMarker>.Assembly.Location; DotnetPath = dotnet
+    EvidenceDirectory = Path.Combine(Path.GetTempPath(), "bozzetto-transport-tests", Guid.NewGuid().ToString("N")) }
+let private start beforeCancellation beforeWrite =
+  ComposerWorkerClient.startWithBoundaries beforeCancellation beforeWrite ["--composer-worker-client-fixture"] (config ())
 
-let private atCapacity operation = task {
+let private capacity operation = task {
   use entered = new ManualResetEventSlim()
   use release = new ManualResetEventSlim()
+  let boundary () = entered.Set(); if not (release.Wait(TimeSpan.FromSeconds 20.)) then failwith "Cancellation barrier timeout."
+  let! client = start boundary (fun _ _ -> Task.CompletedTask)
   use cancellation = new CancellationTokenSource()
-  let beforeCancellationAdmission () =
-    entered.Set()
-    if not (release.Wait(TimeSpan.FromSeconds 10.)) then
-      failwith "Cancellation admission barrier was not released."
-  let cache =
-    Environment.GetEnvironmentVariable "XDG_CACHE_HOME"
-    |> Option.ofObj
-    |> Option.filter (String.IsNullOrWhiteSpace >> not)
-    |> Option.defaultWith (fun () ->
-      Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache"))
-  let dotnet =
-    Environment.GetEnvironmentVariable "DOTNET_HOST_PATH"
-    |> Option.ofObj
-    |> Option.filter (String.IsNullOrWhiteSpace >> not)
-    |> Option.defaultValue "dotnet"
-  let! client =
-    ComposerWorkerClient.startWithCancellationBoundary beforeCancellationAdmission
-      [ "--composer-worker-client-fixture" ]
-      { WorkerPath = typeof<FixtureMarker>.Assembly.Location
-        DotnetPath = dotnet
-        EvidenceDirectory = Path.Combine(cache, "bozzetto", "worker-transport-tests", Guid.NewGuid().ToString("N")) }
-  let mutable canceling: Task = Task.CompletedTask
+  let victimBody = if operation = Operation.Build then Build(address "victim", "reservation") else Run(address "victim", [||])
+  let victim = client.RequestAsync(victimBody, cancellation.Token)
+  let held = [|for index in 1..255 -> client.RequestAsync(request (string index), CancellationToken.None)|]
+  let canceling = Task.Run(Action(fun () -> cancellation.Cancel()))
   try
-    let victim = client.RequestAsync(operation, "session", [], cancellation.Token)
-    let! barrier = client.RequestAsync("barrier", "", [], CancellationToken.None) |> bounded
-    barrier.GetProperty("result").GetProperty("held").GetInt32()
-    |> Expect.equal "The original request reached the child before cancellation." 1
-    let held =
-      Array.init 255 (fun _ -> client.RequestAsync("status", "session", [], CancellationToken.None))
-    canceling <- Task.Run(Action(fun () -> cancellation.Cancel()))
-    entered.Wait(TimeSpan.FromSeconds 10.)
-    |> Expect.isTrue "Cancellation reached the control-admission boundary."
-    let competing = client.RequestAsync("status", "session", [], CancellationToken.None)
-    let rejectedAtAdmission = competing.IsFaulted
-    release.Set()
-    do! canceling.WaitAsync(TimeSpan.FromSeconds 10.)
-    rejectedAtAdmission |> Expect.isTrue "An ordinary request cannot steal the withdrawal's bounded slot."
+    entered.Wait(TimeSpan.FromSeconds 20.) |> Expect.isTrue "Targeted cancellation reached its reserved-slot boundary."
     let! refused = task {
-      try
-        let! _ = competing |> bounded
-        return false
-      with :? InvalidOperationException as error ->
-        return error.Message = "Too many pending Composer requests."
+      try let! _ = client.RequestAsync(request "overflow", CancellationToken.None) |> bounded in return false
+      with :? InvalidOperationException as error -> return error.Message = "Too many pending Composer requests."
     }
-    refused |> Expect.isTrue "The competing request receives the ordinary capacity refusal."
-    let! detached = task {
-      try
-        let! _ = victim |> bounded
-        return false
-      with :? OperationCanceledException -> return true
-    }
-    detached |> Expect.isTrue "The original caller observes cancellation after the exact acknowledgement."
-    client.IsAlive |> Expect.isTrue "Capacity pressure does not retire a healthy worker."
-    let! released = client.RequestAsync("release", "", [], CancellationToken.None) |> bounded
-    released.GetProperty("result").GetProperty("released").GetInt32()
-    |> Expect.equal "Only the original and 255 admitted requests reached the child." 256
+    refused |> Expect.isTrue "Ordinary requests cannot steal the withdrawal slot."
+    release.Set()
+    let! detached = canceled victim
+    detached |> Expect.isTrue "Victim detaches after exact cancellation acknowledgement."
+    let! released = client.RequestAsync(request "release", CancellationToken.None) |> bounded
+    count released |> Expect.equal "Original plus all 255 peers reached the child." 256
     let! survivors = Task.WhenAll held |> bounded
-    survivors |> Array.forall (fun response -> response.GetProperty("success").GetBoolean())
-    |> Expect.isTrue "Every other admitted request completes successfully."
-    client.IsAlive |> Expect.isTrue "Late completion of the abandoned request leaves the connection usable."
+    survivors |> Array.forall succeeded |> Expect.isTrue "All peers survive cancellation at capacity."
+    client.IsAlive |> Expect.isTrue "Late victim reply is correlated and drained."
   finally
     release.Set()
-    try canceling.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
-    finally client.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
-}
-
-let private canceled (work: Task<JsonElement>) = task {
-  try
-    let! _ = bounded work
-    return false
-  with :? OperationCanceledException -> return true
+    canceling.WaitAsync(TimeSpan.FromSeconds 20.).GetAwaiter().GetResult()
+    client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.).GetAwaiter().GetResult()
 }
 
 let private cancellationPhase phase = task {
   let entered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let beforeWrite _ session =
-    if session = "writer" then
-      entered.TrySetResult() |> ignore
-      release.Task :> Task
+    if session = "writer" then entered.TrySetResult() |> ignore; release.Task :> Task
     else Task.CompletedTask
-  let cache =
-    Environment.GetEnvironmentVariable "XDG_CACHE_HOME"
-    |> Option.ofObj
-    |> Option.filter (String.IsNullOrWhiteSpace >> not)
-    |> Option.defaultWith (fun () -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache"))
-  let dotnet =
-    Environment.GetEnvironmentVariable "DOTNET_HOST_PATH"
-    |> Option.ofObj
-    |> Option.filter (String.IsNullOrWhiteSpace >> not)
-    |> Option.defaultValue "dotnet"
-  let! client = ComposerWorkerClient.startWithBoundaries ignore beforeWrite
-                  [ "--composer-worker-client-fixture" ]
-                  { WorkerPath = typeof<FixtureMarker>.Assembly.Location; DotnetPath = dotnet
-                    EvidenceDirectory = Path.Combine(cache, "bozzetto", "worker-transport-tests", Guid.NewGuid().ToString("N")) }
+  let mutable encodingCancellation: CancellationTokenSource option = None
+  let mutable encoded = 0
+  let beforeEncode body =
+    if ComposerWire.session body = "victim" then
+      encoded <- encoded + 1
+      encodingCancellation |> Option.iter _.Cancel()
+  let! client = ComposerWorkerClient.startWithEncodingBoundary beforeEncode ignore beforeWrite ["--composer-worker-client-fixture"] (config ())
   try
-    let peer = client.RequestAsync("status", "peer", [], CancellationToken.None)
-    let! initial = client.RequestAsync("barrier", "", [], CancellationToken.None) |> bounded
-    initial.GetProperty("result").GetProperty("held").GetInt32()
-    |> Expect.equal "The unrelated peer is physically retained by the child." 1
-    let mutable serialized = 0
+    let peer = client.RequestAsync(request "peer", CancellationToken.None)
+    let! barrier = client.RequestAsync(request "barrier", CancellationToken.None) |> bounded
+    count barrier |> Expect.equal "Peer is physically held." 1
     if phase = "writing" || phase = "sent" then
       use cancellation = new CancellationTokenSource()
-      let victim = client.RequestAsync("build", (if phase = "writing" then "writer" else "victim"), [], cancellation.Token)
+      let victim = client.RequestAsync(Build(address (if phase = "writing" then "writer" else "victim"), "reservation"), cancellation.Token)
       if phase = "writing" then
         do! entered.Task |> bounded
         cancellation.Cancel()
-        victim.IsCompleted |> Expect.isFalse "A possibly-written build waits for targeted cancellation acknowledgement."
+        victim.IsCompleted |> Expect.isFalse "Possibly-written work requires acknowledgement."
         release.TrySetResult() |> ignore
       else
-        let! barrier = client.RequestAsync("barrier", "", [], CancellationToken.None) |> bounded
-        barrier.GetProperty("result").GetProperty("held").GetInt32()
-        |> Expect.equal "The victim was sent before cancellation." 2
+        let! barrier = client.RequestAsync(request "barrier", CancellationToken.None) |> bounded
+        count barrier |> Expect.equal "Victim crossed socket before cancellation." 2
         cancellation.Cancel()
       let! detached = canceled victim
-      detached |> Expect.isTrue "Targeted cancellation acknowledges the exact build."
-      let! response = client.RequestAsync("release", "", [], CancellationToken.None) |> bounded
-      response.GetProperty("result").GetProperty("released").GetInt32()
-      |> Expect.equal "Both possibly-written requests retain valid late-reply correlation." 2
+      detached |> Expect.isTrue "Targeted cancellation completes the exact observer."
+      let! response = client.RequestAsync(request "release", CancellationToken.None) |> bounded
+      count response |> Expect.equal "Both late correlated replies are drained." 2
     else
-      let writer =
-        if phase = "queued" then Some(client.RequestAsync("status", "writer", [], CancellationToken.None)) else None
+      let writer = if phase = "queued" then Some(client.RequestAsync(request "writer", CancellationToken.None)) else None
       if writer.IsSome then do! entered.Task |> bounded
-      // The production bound is part of the discriminator: a healthy peer
-      // must survive more never-written cancellations than late-reply slots.
-      for _ in 1 .. 4097 do
+      for _ in 1..4097 do
         use cancellation = new CancellationTokenSource()
         if phase = "initial" then cancellation.Cancel()
-        let parameters =
-          if phase = "initial" || phase = "serialization" then
-            [ "probe", box (CancelWhenSerialized(cancellation, fun () -> serialized <- serialized + 1)) ]
-          else []
-        let beforeSerialization = serialized
-        let victim = client.RequestAsync("status", "victim", parameters, cancellation.Token)
-        if phase = "serialization" then
-          serialized |> Expect.equal "The public payload getter canceled during serialization." (beforeSerialization + 1)
+        encodingCancellation <- if phase = "encoding" then Some cancellation else None
+        let victim = client.RequestAsync(request "victim", cancellation.Token)
         if phase = "queued" then cancellation.Cancel()
         let! detached = canceled victim
-        detached |> Expect.isTrue "Each unsent caller observes cancellation."
-      serialized |> Expect.equal "Only serialization-time cancellation executes the getter."
-        (if phase = "serialization" then 4097 else 0)
+        detached |> Expect.isTrue "Every never-written request detaches."
+      encodingCancellation <- None
+      encoded |> Expect.equal "Pre-canceled requests never enter encoding." (if phase = "initial" then 0 else 4097)
       client.IsAlive |> Expect.isTrue "Never-written requests do not exhaust late-reply capacity."
-      peer.IsCompleted |> Expect.isFalse "The unrelated held request remains owned."
+      peer.IsCompleted |> Expect.isFalse "Unrelated peer is still retained."
       release.TrySetResult() |> ignore
-      let! response = client.RequestAsync("release", "", [], CancellationToken.None) |> bounded
-      response.GetProperty("result").GetProperty("released").GetInt32()
-      |> Expect.equal "No definitively unsent victim reached the child." (if writer.IsSome then 2 else 1)
+      let! response = client.RequestAsync(request "release", CancellationToken.None) |> bounded
+      count response |> Expect.equal "Unsent victims never reached the child." (if writer.IsSome then 2 else 1)
       match writer with
-      | Some work ->
-        let! reply = bounded work
-        reply.GetProperty("success").GetBoolean() |> Expect.isTrue "The writer survives queued cancellations."
+      | Some work -> let! reply = bounded work in succeeded reply |> Expect.isTrue "Writer survives queued cancellation."
       | None -> ()
     let! peerReply = peer |> bounded
-    peerReply.GetProperty("success").GetBoolean() |> Expect.isTrue "The independent peer completes successfully."
-    let! final = client.RequestAsync("barrier", "", [], CancellationToken.None) |> bounded
-    final.GetProperty("result").GetProperty("held").GetInt32() |> Expect.equal "All physical replies were drained." 0
-    client.IsAlive |> Expect.isTrue "The protocol remains usable after late replies."
+    succeeded peerReply |> Expect.isTrue "Independent peer completes."
+    let! final = client.RequestAsync(request "barrier", CancellationToken.None) |> bounded
+    count final |> Expect.equal "All physical replies drained." 0
   finally
     release.TrySetResult() |> ignore
-    client.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
+    client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.).GetAwaiter().GetResult()
+}
+
+let private closeRetainsCallback () = task {
+  use entered = new ManualResetEventSlim()
+  use release = new ManualResetEventSlim()
+  let boundary () =
+    entered.Set()
+    if not (release.Wait(TimeSpan.FromSeconds 30.)) then failwith "Held cancellation callback was not released."
+  let! client = start boundary (fun _ _ -> Task.CompletedTask)
+  use child = System.Diagnostics.Process.GetProcessById client.ProcessId
+  use cancellation = new CancellationTokenSource()
+  let victim = client.RequestAsync(Build(address "held-close", "reservation"), cancellation.Token)
+  let mutable canceling = Task.CompletedTask
+  let mutable closing = Task.CompletedTask
+  let mutable verified = false
+  try
+    let! barrier = client.RequestAsync(request "barrier", CancellationToken.None) |> bounded
+    count barrier |> Expect.equal "The child has received the owned request." 1
+    canceling <- Task.Run(Action(fun () -> cancellation.Cancel()))
+    entered.Wait(TimeSpan.FromSeconds 20.) |> Expect.isTrue "The cancellation callback owns admitted transport work."
+    closing <- client.StopAsync()
+    obj.ReferenceEquals(closing, client.StopAsync()) |> Expect.isTrue "Retirement retains one join receipt."
+    do! child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+    // State readiness is proven by the callback and actual process exit.
+    // Hold past the removed five-second join deadline to discriminate the
+    // prior premature disposal, not to infer readiness from elapsed time.
+    let deadline = Task.Delay(TimeSpan.FromSeconds 6.)
+    let! observed = Task.WhenAny(closing, deadline)
+    obj.ReferenceEquals(observed, deadline) |> Expect.isTrue "Close must not abandon owned cleanup at its former five-second timeout."
+    closing.IsCompleted |> Expect.isFalse "A dead process does not mean its admitted callback drained."
+    release.Set()
+    do! canceling.WaitAsync(TimeSpan.FromSeconds 10.)
+    do! closing.WaitAsync(TimeSpan.FromSeconds 10.)
+    // Completion was settled during invalidation; delivery to this observer
+    // may be scheduled after the physically owned callback/drain has joined.
+    let! withdrawn = task {
+      try
+        let! _ = victim.WaitAsync(TimeSpan.FromSeconds 10.)
+        return false
+      with :? ObjectDisposedException -> return true
+    }
+    withdrawn |> Expect.isTrue "The withdrawn observer receives the stop refusal."
+    client.IsAlive |> Expect.isFalse "Joined retirement cannot expose live worker authority."
+    verified <- true
+  finally
+    release.Set()
+    canceling.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
+    try client.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
+    with _ when not verified -> ()
 }
 
 [<Tests>]
-let tests =
-  let capacity =
-    [ "build"; "run" ]
-    |> List.map (fun operation ->
-      testCaseAsync (operation + " cancellation retains its slot at transport capacity") (async {
-        do! atCapacity operation |> Async.AwaitTask
-      }))
-  let phases =
-    [ "initial"; "serialization"; "queued"; "writing"; "sent" ]
-    |> List.map (fun phase ->
-      testCaseAsync (phase + " cancellation preserves transport ownership and peer progress") (async {
-        do! cancellationPhase phase |> Async.AwaitTask
-      }))
-  capacity @ phases |> testList "Composer worker transport capacity"
+let tests = testList "Composer worker socket client" [
+  testTask "build withdrawal retains capacity while peer requests survive" { do! capacity Operation.Build }
+  testTask "run withdrawal retains capacity while peer requests survive" { do! capacity Operation.Run }
+  for phase in ["initial"; "encoding"; "queued"; "writing"; "sent"] do
+    testTask (phase + " cancellation drains owned work without consuming unrelated capacity") { do! cancellationPhase phase }
+  testTask "close terminates the owned socket child and drains diagnostics" {
+    let! (client: IComposerWorker) = start ignore (fun _ _ -> Task.CompletedTask)
+    let pid = client.ProcessId
+    do! client.StopAsync()
+    client.IsAlive |> Expect.isFalse "Stopped child cannot retain authority."
+    let exited =
+      try use childProcess = System.Diagnostics.Process.GetProcessById pid in childProcess.HasExited
+      with :? ArgumentException -> true
+    exited |> Expect.isTrue "Close physically joins the child process."
+  }
+  testTask "close retains ownership of a held cancellation callback after physical child exit" { do! closeRetainsCallback () }
+]

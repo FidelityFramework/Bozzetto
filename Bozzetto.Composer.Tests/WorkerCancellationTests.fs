@@ -1,29 +1,38 @@
 module Bozzetto.Composer.Tests.WorkerCancellationTests
 
 open System
-open System.Collections.Generic
 open System.IO
-open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 open Bozzetto.Composer.WorkerProtocol
 open Bozzetto.Providers
+open Bozzetto.Composer.Protocol
 open Expecto
 open Expecto.Flip
 
-let private describeCompiler () =
+let private describeCompiler () : CompilerIdentity =
   { AssemblyPath = "injected-compiler"; Sha256 = "injected-sha"; Version = "test" }
 
 let private bounded (work: Task<'a>) = work.WaitAsync(TimeSpan.FromSeconds 5.)
-let private property name (json: JsonElement) = json.GetProperty(name: string)
-let private text name json = (property name json).GetString()
-let private success json =
-  (property "success" json).GetBoolean() |> Expect.isTrue (json.GetRawText())
-  property "result" json
-let private refusal code json =
-  (property "success" json).GetBoolean() |> Expect.isFalse (json.GetRawText())
-  text "code" (property "error" json) |> Expect.equal "refusal code" code
+let private success (reply: Bozzetto.Composer.Protocol.Reply) =
+  match reply.Outcome with
+  | Result.Ok body -> body
+  | Result.Error error -> failtestf "Unexpected typed refusal: %A" error
+let private refusal code (reply: Bozzetto.Composer.Protocol.Reply) =
+  match reply.Outcome with
+  | Result.Error error -> error.Code |> Expect.equal "refusal code" code
+  | Result.Ok body -> failtestf "Expected typed refusal, received %A" body
 let private taskCase name work = testCaseAsync name (async { do! work () |> bounded |> Async.AwaitTask })
+let private address (identity: Authority) : WorkerAddress =
+  { Host = identity.Host; Epoch = identity.Epoch; Provider = identity.Provider }
+let private session (identity: Authority) : SessionAddress =
+  { Worker = address identity; Session = identity.Session }
+let private request id body : Request =
+  { ProtocolVersion = BAREWireCodec.ProtocolVersion; RequestId = id; Body = body }
+let private observed reply =
+  match success reply with Observed value -> value | body -> failtestf "Expected status, received %A" body
+let private reservation reply =
+  match success reply with Reserved value -> value.Reservation | body -> failtestf "Expected reservation, received %A" body
 
 let private directory () =
   let cache =
@@ -34,23 +43,10 @@ let private directory () =
   Directory.CreateDirectory root |> ignore
   root
 
-let private request id operation (identity: JsonElement option) extra =
-  let fields = Dictionary<string, obj | null>()
-  fields["protocolVersion"] <- box 1
-  fields["requestId"] <- box id
-  fields["operation"] <- box operation
-  fields["provider"] <- box "clef-composer"
-  match identity with
-  | Some value ->
-    for name in [ "host"; "session"; "epoch" ] do fields[name] <- box (text name value)
-  | None -> ()
-  for name, value in extra do fields[name] <- value
-  JsonSerializer.SerializeToElement fields
-
 let private hello (worker: Worker<int64>) = task {
-  let! response = worker.Handle(request "hello" "hello" None [])
-  success response |> ignore
-  return property "authority" response
+  let! response = worker.Handle(request "hello" (Hello BAREWireCodec.agreement))
+  match success response with HelloAccepted _ -> () | body -> failtestf "Expected hello, received %A" body
+  return response.Authority
 }
 
 type private Backend(failCleanup: bool) =
@@ -90,23 +86,23 @@ let private canceledOperation runOperation () = task {
   let backend = new Backend(false)
   use worker = new Worker<int64>(Path.Combine(root, "sessions"), (fun _ _ -> backend), describeCompiler)
   let! identity = hello worker
-  let! opened = worker.Handle(request "open" "open" (Some identity) [ "project", box project ])
+  let! opened = worker.Handle(request "open" (Open(address identity, project)))
   success opened |> ignore
-  let identity = property "authority" opened
-  let! reserved = worker.Handle(request "reserve" "reserve" (Some identity) [ "label", box "initial" ])
-  let reservation = reserved |> success |> text "reservation"
+  let target = session opened.Authority
+  let! reserved = worker.Handle(request "reserve" (Reserve(target, "initial")))
+  let token = reservation reserved
   if runOperation then
-    let! accepted = worker.Handle(request "first-build" "build" (Some identity) [ "reservation", box reservation ])
+    let! accepted = worker.Handle(request "first-build" (Build(target, token)))
     success accepted |> ignore
   use canceled = new CancellationTokenSource()
   canceled.Cancel()
-  let operation, parameters = if runOperation then "run", [] else "build", [ "reservation", box reservation ]
-  let! refused = worker.Handle(request "canceled-operation" operation (Some identity) parameters, cancellation = canceled.Token)
-  refusal "canceled" refused
-  let! status = worker.Handle(request "status" "status" (Some identity) [])
-  (status |> success |> property "busy").GetBoolean() |> Expect.isFalse "forwarded cancellation leaves no stranded active request"
-  ((status |> success |> property "current").ValueKind <> JsonValueKind.Null)
-  |> Expect.equal "forwarded observer cancellation preserves current artifact authority" runOperation
+  let body = if runOperation then RequestBody.Run(target, [||]) else Build(target, token)
+  let! refused = worker.Handle(request "canceled-operation" body, cancellation = canceled.Token)
+  refusal RefusalCode.Canceled refused
+  let! status = worker.Handle(request "status" (Status target))
+  let status = observed status
+  status.Busy |> Expect.isFalse "forwarded cancellation leaves no stranded active request"
+  status.Current.IsSome |> Expect.equal "forwarded observer cancellation preserves current artifact authority" runOperation
   backend.Builds |> Expect.equal "pre-canceled build never enters backend" (if runOperation then 1 else 0)
   backend.Runs |> Expect.equal "pre-canceled run never launches an artifact" 0
   let! retired = worker.RetireAsync()
@@ -124,14 +120,13 @@ let tests = testList "Composer worker request lifetime" [
     let backend = new Backend(false)
     use worker = new Worker<int64>(Path.Combine(root, "sessions"), (fun _ _ -> backend), describeCompiler)
     let! identity = hello worker
-    let! opened = worker.Handle(request "open" "open" (Some identity) [ "project", box project ])
-    let identity = property "authority" opened
-    let first = (opened |> success |> property "observation").GetUInt64()
-    let! before = worker.Handle(request "before" "status" (Some identity) [])
-    let! after = worker.Handle(request "after" "status" (Some identity) [])
-    (property "authority" before).GetRawText()
-    |> Expect.equal "observation reads do not mint compiler authority" ((property "authority" after).GetRawText())
-    [ first; (before |> success |> property "observation").GetUInt64(); (after |> success |> property "observation").GetUInt64() ]
+    let! opened = worker.Handle(request "open" (Open(address identity, project)))
+    let first = match success opened with Opened value -> value.Observation | body -> failtestf "Expected opened, received %A" body
+    let target = session opened.Authority
+    let! before = worker.Handle(request "before" (Status target))
+    let! after = worker.Handle(request "after" (Status target))
+    before.Authority |> Expect.equal "observation reads do not mint compiler authority" after.Authority
+    [ first; (observed before).Observation; (observed after).Observation ]
     |> Expect.equal "wire values retain actual capture ordering" [ 1UL; 2UL; 3UL ]
     let! retired = worker.RetireAsync()
     retired |> Result.isOk |> Expect.isTrue "status fixture closes its owner"
@@ -143,32 +138,31 @@ let tests = testList "Composer worker request lifetime" [
     let observed = ResizeArray<string>()
     let cancel id =
       observed.Add id
-      if id = "held-build" then
-        target.Cancel()
-        true
-      elif id = "other-build" then
-        unrelated.Cancel()
-        true
+      if id = "held-build" then target.Cancel(); true
+      elif id = "other-build" then unrelated.Cancel(); true
       else false
     use worker = new Worker<int64>(directory (), (fun _ _ -> failwith "No project should be opened"), describeCompiler, cancelRequest = cancel)
     let! identity = hello worker
-    for overrides, code in [ [ "host", box "foreign" ], "wrong_authority"
-                             [ "epoch", box "foreign" ], "wrong_authority"
-                             [ "provider", box "fsharp" ], "wrong_provider" ] do
-      let! refused = worker.Handle(request "invalid" "cancel_request" (Some identity) ([ "targetRequestId", box "held-build" ] @ overrides))
+    let targetAddress = address identity
+    for invalidAddress, code in [
+      { targetAddress with Host = "foreign" }, RefusalCode.WrongAuthority
+      { targetAddress with Epoch = "foreign" }, RefusalCode.WrongAuthority
+      { targetAddress with Provider = ProviderIdentity.FSharp }, RefusalCode.WrongProvider ] do
+      let! refused = worker.Handle(request "invalid" (CancelRequest(invalidAddress, "held-build")))
       refusal code refused
     observed.Count |> Expect.equal "invalid authority never reaches request cancellation" 0
-    let! missing = worker.Handle(request "missing" "cancel_request" (Some identity) [])
-    refusal "invalid_request" missing
-    let! response = worker.Handle(request "cancel" "cancel_request" (Some identity) [ "targetRequestId", box "held-build" ])
-    let result = success response
-    (property "cancellationRequested" result).GetBoolean() |> Expect.isTrue "target acknowledged"
-    text "targetRequestId" result |> Expect.equal "acknowledgement retains exact request id" "held-build"
-    (property "authority" response).GetRawText() |> Expect.equal "request cancellation reports host authority" (identity.GetRawText())
+    let! missing = worker.Handle(request "missing" (CancelRequest(targetAddress, "")))
+    refusal RefusalCode.InvalidRequest missing
+    let! response = worker.Handle(request "cancel" (CancelRequest(targetAddress, "held-build")))
+    let result = match success response with RequestCanceled value -> value | body -> failtestf "Expected cancellation, received %A" body
+    result.CancellationRequested |> Expect.isTrue "target acknowledged"
+    result.TargetRequestId |> Expect.equal "acknowledgement retains exact request id" "held-build"
+    response.Authority |> Expect.equal "request cancellation reports host authority" identity
     target.IsCancellationRequested |> Expect.isTrue "target token is canceled"
     unrelated.IsCancellationRequested |> Expect.isFalse "unrelated request token remains live"
-    let! unknown = worker.Handle(request "unknown" "cancel_request" (Some identity) [ "targetRequestId", box "completed-request" ])
-    (unknown |> success |> property "cancellationRequested").GetBoolean() |> Expect.isFalse "completed or unknown target is harmless"
+    let! unknown = worker.Handle(request "unknown" (CancelRequest(targetAddress, "completed-request")))
+    let unknown = match success unknown with RequestCanceled value -> value | body -> failtestf "Expected cancellation, received %A" body
+    unknown.CancellationRequested |> Expect.isFalse "completed or unknown target is harmless"
     observed |> Seq.toList |> Expect.equal "callback receives exact explicit targets only" [ "held-build"; "completed-request" ]
   }
 
@@ -190,15 +184,15 @@ let tests = testList "Composer worker request lifetime" [
       backend :> IProjectBackend<int64>
     use worker = new Worker<int64>(Path.Combine(root, "sessions"), create, describeCompiler)
     let! identity = hello worker
-    let opening = Task.Run<JsonElement>(Func<Task<JsonElement>>(fun () ->
-      worker.Handle(request "held-open" "open" (Some identity) [ "project", box project ])))
+    let opening = Task.Run<Bozzetto.Composer.Protocol.Reply>(Func<Task<Bozzetto.Composer.Protocol.Reply>>(fun () ->
+      worker.Handle(request "held-open" (Open(address identity, project)))))
     try
       do! bounded entered.Task
       let retirement = worker.RetireAsync()
       retirement.IsCompleted |> Expect.isFalse "fence accounts for already-admitted construction"
       release.TrySetResult() |> ignore
       let! refused = bounded opening
-      refusal "compiler_retired" refused
+      refusal RefusalCode.CompilerRetired refused
       let! first = bounded retirement
       match first with
       | Result.Ok () -> failtest "First retirement forgot the overtaken open's failed cleanup"
@@ -206,8 +200,8 @@ let tests = testList "Composer worker request lifetime" [
       let! second = bounded (worker.RetireAsync())
       second |> Expect.equal "later fence retains the failed detached session's cleanup evidence" first
       backend.Disposals |> Expect.equal "failure remains recorded without unsafe repeated backend cleanup" 1
-      let! laterOpen = worker.Handle(request "late-open" "open" (Some identity) [ "project", box project ])
-      refusal "compiler_retired" laterOpen
+      let! laterOpen = worker.Handle(request "late-open" (Open(address identity, project)))
+      refusal RefusalCode.CompilerRetired laterOpen
     finally
       release.TrySetResult() |> ignore
   }

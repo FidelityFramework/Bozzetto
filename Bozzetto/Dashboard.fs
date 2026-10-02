@@ -1800,42 +1800,25 @@ let createResetHandler
     | :? System.ObjectDisposedException -> ()
   }
 
-/// The ONLY place `/dashboard/switch-workflow` makes a real network call:
-/// the SAME REST route VS Code already uses (`POST
-/// /api/sessions/{sid}/workflow`, `McpServer.fs`), reached over loopback on
-/// the daemon's own MCP/API port (`infra.McpPort`) instead of a second,
-/// independent switch implementation — one route, one implementation, for
-/// every client that wants to switch a session's workflow.
-let switchWorkflowViaApi
-  (mcpPort: int)
+/// Dashboard and external adapters invoke the same session owner directly.
+let switchWorkflow
+  (operations: SessionManagementOps)
   (sessionId: WorkerProtocol.SessionId)
   (target: WorkflowTypes.SessionWorkflow)
   : Threading.Tasks.Task<Result<string, string>> =
   task {
     try
-      use http = new HttpClient()
-      // A workflow switch can rebuild the target project before the new
-      // worker is ready — generous, matching Hard Reset's own expectations
-      // (SessionBuild's kill timer) rather than a short eval-style timeout.
-      http.Timeout <- TimeSpan.FromMinutes(10.0)
-      let url = sprintf "http://127.0.0.1:%d/api/sessions/%s/workflow" mcpPort (WorkerProtocol.SessionId.value sessionId)
-      let bodyJson = Text.Json.JsonSerializer.Serialize({| workflow = WorkflowSwitch.requestValue target |})
-      use req = new HttpRequestMessage(HttpMethod.Post, url)
-      req.Content <- new StringContent(bodyJson, Text.Encoding.UTF8, "application/json")
-      let! resp = http.SendAsync(req)
-      let! body = resp.Content.ReadAsStringAsync()
-      return WorkflowSwitch.parseResponse (int resp.StatusCode) body
+      let! result = operations.SwitchWorkflow (WorkerProtocol.SessionId.value sessionId) target
+      return Result.mapError BozzettoError.describe result
     with ex ->
-      return Error (sprintf "Could not reach the session API: %s" ex.Message)
+      return Error (sprintf "Session workflow operation failed: %s" ex.Message)
   }
 
 /// Create the workflow-switch POST handler. Parametrized over `getCurrentLabel`
 /// and `switchWorkflow` (mirroring `createResetHandler`'s injection of
 /// `resetSession`) purely for testability — a fake of each lets tests drive
-/// every branch (unknown session, bad target, API success, API failure)
-/// with no network and no daemon. Production wiring (`createEndpoints`)
-/// supplies `switchWorkflowViaApi infra.McpPort`, the only place a real HTTP
-/// call happens.
+/// every branch (unknown session, bad target, owner success, owner failure).
+/// Production wiring supplies the shared session owner's typed operation.
 let createWorkflowSwitchHandler
   (getCurrentLabel: WorkerProtocol.SessionId -> string)
   (switchWorkflow: WorkerProtocol.SessionId -> WorkflowTypes.SessionWorkflow -> Threading.Tasks.Task<Result<string, string>>)
@@ -2891,13 +2874,10 @@ let createEndpoints
     yield post "/dashboard/reset" (createResetHandler "Reset" a.ResetSession)
     yield post "/dashboard/hard-reset" (createResetHandler "Hard Reset" a.HardResetSession)
     yield post "/dashboard/cancel-eval" (createCancelEvalHandler a.CancelEval)
-    // The real workflow switcher (bozzetto-ux-roast.md §4.1/§4.2/§11 Island B
-    // item 4): reuses the already-shipped `POST /api/sessions/{sid}/workflow`
-    // over loopback rather than adding a second switch implementation.
     yield post "/dashboard/switch-workflow"
       (createWorkflowSwitchHandler
         (q.GetSessionWorkflow >> WorkflowTypes.SessionWorkflow.label)
-        (switchWorkflowViaApi infra.McpPort))
+        a.SwitchWorkflow)
     yield post "/dashboard/clear-output" createClearOutputHandler
     yield post "/dashboard/discover-projects" createDiscoverHandler
     yield post "/dashboard/toggle-project" createToggleProjectHandler

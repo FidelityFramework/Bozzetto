@@ -215,8 +215,7 @@
         <Compile Include="CrossCheckoutOverlap.fs" />
         <Compile Include="Features\Verification.fs" />
         <Compile Include="SessionMode.fs" />
-        <Compile Include="HttpWorkerClient.fs" />
-        <Compile Include="HostManifest.fs" />
+        <Compile Include="WorkerStream.fs" />
         <Compile Include="VariantSelector.fs" />
         <Compile Include="HostAdaptation.fs" />
         <Compile Include="OrphanTempDirSweep.fs" />

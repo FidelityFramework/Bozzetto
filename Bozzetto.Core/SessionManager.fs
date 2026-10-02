@@ -316,212 +316,30 @@ module SessionManager =
     : Result<SpawnedWorker, BozzettoError> =
     Error (BozzettoError.WorkerSpawnFailed ExternalFSharpService.message)
 
-  /// Run a blocking action on a dedicated background thread, never a
-  /// thread-pool thread. Returns a Task that completes when the action
-  /// returns, so a caller can `Async.AwaitTask` it exactly like a
-  /// `Task.Run` result — without pinning a pool thread for the action's
-  /// entire lifetime.
-  ///
-  /// WHY: a long-lived blocking `proc.StandardError/Output.ReadLine()` loop
-  /// wrapped in `Task.Run` pins a real thread-pool thread for as long as
-  /// the loop runs — for a live session's stderr/stdout reader, that is the
-  /// session's ENTIRE lifetime. `SessionManager.fs:1126-1145`'s old-worker
-  /// retirement already uses a dedicated thread for exactly this reason
-  /// (its own comment: "under pool saturation / memory pressure a
-  /// pool-queued retirement can be starved indefinitely"); this generalizes
-  /// the same fix to `awaitWorkerPort`'s two readers and
-  /// `SessionBuild.runOnce`'s two readers, which were the ones actually
-  /// observed starving the pool under 5 concurrent session warmups on
-  /// 2026-09-22 (`/health`/`/api/sessions` — lock-free, no I/O — timing out
-  /// for a full minute; Kestrel logging `heartbeat has been running for
-  /// "00:01:00"`). Two pool threads pinned per live session, scaling with
-  /// session count and bounded by nothing, is the actual mechanism behind
-  /// that lockup and very plausibly behind the onboarding trials' "stuck
-  /// for 20 minutes" / "stop_session timed out at 300s" reports too: the
-  /// daemon's own 120s safety-net timers are themselves pool continuations,
-  /// and a starved pool can delay the very watchdogs meant to catch a stuck
-  /// session.
-  let private runOnDedicatedThread (name: string) (action: unit -> unit) : System.Threading.Tasks.Task =
-    let tcs = System.Threading.Tasks.TaskCompletionSource()
-    let thread =
-      System.Threading.Thread(fun () ->
-        try
-          action ()
-          tcs.SetResult()
-        with ex ->
-          tcs.SetException(ex))
-    thread.IsBackground <- true
-    thread.Name <- name
-    thread.Start()
-    tcs.Task
-
-  /// Read the worker's stdout until WORKER_PORT is reported, then post
-  /// a WorkerReady (or WorkerSpawnFailed) message back to the agent.
-  /// Runs completely off the agent loop — never blocks the MailboxProcessor.
-  /// Bounded by Timeouts.warmupInactivityLimit (reset on every
-  /// WARMUP_PROGRESS= line — silence, not slowness, is what trips this) and
-  /// Timeouts.warmupAbsoluteMax (the hard ceiling neither progress nor
-  /// silence can argue past). See WarmupSupervision.decidePoll for the pure
-  /// decision this mirrors.
-  let awaitWorkerPort
+  /// A local F# worker cannot become a production transport. This defensive
+  /// boundary also retires an injected process instead of interpreting stdout
+  /// as a private HTTP endpoint. Tests can inject their own readiness callback.
+  let private refuseLocalWorker
     (sessionId: SessionId)
     (proc: Process)
     (inbox: MailboxProcessor<SessionCommand>)
-    (ct: CancellationToken)
-    =
+    (_ct: CancellationToken) =
+    let pid = proc.Id
     Async.Start(async {
-      use cts =
-        CancellationTokenSource.CreateLinkedTokenSource(ct)
-      // Inactivity-bounded, not flat-bounded: reset on every WARMUP_PROGRESS=
-      // line so a large repo that is genuinely still discovering/compiling
-      // projects gets to keep going, while a process that goes SILENT — the
-      // "20+ minutes, no error, no sign of life" failure three onboarding
-      // trials hit (fcs-trial-a/b/c, 2026-09-22) — is caught within
-      // Timeouts.warmupInactivityLimit of the moment it stopped talking, not
-      // after some flat ceiling that a big-but-healthy warmup could also
-      // trip. absoluteDeadline is the hard ceiling neither progress nor
-      // silence can argue past.
-      let started = DateTime.UtcNow
-      let absoluteDeadline = started + Timeouts.warmupAbsoluteMax
-      let mutable timeoutReason : string option = None
-      cts.CancelAfter(Timeouts.warmupInactivityLimit)
-      let linkedCt = cts.Token
+      let mutable reason = ExternalFSharpService.message
       try
-        let stderrLines = System.Collections.Concurrent.ConcurrentQueue<string>()
-        let stderrTask =
-          runOnDedicatedThread "bozzetto-worker-stderr-reader" (fun () ->
-            try
-              let mutable line = proc.StandardError.ReadLine()
-              while not (isNull line) do
-                stderrLines.Enqueue(line)
-                line <- proc.StandardError.ReadLine()
-            with _ -> ())
-        let mutable found = None
-        while Option.isNone found do
-          let! line = proc.StandardOutput.ReadLineAsync(linkedCt).AsTask() |> Async.AwaitTask
-          match isNull line with
-          | true ->
-            let workerPid = proc.Id
-            let stderrSummary =
-              stderrLines.ToArray()
-              |> Array.truncate 20
-              |> String.concat "\n"
-            try proc.EnableRaisingEvents <- false with _ -> ()
-            try proc.Dispose() with _ -> ()
-            inbox.Post(
-              SessionCommand.WorkerSpawnFailed(
-                sessionId,
-                workerPid,
-                match String.IsNullOrWhiteSpace stderrSummary with
-                | true -> "Worker process exited before reporting port"
-                | false -> sprintf "Worker process exited before reporting port. stderr:\n%s" stderrSummary))
-            found <- Some ""
-          | false when DateTime.UtcNow > absoluteDeadline ->
-            // The absolute ceiling tripped exactly as this line arrived —
-            // treat it the same as the OperationCanceledException path below
-            // rather than accepting one more line past the hard bound.
-            timeoutReason <- Some (WarmupSupervision.absoluteTimeoutReason (DateTime.UtcNow - started))
-            found <- Some ""
-          | false ->
-            match line.StartsWith("WARMUP_PROGRESS=", System.StringComparison.Ordinal) with
-            | true ->
-              let payload = line.Substring("WARMUP_PROGRESS=".Length)
-              inbox.Post(SessionCommand.WorkerWarmupProgress(sessionId, payload))
-              // Progress observed — reset the inactivity clock so a slow-but-
-              // working large-repo discovery isn't killed for being slow.
-              try cts.CancelAfter(Timeouts.warmupInactivityLimit) with :? ObjectDisposedException -> ()
-            | false ->
-              match line.StartsWith("WORKER_PORT=", System.StringComparison.Ordinal) with
-              | true ->
-                found <- Some (line.Substring("WORKER_PORT=".Length))
-              | false -> ()
-        match found with
-        | Some baseUrl when baseUrl.Length > 0 ->
-          // Port found: disable the startup-timeout guard so the long-lived
-          // post-startup stdout read below can't trip it and kill a live worker.
-          cts.CancelAfter(System.Threading.Timeout.Infinite)
-          let proxy = HttpWorkerClient.httpProxy baseUrl
-          inbox.Post(SessionCommand.WorkerReady(sessionId, proc.Id, baseUrl, proxy))
-          // #82: keep reading stdout past the port line for a run_app'd app's
-          // APP_OUTPUT= lines (to EOF; read errors/EOF swallowed, not a spawn fail).
-          let appOutTask =
-            runOnDedicatedThread "bozzetto-worker-stdout-reader" (fun () ->
-              try
-                let mutable l = proc.StandardOutput.ReadLine()
-                while not (isNull l) do
-                  (match AppOutput.tryParse l with
-                   | Some payload -> inbox.Post(SessionCommand.WorkerAppOutput(sessionId, payload))
-                   | None -> ())
-                  l <- proc.StandardOutput.ReadLine()
-              with _ -> ())
-          do! stderrTask |> Async.AwaitTask
-          do! appOutTask |> Async.AwaitTask
-        | Some _ ->
-          // Absolute-deadline branch above: found <- Some "" with a reason
-          // parked in timeoutReason, distinct from "process exited" (which
-          // already posted its own WorkerSpawnFailed before setting found).
-          match timeoutReason with
-          | Some reason ->
-            try proc.Kill(entireProcessTree = true) with ex2 ->
-              Log.warn "[SessionManager] Kill on absolute warmup deadline: %s" ex2.Message
-            try proc.EnableRaisingEvents <- false with _ -> ()
-            try proc.Dispose() with _ -> ()
-            inbox.Post(SessionCommand.WorkerSpawnFailed(sessionId, proc.Id, reason))
-          | None -> ()
-          do! stderrTask |> Async.AwaitTask
-        | None ->
-          do! stderrTask |> Async.AwaitTask
-      with
-      | :? OperationCanceledException when not ct.IsCancellationRequested ->
-        // Linked CTS fired with no line arriving within the inactivity
-        // window: the worker has gone SILENT, not merely slow — a
-        // Progressed observation would have reset this timer (see
-        // WarmupSupervision.decidePoll's Invariant 4). This is the fix for
-        // "warmup on a big repo is unbounded and silent": a healthy big
-        // repo keeps resetting this clock by printing WARMUP_PROGRESS=
-        // lines; a stuck one goes quiet and is caught within
-        // Timeouts.warmupInactivityLimit of going quiet.
-        let stderrSummary =
-          try
-            proc.StandardError.ReadToEnd()
-          with _ -> ""
-        try proc.Kill(entireProcessTree = true) with ex2 ->
-          Log.warn "[SessionManager] Kill on startup timeout: %s" ex2.Message
-        try proc.EnableRaisingEvents <- false with _ -> ()
-        try proc.Dispose() with _ -> ()
-        inbox.Post(
-          SessionCommand.WorkerSpawnFailed(
-            sessionId,
-            proc.Id,
-            sprintf
-              "%s (set BOZZETTO_WARMUP_INACTIVITY_SECONDS to adjust)%s"
-              (WarmupSupervision.inactivityTimeoutReason Timeouts.warmupInactivityLimit)
-              (match String.IsNullOrWhiteSpace stderrSummary with
-               | true -> ""
-               | false -> sprintf "\nstderr:\n%s" stderrSummary)))
-      | ex ->
-        let stderrSummary =
-          try
-            proc.StandardError.ReadToEnd()
-          with _ -> ""
-        try proc.Kill(entireProcessTree = true) with ex2 ->
-          Log.warn "[SessionManager] Kill on spawn failure: %s" ex2.Message
-        try proc.EnableRaisingEvents <- false with _ -> ()
-        try proc.Dispose() with _ -> ()
-        inbox.Post(
-          SessionCommand.WorkerSpawnFailed(
-            sessionId, proc.Id,
-            sprintf "Failed to connect to worker: %s%s"
-              ex.Message
-              (match String.IsNullOrWhiteSpace stderrSummary with
-               | true -> ""
-               | false -> sprintf "\nstderr:\n%s" stderrSummary)))
-    }, ct)
+        if not proc.HasExited then
+          proc.Kill(entireProcessTree = true)
+          do! proc.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 5.) |> Async.AwaitTask
+      with error -> reason <- reason + " Process retirement: " + error.Message
+      try proc.EnableRaisingEvents <- false with _ -> ()
+      proc.Dispose()
+      inbox.Post(SessionCommand.WorkerSpawnFailed(sessionId, pid, reason))
+    })
 
   /// Stop a worker gracefully: send Shutdown with a bounded wait, then kill the
-  /// whole process tree. The bounded wait is essential — HttpWorkerClient.httpProxy
-  /// has no request timeout, so a hung worker would otherwise block daemon shutdown
-  /// forever (StopAll times out and the daemon exits, orphaning workers — issue #126).
+  /// whole process tree. A bounded wait prevents an injected unresponsive proxy
+  /// from blocking owner shutdown indefinitely.
   /// Kill uses entireProcessTree so any child processes (dotnet restore, compiler
   /// server) spawned by the worker die with it instead of lingering on Windows.
   let stopWorker (session: ManagedSession) = async {
@@ -597,7 +415,7 @@ module SessionManager =
 
   let internal defaultRuntime = {
     StartWorkerProcess = startWorkerProcess
-    AwaitWorkerPort = awaitWorkerPort
+    AwaitWorkerPort = refuseLocalWorker
     StopWorker = stopWorker
     RunBuildAsync = fun _projects _workingDir -> async {
       return

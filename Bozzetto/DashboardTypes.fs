@@ -227,43 +227,6 @@ module WorkflowSwitch =
     | WorkflowTypes.SessionWorkflow.Interactive -> "interactive"
     | WorkflowTypes.SessionWorkflow.LiveTesting -> "livetesting"
 
-  /// Parse the response body `POST /api/sessions/{sid}/workflow` returns
-  /// (`McpServer.fs`'s `mapSessionRoutes`) into the plain `Result<string,
-  /// string>` shape every other `DashboardActions` member already uses. Two
-  /// distinct failure shapes exist on that route and both must parse: a
-  /// direct `{success:false; error}` (unrecognized workflow / malformed
-  /// session id) and a bare `BozzettoError.toJson` object `{case; fields;
-  /// message; suggestedAction}` with no `success` key at all (e.g.
-  /// session-not-found). Never throws: an unreadable body degrades to a
-  /// generic message naming the HTTP status rather than crashing the
-  /// handler — the switch may already have happened or not, but the
-  /// dashboard must always be able to show SOMETHING.
-  let parseResponse (statusCode: int) (body: string) : Result<string, string> =
-    try
-      use doc = System.Text.Json.JsonDocument.Parse(body)
-      let root = doc.RootElement
-      let tryStr (name: string) =
-        match root.TryGetProperty(name) with
-        | true, p when p.ValueKind = System.Text.Json.JsonValueKind.String -> Some (p.GetString())
-        | _ -> None
-      let succeeded =
-        match root.TryGetProperty("success") with
-        | true, p -> p.ValueKind = System.Text.Json.JsonValueKind.True
-        | false, _ -> false
-      match succeeded with
-      | true ->
-        let workflow = tryStr "workflow" |> Option.defaultValue ""
-        tryStr "message"
-        |> Option.defaultValue (sprintf "Switched to %s" workflow)
-        |> Ok
-      | false ->
-        tryStr "error"
-        |> Option.orElse (tryStr "message")
-        |> Option.defaultValue (sprintf "Workflow switch failed (HTTP %d)" statusCode)
-        |> Error
-    with _ ->
-      Error (sprintf "Workflow switch returned an unreadable response (HTTP %d)" statusCode)
-
 /// Directory autocomplete for the New Session working-directory input. `split`
 /// is pure and unit-tested; `suggest` adds the one filesystem read.
 [<RequireQualifiedAccess>]
@@ -1106,6 +1069,7 @@ type DashboardActions = {
   CancelEval: WorkerProtocol.SessionId -> Threading.Tasks.Task<Result<string, string>>
   ResetSession: WorkerProtocol.SessionId -> Threading.Tasks.Task<Result<string, string>>
   HardResetSession: WorkerProtocol.SessionId -> Threading.Tasks.Task<Result<string, string>>
+  SwitchWorkflow: WorkerProtocol.SessionId -> WorkflowTypes.SessionWorkflow -> Threading.Tasks.Task<Result<string, string>>
   Dispatch: BozzettoMsg -> unit
   SwitchSession: WorkerProtocol.SessionId -> Threading.Tasks.Task<Result<string, string>>
   StopSession: WorkerProtocol.SessionId -> Threading.Tasks.Task<Result<string, string>>

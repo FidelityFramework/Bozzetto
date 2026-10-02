@@ -544,7 +544,7 @@ let effectHandlerTests = testList "BozzettoEffectHandler" [
       GetStreamingTestProxy = fun _ ->
         proxyCalls <- proxyCalls + 1
         match proxyCalls >= 3 with
-        | true -> Some (fun _ _ _ _ _ -> async { return HttpWorkerClient.StreamOutcome.Completed })
+        | true -> Some (fun _ _ _ _ _ -> async { return WorkerStream.StreamOutcome.Completed })
         | false -> None
       CreateSession = fun _ _ _ ->
         async { return Result.Error BozzettoError.NoActiveSessions }
@@ -638,7 +638,7 @@ let effectHandlerTests = testList "BozzettoEffectHandler" [
       GetStreamingTestProxy = fun _ ->
         proxyCalls <- proxyCalls + 1
         match proxyCalls >= 12 with
-        | true -> Some (fun _ _ _ _ _ -> async { return HttpWorkerClient.StreamOutcome.Completed })
+        | true -> Some (fun _ _ _ _ _ -> async { return WorkerStream.StreamOutcome.Completed })
         | false -> None
       CreateSession = fun _ _ _ ->
         async { return Result.Error BozzettoError.NoActiveSessions }
@@ -732,7 +732,7 @@ let effectHandlerTests = testList "BozzettoEffectHandler" [
       GetStreamingTestProxy = fun _ ->
         proxyCalls <- proxyCalls + 1
         match proxyCalls >= 5 with
-        | true -> Some (fun _ _ _ _ _ -> async { return HttpWorkerClient.StreamOutcome.Completed })
+        | true -> Some (fun _ _ _ _ _ -> async { return WorkerStream.StreamOutcome.Completed })
         | false -> None
       CreateSession = fun _ _ _ ->
         async { return Result.Error BozzettoError.NoActiveSessions }
@@ -820,7 +820,7 @@ let effectHandlerTests = testList "BozzettoEffectHandler" [
       GetStreamingTestProxy = fun _ ->
         proxyCalls <- proxyCalls + 1
         match proxyCalls >= 22 with
-        | true -> Some (fun _ _ _ _ _ -> async { return HttpWorkerClient.StreamOutcome.Completed })
+        | true -> Some (fun _ _ _ _ _ -> async { return WorkerStream.StreamOutcome.Completed })
         | false -> None
       CreateSession = fun _ _ _ ->
         async { return Result.Error BozzettoError.NoActiveSessions }
@@ -915,7 +915,7 @@ let effectHandlerTests = testList "BozzettoEffectHandler" [
         let ready =
           lock gate (fun () -> rebuildGeneration > 0 && readyGeneration >= rebuildGeneration)
         match ready with
-        | true -> Some (fun _ _ _ _ _ -> async { return HttpWorkerClient.StreamOutcome.Completed })
+        | true -> Some (fun _ _ _ _ _ -> async { return WorkerStream.StreamOutcome.Completed })
         | false -> None
       CreateSession = fun _ _ _ ->
         async { return Result.Error BozzettoError.NoActiveSessions }
@@ -1033,7 +1033,7 @@ let effectHandlerTests = testList "BozzettoEffectHandler" [
       GetProxy = fun _ -> None
       GetStreamingTestProxy = fun _ ->
         match lock gate (fun () -> ready) with
-        | true -> Some (fun _ _ _ _ _ -> async { return HttpWorkerClient.StreamOutcome.Completed })
+        | true -> Some (fun _ _ _ _ _ -> async { return WorkerStream.StreamOutcome.Completed })
         | false -> None
       CreateSession = fun _ _ _ ->
         async { return Result.Error BozzettoError.NoActiveSessions }
@@ -1131,7 +1131,7 @@ let effectHandlerTests = testList "BozzettoEffectHandler" [
       GetProxy = fun _ -> None
       GetStreamingTestProxy = fun _ ->
         match lock gate (fun () -> ready) with
-        | true -> Some (fun _ _ _ _ _ -> async { return HttpWorkerClient.StreamOutcome.Completed })
+        | true -> Some (fun _ _ _ _ _ -> async { return WorkerStream.StreamOutcome.Completed })
         | false -> None
       CreateSession = fun _ _ _ ->
         async { return Result.Error BozzettoError.NoActiveSessions }
@@ -1500,7 +1500,7 @@ module RunEndHarness =
 
   let run
     (expectation: CompletionExpectation)
-    (stub: (TestRunResult -> unit) -> Async<HttpWorkerClient.StreamOutcome>)
+    (stub: (TestRunResult -> unit) -> Async<WorkerStream.StreamOutcome>)
     =
     task {
       let sid = testSessionId "a1b2c3d4"
@@ -1589,7 +1589,7 @@ let runEndTests = testList "BozzettoEffectHandler — every requested test ends 
       RunEndHarness.run RunEndHarness.CompletesItself (fun onResult ->
         async {
           onResult RunEndHarness.passedA
-          return HttpWorkerClient.StreamOutcome.Completed
+          return WorkerStream.StreamOutcome.Completed
         })
     runEnd |> RunEndHarness.expectEveryTestTerminal [ RunEndHarness.passedA ] Features.LiveTesting.NoResultReason.StreamEnded
     runEnd.Completion |> Expect.equal "the run reports completion" RunEndHarness.ReportedCompletion
@@ -1602,7 +1602,7 @@ let runEndTests = testList "BozzettoEffectHandler — every requested test ends 
         async {
           onResult RunEndHarness.passedA
           onResult RunEndHarness.failedB
-          return HttpWorkerClient.StreamOutcome.TimedOut after
+          return WorkerStream.StreamOutcome.TimedOut after
         })
     runEnd
     |> RunEndHarness.expectEveryTestTerminal
@@ -1630,7 +1630,7 @@ let runEndTests = testList "BozzettoEffectHandler — every requested test ends 
       RunEndHarness.run RunEndHarness.LeavesCompletionToSupersedingRun (fun onResult ->
         async {
           onResult RunEndHarness.passedA
-          return HttpWorkerClient.StreamOutcome.Cancelled
+          return WorkerStream.StreamOutcome.Cancelled
         })
     runEnd
     |> RunEndHarness.expectEveryTestTerminal
@@ -1651,7 +1651,7 @@ let runEndTests = testList "BozzettoEffectHandler — every requested test ends 
           onResult RunEndHarness.passedA
           onResult RunEndHarness.failedB
           onResult passedC
-          return HttpWorkerClient.StreamOutcome.Completed
+          return WorkerStream.StreamOutcome.Completed
         })
     runEnd.Results
     |> Array.map (fun r -> r.TestId)

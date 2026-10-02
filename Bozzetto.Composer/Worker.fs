@@ -2,58 +2,55 @@ module Bozzetto.Composer.WorkerProtocol
 
 open System
 open System.IO
-open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 open Bozzetto.Providers
+open Bozzetto.Composer.Protocol
 
-let internal jsonOptions = JsonSerializerOptions(PropertyNamingPolicy = JsonNamingPolicy.CamelCase)
-let private element value = JsonSerializer.SerializeToElement(value, jsonOptions)
-let private empty = element {| |}
+let private typedRefusal (error: Bozzetto.Providers.Refusal) : Bozzetto.Composer.Protocol.Refusal =
+  let code =
+    match error.Code with
+    | "invalid_request" -> RefusalCode.InvalidRequest
+    | "closed" -> RefusalCode.Closed
+    | "cleanup_failed" -> RefusalCode.CleanupFailed
+    | "superseded" -> RefusalCode.Superseded
+    | "compiler_refused" -> RefusalCode.CompilerRefused
+    | "canceled" -> RefusalCode.Canceled
+    | "observation_capacity" -> RefusalCode.ObservationCapacity
+    | "busy" -> RefusalCode.Busy
+    | "session_capacity" -> RefusalCode.SessionCapacity
+    | "backend_failed" -> RefusalCode.BackendFailed
+    | "invalid_reservation" -> RefusalCode.InvalidReservation
+    | "not_accepted" -> RefusalCode.NotAccepted
+    | _ -> RefusalCode.RequestRefused
+  { Code = code; Message = error.Code + ": " + error.Message }
 
-let internal text name (value: JsonElement) =
-  match if value.ValueKind = JsonValueKind.Object then value.TryGetProperty(name: string) else false, Unchecked.defaultof<JsonElement> with
-  | true, property when property.ValueKind = JsonValueKind.String -> property.GetString() |> Option.ofObj |> Option.defaultValue ""
-  | _ -> ""
-
-let private authority (value: Authority) =
-  {| host = value.Host; session = value.Session; provider = ProviderIdentity.name value.Provider
-     epoch = value.Epoch; generation = value.Generation |}
-
-let private response requestId (identity: Authority) outcome =
-  match outcome with
-  | Result.Ok payload ->
-    element {| protocolVersion = 1; requestId = requestId; authority = authority identity
-               success = true; result = payload; error = empty |}
-  | Result.Error (error: Refusal) ->
-    element {| protocolVersion = 1; requestId = requestId; authority = authority identity
-               success = false; result = empty; error = element error |}
-
-let private convert requestId map (reply: Reply<'a>) =
-  response requestId reply.Authority (reply.Outcome |> Result.map map)
-
-/// Compiler identity comes from the executable host, keeping the protocol independent of compiler assemblies.
-type CompilerIdentity = {
-  AssemblyPath: string
-  Sha256: string
-  Version: string
-}
-
-/// This worker owns compiler sessions. A public MCP host uses this same private
-/// protocol; it does not obtain or reconstruct Composer tickets.
+/// The worker owns all compiler tickets. The transport copies only closed data.
 type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBackend<'Ticket>, describeCompiler: unit -> CompilerIdentity, ?cancelRequest: (string -> bool)) =
   let gate = obj ()
-  let host = Guid.NewGuid().ToString("N")
-  let epoch = Guid.NewGuid().ToString("N")
+  let host, epoch = Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N")
   let sessions = Collections.Generic.Dictionary<string, ProviderSession<'Ticket>>()
-  let opening = Collections.Generic.Dictionary<string, Task<Result<unit, Refusal>>>()
+  let opening = Collections.Generic.Dictionary<string, Task<Result<unit, Bozzetto.Providers.Refusal>>>()
   let mutable retired = false
+  let mutable agreed = false
   let cancelRequest = defaultArg cancelRequest (fun _ -> false)
-  let hostIdentity =
-    { Host = host; Session = ""; Epoch = epoch
-      Provider = ProviderIdentity.ClefComposer; Generation = 0L }
-
-  let reject id code message = response id hostIdentity (Result.Error { Code = code; Message = message })
+  let hostIdentity: Authority =
+    { Host = host; Session = ""; Epoch = epoch; Provider = ProviderIdentity.ClefComposer; Generation = 0L }
+  let response id identity outcome : Bozzetto.Composer.Protocol.Reply =
+    { ProtocolVersion = BAREWireCodec.ProtocolVersion; RequestId = id; Authority = identity; Outcome = outcome }
+  let rejectAt id identity code message = response id identity (Result.Error { Code = code; Message = message })
+  let reject id code message = rejectAt id hostIdentity code message
+  let convert id map (reply: Bozzetto.Providers.Reply<'a>) =
+    response id reply.Authority (reply.Outcome |> Result.map map |> Result.mapError typedRefusal)
+  let target = function
+    | Hello _ -> None
+    | Open(target, _) | CancelRequest(target, _) | PrepareCompilerChange target -> Some target
+    | Reserve(target, _) | Build(target, _) | Run(target, _)
+    | Status target | Cancel target | Close target -> Some target.Worker
+  let sessionAddress = function
+    | Reserve(target, _) | Build(target, _) | Run(target, _)
+    | Status target | Cancel target | Close target -> Some target
+    | _ -> None
 
   member _.RejectFrame(id, code, message) = reject id code message
 
@@ -61,177 +58,149 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
     lock gate (fun () ->
       retired <- true
       let owned = sessions.Values |> Seq.toArray
-      // Revoke EVERY session before attempting any fallible cleanup.
       for session in owned do session.BeginClose() |> ignore
       owned, opening.Values |> Seq.toArray)
 
-  member this.RetireAsync() = task {
+  member this.RetireAsync() : Task<Result<unit, Bozzetto.Providers.Refusal>> = task {
     let owned, pendingOpens = this.BeginRetirement()
-    let cleanup =
-      owned |> Array.map (fun session -> task {
-        try
-          let! reply = session.CloseAsync()
-          return reply.Outcome |> Result.mapError (fun error ->
-            { error with Message = session.Identity.Session + ": " + error.Message })
-        with error ->
-          return Result.Error { Code = "cleanup_failed"; Message = session.Identity.Session + ": " + error.Message }
-      })
+    let cleanup = owned |> Array.map (fun session -> task {
+      try
+        let! reply = session.CloseAsync()
+        return reply.Outcome |> Result.mapError (fun error ->
+          { error with Message = session.Identity.Session + ": " + error.Message })
+      with error ->
+        return Result.Error ({ Code = "cleanup_failed"; Message = session.Identity.Session + ": " + error.Message }: Bozzetto.Providers.Refusal)
+    })
     let! results = Task.WhenAll(Array.append cleanup pendingOpens)
     let failures = results |> Array.choose (function Result.Error error -> Some error.Message | _ -> None)
     if failures.Length = 0 then return Result.Ok ()
-    else return Result.Error {
-      Code = "cleanup_failed"
-      Message = "All sessions are retired; cleanup failed: " + String.concat "; " failures }
+    else return Result.Error ({ Code = "cleanup_failed"; Message = "All sessions are retired; cleanup failed: " + String.concat "; " failures }: Bozzetto.Providers.Refusal)
   }
 
-  member this.Handle(request: JsonElement, ?cancellation: CancellationToken) = task {
+  member this.Handle(request: Request, ?cancellation: CancellationToken) = task {
     let cancellation = defaultArg cancellation CancellationToken.None
-    let id = text "requestId" request
-    let op = text "operation" request
-    let mutable resolvedAuthority = None
+    let id = request.RequestId
+    let mutable resolvedAuthority = hostIdentity
     try
-      let version =
-        match request.TryGetProperty "protocolVersion" with
-        | true, value when value.ValueKind = JsonValueKind.Number -> value.TryGetInt32()
-        | _ -> false, 0
-      if id = "" then return reject id "invalid_request" "requestId is required."
-      elif version <> (true, 1) then return reject id "protocol_version" "This worker requires protocolVersion 1."
-      elif op = "hello" then
-        let compiler = describeCompiler ()
-        return response id hostIdentity (Result.Ok(element {|
-          compilerAssembly = compiler.AssemblyPath; compilerSha256 = compiler.Sha256
-          compilerVersion = compiler.Version
-          operations = [| "open"; "reserve"; "build"; "status"; "run"; "cancel"; "cancel_request"; "close"; "prepare_compiler_change" |]
-          inMemoryPatchAllowed = false |}))
-      elif text "host" request <> host || text "epoch" request <> epoch then
-        return reject id "wrong_authority" "Use the host and compiler epoch returned by hello."
-      elif text "provider" request <> "clef-composer" then
-        return reject id "wrong_provider" "This worker only accepts the clef-composer provider; F# operations belong to FSI."
-      elif op = "cancel_request" then
-        let target = text "targetRequestId" request
-        if String.IsNullOrWhiteSpace target then
-          return reject id "invalid_request" "targetRequestId is required."
-        else
-          // This targets one transport operation, never whichever revision is
-          // current when a delayed client cancellation happens to arrive.
-          let canceled = cancelRequest target
-          return response id hostIdentity (Result.Ok(element {|
-            targetRequestId = target; cancellationRequested = canceled |}))
-      elif op = "prepare_compiler_change" then
-        let! result = this.RetireAsync()
-        return response id hostIdentity (result |> Result.map (fun () ->
-          element {| restartRequired = true; inMemoryPatchAllowed = false |}))
-      elif op = "open" then
-        let project = text "project" request
-        if String.IsNullOrWhiteSpace project || not (Path.IsPathFullyQualified project) then
-          return reject id "invalid_project" "An absolute .fidproj path is required."
-        elif not (project.EndsWith(".fidproj", StringComparison.OrdinalIgnoreCase)) || not (File.Exists project) then
-          return reject id "invalid_project" "Open requires an existing .fidproj file."
-        elif Path.GetDirectoryName(Path.GetFullPath project) |> Option.ofObj |> Option.exists (fun directory ->
-          Path.GetFullPath(root) = directory || Path.GetFullPath(root).StartsWith(directory + string Path.DirectorySeparatorChar, StringComparison.Ordinal)) then
-          return reject id "invalid_cache" "Provider scratch must reside outside the project directory."
-        else
-          let sessionId = Guid.NewGuid().ToString("N")
-          let completion = TaskCompletionSource<Result<unit, Refusal>>(TaskCreationOptions.RunContinuationsAsynchronously)
-          let admitted = lock gate (fun () ->
-            if retired then false
-            else
-              opening.Add(sessionId, completion.Task)
-              true)
-          if not admitted then
-            return reject id "compiler_retired" "Start a fresh worker before accepting compiler work."
+      if String.IsNullOrWhiteSpace id then return reject id RefusalCode.InvalidRequest "requestId is required."
+      elif request.ProtocolVersion <> BAREWireCodec.ProtocolVersion then
+        return reject id RefusalCode.ProtocolVersion "This worker accepts only binary protocol version 2."
+      else
+        match request.Body with
+        | Hello agreement ->
+          if agreement.ProtocolVersion <> BAREWireCodec.ProtocolVersion then
+            return reject id RefusalCode.ProtocolVersion "Handshake version differs."
+          elif agreement.Encoding <> EncodingId.BAREWire1 then
+            return reject id RefusalCode.EncodingMismatch "Handshake encoding differs."
+          elif agreement.ContractDigest <> BAREWireCodec.ContractDigest then
+            return reject id RefusalCode.ContractMismatch "Handshake contract digest differs."
           else
-            let mutable cleanup = Result.Ok ()
-            try
-              try
-                let directory = Path.Combine(root, host, sessionId, epoch)
-                // Construction can touch disk; it must not hold the host gate.
-                let backend = createBackend (Path.GetFullPath project) directory
-                let session = new ProviderSession<'Ticket>(host, sessionId, epoch, Path.GetFullPath project, backend)
-                let installed = lock gate (fun () ->
+            let assembly = typeof<Fidelity.PSG.Revision>.Assembly
+            let digest = File.ReadAllBytes assembly.Location |> Security.Cryptography.SHA256.HashData |> Convert.ToHexString
+            let result = response id hostIdentity (Result.Ok(HelloAccepted {
+              Agreement = BAREWireCodec.agreement; Compiler = describeCompiler ()
+              Psg = { Schema = Fidelity.PSG.Revision.Schema; AssemblySha256 = digest
+                      FormatVersion = Fidelity.PSG.Binary.FormatVersion; ContractFingerprint = Fidelity.PSG.Binary.ContractFingerprint }
+              Operations = [| Operation.Hello; Operation.Open; Operation.Reserve; Operation.Build; Operation.Status
+                              Operation.Run; Operation.Cancel; Operation.CancelRequest; Operation.Close
+                              Operation.PrepareCompilerChange |]
+              InMemoryPatchAllowed = false }))
+            lock gate (fun () -> agreed <- true)
+            return result
+        | body ->
+          match target body with
+          | None -> return reject id RefusalCode.InvalidRequest "Request lacks a worker address."
+          | Some _ when not (lock gate (fun () -> agreed)) ->
+            return reject id RefusalCode.ProtocolVersion "Complete the exact binary handshake first."
+          | Some address when address.Host <> host || address.Epoch <> epoch ->
+            return reject id RefusalCode.WrongAuthority "Use the host and epoch returned by hello."
+          | Some address when address.Provider <> ProviderIdentity.ClefComposer ->
+            return reject id RefusalCode.WrongProvider "This worker accepts only the Clef/Composer provider."
+          | Some _ ->
+            match body with
+            | CancelRequest(_, targetId) ->
+              if String.IsNullOrWhiteSpace targetId then return reject id RefusalCode.InvalidRequest "targetRequestId is required."
+              else return response id hostIdentity (Result.Ok(RequestCanceled { TargetRequestId = targetId; CancellationRequested = cancelRequest targetId }))
+            | PrepareCompilerChange _ ->
+              let! result = this.RetireAsync()
+              return response id hostIdentity (result |> Result.map (fun () -> CompilerRetired { RestartRequired = true; InMemoryPatchAllowed = false }) |> Result.mapError typedRefusal)
+            | Open(_, project) ->
+              if String.IsNullOrWhiteSpace project || not (Path.IsPathFullyQualified project) then
+                return reject id RefusalCode.InvalidProject "An absolute .fidproj path is required."
+              elif not (project.EndsWith(".fidproj", StringComparison.OrdinalIgnoreCase)) || not (File.Exists project) then
+                return reject id RefusalCode.InvalidProject "Open requires an existing .fidproj file."
+              elif Path.GetDirectoryName(Path.GetFullPath project) |> Option.ofObj |> Option.exists (fun directory ->
+                Path.GetFullPath(root) = directory || Path.GetFullPath(root).StartsWith(directory + string Path.DirectorySeparatorChar, StringComparison.Ordinal)) then
+                return reject id RefusalCode.InvalidCache "Provider scratch must reside outside the project directory."
+              else
+                let sessionId = Guid.NewGuid().ToString("N")
+                let completion = TaskCompletionSource<Result<unit, Bozzetto.Providers.Refusal>>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let admitted = lock gate (fun () ->
                   if retired then false
                   else
-                    sessions.Add(sessionId, session)
+                    opening.Add(sessionId, completion.Task)
                     true)
-                if installed then
-                  return session.Status() |> convert id (fun status ->
-                    element {| observation = status.Observation; project = status.Project; manifestPath = status.ManifestPath |})
+                if not admitted then return reject id RefusalCode.CompilerRetired "Start a fresh worker before accepting compiler work."
                 else
-                  session.BeginClose() |> ignore
-                  let! closed = session.CloseAsync()
-                  cleanup <- closed.Outcome
-                  return reject id "compiler_retired" "Compiler retirement overtook this project open."
-              with error ->
-                cleanup <- Result.Error { Code = "cleanup_failed"; Message = "Opening " + sessionId + ": " + error.Message }
-                return reject id "request_refused" error.Message
-            finally
-              completion.TrySetResult cleanup |> ignore
-              // An overtaken open never enters sessions. Retain its failed
-              // cleanup result so a later fence cannot forget that failure.
-              match cleanup with
-              | Result.Ok () -> lock gate (fun () -> opening.Remove sessionId |> ignore)
-              | Result.Error _ -> ()
-      else
-        let found, isRetired =
-          lock gate (fun () ->
-            let found =
-              match sessions.TryGetValue(text "session" request) with
-              | true, session -> Some session
-              | _ -> None
-            found, retired)
-        match found with
-        | None -> return reject id "unknown_session" "The session is not owned by this worker."
-        | Some session ->
-          resolvedAuthority <- Some session.Identity
-          if isRetired && Set.contains op (set [ "reserve"; "build"; "run"; "cancel" ]) then
-            return response id session.Identity (Result.Error { Code = "closed"; Message = "The compiler worker is retired." })
-          else
-            match op with
-            | "reserve" ->
-              let! result = session.ReserveAsync(text "label" request)
-              return result |> convert id (fun token -> element {| reservation = token |})
-            | "build" ->
-              let! result = session.BuildAsync(text "reservation" request, cancellation)
-              return convert id element result
-            | "run" ->
-              let arguments =
-                match request.TryGetProperty "arguments" with
-                | true, value when value.ValueKind = JsonValueKind.Array ->
-                  value.EnumerateArray()
-                  |> Seq.map (fun arg ->
-                    if arg.ValueKind <> JsonValueKind.String then invalidArg "arguments" "Run arguments must be strings."
-                    arg.GetString() |> Option.ofObj |> Option.defaultValue "")
-                  |> Seq.toList
-                | false, _ -> []
-                | _ -> invalidArg "arguments" "Run arguments must be an array of strings."
-              let! result = session.RunAsync(arguments, cancellation)
-              return convert id element result
-            | "status" ->
-              return session.Status() |> convert id (fun status ->
-                element {| observation = status.Observation; project = status.Project; manifestPath = status.ManifestPath
-                           closed = status.Closed; busy = status.Busy
-                           revocationPending = status.RevocationPending; backendError = (status.BackendError |> Option.toObj)
-                           cleanupPending = status.CleanupPending; cleanupError = (status.CleanupError |> Option.toObj)
-                           current = status.Current |> Option.map element |> Option.defaultValue (element (null: obj | null))
-                           executionRequiresRevalidation = true |})
-            | "cancel" -> return session.Cancel() |> convert id (fun () -> empty)
-            | "close" ->
-              session.BeginClose() |> ignore
-              let closing = session.CloseAsync()
-              if closing.IsCompleted then
-                let! result = closing
-                return result |> convert id (fun () -> element {| closed = true; cleanupPending = false |})
-              else
-                return session.Status() |> convert id (fun status ->
-                  element {| observation = status.Observation; closed = status.Closed; cleanupPending = status.CleanupPending; cleanupError = (status.CleanupError |> Option.toObj) |})
-            | _ -> return response id session.Identity (Result.Error {
-                Code = "unsupported_operation"; Message = "The operation is not supported by the Clef/Composer provider." })
-    with error ->
-      return response id (resolvedAuthority |> Option.defaultValue hostIdentity)
-        (Result.Error { Code = "request_refused"; Message = error.Message })
+                  let mutable cleanup = Result.Ok ()
+                  try
+                    try
+                      let backend = createBackend (Path.GetFullPath project) (Path.Combine(root, host, sessionId, epoch))
+                      let session = new ProviderSession<'Ticket>(host, sessionId, epoch, Path.GetFullPath project, backend)
+                      let installed = lock gate (fun () ->
+                        if retired then false
+                        else
+                          sessions.Add(sessionId, session)
+                          true)
+                      if installed then
+                        return session.Status() |> convert id (fun status -> Opened { Observation = status.Observation; Project = status.Project; ManifestPath = status.ManifestPath })
+                      else
+                        session.BeginClose() |> ignore
+                        let! closed = session.CloseAsync()
+                        cleanup <- closed.Outcome
+                        return reject id RefusalCode.CompilerRetired "Compiler retirement overtook this project open."
+                    with error ->
+                      cleanup <- Result.Error { Code = "cleanup_failed"; Message = "Opening " + sessionId + ": " + error.Message }
+                      return reject id RefusalCode.RequestRefused error.Message
+                  finally
+                    completion.TrySetResult cleanup |> ignore
+                    match cleanup with
+                    | Result.Ok () -> lock gate (fun () -> opening.Remove sessionId |> ignore)
+                    | Result.Error _ -> ()
+            | _ ->
+              let found, isRetired = lock gate (fun () ->
+                let found = sessionAddress body |> Option.bind (fun address ->
+                  match sessions.TryGetValue address.Session with true, session -> Some session | _ -> None)
+                found, retired)
+              match found with
+              | None -> return reject id RefusalCode.UnknownSession "The session is not owned by this worker."
+              | Some session ->
+                resolvedAuthority <- session.Identity
+                match body with
+                | Reserve _ | Build _ | Run _ | Cancel _ when isRetired ->
+                  return rejectAt id session.Identity RefusalCode.Closed "The compiler worker is retired."
+                | Reserve(_, label) ->
+                  let! reply = session.ReserveAsync label
+                  return convert id (fun token -> Reserved { Reservation = token }) reply
+                | Build(_, token) ->
+                  let! reply = session.BuildAsync(token, cancellation)
+                  return convert id Built reply
+                | Run(_, arguments) ->
+                  let! reply = session.RunAsync(Array.toList arguments, cancellation)
+                  return convert id Ran reply
+                | Status _ -> return session.Status() |> convert id Observed
+                | Cancel _ -> return session.Cancel() |> convert id (fun () -> Canceled)
+                | Close _ ->
+                  let closing = session.CloseAsync()
+                  if closing.IsCompleted then
+                    let! reply = closing
+                    return convert id (fun () -> Closed { Observation = 0UL; Closed = true; CleanupPending = false; CleanupError = None }) reply
+                  else
+                    return session.Status() |> convert id (fun status -> Closed {
+                      Observation = status.Observation; Closed = status.Closed; CleanupPending = status.CleanupPending; CleanupError = status.CleanupError })
+                | _ -> return rejectAt id session.Identity RefusalCode.UnsupportedOperation "Operation is not supported."
+    with error -> return rejectAt id resolvedAuthority RefusalCode.RequestRefused error.Message
   }
 
   interface IDisposable with
-    // The owner explicitly awaits RetireAsync within its shutdown deadline.
-    // Disposing this scope must not start a second unbounded cleanup retry.
     member this.Dispose() = this.BeginRetirement() |> ignore

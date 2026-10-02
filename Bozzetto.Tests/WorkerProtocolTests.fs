@@ -511,20 +511,6 @@ let workerProtocolTests =
         backRef.Line |> Expect.equal "line back" 10
     ]
 
-    testList "HTTP route mapping" [
-
-      testCase "TypeCheckWithSymbols maps to POST /typecheck-symbols"
-      <| fun _ ->
-        let method, path, body =
-          HttpWorkerClient.toRoute (WorkerMessage.TypeCheckWithSymbols("let x = 1", "file.fsx", "r1"))
-        method |> Expect.equal "method should be POST" "POST"
-        path |> Expect.equal "path" "/typecheck-symbols"
-        body.IsSome |> Expect.isTrue "should have body"
-        body.Value |> Expect.stringContains "body contains code" "let x = 1"
-        body.Value |> Expect.stringContains "body contains filePath" "file.fsx"
-        body.Value |> Expect.stringContains "body contains replyId" "r1"
-    ]
-
     testList "App run protocol" [
       let project = "/src/Web/Web.fsproj"
       let at = DateTime(2026, 9, 10, 12, 0, 0, DateTimeKind.Utc)
@@ -567,24 +553,6 @@ let workerProtocolTests =
         let _, result = roundTrip<WorkerResponse> resp
         result |> Expect.equal "round-trip" resp
 
-      testCase "WHY — HttpWorkerClient.toRoute — RunApp posts the project to /run-app because the worker route table is shared" <| fun _ ->
-        let method, path, body = HttpWorkerClient.toRoute (WorkerMessage.RunApp(project, Bozzetto.AppRun.PreviousAddress.ReuseAddress "http://127.0.0.1:5123", "r1"))
-        method |> Expect.equal "method" "POST"
-        path |> Expect.equal "path" "/run-app"
-        body |> Expect.isSome "has a body"
-        body.Value |> Expect.stringContains "body carries the project" "Web.fsproj"
-        body.Value |> Expect.stringContains "body carries the replyId" "r1"
-
-      testCase "WHY — HttpWorkerClient.toRoute — StopApp posts to /stop-app because stop must not be a cacheable GET" <| fun _ ->
-        let method, path, _ = HttpWorkerClient.toRoute (WorkerMessage.StopApp(Bozzetto.AppRun.StopScope.OnlyRun "run1", "r2"))
-        method |> Expect.equal "method" "POST"
-        path |> Expect.equal "path" "/stop-app"
-
-      testCase "WHY — HttpWorkerClient.toRoute — AwaitAppChange posts the run id to /await-app-change because the long poll is per run" <| fun _ ->
-        let method, path, body = HttpWorkerClient.toRoute (WorkerMessage.AwaitAppChange("run1", "r3"))
-        method |> Expect.equal "method" "POST"
-        path |> Expect.equal "path" "/await-app-change"
-        body.Value |> Expect.stringContains "body carries the run id" "run1"
     ]
 
     // The choke point for a whole bug class: `SessionInfo.LastActivity` (and
