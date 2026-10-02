@@ -85,7 +85,7 @@ Acceptance evidence is under
 | Calque full suite | **99/99 passed**, zero skipped/failed (`calque-tests.log`, `calque-results/calque-audit.trx`). Includes Merge-phase stops and last-demand release inside Parse, Print and Merge. |
 | Bozzetto unfiltered default suite | **8,977 registered/ran; 8,974 passed, three existing ignores, zero failed/errored; Trusted** (`bozzetto-default-final.log`, `trust.jsonl`). Includes deadline escalation, failed-stop fencing, monitor renewal, the 32-handle boundary and strict-wire diagnostic bounds. |
 | Complete Composer tier | **46/46 passed**, zero ignored/failed/errored; **Trusted** (`bozzetto-native.log`, `trust.jsonl`). Includes real worker and public-interface preview/reserve/apply/build/run journeys. |
-| Worker closure and artifact integrity | **34** declared runtime assets, zero missing and zero test dependencies (`worker-assets.log`); daemon/worker protocol DLLs match. All candidate files pass the final SHA-256 check (`candidate-before.sha256`, `candidate-integrity.log`). |
+| Worker closure and artifact integrity | **34** declared runtime assets, zero missing and zero test dependencies (`worker-assets.log`); daemon/worker protocol DLLs match. A fresh strict SHA-256 check matches **211/211 manifest entries**, exit **0** (`candidate-before.sha256`, `candidate-integrity.log`, `candidate-integrity.json`). |
 
 `acceptance-receipt.json` records the source commit, exact artifact identities and
 both TRUST rows. The candidate directories are
@@ -94,6 +94,17 @@ Daemon SHA-256:
 `d0bb50bb572b38cdc39e4a1860b39ee1deebcf403e8fcda13db0918eaa032bb6`;
 worker SHA-256:
 `a85b419ade24f7ba57c68c269545676cd156ccc19531213e9bf3fb41427fd08d`.
+
+**Integrity receipt correction, October 2 at 12:47:50 EDT (16:47:50 UTC):** the
+original quiet check left an empty log, which did not independently establish success. That file
+is preserved as `candidate-integrity-original-quiet.log`. A fresh
+`sha256sum --check --strict` produced 211 individual `OK` results and exit code 0;
+the new log and JSON record the command, timestamps, counts and manifest SHA-256
+`e41e2f3d93112014fa58bf228dbf31c0c6c6d5b954eccb26e5333996a0728236`.
+The manifest remained unchanged during verification. `acceptance-receipt.json`
+now links this explicit result; its earlier version is preserved as
+`acceptance-receipt-before-integrity-correction.json`. The existing build and test
+receipts remain unchanged.
 
 Two initial default runs stalled at an unprotected nested Expecto spinner in
 `IntegrationRegistryTests`. Its child case completed while the parent and console
@@ -109,6 +120,8 @@ All build/test leases are released. Installed release
 `2026-10-02-calque-7d3557971d26-66c0b1bce8fe` and shared daemon PID **99247** remain
 unchanged. Release publication still requires the complete release gate; these
 receipts establish the pushed integration checkpoint and its candidate.
+The downstream workflow reviewer/verifier outcome has not yet been recorded
+here; the auditor's latest feedback reports that result as pending.
 
 ### Earlier repair receipt
 
