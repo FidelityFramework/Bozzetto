@@ -317,22 +317,24 @@ let tests = testList "Composer worker socket client" [
   testTask "transport withdrawal retains physical ownership until the actual child exits" {
     let! (client: IComposerWorker) = start ignore (fun _ _ -> Task.CompletedTask)
     let child = System.Diagnostics.Process.GetProcessById client.ProcessId
-    try
-      let! held = client.RequestAsync(request "hold-after-close", CancellationToken.None) |> bounded
-      succeeded held |> Expect.isTrue "child has acknowledged its physical hold"
-      let stopping = client.StopAsync()
-      client.IsAlive |> Expect.isFalse "transport authority is withdrawn immediately"
-      client.IsProcessAlive |> Expect.isTrue "unavailable transport still owns the live process"
-      child.HasExited |> Expect.isFalse "physical state comes from the actual child"
-      stopping.IsCompleted |> Expect.isFalse "shutdown has not mistaken withdrawal for exit"
-      child.Kill(true)
-      do! stopping.WaitAsync(TimeSpan.FromSeconds 10.)
-      client.IsProcessAlive |> Expect.isFalse "joined child no longer owns a live process"
-    finally
-      try
-        if not child.HasExited then child.Kill(true)
-        client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.).GetAwaiter().GetResult()
-      finally child.Dispose()
+    use cleanup =
+      { new IAsyncDisposable with
+          member _.DisposeAsync() = ValueTask(task {
+            try
+              if not child.HasExited then child.Kill(true)
+              do! client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.)
+            finally child.Dispose()
+          }) }
+    let! held = client.RequestAsync(request "hold-after-close", CancellationToken.None) |> bounded
+    succeeded held |> Expect.isTrue "child has acknowledged its physical hold"
+    let stopping = client.StopAsync()
+    client.IsAlive |> Expect.isFalse "transport authority is withdrawn immediately"
+    client.IsProcessAlive |> Expect.isTrue "unavailable transport still owns the live process"
+    child.HasExited |> Expect.isFalse "physical state comes from the actual child"
+    stopping.IsCompleted |> Expect.isFalse "shutdown has not mistaken withdrawal for exit"
+    child.Kill(true)
+    do! stopping.WaitAsync(TimeSpan.FromSeconds 10.)
+    client.IsProcessAlive |> Expect.isFalse "joined child no longer owns a live process"
   }
   testTask "close retains ownership of a held cancellation callback after physical child exit" { do! closeRetainsCallback Operation.Build }
   testTask "close retains ownership of a held format cancellation callback after physical child exit" { do! closeRetainsCallback Operation.Format }

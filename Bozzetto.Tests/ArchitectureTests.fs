@@ -1217,7 +1217,7 @@ let blockingCallBudgets =
     [ "Async.RunSynchronously", 44
       "Thread.Sleep", 42
       ".Wait(", 23
-      "GetAwaiter().GetResult()", 24 ]
+      "GetAwaiter().GetResult()", 23 ]
   testList "Architecture — blocking-call budgets (ratchet down, never raise)" [
     for (pattern, budget) in budgets ->
       testCase (sprintf "WHY — test bodies keep '%s' at or below %d, so the thread-pool-starving blocking-call debt can only shrink" pattern budget) <| fun _ ->

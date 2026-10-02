@@ -721,47 +721,49 @@ let tests =
       let owner = ComposerSupervisor((fun () -> Task.FromResult connection), true)
       let readEntered = completion<unit> ()
       let readReleased = completion<Reply> ()
-      try
-        let! session = openSession owner worker
-        worker.SetBusy(session, true)
-        let mutable reads = 0
-        worker.Intercept <- fun operation _ ->
-          if operation = Operation.Status && Interlocked.Increment(&reads) > 1 then
-            readEntered.TrySetResult() |> ignore
-            Some readReleased.Task
-          else None
-        let! status = execute owner (request Operation.Status worker session)
-        (observed status).Busy |> Expect.isTrue "busy work starts its owned status monitor"
-        do! readEntered.Task
-        let! retirement = execute owner (request Operation.PrepareCompilerChange worker "")
-        retirement |> refused RefusalCode.ProviderUnavailable
-        failedStop.IsFaulted |> Expect.isTrue "the previous retirement already settled as a fault"
-        let stopping = task {
-          try
-            do! owner.StopAsync()
-            return None
-          with error -> return Some error
-        }
-        stopping.IsCompleted |> Expect.isFalse "a failed stop cannot bypass a still-owned monitor read"
-        readReleased.TrySetResult(worker.Response(Operation.Status, session)) |> ignore
-        let! error = stopping
-        error |> Expect.isSome "shutdown reports the failed physical termination after joining"
-        obj.ReferenceEquals(error.Value, failure) |> Expect.isTrue "the original termination failure survives shutdown"
-        worker.Alive |> Expect.isTrue "settled fault is not process exit"
-        connection.IsAlive |> Expect.isFalse "failed termination leaves transport unavailable"
-        owner.WorkerPid |> Expect.equal "failed shutdown retains ownership of the live process" (Some 130)
-        let! directory = owner.SessionsAsync CancellationToken.None
-        directory.Worker |> Expect.isSome "directory retains the physical worker after transport withdrawal"
-        let terminal = snapshot session directory.Sessions
-        terminal |> assertWithdrawn
-        terminal.WorkerError.Value.Contains(failure.Message, StringComparison.Ordinal)
-        |> Expect.isTrue "failed shutdown remains observable in the session view"
-        let! opening = execute owner (request Operation.Open worker "")
-        opening |> refused RefusalCode.ProviderUnavailable
-      finally
-        readReleased.TrySetException(OperationCanceledException "test cleanup") |> ignore
-        try owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult()
-        with :? InvalidOperationException -> ()
+      use cleanup =
+        { new IAsyncDisposable with
+            member _.DisposeAsync() = ValueTask(task {
+              readReleased.TrySetException(OperationCanceledException "test cleanup") |> ignore
+              try do! owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.)
+              with :? InvalidOperationException -> ()
+            }) }
+      let! session = openSession owner worker
+      worker.SetBusy(session, true)
+      let mutable reads = 0
+      worker.Intercept <- fun operation _ ->
+        if operation = Operation.Status && Interlocked.Increment(&reads) > 1 then
+          readEntered.TrySetResult() |> ignore
+          Some readReleased.Task
+        else None
+      let! status = execute owner (request Operation.Status worker session)
+      (observed status).Busy |> Expect.isTrue "busy work starts its owned status monitor"
+      do! readEntered.Task
+      let! retirement = execute owner (request Operation.PrepareCompilerChange worker "")
+      retirement |> refused RefusalCode.ProviderUnavailable
+      failedStop.IsFaulted |> Expect.isTrue "the previous retirement already settled as a fault"
+      let stopping = task {
+        try
+          do! owner.StopAsync()
+          return None
+        with error -> return Some error
+      }
+      stopping.IsCompleted |> Expect.isFalse "a failed stop cannot bypass a still-owned monitor read"
+      readReleased.TrySetResult(worker.Response(Operation.Status, session)) |> ignore
+      let! error = stopping
+      error |> Expect.isSome "shutdown reports the failed physical termination after joining"
+      obj.ReferenceEquals(error.Value, failure) |> Expect.isTrue "the original termination failure survives shutdown"
+      worker.Alive |> Expect.isTrue "settled fault is not process exit"
+      connection.IsAlive |> Expect.isFalse "failed termination leaves transport unavailable"
+      owner.WorkerPid |> Expect.equal "failed shutdown retains ownership of the live process" (Some 130)
+      let! directory = owner.SessionsAsync CancellationToken.None
+      directory.Worker |> Expect.isSome "directory retains the physical worker after transport withdrawal"
+      let terminal = snapshot session directory.Sessions
+      terminal |> assertWithdrawn
+      terminal.WorkerError.Value.Contains(failure.Message, StringComparison.Ordinal)
+      |> Expect.isTrue "failed shutdown remains observable in the session view"
+      let! opening = execute owner (request Operation.Open worker "")
+      opening |> refused RefusalCode.ProviderUnavailable
     }
 
     taskCase "an opened session remains discoverable when its first status refresh fails" <| fun () -> task {

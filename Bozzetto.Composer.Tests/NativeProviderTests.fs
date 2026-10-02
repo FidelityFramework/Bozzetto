@@ -162,7 +162,7 @@ type private Client(directory: string, name: string, ?environment: (string * str
   member _.Epoch = epoch
   member _.ProcessId = workerProcess.Id
   member _.Disconnect() = socket.Shutdown SocketShutdown.Both
-  member _.WaitForExit milliseconds = workerProcess.WaitForExit(milliseconds: int)
+  member _.WaitForExitAsync timeout = workerProcess.WaitForExitAsync().WaitAsync(timeout: TimeSpan)
   /// Test-only prediction used by a single-threaded self-cancellation probe.
   member _.NextRequestId = string (Volatile.Read(&sequence) + 1)
   member _.CallTyped(body: RequestBody) = call body
@@ -317,7 +317,7 @@ let private objects directory label accepted =
 [<Tests>]
 let tests =
   testSequenced <| testList "Composer native provider process" [
-    testCase "socket loss retires a live native tool and its child without a daemon tree kill" <| fun _ ->
+    testTask "socket loss retires a live native tool and its child without a daemon tree kill" {
       let directory = evidenceRoot ()
       let fixture = fixture directory
       let path = Environment.GetEnvironmentVariable "PATH"
@@ -337,19 +337,25 @@ let tests =
         + "sleep 120 &\nchild=$!\nprintf '%s\\n' \"$child\" > \"$BOZZETTO_TEST_TOOL_CHILD_PID\"\n"
         + "printf '%s\\n' \"$$\" > \"$BOZZETTO_TEST_TOOL_PID\"\nwait \"$child\"\n")
       File.SetUnixFileMode(wrapper, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
-      use client = new Client(directory, "owned-native-child", environment = [
+      let client = new Client(directory, "owned-native-child", environment = [
         "PATH", tools + string Path.PathSeparator + path
         "BOZZETTO_TEST_TOOL_PID", rootPid; "BOZZETTO_TEST_TOOL_CHILD_PID", childPid
       ])
-      client.Hello() |> succeeded |> ignore
-      let session = openProject client fixture.Project
-      let token = reserve client session "hold actual native tool"
-      let building = Task.Run(fun () -> buildReserved client session token)
       let mutable toolProcess: Process option = None
       let mutable childProcess: Process option = None
       try
-        SpinWait.SpinUntil((fun () -> File.Exists rootPid && File.Exists childPid), TimeSpan.FromSeconds 90.)
-        |> Expect.isTrue "real compiler build launched the held tool and its ordinary child"
+        client.Hello() |> succeeded |> ignore
+        let session = openProject client fixture.Project
+        let token = reserve client session "hold actual native tool"
+        let building = Task.Run(fun () -> buildReserved client session token)
+        let launched () =
+          File.Exists rootPid && File.Exists childPid
+          && not (String.IsNullOrWhiteSpace(File.ReadAllText rootPid))
+          && not (String.IsNullOrWhiteSpace(File.ReadAllText childPid))
+        let deadline = DateTime.UtcNow + TimeSpan.FromSeconds 90.
+        while not (launched ()) && DateTime.UtcNow < deadline do
+          do! Task.Delay 10
+        launched () |> Expect.isTrue "real compiler build launched the held tool and its ordinary child"
         let tool = Process.GetProcessById(Int32.Parse(File.ReadAllText rootPid))
         let child = Process.GetProcessById(Int32.Parse(File.ReadAllText childPid))
         toolProcess <- Some tool
@@ -359,21 +365,27 @@ let tests =
         // Only close transport. Client.Dispose's rescue kill runs after these
         // assertions, so a daemon-side kill cannot conceal a worker defect.
         client.Disconnect()
-        client.WaitForExit 15000 |> Expect.isTrue "worker exits after its own native cleanup"
-        tool.WaitForExit 5000 |> Expect.isTrue "worker's native owner joined the tool"
-        child.WaitForExit 5000 |> Expect.isTrue "ordinary native descendant did not outlive retirement"
-        let refused =
-          try building.WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult() |> ignore; false
-          with :? EndOfStreamException -> true
+        do! client.WaitForExitAsync(TimeSpan.FromSeconds 15.)
+        do! tool.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 5.)
+        do! child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 5.)
+        let! refused = task {
+          try
+            let! _ = building.WaitAsync(TimeSpan.FromSeconds 5.)
+            return false
+          with :? EndOfStreamException -> return true
+        }
         refused |> Expect.isTrue "disconnected build cannot publish an accepted artifact"
       finally
         // Exact captured handles only; emergency cleanup never counts as the
         // retirement proof above and cannot target another session's process.
-        for owned in [ toolProcess; childProcess ] |> List.choose id do
-          try
-            if not owned.HasExited then owned.Kill true
-            owned.WaitForExit 5000 |> ignore
-          finally owned.Dispose()
+        try
+          for owned in [ toolProcess; childProcess ] |> List.choose id do
+            try
+              if not owned.HasExited then owned.Kill true
+              owned.WaitForExit 5000 |> ignore
+            finally owned.Dispose()
+        finally (client :> IDisposable).Dispose()
+    }
 
     testCase "Calque preview reserves exact base apply before build and current native run" <| fun _ ->
       let directory = evidenceRoot ()
