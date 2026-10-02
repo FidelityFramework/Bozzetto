@@ -2,7 +2,7 @@
   "name": "bozzetto",
   "displayName": "Bozzetto — Live F# Development",
   "description": "Send F# code for evaluation, type-checking, and live test feedback.",
-  "version": "0.6.834",
+  "version": "0.6.836",
   "publisher": "fidelityframework",
   "license": "MIT",
   "icon": "icon.png",
@@ -35,8 +35,7 @@
     "workspaceContains:**/*.slnx",
     "onCommand:bozzetto.start",
     "onCommand:bozzetto.stop",
-    "onCommand:bozzetto.restart",
-    "onCommand:bozzetto.openDashboard"
+    "onCommand:bozzetto.restart"
   ],
   "main": "./dist/Extension.js",
   "contributes": {
@@ -65,10 +64,6 @@
       {
         "command": "bozzetto.restart",
         "title": "Bozzetto: Restart Daemon"
-      },
-      {
-        "command": "bozzetto.openDashboard",
-        "title": "Bozzetto: Open Dashboard"
       },
       {
         "command": "bozzetto.reconnect",
@@ -120,11 +115,6 @@
       {
         "command": "bozzetto.cycleDensity",
         "title": "Bozzetto: Cycle Density (Full → Normal → Minimal)"
-      },
-      {
-        "command": "bozzetto.sessionContextRefresh",
-        "title": "Bozzetto: Refresh Session Context",
-        "icon": "$(refresh)"
       },
       {
         "command": "bozzetto.enableLiveTesting",
@@ -305,7 +295,7 @@
         "bozzetto.dashboardPort": {
           "type": "number",
           "default": 47750,
-          "description": "Legacy fallback dashboard port. Bozzetto normally discovers the daemon and derives the dashboard port from the MCP port."
+          "description": "The daemon's control port (daemon-info and shutdown). Bozzetto derives it from the MCP port (MCP port + 1)."
         },
         "bozzetto.autoStart": {
           "type": "boolean",
@@ -376,11 +366,6 @@
           "contextualTitle": "Bozzetto Sessions"
         },
         {
-          "id": "bozzetto-sessionContext",
-          "name": "Session Context",
-          "contextualTitle": "Bozzetto Session Context"
-        },
-        {
           "id": "bozzetto-types",
           "name": "API Browser",
           "contextualTitle": "Bozzetto API Browser"
@@ -434,10 +419,6 @@
           "when": "bozzetto:daemonRunning"
         },
         {
-          "command": "bozzetto.openDashboard",
-          "when": "bozzetto:daemonRunning"
-        },
-        {
           "command": "bozzetto.switchProject",
           "when": "bozzetto:daemonRunning"
         },
@@ -471,10 +452,6 @@
         },
         {
           "command": "bozzetto.stopSession",
-          "when": "bozzetto:daemonRunning && bozzetto:hasSession"
-        },
-        {
-          "command": "bozzetto.sessionContextRefresh",
           "when": "bozzetto:daemonRunning && bozzetto:hasSession"
         },
         {
@@ -551,11 +528,6 @@
         }
       ],
       "view/title": [
-        {
-          "command": "bozzetto.sessionContextRefresh",
-          "when": "view == bozzetto-sessionContext",
-          "group": "navigation"
-        },
         {
           "command": "bozzetto.createSession",
           "when": "view == bozzetto-sessions",
@@ -776,21 +748,6 @@
         "view": "bozzetto-sessions",
         "when": "bozzetto:hasFsharpProject && bozzetto:daemonRunning && !bozzetto:hasSession",
         "contents": "Bozzetto is running with no active session.\n[Create Session](command:bozzetto.createSession)"
-      },
-      {
-        "view": "bozzetto-sessionContext",
-        "when": "!bozzetto:daemonRunning",
-        "contents": "Bozzetto isn't running.\n[Start Bozzetto](command:bozzetto.start)"
-      },
-      {
-        "view": "bozzetto-sessionContext",
-        "when": "bozzetto:daemonRunning && !bozzetto:hasSession",
-        "contents": "No active session.\n[Create Session](command:bozzetto.createSession)\n\nSession context shows bindings and types once a session is running."
-      },
-      {
-        "view": "bozzetto-sessionContext",
-        "when": "bozzetto:daemonRunning && bozzetto:hasSession && !bozzetto:sessionContextLoaded",
-        "contents": "Warming up.\n\nA session loads its projects before it can report what it holds; this usually takes 15-30 seconds.\n[Refresh](command:bozzetto.sessionContextRefresh)"
       },
       {
         "view": "bozzetto-types",
