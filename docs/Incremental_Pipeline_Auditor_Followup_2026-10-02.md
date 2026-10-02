@@ -158,9 +158,21 @@ tracking cannot express census inputs, configuration or proof premises; effects
 as side effects in a flush, with cleanups recorded rather than joined, are the
 opposite of the launch recheck under the invocation fence and `awaitClose`;
 per-flight cancellation tokens inside the graph are ambient cancellation, which
-the foundation deliberately avoids; a single owning thread would serialise
-independent compiler work; and payload equality policies would let an authority
-change vanish behind an equal value.
+the foundation deliberately avoids; and payload equality policies would let an
+authority change vanish behind an equal value.
+
+Threading is a correspondence rather than an anti-lesson, after correction by
+Ranvier's author. A graph is not single-threaded: one thread owns graph mutation
+under the default `Guarded` affinity, while async bodies run wherever their task
+runs and settle through the graph inbox (`AsyncSource.Settle` posts through
+`Graph.Dispatch`, `src/Ranvier/Core.fs:2559`), `Serialised` affinity admits
+varying threads under one synchronisation context, and graphs owned by different
+threads update in parallel (`tests/Ranvier.Tests/Threading.fs:382,643,699`).
+That is the same shape as the foundation's `AsyncMailbox`: a single coordinator
+interprets commands while evaluators run on the pool within `MaxConcurrency`.
+The difference is that Ranvier's inbox needs a dispatcher or an explicit pump,
+whereas the mailbox drives itself. Ranvier is pre-release, so these contracts
+should be confirmed by experiment before any of the ideas above are built on them.
 
 Suggested order: content-keyed cutoff first, since it is the smallest change with
 the largest expected effect on repeated previews; then retained drained results;
