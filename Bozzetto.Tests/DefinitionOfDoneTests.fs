@@ -1,4 +1,5 @@
-/// The release Definition-of-Done gate.
+/// The Definition-of-Done matrix: every client/capability obligation in
+/// quality/definition-of-done.json, and whether its claim resolves.
 ///
 /// WHY THIS FILE IS SHAPED THE WAY IT IS. Until 2026-09-20 a `verified` row
 /// needed only a non-empty `evidence` STRING. Any prose passed. Two rows
@@ -15,9 +16,8 @@
 ///                      must register itself for the cited runner; the runner
 ///                      flag must be dispatched by Bozzetto.Tests/Program.fs AND
 ///                      invoked by a `run` line in ci-pipeline.fsx; the cited
-///                      stage must exist in ci-pipeline.fsx or as a named step
-///                      in a workflow; and a run id or commit SHA must make it
-///                      resolvable by someone else.
+///                      stage must exist in ci-pipeline.fsx; and a run id or
+///                      commit SHA must make it resolvable by someone else.
 ///
 ///   kind = "external"  only legal for a client the matrix declares this repo
 ///                      structurally cannot execute (`externalClients`). It is
@@ -28,17 +28,8 @@
 /// Anything else — a bare string, an unknown kind, an unresolvable field — is
 /// an ERROR. Unverifiable evidence never passes.
 ///
-/// WHERE RELEASE BLOCKING LIVES. `validateMatrix true` reports every deferred
-/// row as blocking, and that projection is consumed by the two things that
-/// actually gate a release: `dotnet run --project Bozzetto.Tests --
-/// --release-readiness` (the `isReleaseReadiness` branch in Program.fs) and the publish workflow's
-/// "Enforce release Definition of Done" step. Neither is weakened here. What
-/// this suite asserts is that the MATRIX IS HONEST — every claim resolves, every
-/// deferral is tracked and unexpired — plus, on synthetic matrices, that the
-/// release projection really does block on a deferral. Whether the repo happens
-/// to be shippable today is the release gate's verdict to deliver, not a unit
-/// test's; encoding it here produced a sentinel that had to be rewritten in
-/// both directions every time a row moved.
+/// What this suite asserts is that the MATRIX IS HONEST: every claim resolves,
+/// every deferral is tracked and unexpired. The matrix gates no release.
 module Bozzetto.Tests.DefinitionOfDoneTests
 
 open System
@@ -70,7 +61,7 @@ type RepoProbe = {
   RunnerDispatched: string -> bool
   /// Does a `run` line in ci-pipeline.fsx actually invoke this runner flag?
   RunnerInvokedByCi: string -> bool
-  /// Does this stage/step name exist in ci-pipeline.fsx or a workflow?
+  /// Does this stage name exist in ci-pipeline.fsx?
   StageExists: string -> bool
 }
 
@@ -86,15 +77,6 @@ module RepoProbe =
     let ciPipeline = lazy (readOrEmpty (Path.Combine(repoRoot, "ci-pipeline.fsx")))
     let programFs = lazy (readOrEmpty (Path.Combine(repoRoot, "Bozzetto.Tests", "Program.fs")))
     let testsProj = lazy (readOrEmpty (Path.Combine(repoRoot, "Bozzetto.Tests", "Bozzetto.Tests.fsproj")))
-    let workflows =
-      lazy (
-        let dir = Path.Combine(repoRoot, ".github", "workflows")
-        match Directory.Exists dir with
-        | false -> ""
-        | true ->
-          Directory.GetFiles(dir, "*.yml")
-          |> Array.map readOrEmpty
-          |> String.concat "\n")
     let fileText =
       let cache = Collections.Generic.Dictionary<string, string>()
       fun (relativePath: string) ->
@@ -128,9 +110,7 @@ module RepoProbe =
       RunnerInvokedByCi = fun runner ->
         TestInfrastructure.TrustSignal.pipelineTierArgs ciPipeline.Value
         |> List.exists (fun args -> TestInfrastructure.TrustSignal.tierOfArgs args = runner)
-      StageExists = fun name ->
-        ciPipeline.Value.Contains(sprintf "stage \"%s\"" name)
-        || workflows.Value.Contains(sprintf "name: %s" name) }
+      StageExists = fun name -> ciPipeline.Value.Contains(sprintf "stage \"%s\"" name) }
 
 let stringProperty (name: string) (row: JsonElement) =
   match row.TryGetProperty name with
@@ -269,7 +249,7 @@ let private validateEvidence
           "%s: evidence must be a typed object the gate can resolve, not free text (free text is what let a deleted CI job sit green for a week)"
           id)
 
-let validateMatrixWith (probe: RepoProbe) (releaseReady: bool) (today: DateOnly) (json: string) =
+let validateMatrixWith (probe: RepoProbe) (today: DateOnly) (json: string) =
   try
     use doc = JsonDocument.Parse json
     let root = doc.RootElement
@@ -326,9 +306,6 @@ let validateMatrixWith (probe: RepoProbe) (releaseReady: bool) (today: DateOnly)
         match String.IsNullOrWhiteSpace(stringProperty "reason" row) with
         | true -> errors.Add(sprintf "%s needs a deferral reason naming what would re-verify it" id)
         | false -> ()
-        match releaseReady with
-        | true -> errors.Add(sprintf "%s blocks release readiness" id)
-        | false -> ()
       | "not-applicable" ->
         match String.IsNullOrWhiteSpace(stringProperty "reason" row) with
         | true -> errors.Add(sprintf "%s needs a not-applicable reason" id)
@@ -338,10 +315,9 @@ let validateMatrixWith (probe: RepoProbe) (releaseReady: bool) (today: DateOnly)
   with ex ->
     [ sprintf "invalid matrix: %s" ex.Message ]
 
-/// The entry point Program.fs's `--release-readiness` and the publish
-/// workflow's gate resolve against this checkout.
-let validateMatrix (releaseReady: bool) (today: DateOnly) (json: string) =
-  validateMatrixWith (RepoProbe.real ()) releaseReady today json
+/// Validate the matrix against this checkout.
+let validateMatrix (today: DateOnly) (json: string) =
+  validateMatrixWith (RepoProbe.real ()) today json
 
 // ── Synthetic fixtures, for proving the rules rather than the repo's mood ──
 
@@ -407,7 +383,7 @@ let private fullyResolvingMatrix = matrixReplacing "" ""
 
 let private today = DateOnly.FromDateTime DateTime.UtcNow
 
-let private checkSynthetic probe releaseReady json = validateMatrixWith probe releaseReady today json
+let private checkSynthetic probe json = validateMatrixWith probe today json
 
 let private errorsMentioning (fragment: string) (errors: string list) =
   errors |> List.filter (fun e -> e.Contains fragment)
@@ -418,7 +394,7 @@ let definitionOfDoneTests =
 
     testCase "WHY — development matrix is structurally complete because every client and capability needs an owned obligation" <| fun () ->
       File.ReadAllText matrixPath
-      |> validateMatrix false today
+      |> validateMatrix today
       |> Expect.isEmpty "development matrix should be structurally valid"
 
     testCase "WHY — every verified row in the live matrix resolves against this checkout: the cited files exist and compile, the cited runner is dispatched AND invoked by ci-pipeline.fsx, and the cited stage exists" <| fun () ->
@@ -436,73 +412,59 @@ let definitionOfDoneTests =
           "not declared in externalClients"
           "unknown evidence kind"
           "typed object" ]
-      let errors = File.ReadAllText matrixPath |> validateMatrix false today
+      let errors = File.ReadAllText matrixPath |> validateMatrix today
       resolutionFailures
       |> List.collect (fun fragment -> errorsMentioning fragment errors)
       |> Expect.isEmpty "no verified row may cite something this checkout cannot resolve"
-
-    testCase "WHY — a deferred row blocks release readiness, because that projection is what --release-readiness and the publish gate consume" <| fun () ->
-      let deferred =
-        """{ "id": "LT-VSC", "capability": "live-testing", "client": "vscode", "status": "deferred",
-             "issue": 128, "expires": "2099-01-01", "reason": "runner runs in no pipeline" }"""
-      matrixReplacing "LT-VSC" deferred
-      |> checkSynthetic probeThatResolvesEverything true
-      |> errorsMentioning "blocks release readiness"
-      |> Expect.isNonEmpty "a deferred obligation must block the release projection"
-
-    testCase "WHY — a fully verified matrix does not block release readiness, so the projection is a real signal and not a constant" <| fun () ->
-      fullyResolvingMatrix
-      |> checkSynthetic probeThatResolvesEverything true
-      |> Expect.isEmpty "a matrix with nothing deferred must produce no release-readiness errors"
 
     testCase "WHY — free-text evidence is rejected outright, because a non-empty string is exactly what let a deleted CI job pass for a week" <| fun () ->
       let freeText =
         """{ "id": "HR-VSC", "capability": "hot-reload", "client": "vscode", "status": "verified",
              "evidence": "HotReloadBrowserTests.fs — CI dashboard-browser-e2e green at d3647cf" }"""
       matrixReplacing "HR-VSC" freeText
-      |> checkSynthetic probeThatResolvesEverything false
+      |> checkSynthetic probeThatResolvesEverything
       |> errorsMentioning "typed object"
       |> Expect.isNonEmpty "prose evidence must fail the gate"
 
     testCase "WHY — a runner no ci-pipeline.fsx stage invokes fails the gate, even though Program.fs dispatches it (the --integration-hr/--integration-lt class)" <| fun () ->
       let probe = { probeThatResolvesEverything with RunnerInvokedByCi = fun _ -> false }
       fullyResolvingMatrix
-      |> checkSynthetic probe false
+      |> checkSynthetic probe
       |> errorsMentioning "has never executed in CI"
       |> Expect.isNonEmpty "a dark runner must not back a verified row"
 
     testCase "WHY — a cited stage that no longer exists fails the gate (the dashboard-browser-e2e deletion)" <| fun () ->
       let probe = { probeThatResolvesEverything with StageExists = fun _ -> false }
       fullyResolvingMatrix
-      |> checkSynthetic probe false
+      |> checkSynthetic probe
       |> errorsMentioning "cited CI stage does not exist"
       |> Expect.isNonEmpty "a deleted stage must not back a verified row"
 
     testCase "WHY — a cited test file that does not exist fails the gate" <| fun () ->
       let probe = { probeThatResolvesEverything with FileExists = fun _ -> false }
       fullyResolvingMatrix
-      |> checkSynthetic probe false
+      |> checkSynthetic probe
       |> errorsMentioning "cited test file does not exist"
       |> Expect.isNonEmpty "a missing test file must not back a verified row"
 
     testCase "WHY — a cited test file that is not in the compile list fails the gate, because an orphaned file is not a gate" <| fun () ->
       let probe = { probeThatResolvesEverything with CompiledInTestProject = fun _ -> false }
       fullyResolvingMatrix
-      |> checkSynthetic probe false
+      |> checkSynthetic probe
       |> errorsMentioning "compile list"
       |> Expect.isNonEmpty "an uncompiled test file must not back a verified row"
 
     testCase "WHY — a cited test file that does not register itself for the cited runner fails the gate" <| fun () ->
       let probe = { probeThatResolvesEverything with FileRegistersRunner = fun _ _ -> false }
       fullyResolvingMatrix
-      |> checkSynthetic probe false
+      |> checkSynthetic probe
       |> errorsMentioning "does not register itself"
       |> Expect.isNonEmpty "evidence must tie the file to the runner that selects it"
 
     testCase "WHY — external attestation is fenced to declared externalClients, so 'we cannot check it' can never spread to a client whose tests run here" <| fun () ->
       let smuggled = externalRow "FR-VSC" "friction" "vscode"
       matrixReplacing "FR-VSC" smuggled
-      |> checkSynthetic probeThatResolvesEverything false
+      |> checkSynthetic probeThatResolvesEverything
       |> errorsMentioning "not declared in externalClients"
       |> Expect.isNonEmpty "only a structurally unrunnable client may use external attestation"
 
@@ -512,7 +474,7 @@ let definitionOfDoneTests =
              "evidence": { "kind": "external", "repo": "owner/repo", "tests": ["spec/e2e.lua"],
                            "commit": "ce2f615", "attestedAt": "2026-09-04", "summary": "attested" } }"""
       matrixReplacing "HR-NVIM" abbreviated
-      |> checkSynthetic probeThatResolvesEverything false
+      |> checkSynthetic probeThatResolvesEverything
       |> errorsMentioning "full 40-character commit SHA"
       |> Expect.isNonEmpty "an abbreviated foreign SHA must not back a verified row"
 
@@ -521,7 +483,7 @@ let definitionOfDoneTests =
         """{ "id": "HR-VSC", "capability": "hot-reload", "client": "vscode", "status": "verified",
              "evidence": { "kind": "vibes", "summary": "it felt right" } }"""
       matrixReplacing "HR-VSC" unknown
-      |> checkSynthetic probeThatResolvesEverything false
+      |> checkSynthetic probeThatResolvesEverything
       |> errorsMentioning "unknown evidence kind"
       |> Expect.isNonEmpty "an unrecognised evidence kind must be an error, never a pass"
 
@@ -530,7 +492,7 @@ let definitionOfDoneTests =
         """{ "id": "LT-VSC", "capability": "live-testing", "client": "vscode", "status": "deferred",
              "issue": 128, "expires": "2099-01-01" }"""
       matrixReplacing "LT-VSC" reasonless
-      |> checkSynthetic probeThatResolvesEverything false
+      |> checkSynthetic probeThatResolvesEverything
       |> errorsMentioning "deferral reason"
       |> Expect.isNonEmpty "a deferral must say what would re-verify it"
 
@@ -540,7 +502,7 @@ let definitionOfDoneTests =
              "evidence": { "kind": "ci", "tests": ["Bozzetto.Tests/Some.fs"], "runner": "--integration-host",
                            "stage": "integration host", "run": "35523239725", "summary": "green locally" } }"""
       matrixReplacing "HR-VSC" local
-      |> checkSynthetic probeThatResolvesEverything false
+      |> checkSynthetic probeThatResolvesEverything
       |> errorsMentioning "'green locally' is not evidence"
       |> Expect.isNonEmpty "locally-observed greenness is not something anyone else can open"
 
@@ -550,7 +512,7 @@ let definitionOfDoneTests =
              "evidence": { "kind": "ci", "tests": ["Bozzetto.Tests/Some.fs"], "runner": "--integration-host",
                            "stage": "integration host", "summary": "it passed" } }"""
       matrixReplacing "HR-VSC" unresolvable
-      |> checkSynthetic probeThatResolvesEverything false
+      |> checkSynthetic probeThatResolvesEverything
       |> errorsMentioning "run id or commit SHA"
       |> Expect.isNonEmpty "a verified row must be resolvable by someone else"
 

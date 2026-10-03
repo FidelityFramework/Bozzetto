@@ -1,46 +1,37 @@
 #!/usr/bin/env -S dotnet fsi
 // ci-pipeline.fsx
 //
-// THIS SCRIPT IS THE CI PIPELINE. GitHub Actions (.github/workflows/main.yml)
-// supplies only the runner, the checkout, and the SDK/Node/xvfb install; it
-// encodes no build/test/pack logic of its own. The exact same stages run
-// locally and in CI:
+// THIS SCRIPT IS THE BUILD AND TEST PIPELINE. Every build/test step is encoded
+// here, so the same stages run on a developer machine and on any CI runner,
+// which needs to supply only the checkout and the SDK/Node/xvfb install:
 //
-//   dotnet fsi ci-pipeline.fsx             # build, format, unit + integration
-//   dotnet fsi ci-pipeline.fsx -- ci       # + the mutation-score gate
-//   dotnet fsi ci-pipeline.fsx -- ci composer release # + Composer and release bundle
+//   dotnet fsi ci-pipeline.fsx                # build, format, unit + integration
+//   dotnet fsi ci-pipeline.fsx -- ci          # + the mutation-score gate
+//   dotnet fsi ci-pipeline.fsx -- composer    # + the Composer provider tier
+//   dotnet fsi ci-pipeline.fsx -- pack        # + pack the CLI tool into nupkg/
 //
-// The design goal (the whole reason this replaces a page of YAML): build the
-// solution ONCE in Release, then run every downstream check --no-build off that
-// single output, and PROMOTE the packed artifacts rather than a separate job
-// rebuilding them. It runs entirely on ONE Linux runner — the real-daemon
-// integration-host suites and the VS Code command-proof were verified green on
-// Linux (Args.resolveHostLaunch launches the FSI host via the dotnet muxer on
-// non-Windows; the proof self-provisions a Linux VS Code under xvfb), so the
-// former windows leg is gone. No more building the solution once per job,
-// no separate build/integration/
-// extensions/benchmarks/release jobs each from a clean checkout.
+// The design goal: build the solution ONCE in Release, then run every
+// downstream check --no-build off that single output, on one Linux machine.
 //
 // Stage selection:
-//   * unconditional — restore, build, format, samples, VS Code extension
-//     compile + client contract tests (npm run
-//     test:golden + every bozzetto-vscode/tests/*.fsx), then "test tiers": the
-//     default suite and the integration-host suites.
+//   * unconditional — build, format, samples, VS Code extension compile +
+//     client contract tests (npm run test:golden + every
+//     bozzetto-vscode/tests/*.fsx), then "test tiers": the default suite and
+//     the integration-host suites.
 //   * `ci` adds to "test tiers" — the mutation-score gate.
+//   * `composer` builds the Composer provider worker and adds its tier; it
+//     needs BOZZETTO_COMPOSER_DISTRIBUTION and BOZZETTO_COMPOSER_FIXTURE.
 //   * "test tiers" runs every tier regardless of the others; concurrently, each
 //     in a private copy-on-write clone, where the machine supports it (see the
 //     tier scheduler section and build/TierPlan.fs).
 //   * always, after the tiers — the "trust report": one table of every tier's
 //     registered/ran/verdict; the one place a red test tier fails the run.
-//   * whenCmdArg "release" — pack the shippable bundle + write release-manifest.
+//   * `pack` — after a trusted run, pack the CLI tool package into nupkg/ and
+//     check its payload. Nothing is published from this pipeline.
 //
-// Cross-platform packing is safe: every per-RID tree-sitter native is committed
-// under runtimes/ and the fsproj includes them by Condition="Exists(...)", so
-// the single Linux pack produces a complete cross-platform nupkg. (The Windows
-// user gets the FSI host via the dotnet muxer rather than a native
-// a native worker apphost — the Unix-proven launch path; if a native Windows apphost is
-// ever wanted in the package, cross-publish it with `dotnet publish -r win-x64`,
-// which works from Linux.)
+// Cross-platform packing: every per-RID tree-sitter native is committed under
+// runtimes/ and the fsproj includes them by Condition="Exists(...)", so the
+// single Linux pack produces a complete cross-platform nupkg.
 
 #r "nuget: Fun.Build, 1.2.0"
 
@@ -55,7 +46,8 @@ open Fun.Build.Github
 
 
 let rootDir = __SOURCE_DIRECTORY__
-let releaseDir = Path.Combine(rootDir, "release")
+/// Where `pack` writes the CLI tool package (gitignored).
+let packDir = Path.Combine(rootDir, "nupkg")
 let vscodeDir = Path.Combine(rootDir, "bozzetto-vscode")
 // Every downstream check runs against this ONE Release build (see "build" stage).
 let testBinDir = "Bozzetto.Tests/bin/Release/net10.0"
@@ -122,7 +114,7 @@ let withTestSuiteLease (work: unit -> Async<Result<unit, string>>) =
       | None -> return result
   }
 
-// ---- release helpers (faithful F# translations of the old pwsh steps) --------
+// ---- packing ------------------------------------------------------------------
 
 /// The single source-of-truth version, from Directory.Build.props.
 let propsVersion () =
@@ -132,34 +124,13 @@ let propsVersion () =
   |> Option.map (fun e -> e.Value.Trim())
   |> Option.defaultWith (fun () -> failwith "Directory.Build.props: no <Version> element found")
 
-/// The VS Code extension version, from its package.json.
-let pkgJsonVersion () =
-  use doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(vscodeDir, "package.json")))
-  doc.RootElement.GetProperty("version").GetString()
-
-let sha256Hex (path: string) =
-  use s = File.OpenRead path
-  use sha = SHA256.Create()
-  (sha.ComputeHash s |> Array.map (fun b -> b.ToString("x2")) |> String.concat "")
-
-/// Fail if the packaged VSIX version would drift from the NuGet/tool version —
-/// publish locates the VSIX by the Directory.Build.props version, so a mismatch
-/// only surfaces after a full build (observed 2026-08: props vs package.json).
-let verifyVersionAlignment () =
-  let p, k = propsVersion (), pkgJsonVersion ()
-  if p <> k then
-    failwithf
-      "Version drift: Directory.Build.props is %s but bozzetto-vscode/package.json is %s. Run scripts/bump-version, or set package.json to %s."
-      p k p
-  printfn "Versions aligned at %s" p
-
-/// Verify the installed tool payload matches the supported stable runtime.
+/// Verify the packed tool payload matches the supported stable runtime.
 let requiredToolTfms = [ "net10.0" ]
 let verifyToolInstallable () =
   // The package for THIS build's version, never whichever nupkg sorts first.
-  let expected = Path.Combine(releaseDir, $"Bozzetto.{pkgJsonVersion ()}.nupkg")
+  let expected = Path.Combine(packDir, $"Bozzetto.{propsVersion ()}.nupkg")
   match File.Exists expected with
-  | false -> failwithf "No %s in release/. Did pack fail?" (Path.GetFileName expected)
+  | false -> failwithf "No %s in nupkg/. Did pack fail?" (Path.GetFileName expected)
   | true ->
     let nupkg = expected
     use zip = ZipFile.OpenRead nupkg
@@ -170,15 +141,6 @@ let verifyToolInstallable () =
       |> Seq.map (fun n -> (n.Split('/')).[1])
       |> Seq.distinct
       |> Seq.toList
-    // nuget.org refuses anything over 250 MB with a 413, and that only shows up
-    // at the publish step, after the VS Code marketplaces already took the
-    // release. Catch it here. The margin leaves room for ordinary growth.
-    let nugetLimitBytes = 250L * 1024L * 1024L
-    let size = FileInfo(nupkg).Length
-    match size < nugetLimitBytes * 9L / 10L with
-    | false ->
-      failwithf "%s is %d MB. nuget.org rejects packages over 250 MB, and this gate wants 10%% headroom." (Path.GetFileName nupkg) (size / 1048576L)
-    | true -> ()
     // Bozzetto loads exactly one tree-sitter grammar, its own F# one. Any other
     // grammar in the package is dead weight that got copied in from
     // TreeSitter.DotNet (Directory.Build.targets strips them).
@@ -197,33 +159,13 @@ let verifyToolInstallable () =
     let unexpected = tfms |> List.filter (fun t -> not (List.contains t requiredToolTfms))
     match missing, unexpected with
     | [], [] ->
-      printfn "OK %s installs on both %s SDKs." (Path.GetFileName nupkg) (String.concat " and " requiredToolTfms)
+      printfn "OK %s carries exactly the %s tool payload." (Path.GetFileName nupkg) (String.concat " and " requiredToolTfms)
     | missing, [] ->
       failwithf "DotnetToolSettings.xml missing for %s in %s — those SDK users' installs will fail (issue #131)." (String.concat ", " missing) (Path.GetFileName nupkg)
     | [], unexpected ->
       failwithf "Tool package also targets unexpected TFM(s) %s in %s — the repo must pack exactly %s." (String.concat ", " unexpected) (Path.GetFileName nupkg) (String.concat ", " requiredToolTfms)
     | missing, unexpected ->
       failwithf "Tool package TFM mismatch in %s: missing %s, unexpected %s." (Path.GetFileName nupkg) (String.concat ", " missing) (String.concat ", " unexpected)
-
-/// Write release/release-manifest.json in the exact shape publish.yml consumes
-/// (version + sourceSha + per-file sha256). The GitHub context comes in as env.
-let writeReleaseManifest () =
-  let envOr k = match Environment.GetEnvironmentVariable k with null -> "" | v -> v
-  let files =
-    Directory.GetFiles releaseDir
-    |> Array.filter (fun f -> let e = Path.GetExtension f in e = ".nupkg" || e = ".vsix")
-    |> Array.sortBy Path.GetFileName
-  if files.Length < 2 then
-    failwithf "Expected release files were not staged (found %d; need the nupkg and the vsix)." files.Length
-  let manifest =
-    {| version = propsVersion ()
-       sourceSha = envOr "SOURCE_SHA"
-       sourceRunId = envOr "SOURCE_RUN_ID"
-       sourceRunAttempt = envOr "SOURCE_RUN_ATTEMPT"
-       files = files |> Array.map (fun f -> {| name = Path.GetFileName f; sha256 = sha256Hex f |}) |}
-  let json = JsonSerializer.Serialize(manifest, JsonSerializerOptions(WriteIndented = true))
-  File.WriteAllText(Path.Combine(releaseDir, "release-manifest.json"), json)
-  printfn "Wrote release-manifest.json for %s (%d files)" manifest.version files.Length
 
 // ---- the trust ledger and the tier scheduler -----------------------------------
 //
@@ -281,8 +223,8 @@ let tierWork =
     failwith "XDG_CACHE_HOME must place test-tier scratch outside the checkout."
   path
 
-/// Recorded per-tier durations, for longest-first ordering. The local gate
-/// points this at its persistent state; elsewhere it lives with the results.
+/// Recorded per-tier durations, for longest-first ordering. They live with the
+/// results unless BOZZETTO_TIER_HISTORY names a persistent file.
 let durationsFile =
   match Environment.GetEnvironmentVariable "BOZZETTO_TIER_HISTORY" with
   | null | "" -> Path.Combine(rootDir, "test-results", "tier-durations.json")
@@ -602,11 +544,10 @@ let rec runSteps (runCommand: string -> Async<Result<unit, string>>) (steps: str
 
 pipeline "bozzetto" {
   description
-    "Bozzetto CI as one typed F# pipeline: restore pinned packages, build once \
-     in Release, then run every check --no-build off that output. Linux leg: \
-     format, unit suite, mutation gate, VSIX + nupkg + release manifest. Windows \
-     leg: samples + the real-daemon integration-host suites. Identical locally \
-     and in GitHub Actions."
+    "Bozzetto build and test pipeline: build once in Release, then run every \
+     check --no-build off that output: format, client contract tests, the test \
+     tiers and the trust report. `ci` adds the mutation gate, `composer` the \
+     Composer provider tier, `pack` the CLI tool package. Nothing is published."
   workingDir rootDir
   timeout 3600
   timeoutForStep 900
@@ -614,8 +555,7 @@ pipeline "bozzetto" {
 
   stage "build" {
     // Build the whole solution ONCE, in Release. Every downstream stage runs
-    // --no-build against this exact output — the single build that used to be
-    // repeated in build/integration-host/extensions/release-artifacts.
+    // --no-build against this exact output.
     run (leasedCommand "full_build" "dotnet build -c Release")
   }
 
@@ -655,7 +595,7 @@ pipeline "bozzetto" {
   }
 
   stage "vscode extension compile" {
-    // Build the extension for client contracts and the VSIX package step.
+    // Build the extension for the client contract tests.
     workingDir vscodeDir
     run (leasedCommand "full_build" "dotnet tool restore")
     run (leasedCommand "full_build" "npm ci --include=dev")
@@ -727,13 +667,14 @@ pipeline "bozzetto" {
     // ONE table for every tier this run invoked: registered vs ran vs result,
     // plus the verdict. Fails the pipeline if any tier is not Trusted —
     // failed, errored, ran nothing, ran a different count than it registered,
-    // or never reported at all. Written to the GitHub step summary too.
+    // or never reported at all. Also appended to the CI step summary when
+    // GITHUB_STEP_SUMMARY is set.
     run (fun _ ->
       async {
         let lines = trustLines ()
         let table = renderTrustTable lines
         printfn "%s" table
-        // Kept beside the ledger so a local gate can record it with the pass.
+        // Kept beside the ledger.
         File.WriteAllText(Path.Combine(Path.GetDirectoryName trustLedger, "trust-report.md"), table + "\n")
         match Environment.GetEnvironmentVariable "GITHUB_STEP_SUMMARY" with
         | null | "" -> ()
@@ -749,95 +690,13 @@ pipeline "bozzetto" {
       })
   }
 
-  stage "package vscode extension" {
-    // Produce the shippable VSIX straight into release/ (no separate artifact
-    // hand-off between jobs).
-    whenCmdArg "release"
-    workingDir vscodeDir
-    run (fun ctx ->
-      async {
-        // Start release/ empty. The local gate reuses one checkout, and git clean
-        // keeps ignored output, so release/ used to pile up every old nupkg.
-        // The installability check then read an old one, and the manifest listed
-        // all of them.
-        if Directory.Exists releaseDir then Directory.Delete(releaseDir, true)
-        Directory.CreateDirectory releaseDir |> ignore
-        let vsixOut = Path.Combine(releaseDir, $"bozzetto-vscode-{pkgJsonVersion ()}.vsix")
-        return! ctx.RunCommand (leasedCommand "full_build" $"npx @vscode/vsce package -o \"{vsixOut}\"")
-      })
-  }
-
-  stage "pack release bundle" {
-    // Pack the nupkg, verify it is installable and version-aligned, and write
-    // the manifest publish.yml consumes — all straight into release/, uploaded
-    // by the one build job. This is the whole former release-artifacts job.
-    whenCmdArg "release"
-    run (fun _ -> async { verifyVersionAlignment (); return Ok() })
-    run (fun _ ->
-      async {
-        Directory.CreateDirectory releaseDir |> ignore
-        return Ok()
-      })
-    run (leasedCommand "full_build" "dotnet pack Bozzetto -c Release -o release")
+  stage "pack" {
+    // Pack the CLI tool into nupkg/ and check the package's payload. Runs only
+    // after the trust report, so it packs a trusted build. Nothing is
+    // published from this pipeline.
+    whenCmdArg "pack"
+    run (leasedCommand "full_build" "dotnet pack Bozzetto -c Release -o nupkg")
     run (fun _ -> async { verifyToolInstallable (); return Ok() })
-    run (fun _ -> async { writeReleaseManifest (); return Ok() })
-  }
-
-  stage "packaged tool smoke" {
-    // Install the just-packed nupkg as a real tool and run it — the one check
-    // that exercises the SHIPPED, INSTALLED artifact rather than the build
-    // output. Formerly smoke-test.yml (windows-latest); consolidated here on
-    // Linux, cross-platform (no pwsh). Installs to a throwaway --tool-path so it
-    // never touches a developer's global tools, then runs `--version`. Runs
-    // after "pack release bundle", so it is gated on "release" (present on a
-    // main release gate). This preserves the packaging-regression guard
-    // (uninstallable / unlaunchable tool) that verifyToolInstallable's
-    // nupkg-structure check alone cannot catch.
-    //
-    // Pin the stable SDK in an isolated directory so ambient resolution
-    // cannot silently validate a different runtime than the shipped payload.
-    whenCmdArg "release"
-    timeoutForStep 300
-    run (fun _ ->
-      async {
-        let sdks = [ "10.0.401", "net10.0" ]
-        let smokeOneSdk (sdkVersion: string, tfm: string) =
-          async {
-            let workDir = Path.Combine(rootDir, $".smoke-{tfm}")
-            if Directory.Exists workDir then Directory.Delete(workDir, true)
-            Directory.CreateDirectory workDir |> ignore
-            File.WriteAllText(
-              Path.Combine(workDir, "global.json"),
-              $"""{{"sdk":{{"version":"{sdkVersion}","rollForward":"disable"}}}}""")
-            let toolPath = Path.Combine(workDir, "tool")
-            let log = Path.Combine(workDir, "smoke.log")
-            let! installExit =
-              execToLog (TimeSpan.FromMinutes 10.0) workDir [] log
-                [ leaseRunner; "run"; "full_build"; "dotnet"; "tool"; "install"; "Bozzetto"; "--tool-path"; toolPath
-                  "--version"; pkgJsonVersion ()
-                  "--add-source"; releaseDir; "--no-cache" ]
-            match installExit with
-            | 0 ->
-              // `--version` proves the packed tool installed and launches
-              // (catches the uninstallable-package / dropped-exe /
-              // missing-dll-at-startup class). We deliberately do NOT run
-              // `check` here: it probes daemon and port state, whose exit
-              // semantics on a clean runner are not pinned, and a smoke stage
-              // must never be the flaky one.
-              let exe = Path.Combine(toolPath, "boz")
-              let! versionExit = execToLog (TimeSpan.FromMinutes 2.0) workDir [] log [ leaseRunner; "run"; "full_build"; exe; "--version" ]
-              match versionExit with
-              | 0 ->
-                printfn "OK: Bozzetto installs and runs under .NET SDK %s (%s build)" sdkVersion tfm
-                return Ok()
-              | code -> return Error $"'boz --version' under SDK {sdkVersion} (expected {tfm} build) exited {code}; see {log}"
-            | code -> return Error $"tool install under SDK {sdkVersion} (expected {tfm} build) exited {code}; see {log}"
-          }
-        let! results = sdks |> List.map smokeOneSdk |> Async.Sequential
-        match results |> Array.toList |> List.choose (function Error e -> Some e | Ok () -> None) with
-        | [] -> return Ok()
-        | errors -> return Error(String.concat "; " errors)
-      })
   }
 
   runIfOnlySpecified false

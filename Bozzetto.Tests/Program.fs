@@ -14,19 +14,6 @@ let runTests argv =
     0
   | false ->
 
-  let isReleaseReadiness = argv |> Array.exists (fun arg -> arg = "--release-readiness")
-  match isReleaseReadiness with
-  | true ->
-    let errors =
-      System.IO.File.ReadAllText Bozzetto.Tests.DefinitionOfDoneTests.matrixPath
-      |> Bozzetto.Tests.DefinitionOfDoneTests.validateMatrix true (DateOnly.FromDateTime DateTime.UtcNow)
-    match errors with
-    | [] -> 0
-    | failures ->
-      failures |> List.iter (eprintfn "QUALITY GATE: %s")
-      1
-  | false ->
-
   // Run mutation score report if --mutation-score flag is passed
   let isMutationScore = argv |> Array.exists (fun a -> a = "--mutation-score")
   match isMutationScore with

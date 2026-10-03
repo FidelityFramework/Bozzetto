@@ -192,7 +192,12 @@ The separate upstream Neovim plugin, `WillEhrendreich/sagefs.nvim`, is not part 
 dotnet build           # Build all projects
 dotnet test            # CI only — locally run the built test DLL unfiltered under a test-suite lease
 dotnet pack Bozzetto -o nupkg  # Package the CLI tool
+dotnet fsi ci-pipeline.fsx     # Full build and test pipeline; `-- ci`, `-- composer`, `-- pack` add stages
 ```
+
+Bozzetto is built from source and its packages are published to the project's
+own Forgejo package registry; nothing is published to NuGet.org, and no script
+or pipeline stage in this checkout publishes anything.
 
 If the scheduler blocks a build for memory, immediately investigate the consumers
 with `btop`, `ps`, or equivalent tools instead of repeatedly polling for a lease.
@@ -204,8 +209,8 @@ not a measurement of Bozzetto's memory usage. Raise architectural questions earl
 and ask before changing the scheduling policy or stopping processes you do not own.
 
 Commit and push useful checkpoints promptly so work has a remote recovery point.
-If release checks are still pending, use an integration branch and record the
-outstanding checks; release checks must not block these checkpoint pushes.
+Work lands on `main`; there are no side or integration branches, and no version
+bump or release check gates a push.
 
 ## Multi-agent / worktree sessions
 
@@ -258,5 +263,5 @@ portable host contracts. Record exact identities and acceptance evidence in the
 - Do not introduce new NuGet dependencies without discussion
 - Do not change the indentation style (2 spaces)
 - Do not use `dotnet test` for local development — run the built test DLL unfiltered under `acquire_test_suite_lease`, and read the TRUST line
-- Do not modify `Directory.Build.props` version numbers. Nothing bumps on commit: `scripts/ship` bumps once per push, and `scripts/pre-push` refuses a main push that doesn't raise the version
+- Do not modify the `<Version>` in `Directory.Build.props`. Versions are not bumped per commit or per push; versioning will follow the project's Forgejo package workflow
 - Do not add Version attributes to PackageReference elements

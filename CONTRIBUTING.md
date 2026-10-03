@@ -32,7 +32,6 @@ unfiltered build/test gates below.
 ```bash
 git clone https://forge.spkez.dev/FidelityFramework/Bozzetto.git
 cd Bozzetto
-scripts/install-hooks
 dotnet fsi build.fsx
 ```
 
@@ -91,41 +90,32 @@ The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are 
 - `Bozzetto/McpServer.fs` and `Bozzetto/McpTools.fs` — MCP transport and tools
 - `Bozzetto.Tests/` — the test project shows how every module is exercised
 
-## Publishing the Forgejo checkout
+## Branches, versions and packages
 
-Run `scripts/install-hooks` after cloning. It installs the repository's pre-push
-checks without replacing an existing hook or custom hooks directory. Plain Git
-does not install tracked hooks automatically. Use integration branches for
-recovery checkpoints while release validation is pending.
+Work lands on `main`; there are no side or integration branches. No hook,
+script or pipeline stage bumps the version or gates a push, and the
+`<Version>` in `Directory.Build.props` is left as it is: versioning will follow
+the project's Forgejo package workflow.
 
-Commit the reviewed changes before running `scripts/ship`. It bumps the version
-once, gates that exact commit in a detached checkout, and pushes its pinned SHA
-to the existing `origin/main` branch. The inherited `master` target is refused.
-The GitHub workflows remain upstream release infrastructure; a Forgejo push is
-not evidence that they ran.
+Bozzetto is built from source and published to the project's own Forgejo
+package registry; it is not published to NuGet.org. `dotnet fsi ci-pipeline.fsx -- pack`
+packs the CLI tool into `nupkg/` after a trusted run and checks its payload.
+Nothing in this checkout publishes the package.
 
-Select immutable compiler and formatter closures, the Fidelity.Data project, and
-the native fixture before shipping. These explicit paths also supply the detached
-gate's MSBuild references:
+The Composer provider tier runs with `dotnet fsi ci-pipeline.fsx -- composer`
+and needs explicit, absolute paths to a built compiler closure and the native
+fixture:
 
 ```bash
 export BOZZETTO_COMPOSER_DISTRIBUTION=/absolute/path/to/reviewed/compiler/closure
-export BOZZETTO_CALQUE_DISTRIBUTION=/absolute/path/to/reviewed/formatter/closure
-export BOZZETTO_FIDELITY_DATA_PROJECT=/absolute/path/to/Fidelity.Data/src/Fidelity.Data/Fidelity.Data.fsproj
 export BOZZETTO_COMPOSER_FIXTURE=/absolute/path/to/IncrementalScalarRegions.fidproj
-scripts/ship
+dotnet fsi ci-pipeline.fsx -- ci composer
 ```
 
-The release gate runs `ci composer release`, including the whole Composer tier.
 Build commands and the parallel test stage take their matching work leases;
-deferral or refusal stops the work. Closure identities are recorded with the
-receipt and rechecked before recording a pass. Fidelity.Data remains a project
-reference: the gate records its checkout's tracked and non-ignored source/build
-files, commit and tags, and refuses a pass if those inputs change during the run.
-The explicit project path is forwarded as `FidelityDataProject`; the development
-default remains the sibling Fidelity.Data checkout. The current lease endpoint has
-no renewal operation, so work ends before expiry and an overlong tier is reported
-as incomplete. Old receipts without the Composer tier cannot authorize a push.
+deferral or refusal stops the work. The current lease endpoint has no renewal
+operation, so work ends before expiry and an overlong tier is reported as
+incomplete.
 
 ## Debugging Bozzetto
 

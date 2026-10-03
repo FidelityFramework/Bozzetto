@@ -39,7 +39,7 @@
 /// budget in about six seconds. The default window below covers three full
 /// 60s housekeeping cycles and catches anything above ~50MB/minute, which is
 /// forty times more sensitive than the bug it was written for, while costing
-/// the pre-push gate three minutes instead of ten. Set
+/// the test tier three minutes instead of ten. Set
 /// `BOZZETTO_IDLE_RSS_SOAK_MINUTES` to hunt a slower drip than that.
 module Bozzetto.Tests.DaemonIdleRssTests
 

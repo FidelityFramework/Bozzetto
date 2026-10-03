@@ -87,7 +87,7 @@ Bozzetto carries compiler-authored evidence faithfully, with its source, target 
 
 ### 1. Install
 
-Bozzetto is distributed as a reviewed release bundle — daemon and Composer worker — launched through the installed `boz` command; it is not published to NuGet. `scripts/ship` gates a commit and pushes it, and the main build promotes the gated bundle. For host development, use the SDK pinned in `global.json` and follow [the contributing guide](CONTRIBUTING.md); building the host does not change the compiler distribution a session runs.
+Bozzetto is built from source and published to the project's own Forgejo package registry; it is not published to NuGet.org. The daemon and its Composer worker are launched through the installed `boz` command. For host development, use the SDK pinned in `global.json` and follow [the contributing guide](CONTRIBUTING.md); building the host does not change the compiler distribution a session runs.
 
 ### 2. Start the shared daemon
 

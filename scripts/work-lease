@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bounded HTTP control and command ownership for the local release gate.
+# Bounded HTTP control and command ownership for leased build and test work.
 # work-lease acquire <kind> <holder> | release <id> | run <kind> <command>...
 set -euo pipefail
 endpoint="http://127.0.0.1:${BOZZETTO_MCP_PORT:-47749}/api/lease"
