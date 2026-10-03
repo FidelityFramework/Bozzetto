@@ -1,6 +1,8 @@
 # FFI correction: Phase 0 evidence
 
-October 3, 2026. Implementer record. Phase 0 is in progress. The owner reviews and commits repository changes. The separate auditor reviews this record.
+October 3, 2026. Implementer record. The owner reviews and commits repository changes. The separate auditor reviews this record.
+
+Owner direction after this record's initial publication: trust the supplied test counts; do not rerun the baseline. Those counts are accepted as the starting point. Subsequent execution is limited to validating authorized repairs and the discriminating regression probe. All source changes use the existing `main` checkouts.
 
 The current [implementor guide](FFI_Correction_Implementor_Guide_2026-10-03.md) and [owner rulings](FFI_Correction_Rulings_2026-10-03.md) govern this work. Fresh captures are under `/home/hhh/.cache/bozzetto/evidence/ffi-correction-2026-10-03/implementer-phase0-20261003-BPhJf0/`. Inherited evidence is under the parent directory.
 
@@ -60,8 +62,8 @@ Bozzetto's new head adds the guide and rulings. Its implementation remains at th
 | Gate | Command record | Lease | Result |
 |---|---|---|---|
 | clef, unfiltered | `clef-command.txt`, `clef-test.log`, `clef-results/clef.trx` in the fresh capture directory | `1eb8b4b0fd104783b1828805d25d4f28`, released | 2,260 passed / 94 failed / 0 skipped. Same failing multiset as the pin. |
-| Composer NativeCallbacks, unfiltered | `nativecallbacks-command.txt`, `nativecallbacks-test.log` | `154a00090b7b4d62862d8135bf81bfd8`, expires 19:51:27 UTC | Running with an 850-second outer limit and 10-second kill grace. |
-| Composer regression runner, unfiltered | To run after NativeCallbacks | Not acquired | Pending |
+| Composer NativeCallbacks, unfiltered | `nativecallbacks-command.txt`, `nativecallbacks-test.log`, `nativecallbacks.evidence.json` | `154a00090b7b4d62862d8135bf81bfd8`, released | Completed 19:36:46–19:50:44 UTC within lease. All 29 failed at compilation; none executed. Outcomes match the supplied record. |
+| Composer regression runner | Supplied command and results accepted | No new lease | Not rerun, per owner direction. |
 
 ## Triage checked against source and spec
 
@@ -133,13 +135,66 @@ The draft's proposed first-refusal pins also depend on diagnostic ordering (`Nat
 
 ## Step 1 orientation
 
-Read-only helpers read `t1/T1-PLAN.md` and `deployment.md` in full (R, retained design documents). Their valid requirements preserve complete callable contracts, Baker-owned adapters, immutable PSG transport, passive Alex witnessing and target realization checks. `FnPtr.ofExtern` demands the actual import through declaration identity. Interior records and native C tables need distinct admission and projection contracts.
+Read-only helpers read `t1/T1-PLAN.md`, `deployment.md`, `records.md` and `obligations.md` in full (R, retained design documents). Their valid requirements preserve complete callable contracts, Baker-owned adapters, immutable PSG transport, passive Alex witnessing and target realization checks. `FnPtr.ofExtern` demands the actual import through declaration identity. Interior records and native C tables need distinct admission and projection contracts.
 
 The following instructions are superseded by the owner rulings: fixed schema 16→17 sequencing in T1-A; deferral of ordinary callable fields and callable union payloads; blanket refusal of interior Option<FnPtr>; protected approval-file consumption; and Bozzetto gates as prerequisites to compiler acceptance. D6(b) moves the shared callable foundation into Phase B. Native absence conversion remains a separate boundary obligation. D1(iii) uses explicit owner go-ahead tied to the reviewed distribution and rollback record. Worker wire/loaded-identity checks, cleanup fencing and rollback remain required on the independent controller track.
 
-## Required checks in progress
+## Follow-through
 
-- Compare fresh failing sets with the retained baseline, preserving duplicate theory occurrences.
-- Read the Step 1 designs for orientation. Their sequence is superseded by the baseline document when published.
+The completed runs' failing sets have been compared without rerunning tests. The remaining supplied counts are accepted under the owner's direction. Step 1 orientation is complete; the corrected baseline document governs implementation sequencing when it arrives.
 
-Phase 0 has not yet established a basis for Phase B implementation. No source repair or acceptance result is claimed here.
+The updated guide authorizes the ordered Ready now set: Bozzetto output repair and Release validation, two Clef fixture corrections, then the temporary regression probe. Other Phase B edits await the corrected baseline document. Each result is recorded below as it completes.
+
+## Ready now: environment repair
+
+E: `dotnet clean -c Debug` completed. The following parallel build hit two writes to Calque's generated `obj/Debug/net10.0/FSComp.fs`. Completing the build with `-m:1` succeeded, followed by a successful Release build. This changed generated outputs only. No shared daemon or worker was restarted.
+
+E: The authorized Release check, with `DOTNET_ROOT` and `DOTNET_HOST_PATH` pointing to the mise 10.0.401 installation and system temporary storage, returned:
+
+```text
+TRUST tier=default registered=8405 ran=8405 passed=8402 failed=0 errored=0 ignored=3 verdict=Trusted
+```
+
+Commands, logs and exit records are in `ready-now/` beneath the fresh evidence directory. Build leases: `a32b9854b2d143e385f3e92d456f5c15` (initial clean/build; manually released after driver interruption) and `38aaecf64e204fd384008c66f355628f` (serialized builds; released). Test lease: `4b4ba468840b400a83c51428aa7ddf61` (released). The run uses private data and trust-ledger paths. This is the requested environment-repair check, not a revalidation of the supplied baseline counts.
+
+## Ready now: Clef fixture corrections
+
+R: Changed only `ClosureValueCases.fs` on `main`. RC8 attaches `ClosureValues.context` before reading the valid callback descriptor and both invalid variants. R13 now asserts that an Unbounded interior value has no held width and names that obligation explicitly. Its source and `noErrors` guard are preserved.
+
+E: The fixture build passed under lease `dd8f22e0c4b941199deb3151d289fdf9`. The requested unfiltered post-change gate ran under lease `adc03043ff6f4e7a9cb65918a9c418c3`, finished in 4 minutes 35 seconds, and released the lease: 2,261 passed, 93 failed, 0 skipped, 2,354 total. The listener descriptor test now passes. Comparison with the supplied TRX shows no other failure changes except the R13 test's rename. R13 still stops at the separate, already-known CCS8011 error before reaching its corrected assertion; it is not reported as passing.
+
+Evidence: `ready-now/clef-fixtures-{build,test}*`, `clef-fixtures-results/clef-fixtures.trx`, and `clef-fixtures-comparison.json`. The owner subsequently clarified validation scope: focused checks during implementation, full suites at major integration gates. Do not repeat full runs for each small edit.
+
+## Ready now: discriminating range probe
+
+E: P0-10's representation-rewrite hypothesis is now demonstrated for both requested fixtures. Temporary, read-only logging captured the graph before representation preparation, after sequence/environment rewriting and demand renewal, and inside numeric settlement using its actual `freshFacts` map. `ProjectChecker.checkProject` checked the existing `16g_SequenceStartup` and `16a_SequenceOperations` projects. No native executable was launched.
+
+| Fixture | Before rewriting: sites whose fresh facts do not fit held bounded ranges | After sequence/environment rewriting | At numeric settlement | Freshness diagnostic occurrences |
+|---|---:|---:|---:|---:|
+| 16g | 0 | 56 | 56 | 51 |
+| 16a | 0 | 448 | 448 | 404 |
+
+These are different measures: node comparisons and emitted diagnostic occurrences. The emitted freshness messages total 455. Demand is valid at all three capture points in both projects; an invalid-demand empty map does not explain these runs.
+
+E: In 16g, finite-cell evidence remains current, and sequence-range evidence is current after rewriting and at numeric settlement. Thirteen generated `FrameRead` sites retain bounded annotations but recompute as `Unbounded`. For example:
+
+```text
+NodeId 6502: FrameRead (NodeId 6501, NodeId 5749)
+held:  Some (Bounded (0, 99))
+fresh: Some Unbounded
+source: SequenceStartup.clef, line 9, column 8
+ContinuationValue: source NodeId 5749 -> target NodeId 6502
+ContinuationSlotAccess: sources 5738, 5773, 6482, 5749, 6515, 6513 -> target 6502
+```
+
+Before rewriting, source node 5749 is an Application whose held and fresh ranges both equal `Bounded (0, 99)`. The generated read's provenance points back to that source node, while fresh range recomputation loses the bound.
+
+The other mismatches occur in applications, bindings, sequences and references. R: the pinned RangeAnalysis transfer has no FrameRead rule; its unmatched integer-value fallback produces Unbounded. Thus the generated read is a demonstrated loss of range correspondence, even while the captured proof-currency checks succeed. This is not missing post-fixpoint saturation or evidence that the source arithmetic itself is unbounded.
+
+E: In 16a, 260 of the 448 mismatches are FrameRead sites. Finite-cell evidence changes from current before rewriting to non-current afterward. This fixture has an additional currency problem; repairing FrameRead handling alone is not established as sufficient. I: the baseline repair must preserve validated source-to-generated-value correspondence and renew the owning premises across representation rewrites. Disabling freshness checks or accepting held annotations as their own proof would not establish that repair.
+
+Evidence is under `ready-now/probe/`: `instrumentation.patch`, `RunProbe.fsx`, per-fixture JSONL captures, diagnostic JSON, summary JSON and command/lease records. The JSONL uses F# diagnostic rendering for metadata and incidence; large rendered collections can be abbreviated. It is a diagnostic capture, not a complete serialized PSG or proof certificate. The specific continuation edges quoted above are complete in the capture.
+
+Build lease: `b8dd2d1ba5c141e589e43b636a80d7ab`. Successful probe lease: `f82856f65c2e46b08d03b38f8ed71db4`. Two earlier driver attempts stopped before project checking because FSI had not loaded XParsec; their logs and released leases (`1575e3a2a3a646e591fa190f01bce932`, `be9e40080c6a4b7fa8881edec002a1c5`) are retained. All leases were released.
+
+E: Both temporarily instrumented source files were restored byte-for-byte against their saved hashes. The normal compiler was rebuilt under released lease `12b92a848b7f4a6196ba6ae492c263fe`; its SHA-256 is again `27b59f138f56f30a695a9311c5f2434c21aff7bb08fabdecf5c7775e969757ba`, identical to the original compiler. No instrumentation remains in repository source or compiler output. Clef's retained diff consists solely of the two fixture corrections. The regression itself has not been repaired; this probe supplies its executed basis to the corrected baseline plan.

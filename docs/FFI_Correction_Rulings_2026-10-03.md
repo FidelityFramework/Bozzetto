@@ -133,6 +133,14 @@ change set, tests and acceptance, rather than designing a workaround around it. 
 means collapsing a seam: each component keeps its responsibility, and safety intents (for example,
 refusing a mismatched contract loudly) stay enforced.
 
+**Bozzetto sits outside the compiler pipeline.**
+> I'm still surprised that a daemon is given this much weight. The point of having Bozzetto outside the pipeline is
+> for this latitude to exist.
+
+Compiler and FFI work is accepted on component gates only: the unfiltered suites, the Composer runners and Farscape
+conformance. Adapting Bozzetto to a new compiler contract is an independent track. Switching the shared daemon is an
+operational step the owner triggers, reported separately, and it never blocks a compiler phase.
+
 **The spec is primary, and the relationship is multi-way.**
 > The thing that I think is most correct is the spec - but it's a multi-way relationship! The
 > "realities on the ground" may override a theoretical decision that "seems good on paper". Dealing

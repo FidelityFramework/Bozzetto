@@ -40,8 +40,10 @@ and non-portable, like the evidence paths in earlier checkpoints.
 
 ## Current state
 
-Every suite ran unfiltered under Bozzetto leases on October 3 at the heads listed. These counts are executed
-evidence.
+Every suite ran unfiltered on October 3 at the heads listed. These counts are executed evidence. Lease coverage was
+incomplete: the daemon grants fixed-lifetime leases, the detached driver renewed only between suites, and the
+NativeCallbacks and regression runs outlived their leases by about eight and nine minutes (Phase 0 audit finding
+P0-12). Treat those two runs as historical observations. Fresh acceptance runs need a lease that covers the whole run.
 
 | Repository and suite | Head | Result |
 |---|---|---|
@@ -63,7 +65,9 @@ The previous FFI handoff reported 61 clef failures. That figure came from a run 
 that run never included.
 
 The triage agents classified every failure (`baseline-repair/INVENTORY.md`). Their verdicts are one agent's report
-each and are the first thing Phase 0 audits.
+each. Where the implementer's [Phase 0 audit](FFI_Correction_Phase0_Audit_2026-10-03.md) has checked a group against
+source and spec, its finding supersedes the triage verdict. That audit rejects blanket test-defect rewrites for
+several groups, for example modulo rewrites of finite counters.
 
 | Classification | clef | Composer |
 |---|---|---|
@@ -104,8 +108,9 @@ reported separately, and it never blocks a compiler phase.
   RSS and cgroup usage and report them. Never poll.
 - A detached test driver outlives the agent that started it and keeps its lease. Release that lease yourself when the
   driver ends.
-- Acceptance is the unfiltered suite of every touched repository, using the commands in `t0/baseline/<repo>.md`. A
-  filtered run serves the inner loop only.
+- Acceptance is the unfiltered suite of every touched repository, using the commands in `t0/baseline/<repo>.md`.
+  Composer has no such record: its commands are in `t0/baseline/test-all.sh` with the raw logs under
+  `t0/baseline/logs/` (Phase 0 audit finding P0-14). A filtered run serves the inner loop only.
 - Test frameworks follow each repository: xUnit in clef, Alex, Fidelity.PSG, Composer `tests/Alex.Tests` and
   Farscape; NUnit in Calque and Fidelity.FSharp.Incremental; BAREWire's own harness; Expecto with FsCheck in Bozzetto
   and Fidelity.Data. Register every new test so the unfiltered run includes it.
@@ -156,9 +161,25 @@ be executed as written:
 - The parallel file partition fails. Several fixes must edit `RangeAnalysis.fs`.
 - Several expected greens contradict executed diagnostics.
 
-Make no repository edits for Phase B until `FFI_Correction_Baseline_2026-10-03.md` appears in this folder. That
-document applies the review's corrections and the owner's decision D6(b). Until then, continue Phase 0, and record in
-the audit file your own verification of the review's defects, starting with the blocker.
+This section governs, and it supersedes the kickoff message's "begin Phase B with the items the guide lists as ready".
+Until `FFI_Correction_Baseline_2026-10-03.md` appears in this folder, Phase B is limited to the ready set below. That
+document applies the review's corrections, the owner's decision D6(b) and the findings of the
+[Phase 0 audit](FFI_Correction_Phase0_Audit_2026-10-03.md).
+
+Ready now, in this order, each only after any gate run in progress has finished (no source in a running gate's
+dependency closure may change):
+
+1. Environment. Rebuild the stale Bozzetto Debug outputs cleanly and confirm the Release run reaches `Trusted` with
+   `DOTNET_ROOT` and `DOTNET_HOST_PATH` set. Rebuilding changes no repository file.
+2. The two fixture repairs the audit confirmed against source and spec, both in clef
+   `tests/Clef.Compiler.Service.Tests/ClosureValueCases.fs`: R13 (the register-width fallback assertion near line 484)
+   and RC8 (attach the platform to the valid graph and both negative graphs near line 120). Accept them with the
+   unfiltered clef suite under a lease that covers the whole run.
+3. The discriminating probe for the `bba4025` regression (audit P0-10). This is an investigation: keep any
+   instrumentation out of committed source and record the result in the audit file, where the baseline document will
+   use it.
+
+Everything else in Phase B waits for the baseline document.
 
 Work the baseline document is expected to schedule first: the environment items (clean Bozzetto Debug outputs, the
 `DOTNET_ROOT` requirement, the five regression-runner timeouts), then confirmed test defects and compiler defects in a
