@@ -49,23 +49,19 @@ let private workerText (worker: WorkerView) =
   | "idle" -> "worker idle"
   | _ -> "Composer not configured"
 
-let private outcomeClass (outcome: OutcomeView option) =
-  match outcome with
-  | Some o when o.ok -> "text-xs text-success break-words"
-  | Some _ -> "text-xs text-error break-words"
-  | None -> "hidden"
-
-let private outcomeText (outcome: OutcomeView option) =
-  match outcome with
-  | Some o -> clockTime o.at + " · " + o.text
-  | None -> ""
-
 /// A CSS-only spinner. (DaisyUI's spinner component masks are data-URI SVGs that
 /// carry the SVG namespace URL, which the self-contained check forbids.)
 let private spinner = "inline-block w-2.5 h-2.5 rounded-full border-2 border-current border-t-transparent animate-spin"
 
 let private exitBadge (exitCode: int) =
   if exitCode = 0 then "badge badge-sm badge-success font-mono" else "badge badge-sm badge-error font-mono"
+
+let private diagnosticTokenClass (severity: string) =
+  match severity with
+  | "error" -> "font-semibold text-error"
+  | "warning" -> "font-semibold text-warning"
+  | "info" -> "font-semibold text-info"
+  | _ -> ""
 
 // ── Components ─────────────────────────────────────────────────────────────
 // Partas compiles each [<SolidComponent>] function to a plain JS function, and
@@ -76,7 +72,47 @@ let private exitBadge (exitCode: int) =
 // the edges of a literal, and keep double quotes out of literal attributes.
 
 [<SolidComponent>]
-let TopBar (model: ModelView) (link: unit -> Bridge.Link) (dark: unit -> bool) (toggleTheme: unit -> unit) (refresh: unit -> unit) =
+let TraceText (text: unit -> string) =
+  For (each = DiagnosticText.segments (text ())) {
+    yield fun token _ -> span (class' = diagnosticTokenClass token.severity) { token.text }
+  }
+
+[<SolidComponent>]
+let DiagnosticBlock (errorContext: bool) (label: unit -> string) (text: unit -> string) =
+  div (class' = (if errorContext then "diagnostic diagnostic-error" else "diagnostic")) {
+    div (class' = "diagnostic-header") {
+      span (class' = (if errorContext then "badge badge-sm badge-outline badge-error" else "badge badge-sm badge-ghost")) {
+        if errorContext then "Diagnostic" else "Output"
+      }
+      h3 (class' = "text-sm font-semibold") { label () }
+    }
+    // A text child preserves the trace without executing markup from a compiler.
+    pre (class' = "diagnostic-trace") { TraceText text }
+  }
+
+[<SolidComponent>]
+let CommandOutcome (outcome: unit -> OutcomeView option) =
+  let field pick = outcome () |> Option.map pick |> Option.defaultValue ""
+  Show (when' = (outcome ()).IsSome) {
+    Show (
+      when' = (outcome () |> Option.exists (fun value -> not value.ok)),
+      fallback = (div (class' = "text-xs text-success whitespace-pre-wrap break-words") {
+        field (fun value -> clockTime value.at + " · " + value.text)
+      })
+    ) {
+      div (class' = "diagnostic diagnostic-error") {
+        div (class' = "diagnostic-header") {
+          span (class' = "badge badge-sm badge-outline badge-error") { "Refused" }
+          h3 (class' = "text-sm font-semibold") { "Command outcome" }
+          span (class' = "text-xs opacity-70") { field (fun value -> clockTime value.at) }
+        }
+        pre (class' = "diagnostic-trace") { TraceText (fun () -> field (fun value -> value.text)) }
+      }
+    }
+  }
+
+[<SolidComponent>]
+let TopBar (link: unit -> Bridge.Link) (dark: unit -> bool) (toggleTheme: unit -> unit) (refresh: unit -> unit) =
   div (class' = "navbar min-h-0 h-12 px-4 gap-3 bg-base-100 shadow-sm border-b border-base-content/10") {
     div (class' = "flex-1 flex items-center gap-3 min-w-0") {
       span (class' = "font-heading font-extrabold text-lg tracking-tight") { "Bozzetto" }
@@ -87,9 +123,6 @@ let TopBar (model: ModelView) (link: unit -> Bridge.Link) (dark: unit -> bool) (
       }
     }
     div (class' = "flex-none flex items-center gap-2") {
-      span (class' = "text-xs font-mono opacity-50") {
-        if model.revision = "" then "" else "rev " + model.revision
-      }
       button (class' = "btn btn-outline btn-accent btn-sm font-medium", title = "Request a fresh snapshot", onClick = fun _ -> refresh ()) { "↻ Refresh" }
       button (class' = "btn btn-ghost btn-sm btn-circle text-base", title = "Toggle theme", onClick = fun _ -> toggleTheme ()) {
         if dark () then "☀" else "☾"
@@ -158,9 +191,7 @@ let OpenBar (local: LocalView) (connected: unit -> bool) (dispatch: Command -> u
         onClick = fun _ -> submit ()
       ) { "Open project" }
     }
-    div (class' = outcomeClass (Interop.dictTryGet local.outcomes OpenKey)) {
-      outcomeText (Interop.dictTryGet local.outcomes OpenKey)
-    }
+    CommandOutcome (fun () -> Interop.dictTryGet local.outcomes OpenKey)
   }
 
 [<SolidComponent>]
@@ -233,7 +264,7 @@ let SessionCard (s: SessionView) (local: LocalView) (connected: unit -> bool) (d
         }
       }
       For (each = s.notices) {
-        yield fun n _ -> div (class' = "text-xs text-error font-mono break-all") { n.text }
+        yield fun n _ -> DiagnosticBlock true (fun () -> n.label) (fun () -> n.text)
       }
       div (class' = "flex flex-wrap items-center gap-1.5") {
         div (class' = "join") {
@@ -265,9 +296,7 @@ let SessionCard (s: SessionView) (local: LocalView) (connected: unit -> bool) (d
         button (class' = "btn btn-xs btn-rust", disabled = (not (connected ()) || s.closed), onClick = fun _ -> dispatch (CloseSession(targetOf s))) { "Close" }
       }
       div (class' = (if argsError () = "" then "hidden" else "text-xs text-error")) { argsError () }
-      div (class' = outcomeClass (Interop.dictTryGet local.outcomes s.id)) {
-        outcomeText (Interop.dictTryGet local.outcomes s.id)
-      }
+      CommandOutcome (fun () -> Interop.dictTryGet local.outcomes s.id)
     }
   }
 
@@ -284,7 +313,7 @@ let SessionsPanel (model: ModelView) (local: LocalView) (connected: unit -> bool
         "No Composer sessions are open. Open a .fidproj to begin; reserve before editing, build the reservation, then run."
       })
     ) {
-      div (class' = "grid grid-cols-1 xl:grid-cols-2 gap-2") {
+      div (class' = (if model.sessions.Length = 1 then "grid grid-cols-1 gap-2" else "grid grid-cols-1 xl:grid-cols-2 gap-2")) {
         For (each = model.sessions) {
           yield fun s _ -> SessionCard s local connected dispatch
         }
@@ -332,9 +361,7 @@ let WorkerPanel (model: ModelView) (local: LocalView) (connected: unit -> bool) 
         ) { if confirming () then "Confirm: retire every session" else "Retire worker" }
         span (class' = "text-xs opacity-50") { "before replacing compiler binaries" }
       }
-      div (class' = outcomeClass (Interop.dictTryGet local.outcomes WorkerKey)) {
-        outcomeText (Interop.dictTryGet local.outcomes WorkerKey)
-      }
+      CommandOutcome (fun () -> Interop.dictTryGet local.outcomes WorkerKey)
     }
   }
 
@@ -431,9 +458,9 @@ let OutputPane (model: ModelView) =
           }
           span (class' = "opacity-50") { run () |> Option.map (fun r -> clockTime r.at) |> Option.defaultValue "" }
         }
-        pre (class' = "panel text-xs font-mono whitespace-pre-wrap break-words px-4 py-3") { field (fun r -> r.stdout) }
-        pre (class' = (if field (fun r -> r.stderr) = "" then "hidden" else "panel text-xs font-mono whitespace-pre-wrap break-words text-error px-4 py-3 mt-2")) {
-          field (fun r -> r.stderr)
+        pre (class' = "panel diagnostic-trace") { TraceText (fun () -> field (fun r -> r.stdout)) }
+        div (class' = (if field (fun r -> r.stderr) = "" then "hidden" else "mt-2")) {
+          DiagnosticBlock false (fun () -> "Standard error") (fun () -> field (fun r -> r.stderr))
         }
       }
     }
@@ -441,11 +468,11 @@ let OutputPane (model: ModelView) =
       Show (when' = (model.activity.Length > 0), fallback = (div (class' = "text-xs opacity-50 py-2") { "Command outcomes appear here." })) {
         For (each = model.activity) {
           yield fun a _ ->
-            div (class' = "flex gap-2 text-xs py-0.5 border-b border-base-content/5") {
+            div (class' = "flex gap-2 text-xs py-2 border-b border-base-content/5") {
               span (class' = "font-mono opacity-50 shrink-0") { clockTime a.at }
               span (class' = (if a.ok then "text-success shrink-0" else "text-error shrink-0")) { if a.ok then "✓" else "✗" }
               span (class' = "font-mono opacity-70 shrink-0") { a.scope }
-              span (class' = "break-words min-w-0") { a.text }
+              pre (class' = "activity-trace") { TraceText (fun () -> a.text) }
             }
         }
       }
@@ -507,7 +534,7 @@ let App () =
 
   // ── View ─────────────────────────────────────────────────────────────────
   div (class' = "flex flex-col h-screen bg-base-100 text-base-content text-sm") {
-    TopBar model link dark toggleTheme (fun () -> dispatch RequestSnapshot)
+    TopBar link dark toggleTheme (fun () -> dispatch RequestSnapshot)
     HealthStrip model stores.Uptime
     Show (when' = not (connected ())) {
       div (class' = "px-4 py-1 text-xs bg-warning text-warning-content") {

@@ -22,6 +22,7 @@
 
     <ItemGroup>
         <Compile Include="WireJson.fs" />
+        <Compile Include="ReleaseVersion.fs" />
         <Compile Include="TestProviderTypes.fs" />
         <Compile Include="WorkflowTypes.fs" />
         <Compile Include="SessionProjectTarget.fs" />

@@ -99,14 +99,12 @@ module UpdateCheck =
     | true, v -> Some(normalize v)
     | false, _ -> None
 
-  /// How many releases `current` is behind `latest`, assuming this repo's
-  /// own convention (`Directory.Build.props`): Major.Minor changes rarely
-  /// and by hand; every ordinary release auto-bumps only the patch
-  /// component. When Major or Minor differ, the patch component alone
-  /// cannot express the true distance, so this is a lower bound — 1
-  /// whenever `latest` is newer, never more precise than that. Always 0
-  /// when `latest <= current` (current is up to date, or ahead — a local
-  /// build one commit past the last release is not "behind" anything).
+  /// Estimate release distance using numeric version components. Within
+  /// one Major.Minor pair, this uses the patch difference; across pairs,
+  /// it reports 1 whenever `latest` is newer. It does not count published
+  /// releases or builds. Directory.Build.props changes only for deliberate
+  /// owner-requested releases; builds never increment it. Always 0 when
+  /// `latest <= current` (current is up to date or ahead).
   /// Normalizes both inputs itself (see `normalize`) so a caller that
   /// forgets to strip the Revision component can never manufacture a
   /// phantom distance here.

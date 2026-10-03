@@ -1076,6 +1076,52 @@ let tests =
     ]
 
     testList "page" [
+      testTask "Composer and dashboard bookmarks serve the same live Braidpoint page and policy" {
+        do! task {
+          use stopping = new CancellationTokenSource()
+          let hub = hubOf (FakeComposer()) stopping.Token unpaused (ClockGate())
+          let! app, url = Hosting.start (fun app -> mapRoutes app hub)
+          use client = new Net.Http.HttpClient(Timeout = TimeSpan.FromSeconds 10.)
+          try
+            let mutable pages = []
+            for route in [ "/composer"; "/dashboard" ] do
+              use! response = client.GetAsync(url + route)
+              let! html = response.Content.ReadAsStringAsync()
+              int response.StatusCode |> Expect.equal (route + " is a browser page") 200
+              string response.Content.Headers.ContentType |> Expect.equal (route + " serves HTML") "text/html; charset=utf-8"
+              html |> Expect.equal (route + " uses the complete live UI bundle") Bozzetto.Server.WebAssets.IndexHtml
+              html |> Expect.stringContains (route + " uses the saved-choice Braidpoint theme") "data-theme=\"dark\""
+              html |> Expect.stringContains (route + " retains the Braidpoint logo palette") "--bp-plum-ink"
+              let policy = response.Headers.GetValues("Content-Security-Policy") |> Seq.exactlyOne
+              policy |> Expect.stringContains (route + " connects to the shared live bridge") ("connect-src 'self' ws://" + Uri(url).Authority)
+              policy.Contains "unsafe-inline" |> Expect.isFalse (route + " admits only its bundled code")
+              response.Headers.CacheControl.NoStore |> Expect.isTrue (route + " does not cache an obsolete display")
+              response.Headers.GetValues("X-Content-Type-Options") |> Seq.exactlyOne |> Expect.equal (route + " disables content guessing") "nosniff"
+              pages <- (html, policy) :: pages
+            pages |> List.distinct |> List.length |> Expect.equal "the bookmarks cannot drift into separate displays" 1
+          finally
+            stopping.Cancel()
+            Hosting.stop app
+        }
+      }
+
+      testTask "control-port Composer and old dashboard bookmarks redirect to the shared live view" {
+        do! task {
+          let deps: Bozzetto.Server.ControlListener.ControlDeps =
+            { Version = "0.6.834-test"; McpPort = 47749; GetSessionCount = (fun () -> Task.FromResult 0); Shutdown = ignore }
+          let! app, url = Hosting.start (Bozzetto.Server.ControlListener.mapRoutes deps)
+          use handler = new Net.Http.HttpClientHandler(AllowAutoRedirect = false)
+          use client = new Net.Http.HttpClient(handler, Timeout = TimeSpan.FromSeconds 10.)
+          try
+            for route in [ "/composer"; "/dashboard" ] do
+              use! response = client.GetAsync(url + route)
+              int response.StatusCode |> Expect.equal (route + " redirects") 302
+              string response.Headers.Location |> Expect.equal (route + " keeps its entry point on the MCP listener") ("http://127.0.0.1:47749" + route)
+          finally
+            Hosting.stop app
+        }
+      }
+
       test "the CSP admits exactly the welded page's inline script and styles" {
         let html = Bozzetto.Server.WebAssets.IndexHtml
         let scripts = Page.inlineHashes html "script"

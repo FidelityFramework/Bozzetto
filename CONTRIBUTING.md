@@ -93,9 +93,14 @@ The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are 
 ## Branches, versions and packages
 
 Work lands on `main`; there are no side or integration branches. No hook,
-script or pipeline stage bumps the version or gates a push, and the
-`<Version>` in `Directory.Build.props` is left as it is: versioning will follow
-the project's Forgejo package workflow.
+script or pipeline stage bumps the version or gates a push.
+`Directory.Build.props` owns the shared release version, starting at `0.1.0`.
+Change it only for a deliberate owner-requested release. Builds, commits and
+pushes retain that value; source revisions and artifact hashes identify builds.
+Public version displays use the release version, while the SDK derives the
+assembly/file versions. The VS Code manifest's explicit `sync-version` command
+copies this shared value without incrementing it. Packages follow the project's
+Forgejo package workflow.
 
 Bozzetto is built from source and published to the project's own Forgejo
 package registry; it is not published to NuGet.org. `dotnet fsi ci-pipeline.fsx -- pack`

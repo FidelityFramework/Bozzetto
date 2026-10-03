@@ -385,9 +385,11 @@ module ComposerWorkerClient =
     let prefix = Path.Combine(config.EvidenceDirectory, "worker-" + Guid.NewGuid().ToString("N"))
     let wire = new StreamWriter(prefix + "-wire.tsv", false, UTF8Encoding(false), AutoFlush = true)
     cleanup.Add wire.Dispose
-    let stdoutFile = new FileStream(prefix + "-stdout.log", FileMode.CreateNew, FileAccess.Write, FileShare.Read)
+    // Readers must see a short final diagnostic while the worker remains alive.
+    // Disable managed buffering without changing the owned physical stream drains.
+    let stdoutFile = new FileStream(prefix + "-stdout.log", FileMode.CreateNew, FileAccess.Write, FileShare.Read, bufferSize = 1)
     cleanup.Add stdoutFile.Dispose
-    let stderrFile = new FileStream(prefix + "-stderr.log", FileMode.CreateNew, FileAccess.Write, FileShare.Read)
+    let stderrFile = new FileStream(prefix + "-stderr.log", FileMode.CreateNew, FileAccess.Write, FileShare.Read, bufferSize = 1)
     cleanup.Add stderrFile.Dispose
     let worker = new Process(StartInfo = info)
     cleanup.Add worker.Dispose

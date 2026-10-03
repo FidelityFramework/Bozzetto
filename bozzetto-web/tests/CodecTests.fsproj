@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="../src/Shared/Protocol.fs" />
     <Compile Include="../src/Frontend/Codec.fs" />
+    <Compile Include="../src/Frontend/DiagnosticText.fs" />
     <Compile Include="../src/Mock/Codec.fs" />
     <Compile Include="RoundTrip.fs" />
   </ItemGroup>

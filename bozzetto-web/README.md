@@ -5,6 +5,12 @@ F# (Partas.Solid) single-page app compiled by Fable, bundled by Vite into one
 self-contained HTML page, and welded into the daemon, which serves it and
 talks to it over one WebSocket.
 
+Both `/composer` and `/dashboard` on the MCP listener (normally port 47749)
+serve this same live page, with the same theme, session directory and security
+policy. Bookmarks for either path on the control listener (normally port
+47750) redirect to that view. Composer's `/api/composer/*` HTTP contracts
+remain available to local clients; there is no separate JSON display page.
+
 It follows the destination architecture of
 [WrenHello](../../WrenHello/README.md), the reference WREN Stack application.
 Here, .NET Bozzetto is the backend-for-frontend in place of WrenHello's
@@ -77,8 +83,40 @@ native Clef backend compiled by Composer.
 
 The UI wears the Braidpoint site's look (`braidpoint-site/hugo`):
 
+Edit [`theme.js`](theme.js) for **all browser colors and font families**.
+[`tailwind.config.js`](tailwind.config.js) consumes it for DaisyUI's themes
+and semantic utilities; Vite consumes it for the first painted background.
+The page shell, sessions, worker, leases, output and diagnostics all use
+that shared theme. [`styles.css`](src/Frontend/styles.css) owns reusable
+treatments and [`App.fs`](src/Frontend/App.fs) owns layout and components;
+neither defines a palette. The saved light/dark choice and reduced-motion
+behavior remain local presentation settings.
+
+Diagnostics keep their exact source text, newlines and tab indentation in
+readable trace panels. Headings describe the existing status field; bodies
+use `text-base-content`. The small presentation tokenizer recognizes only
+explicit line-start severity labels and Composer's emitted location/code
+format. Error, warning and info markers use `text-error`, `text-warning`
+and `text-info` from the same theme. It never infers severity from message
+wording, creates source locations, or interprets diagnostic text as HTML.
+
+Future views use the same semantic classes (`bg-base-200`, `text-accent`,
+`badge-info`, `btn-plum`, and the shared treatments). Add a role in
+`theme.js` when needed; do not put hex/RGB colors or an independent Tailwind
+color family in a component. Bundle verification covers every frontend
+`.fs` file as well as the shell and stylesheet to keep that rule enforceable.
+
+After a theme or component edit, run `../scripts/work-lease run full_build
+npm run build:daemon` from this directory to compile, verify and regenerate
+the daemon's [`WebAssets.fs`](../Bozzetto/WebAssets.fs). Rebuild Bozzetto
+under its build lease to include that generated page. Do not edit the
+generated file. The bundle check validates both themes' logo properties
+and the generated first-paint colors against `theme.js`, and rejects copied
+palette literals in the frontend components, HTML, stylesheet or Tailwind
+configuration.
+
 - **Themes.** Its DaisyUI `dark` and `light` themes, colors unchanged
-  ([`tailwind.config.js`](tailwind.config.js)): dark base-100 `#1a1a1a`,
+  ([`theme.js`](theme.js)): dark base-100 `#1a1a1a`,
   base-200 `#242424`, base-300 `#2e2e2e`, text `#eaeaea`; light base-100
   `#ffffff`. Only `color-scheme` is added. The ☀/☾ toggle switches between
   them, and `data-theme` on `<html>` stays the single authority, as on that
@@ -96,7 +134,7 @@ The UI wears the Braidpoint site's look (`braidpoint-site/hugo`):
 - **Logo palette.** From `static/images/BraidpointcolorLogo_small.svg`:
   burnt-orange ring `#ba530d`, orange `#ec6911`, rust red `#be350e`, teal
   `#468f99`, slate blue `#315182`, plum `#6b144c`. They are theme-aware
-  tokens (`bp-*` in Tailwind): the exact color as a fill under white text,
+  tokens (defined in `theme.js`, exposed as `bp-*` in Tailwind): the exact color as a fill under white text,
   and an `-ink` shade that reads as text on the theme's background (the color
   itself on white; a lighter tint of the same hue on `#1a1a1a`).
 
@@ -197,6 +235,7 @@ deferred: wait and retry, never bypass.
 | `npm run preview:mock` | Serves the **built** `dist/index.html` with the mock bridge |
 | `npm test` | Codec round trip under node, for every Command and Event case plus malformed frames |
 | `npm run build` | Fable → `vite build` → verify → weld |
+| `npm run build:daemon` | The same verified build, welded into `../Bozzetto/WebAssets.fs` for the daemon |
 
 **Against the mock.** Run `npm run fable && npm run dev:mock` and open the
 printed URL. Any absolute `*.fidproj` path opens. A path containing `broken`
@@ -232,7 +271,9 @@ native binary. By default it writes `dist/EmbeddedAssets.fs` (module
 `Bozzetto.Web.EmbeddedAssets`). The backend chooses where the file goes:
 
 ```bash
-node scripts/weld.js --out ../Bozzetto/EmbeddedUi.fs --module Bozzetto.Server.EmbeddedUi
+npm run build:daemon
+# or, after an already verified build:
+node scripts/weld.js --out ../Bozzetto/WebAssets.fs --module Bozzetto.Server.WebAssets
 # or: BOZZETTO_WEB_WELD_OUT=… BOZZETTO_WEB_WELD_MODULE=… npm run weld
 ```
 
@@ -318,11 +359,10 @@ small upstream fix would make it usable here.
 7. **Lease snapshot gaps.** `ExpensiveWorkLease.snapshot` exposes neither
    `GrantedAt` nor an id. The `LeaseId` is the release capability and must
    never be sent, so add a non-secret display id.
-8. **Serve the welded page** as `text/html; charset=utf-8` from memory, on a
-   route to be decided (replace the inline `/composer` page, or add `/ui`).
-   Send `Cache-Control: no-store` and a CSP such as `default-src 'none';
-   script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self';
-   img-src data:`.
+8. **Page serving is implemented.** Both `/composer` and `/dashboard` serve
+   the welded page as `text/html; charset=utf-8` from memory, with
+   `Cache-Control: no-store` and hashes of the exact inline script/styles in
+   the CSP. The bridge uses the page's origin; tab icons use `img-src 'self'`.
 9. **Reservation reporting**, so tokens survive reloads and are visible to
    other tabs: report the active reservation per session, or accept a
    re-reserve.

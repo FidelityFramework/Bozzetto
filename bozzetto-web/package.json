@@ -11,6 +11,7 @@
     "verify": "node scripts/verify-bundle.js",
     "weld": "node scripts/weld.js",
     "build": "npm run fable && npm run bundle && npm run verify && npm run weld",
+    "build:daemon": "npm run build && node scripts/weld.js --out ../Bozzetto/WebAssets.fs --module Bozzetto.Server.WebAssets",
     "test": "npm run fable:test && node output-test/RoundTrip.js",
     "dev": "vite",
     "dev:mock": "npm run fable:mock && vite --mode mock",

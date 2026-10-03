@@ -8,6 +8,12 @@ open System.Threading.Tasks
 open Fidelity.FSharp.Incremental
 open Fidelity.FSharp.Incremental.Hosting
 
+module internal ProviderDiagnostics =
+  let reportFailure (writer: System.IO.TextWriter) (authority: Authority) (ScopeId scope) (WorkId work) (message: string) =
+    writer.WriteLine(sprintf
+      "Composer producer host=%s session=%s epoch=%s generation=%d scope=%d work=%d compiler_refused: %s"
+      authority.Host authority.Session authority.Epoch authority.Generation scope work message)
+
 type private Producer<'a> = {
   Scope: ScopeId
   Work: WorkId
@@ -163,7 +169,12 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   }
   let drainObservations () =
     AsyncMailbox.drainEvents mailbox |> ignore
-    let errors = AsyncMailbox.drainDiagnostics mailbox
+    // Returned compiler refusals belong to their producer's settled result.
+    // Its observation publishes them under the generation fence below; a
+    // late obsolete failure must not overwrite a newer session's status.
+    let errors =
+      AsyncMailbox.drainDiagnostics mailbox
+      |> List.filter (fun error -> error.Failure.Code <> "compiler_refused")
     if not errors.IsEmpty then
       lock gate (fun () -> backendError <- Some(errors |> List.map (fun error -> error.Failure.Message) |> String.concat "; "))
 
@@ -239,6 +250,23 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
       AsyncMailbox.isEligible result mailbox
     | _ -> false
 
+  let settledFailure (producer: Producer<'a>) message =
+    // Failure is terminal evidence, never a successful ResultHandle. Retain
+    // only the refusal of this still-demanded, open, physically joined work.
+    match producer.Value with
+    | Some(Result.Error owned) when owned = message ->
+      let snapshot = AsyncMailbox.snapshot mailbox
+      not snapshot.IsClosing && not snapshot.Graph.Retiring
+      && (snapshot.Graph.Scopes |> List.exists (fun scope ->
+        scope.Scope = producer.Scope && scope.Phase = ScopePhase.Open(RevisionId 1UL)
+        && scope.PendingAttempts = 0))
+      && (snapshot.Graph.Works |> List.exists (fun work ->
+        work.Work = producer.Work && work.Scope = producer.Scope && work.Demanded
+        && (match work.Status with
+            | WorkStatus.Failed failure -> failure.Code = "compiler_refused" && failure.Message = message
+            | _ -> false)))
+    | _ -> false
+
   let reconcileRunFailure expected accepted = async {
     // This getter belongs to the compiler boundary, never Status or its gate.
     // A refused/canceled operation alone does not withdraw another demand.
@@ -290,7 +318,14 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
           with error -> return Result.Error error.Message
       }
       match result with
-      | Result.Error _ -> do! onFailure ()
+      | Result.Error message ->
+        // The worker's existing stderr owner retains withdrawn attempt
+        // evidence too. Report once at the compiler result, outside gate;
+        // client detach, replay and current-status publication never log it.
+        if running.IsSome then
+          try ProviderDiagnostics.reportFailure Console.Error producer.Authority producer.Scope producer.Work message
+          with _ -> () // Diagnostic IO must not replace the original refusal.
+        do! onFailure ()
       | Result.Ok _ -> ()
       lock gate (fun () -> producer.Value <- Some result)
       return StepOutcome.Complete(
@@ -334,7 +369,10 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
             if eligible producer then Result.Ok value
             else Result.Error "The incremental producer no longer has eligible result authority.")
         if not producer.Abandoned && (obsolete producer.Authority).IsNone then
-          match result with Result.Ok value -> publish value | Result.Error _ -> ()
+          match result with
+          | Result.Ok _ when eligible producer -> publish result
+          | Result.Error message when settledFailure producer message -> publish result
+          | _ -> ()
         result)
     })
     observations.Add(producer.Work, observation :> Task)
@@ -497,7 +535,9 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
             let! result = observation
             return complete producer result }
           | _ ->
-            match attach producer (fun accepted -> current <- Some accepted) with
+            match attach producer (function
+              | Result.Ok accepted -> current <- Some accepted; backendError <- None
+              | Result.Error message -> current <- None; backendError <- Some message) with
             | Result.Error message -> Task.FromResult(reply (refuse "session_capacity" message))
             | Result.Ok(demand, observation) -> projectReply producer demand observation cancellation
       | _ -> Task.FromResult(reply (refuse "invalid_reservation" "Reservation is foreign or superseded.")))

@@ -211,7 +211,10 @@ let tests =
           use reader = new StreamReader(stream)
           do! nextSse reader
           let! humanPage = http.GetStringAsync "/composer"
-          humanPage |> Expect.stringContains "human page explains reservation discipline" "Reserve before editing"
+          let! dashboardPage = http.GetStringAsync "/dashboard"
+          humanPage |> Expect.equal "both human entry points share the live Composer display" dashboardPage
+          humanPage |> Expect.stringContains "the shared display uses Braidpoint's theme" "data-theme=\"dark\""
+          humanPage |> Expect.stringContains "the live display observes the daemon through its bridge" "/ui/bridge"
 
           let! reserved = composer mcp evidence "composer_reserve_edit" (arguments first @ [ "label", box "cold" ])
           let reservation = reserved |> success |> text "reservation"

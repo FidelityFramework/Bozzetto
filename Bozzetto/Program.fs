@@ -560,9 +560,7 @@ let main args =
     0
 
   | ShowVersion ->
-    let assembly = Assembly.GetExecutingAssembly()
-    let version = assembly.GetName().Version
-    printfn $"Bozzetto version %A{version}"
+    printfn "Bozzetto version %s" (ReleaseVersion.current ())
     0
 
   | Stop ->

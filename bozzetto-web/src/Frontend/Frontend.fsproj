@@ -10,6 +10,7 @@
     <Compile Include="Interop.fs" />
     <Compile Include="Codec.fs" />
     <Compile Include="Bridge.fs" />
+    <Compile Include="DiagnosticText.fs" />
     <Compile Include="Model.fs" />
     <Compile Include="App.fs" />
     <Compile Include="Main.fs" />

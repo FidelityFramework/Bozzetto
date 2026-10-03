@@ -237,7 +237,7 @@ bump or release check gates a push.
 ## Architecture Principles
 
 - **Current clients**: VS Code, Neovim, and MCP use session-scoped daemon contracts
-- **Browser UI**: the plain-JS `/composer` page and `/api/composer/*` on 47749 serve Composer today; a Partas.Solid UI in `bozzetto-web/` (in progress) will replace that page
+- **Browser UI**: `/composer` and `/dashboard` on 47749 serve the same Partas.Solid UI from `bozzetto-web/` over `/ui/bridge`; `/api/composer/*` remains the HTTP client contract. `bozzetto-web/theme.js` is the sole browser color and font source, consumed by DaisyUI/Tailwind and the first-paint style. Change reusable treatments in `styles.css`, then rebuild/verify/weld the bundle under a work lease; never edit generated `WebAssets.fs` by hand or add a separate page palette.
 - **Binary persistence**: Session/test state via CRC-validated binary manifest (.bozzettofm)
 - **CQRS**: Separate read/write models
 - **Vertical slices**: Features as single files for locality of behavior
@@ -263,5 +263,5 @@ portable host contracts. Record exact identities and acceptance evidence in the
 - Do not introduce new NuGet dependencies without discussion
 - Do not change the indentation style (2 spaces)
 - Do not use `dotnet test` for local development — run the built test DLL unfiltered under `acquire_test_suite_lease`, and read the TRUST line
-- Do not modify the `<Version>` in `Directory.Build.props`. Versions are not bumped per commit or per push; versioning will follow the project's Forgejo package workflow
+- `Directory.Build.props` owns the shared release version (`0.1.0`). Change it only for an owner-requested release; never bump it for a build, commit or push. Public displays use that release version; source revisions and artifact hashes identify builds. Packages follow the project's Forgejo package workflow.
 - Do not add Version attributes to PackageReference elements

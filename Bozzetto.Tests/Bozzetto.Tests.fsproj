@@ -15,6 +15,7 @@
     <ItemGroup>
         <Compile Include="LiveTestingBudgets.fs" />
         <Compile Include="TestInfrastructure.fs" />
+        <Compile Include="ReleaseVersionTests.fs" />
         <Compile Include="../Bozzetto.Composer/ProviderContracts.fs" Link="Composer/ProviderContracts.fs" />
   <Compile Include="../Bozzetto.Composer/FormatterSession.fs" Link="Composer/FormatterSession.fs" />
         <Compile Include="../Bozzetto.Composer/ProviderSession.fs" Link="Composer/ProviderSession.fs" />

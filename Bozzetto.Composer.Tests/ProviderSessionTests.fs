@@ -46,6 +46,7 @@ type private Backend() =
   let mutable buildCancellation = CancellationToken.None
   let registrations = ResizeArray<CancellationTokenRegistration>()
   member val HoldBuild = false with get, set
+  member val BuildFailure: string option = None with get, set
   member val HoldRun = false with get, set
   member val RefuseRun = false with get, set
   member val WithdrawOnRunRefusal = false with get, set
@@ -81,19 +82,25 @@ type private Backend() =
         next)
     member this.BuildAsync(value, cancellation) = task {
       let selected = value
+      let failure = this.BuildFailure
       builds <- builds + 1
       buildCancellation <- cancellation
       let registration = cancellation.Register(fun () -> this.OnCancellation())
       lock registrations (fun () -> registrations.Add registration)
       buildEntered.TrySetResult() |> ignore
       if this.HoldBuild then do! buildRelease.Task
-      let result = artifact selected.Generation
-      lock gate (fun () ->
-        this.BeforePublish()
-        if not disposed && (ticket |> Option.exists (fun latest -> obj.ReferenceEquals(latest, selected))) then
-          current <- Some result)
+      let result =
+        match failure with
+        | Some message -> Result.Error message
+        | None ->
+          let accepted = artifact selected.Generation
+          lock gate (fun () ->
+            this.BeforePublish()
+            if not disposed && (ticket |> Option.exists (fun latest -> obj.ReferenceEquals(latest, selected))) then
+              current <- Some accepted)
+          Result.Ok accepted
       buildReturned.TrySetResult() |> ignore
-      return Result.Ok result
+      return result
     }
     member this.RunCurrentAsync(_, _) = task {
       let selected = lock gate (fun () -> this.BeforeRun(); runs <- runs + 1; current.Value)
@@ -152,6 +159,18 @@ let private session id epoch backend =
 let private build (session: ProviderSession<Ticket>) label =
   session.BuildAsync(session.Reserve(label) |> success, CancellationToken.None)
 
+let private settledStatus (owner: ProviderSession<Ticket>) = task {
+  let deadline = Diagnostics.Stopwatch.StartNew()
+  let mutable status = owner.Status() |> success
+  while status.Busy do
+    if deadline.Elapsed > TimeSpan.FromSeconds 5. then failtest "The provider did not physically settle its build."
+    do! Task.Yield()
+    status <- owner.Status() |> success
+  return status
+}
+
+let private compilerDiagnostic = "NativeCallbacks.clef:12:7 CCS8403: BoundaryEmission requires settled ownership.\nComposer exited with 26 compilation errors."
+
 let private preCanceledRequest runOperation () = task {
   let backend = new Backend()
   use owner = session "one" "epoch-a" backend
@@ -189,6 +208,17 @@ let private preCanceledRequest runOperation () = task {
 [<Tests>]
 let tests =
   testList "Composer provider session authority" [
+    testCase "producer failure evidence records exact diagnostic and owning revision without global console capture" <| fun _ ->
+      use writer = new System.IO.StringWriter()
+      let authority: Authority =
+        { Host = "host-a"; Session = "session-b"; Provider = ProviderIdentity.ClefComposer
+          Epoch = "epoch-c"; Generation = 7L }
+      ProviderDiagnostics.reportFailure writer authority (Fidelity.FSharp.Incremental.ScopeId 11UL) (Fidelity.FSharp.Incremental.WorkId 13UL) compilerDiagnostic
+      let evidence = writer.ToString()
+      evidence |> Expect.stringContains "failure retains the exact diagnostic text" compilerDiagnostic
+      evidence |> Expect.stringContains "evidence names the exact producer rather than current session state" "host=host-a session=session-b epoch=epoch-c generation=7 scope=11 work=13 compiler_refused: "
+      evidence.Split([| "compiler_refused: " |], StringSplitOptions.None).Length |> Expect.equal "one report emits one scoped failure" 2
+
     testCase "provider parsing refuses unknown identities instead of selecting FSharp" <| fun _ ->
       ProviderIdentity.parse "fsharp" |> Expect.equal "explicit FSharp" (Result.Ok ProviderIdentity.FSharp)
       ProviderIdentity.parse "clef-composer" |> Expect.equal "explicit Composer" (Result.Ok ProviderIdentity.ClefComposer)
@@ -343,6 +373,132 @@ let tests =
       let! replay = owner.BuildAsync(ticket, CancellationToken.None)
       replay |> success |> Expect.equal "retained compiler authority survives cleanup of both runs" accepted
       backend.ReserveLabels |> Expect.equal "observer detach never inserts a compiler reservation" [| "initial" |]
+    }
+
+    taskCase "failed build evidence survives fresh status observers and replay until a new build succeeds" <| fun () -> task {
+      let backend = new Backend(BuildFailure = Some compilerDiagnostic)
+      use owner = session "shared-failure" "epoch-a" backend
+      let token = owner.Reserve "failed revision" |> success
+      let! failed = owner.BuildAsync(token, CancellationToken.None)
+      failed |> refuses "compiler_refused"
+      match failed.Outcome with
+      | Result.Error refusal -> refusal.Message |> Expect.equal "original compiler evidence is retained exactly" compilerDiagnostic
+      | Result.Ok _ -> failtest "The rejected build produced an artifact."
+      let first = owner.Status() |> success
+      let fresh = owner.Status() |> success
+      first.BackendError |> Expect.equal "a new status observer sees the compiler refusal" (Some compilerDiagnostic)
+      fresh.BackendError |> Expect.equal "the evidence belongs to shared session state" first.BackendError
+      fresh.Current |> Expect.isNone "failed compilation has no accepted artifact"
+      fresh.Busy |> Expect.isFalse "published failure follows physical build settlement"
+      let! replay = owner.BuildAsync(token, CancellationToken.None)
+      replay |> Expect.equal "re-observing a failed reservation retains its exact reply" failed
+      backend.BuildCount |> Expect.equal "status and replay do not repeat the failed compilation" 1
+      backend.BuildFailure <- None
+      let! repaired = build owner "corrected revision"
+      let accepted = repaired |> success
+      let recovered = owner.Status() |> success
+      recovered.Current |> Expect.equal "the corrected build publishes its artifact" (Some accepted)
+      recovered.BackendError |> Expect.isNone "new successful build clears obsolete refusal evidence"
+    }
+
+    taskCase "late obsolete build failure cannot replace a newer accepted artifact or its clean status" <| fun () -> task {
+      let backend = new Backend(HoldBuild = true, BuildFailure = Some compilerDiagnostic)
+      use owner = session "superseded-failure" "epoch-a" backend
+      let pending = build owner "old failing revision"
+      try
+        do! bounded backend.BuildEntered
+        let token = owner.Reserve "new revision" |> success
+        backend.BuildFailure <- None
+        backend.HoldBuild <- false
+        let! built = owner.BuildAsync(token, CancellationToken.None)
+        let accepted = built |> success
+        backend.ReleaseBuild()
+        let! old = bounded pending
+        old |> refuses "superseded"
+        let fresh = owner.Status() |> success
+        fresh.Current |> Expect.equal "late failure cannot revoke the new artifact" (Some accepted)
+        fresh.BackendError |> Expect.isNone "unfenced compiler diagnostics cannot contaminate the new revision"
+        let! replay = owner.BuildAsync(token, CancellationToken.None)
+        replay |> success |> Expect.equal "new revision remains replayable" accepted
+        (owner.Status() |> success).BackendError |> Expect.isNone "later observers retain the clean current revision"
+      finally backend.ReleaseBuild()
+    }
+
+    taskCase "explicit cancellation prevents a late compiler refusal from becoming current evidence" <| fun () -> task {
+      let backend = new Backend(HoldBuild = true, BuildFailure = Some compilerDiagnostic)
+      use owner = session "canceled-failure" "epoch-a" backend
+      let pending = build owner "failing revision"
+      try
+        do! bounded backend.BuildEntered
+        owner.Cancel() |> success |> ignore
+        backend.ReleaseBuild()
+        let! old = bounded pending
+        old |> refuses "superseded"
+        let! fresh = settledStatus owner
+        fresh.Current |> Expect.isNone "cancellation retains no artifact"
+        fresh.BackendError |> Expect.isNone "withdrawn failure cannot publish through the generic diagnostic drain"
+      finally backend.ReleaseBuild()
+    }
+
+    taskCase "closed sessions do not publish a late build refusal as current compiler evidence" <| fun () -> task {
+      let backend = new Backend(HoldBuild = true, BuildFailure = Some compilerDiagnostic)
+      use owner = session "closed-failure" "epoch-a" backend
+      let pending = build owner "failing revision"
+      try
+        do! bounded backend.BuildEntered
+        let closing = owner.CloseAsync()
+        backend.ReleaseBuild()
+        let! old = bounded pending
+        old |> refuses "closed"
+        let! cleaned = bounded closing
+        cleaned |> success |> ignore
+        let fresh = owner.Status() |> success
+        fresh.Closed |> Expect.isTrue "logical retirement remains visible"
+        fresh.Current |> Expect.isNone "closed session has no artifact"
+        fresh.BackendError |> Expect.isNone "retired producer cannot publish a current refusal"
+      finally backend.ReleaseBuild()
+    }
+
+    taskCase "a build abandoned by its last observer cannot publish a later compiler refusal" <| fun () -> task {
+      let backend = new Backend(HoldBuild = true, BuildFailure = Some compilerDiagnostic)
+      use owner = session "abandoned-failure" "epoch-a" backend
+      use cancellation = new CancellationTokenSource()
+      let token = owner.Reserve "failing revision" |> success
+      let pending = owner.BuildAsync(token, cancellation.Token)
+      try
+        do! bounded backend.BuildEntered
+        cancellation.Cancel()
+        let! detached = bounded pending
+        detached |> refuses "canceled"
+        backend.ReleaseBuild()
+        let! fresh = settledStatus owner
+        fresh.Current |> Expect.isNone "abandoned build has no accepted artifact"
+        fresh.BackendError |> Expect.isNone "failure without a surviving demand cannot become current evidence"
+        let! replay = owner.BuildAsync(token, CancellationToken.None)
+        replay |> refuses "canceled"
+      finally backend.ReleaseBuild()
+    }
+
+    taskCase "a surviving shared build demand retains exact failure after a peer detaches" <| fun () -> task {
+      let backend = new Backend(HoldBuild = true, BuildFailure = Some compilerDiagnostic)
+      use owner = session "surviving-failure" "epoch-a" backend
+      use cancellation = new CancellationTokenSource()
+      let token = owner.Reserve "failing revision" |> success
+      let pending = owner.BuildAsync(token, cancellation.Token)
+      try
+        do! bounded backend.BuildEntered
+        let surviving = owner.BuildAsync(token, CancellationToken.None)
+        cancellation.Cancel()
+        let! detached = bounded pending
+        detached |> refuses "canceled"
+        backend.ReleaseBuild()
+        let! failed = bounded surviving
+        failed |> refuses "compiler_refused"
+        let fresh = owner.Status() |> success
+        fresh.BackendError |> Expect.equal "the surviving observer publishes shared compiler evidence" (Some compilerDiagnostic)
+        fresh.Current |> Expect.isNone "the refusal cannot be treated as successful artifact authority"
+        backend.BuildCount |> Expect.equal "both clients shared one compiler attempt" 1
+      finally backend.ReleaseBuild()
     }
 
     taskCase "two clients share one producer for the same session reservation" <| fun () -> task {

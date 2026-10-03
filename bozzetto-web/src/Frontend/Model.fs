@@ -29,7 +29,7 @@ type ArtifactView =
     changed: int
   |}
 
-type NoticeView = {| id: string; text: string |}
+type NoticeView = {| id: string; label: string; text: string |}
 
 type SessionView =
   {|
@@ -279,8 +279,8 @@ let private artifactView (a: ArtifactSummary) : ArtifactView =
   |}
 
 let private sessionView (s: SessionStatus) : SessionView =
-  let notice label (value: string option) =
-    value |> Option.map (fun text -> {| id = label; text = label + ": " + text |})
+  let notice id label (value: string option) =
+    value |> Option.map (fun text -> {| id = id; label = label; text = text |})
   {|
     id = sessionKey s.Target
     host = s.Target.Worker.Host
@@ -298,12 +298,12 @@ let private sessionView (s: SessionStatus) : SessionView =
     current = s.Current |> Option.map artifactView |> Option.defaultWith noArtifact
     notices =
       [|
-        notice "backend" s.BackendError
-        notice "worker retirement required" s.WorkerRetirementRequired
-        notice "cleanup" s.CleanupError
-        notice "formatter" s.FormatterError
-        notice "worker" s.WorkerError
-        notice "status" s.StatusError
+        notice "backend" "Backend diagnostic" s.BackendError
+        notice "worker retirement required" "Worker retirement required" s.WorkerRetirementRequired
+        notice "cleanup" "Cleanup diagnostic" s.CleanupError
+        notice "formatter" "Formatter diagnostic" s.FormatterError
+        notice "worker" "Worker diagnostic" s.WorkerError
+        notice "status" "Status diagnostic" s.StatusError
       |]
       |> Array.choose id
   |}

@@ -911,14 +911,14 @@ let private header (ctx: HttpContext) (name: string) =
   | true, values when not (String.IsNullOrWhiteSpace(string values)) -> Some(string values)
   | _ -> None
 
-/// GET /dashboard serves the welded page, GET /favicon.* its tab icons, and
-/// GET /ui/bridge upgrades to the bridge. All sit behind the daemon's origin
-/// guard.
+/// GET /dashboard and /composer serve the same welded page, GET /favicon.*
+/// its tab icons, and GET /ui/bridge upgrades to the bridge. All sit behind
+/// the daemon's origin guard.
 let mapRoutes (app: WebApplication) (hub: Hub) =
   for icon in Icons.all () do
     app.MapGet(icon.Route, RequestDelegate(fun ctx -> Icons.write icon ctx)) |> ignore
 
-  app.MapGet("/dashboard", RequestDelegate(fun (ctx: HttpContext) -> task {
+  let servePage = RequestDelegate(fun (ctx: HttpContext) -> task {
     let scripts, styles = pageHashes.Value
     let host = if ctx.Request.Host.HasValue then Some(string ctx.Request.Host) else None
     ctx.Response.ContentType <- "text/html; charset=utf-8"
@@ -927,7 +927,11 @@ let mapRoutes (app: WebApplication) (hub: Hub) =
     ctx.Response.Headers.XContentTypeOptions <- StringValues "nosniff"
     ctx.Response.Headers["Referrer-Policy"] <- StringValues "no-referrer"
     do! ctx.Response.WriteAsync(page, ctx.RequestAborted)
-  })) |> ignore
+  })
+  // Both browser entry points share the live view, theme and security policy.
+  // There is no separate presentation of the Composer session directory.
+  for route in [ "/dashboard"; "/composer" ] do
+    app.MapGet(route, servePage) |> ignore
 
   app.MapGet("/ui/bridge", RequestDelegate(fun (ctx: HttpContext) -> task {
     if not ctx.WebSockets.IsWebSocketRequest then

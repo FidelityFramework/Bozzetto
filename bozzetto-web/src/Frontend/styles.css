@@ -2,35 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-/* The Braidpoint logo palette (braidpoint-site/hugo/static/images/
-   BraidpointcolorLogo_small.svg) as theme-aware RGB triplets. A plain name is
-   the logo's exact color, used as a fill under white text. An `-ink` name is
-   the shade of that hue which reads as text or a border on the theme's own
-   background: the logo color itself on white, a lighter tint on #1a1a1a. */
+/* Reusable treatments only. theme.js owns every color and font family,
+   including the theme-aware Braidpoint logo properties. */
 @layer base {
-  :root,
-  [data-theme="light"] {
-    --bp-ring: 186 83 13;       /* #ba530d burnt-orange ring */
-    --bp-orange: 236 105 17;    /* #ec6911 orange */
-    --bp-rust: 190 53 14;       /* #be350e rust red */
-    --bp-rust-ink: 190 53 14;
-    --bp-teal: 70 143 153;      /* #468f99 teal */
-    --bp-teal-ink: 47 111 120;  /* #2f6f78 */
-    --bp-blue: 49 81 130;       /* #315182 slate blue */
-    --bp-blue-ink: 49 81 130;
-    --bp-plum: 107 20 76;       /* #6b144c plum */
-    --bp-plum-ink: 107 20 76;
-  }
-
-  [data-theme="dark"] {
-    --bp-rust-ink: 232 113 79;  /* #e8714f */
-    --bp-teal-ink: 95 179 189;  /* #5fb3bd */
-    --bp-blue-ink: 123 159 212; /* #7b9fd4 */
-    --bp-plum-ink: 210 127 178; /* #d27fb2 */
-  }
-
   /* Montserrat for text and Nunito for headings, as on the Braidpoint site;
-     local faces only (tailwind.config.js has the fallbacks). */
+     local faces only (theme.js has the fallbacks). */
   body {
     @apply font-sans;
     -webkit-font-smoothing: antialiased;
@@ -66,6 +42,28 @@
     @apply bg-base-300 text-accent font-mono px-1.5 py-0.5 rounded;
   }
 
+  /* Status headings carry the error accent; the exact trace uses readable ink. */
+  .diagnostic {
+    @apply min-w-0 rounded-lg border border-base-content/20 border-l-4 bg-base-100 text-base-content;
+  }
+  .diagnostic-error {
+    @apply border-l-error;
+  }
+  .diagnostic-header {
+    @apply flex flex-wrap items-center gap-2 border-b border-base-content/10 px-3 py-2;
+  }
+  .diagnostic-trace,
+  .activity-trace {
+    @apply m-0 min-w-0 font-mono text-sm leading-relaxed text-base-content;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: normal;
+    tab-size: 4;
+  }
+  .diagnostic-trace {
+    @apply max-h-96 overflow-auto px-3 py-3;
+  }
+
   /* Reservations: plum. */
   .btn.btn-plum:not(:disabled) {
     color: rgb(var(--bp-plum-ink));
@@ -73,12 +71,12 @@
     background-color: transparent;
   }
   .btn.btn-plum:not(:disabled):hover {
-    color: #ffffff;
+    color: rgb(var(--bp-on-fill));
     border-color: rgb(var(--bp-plum));
     background-color: rgb(var(--bp-plum));
   }
   .badge.badge-plum {
-    color: #ffffff;
+    color: rgb(var(--bp-on-fill));
     border-color: rgb(var(--bp-plum));
     background-color: rgb(var(--bp-plum));
   }
@@ -91,7 +89,7 @@
   }
   .btn.btn-rust:not(:disabled):hover,
   .btn.btn-rust-armed:not(:disabled) {
-    color: #ffffff;
+    color: rgb(var(--bp-on-fill));
     border-color: rgb(var(--bp-rust));
     background-color: rgb(var(--bp-rust));
   }

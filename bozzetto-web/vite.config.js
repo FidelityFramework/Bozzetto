@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import { mockBridge } from './scripts/mock-bridge.js';
+import { prepaintStyle } from './theme.js';
 
 // The dev daemon whose /ui/bridge `npm run dev` proxies to. A dedicated dev
 // daemon, never the installed one on 47749/47750.
@@ -39,10 +40,21 @@ const bridgeProxy = {
   },
 };
 
+// The first painted background uses the same source as the DaisyUI themes.
+const themePrepaint = {
+  name: 'bozzetto-theme-prepaint',
+  transformIndexHtml: () => [{
+    tag: 'style',
+    attrs: { 'data-bozzetto-theme': 'prepaint' },
+    children: prepaintStyle,
+    injectTo: 'head-prepend',
+  }],
+};
+
 export default defineConfig(({ mode }) => ({
   // `vite build` must produce ONE self-contained index.html: scripts, styles
   // and assets all inlined, so scripts/weld.js can embed it in the daemon.
-  plugins: [solidPlugin(), viteSingleFile(), ...(mode === 'mock' ? [mockBridge()] : [])],
+  plugins: [themePrepaint, solidPlugin(), viteSingleFile(), ...(mode === 'mock' ? [mockBridge()] : [])],
   // `--mode mock` answers /ui/bridge from the in-process mock instead.
   // `vite` serves the source page; `vite preview` serves the built dist/.
   server: { proxy: mode === 'mock' ? undefined : bridgeProxy },

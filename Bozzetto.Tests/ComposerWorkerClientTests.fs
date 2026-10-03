@@ -34,6 +34,8 @@ let private ownedRequest operation session =
   | Operation.Run -> Run(address session, [||])
   | Operation.Format -> Format(address session, 0L, formatBuffer)
   | _ -> failwith "Expected an operation with a worker-side demand."
+let private liveDiagnostic = "Boundary witness refused: callback environment has no owning region.\nThe compiler's exact diagnostic must remain readable while its worker is alive."
+let private liveStandardOutput = "Compiler worker diagnostic evidence is live."
 
 /// Child-only typed transport fixture; control barriers use fixture session IDs.
 /// It records individual requests, not Calque's shared producer/demand state.
@@ -88,6 +90,14 @@ let runFixture socketPath =
       | Status target when target.Session = "hold-after-close" ->
         holdAfterClose <- true
         reply request (Observed(status target.Session 0))
+      | Status target when target.Session = "diagnostic-evidence" ->
+        let authority: Bozzetto.Providers.Authority =
+          { Host = workerAddress.Host; Epoch = workerAddress.Epoch; Provider = workerAddress.Provider
+            Session = target.Session; Generation = 7L }
+        ProviderDiagnostics.reportFailure Console.Error authority
+          (Fidelity.FSharp.Incremental.ScopeId 11UL) (Fidelity.FSharp.Incremental.WorkId 13UL) liveDiagnostic
+        Console.WriteLine liveStandardOutput
+        reply request (Observed(status target.Session 0))
       | Status target when target.Session = "withdrawals" -> reply request (Observed(status target.Session withdrawn.Count))
       | Status target when target.Session = "format-requests" ->
         let retained =
@@ -122,6 +132,41 @@ let private config () =
     EvidenceDirectory = Path.Combine(Path.GetTempPath(), "bozzetto-transport-tests", Guid.NewGuid().ToString("N")) }
 let private start beforeCancellation beforeWrite =
   ComposerWorkerClient.startWithBoundaries beforeCancellation beforeWrite ["--composer-worker-client-fixture"] (config ())
+
+let private evidenceWhileAlive () = task {
+  let readEvidence path =
+    use input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
+    use reader = new StreamReader(input)
+    reader.ReadToEnd()
+  let launch = config ()
+  let! client = ComposerWorkerClient.startWithBoundaries ignore (fun _ _ -> Task.CompletedTask) ["--composer-worker-client-fixture"] launch
+  use cleanup =
+    { new IAsyncDisposable with
+        member _.DisposeAsync() = ValueTask(client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.)) }
+  let! emitted = client.RequestAsync(request "diagnostic-evidence", CancellationToken.None) |> bounded
+  succeeded emitted |> Expect.isTrue "The live child emitted its diagnostic before acknowledging the request."
+  let stderrPath = Directory.GetFiles(launch.EvidenceDirectory, "worker-*-stderr.log") |> Array.exactlyOne
+  let stdoutPath = Directory.GetFiles(launch.EvidenceDirectory, "worker-*-stdout.log") |> Array.exactlyOne
+  let expectedError =
+    "Composer producer host=transport-fixture session=diagnostic-evidence epoch=transport-fixture-epoch generation=7 scope=11 work=13 compiler_refused: "
+    + liveDiagnostic + Environment.NewLine
+  let expectedOutput = liveStandardOutput + Environment.NewLine
+  (System.Text.Encoding.UTF8.GetByteCount expectedError, 4096) |> Expect.isLessThan "The diagnostic cannot fill the former 4096-byte FileStream buffer."
+  let elapsed = System.Diagnostics.Stopwatch.StartNew()
+  let mutable stderr = ""
+  let mutable stdout = ""
+  while (stderr <> expectedError || stdout <> expectedOutput) && elapsed.Elapsed < TimeSpan.FromSeconds 5. do
+    client.IsProcessAlive |> Expect.isTrue "Evidence is read before the child exits."
+    client.IsAlive |> Expect.isTrue "The shared transport remains available while diagnostics are read."
+    stderr <- readEvidence stderrPath
+    stdout <- readEvidence stdoutPath
+    if stderr <> expectedError || stdout <> expectedOutput then do! Task.Delay 10
+  stderr |> Expect.equal "The existing stderr evidence path retains the exact scoped diagnostic without retirement." expectedError
+  stdout |> Expect.equal "The existing stdout evidence path is also readable before retirement." expectedOutput
+  let! responsive = client.RequestAsync(request "barrier", CancellationToken.None) |> bounded
+  count responsive |> Expect.equal "The same live child still responds after evidence became visible." 0
+  client.IsProcessAlive |> Expect.isTrue "No exit was used to flush the diagnostic."
+}
 
 let private capacity operation = task {
   use entered = new ManualResetEventSlim()
@@ -268,6 +313,7 @@ let private closeRetainsCallback operation = task {
 
 [<Tests>]
 let tests = testList "Composer worker socket client" [
+  testTask "short worker diagnostics are visible in existing evidence files before the child exits" { do! evidenceWhileAlive () }
   testTask "build withdrawal retains capacity while peer requests survive" { do! capacity Operation.Build }
   testTask "run withdrawal retains capacity while peer requests survive" { do! capacity Operation.Run }
   testTask "format withdrawal retains capacity while peer requests survive" { do! capacity Operation.Format }

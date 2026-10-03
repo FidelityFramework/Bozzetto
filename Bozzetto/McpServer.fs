@@ -1755,6 +1755,8 @@ let configureCompression (builder: WebApplicationBuilder) =
     opts.Level <- System.IO.Compression.CompressionLevel.Fastest
   ) |> ignore
 
+let publicServerInfo () = Implementation(Name = "bozzetto", Version = ReleaseVersion.current ())
+
 let configureMcpProtocolWithComposer (builder: WebApplicationBuilder) (mcpContext: McpContext) (serverTracker: McpServerTracker) (composer: Bozzetto.ComposerIntegration.ComposerSupervisor) =
   builder.Services.AddSingleton<McpContext>(mcpContext) |> ignore
   builder.Services.AddSingleton<Bozzetto.Server.McpTools.BozzettoTools>(fun serviceProvider ->
@@ -1772,6 +1774,7 @@ let configureMcpProtocolWithComposer (builder: WebApplicationBuilder) (mcpContex
     Bozzetto.Server.ComposerTools.ComposerResources(composer)) |> ignore
   builder.Services
     .AddMcpServer(fun options ->
+      options.ServerInfo <- publicServerInfo ()
       // The always-on short form of skills/bozzetto/SKILL.md. See AgentGuidance.fs.
       options.ServerInstructions <- Bozzetto.Server.AgentGuidance.serverInstructions
     )
@@ -2163,16 +2166,22 @@ let healthyForSessions (sessions: Bozzetto.Features.SessionHealthSummary list) :
     | Some Bozzetto.Features.SessionHealthStatus.Evaluating -> true
     | _ -> false
 
+let internal writeVersionResponse (ctx: Microsoft.AspNetCore.Http.HttpContext) = task {
+  do! jsonResponse ctx 200
+        (JsonValue.Object [
+          "version", JsonValue.String (ReleaseVersion.current ())
+          "protocolVersion", HttpJson.integer 1
+          "apiVersion", HttpJson.integer EndpointContracts.apiVersion
+          "server", JsonValue.String "bozzetto"
+          "mcp", JsonValue.Bool true
+          "sse", JsonValue.Bool true ])
+}
+
 let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
   app.MapGet("/health", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     timeHealthLatency observeHealthLatencyToHealthWatch (fun () -> task {
       let! allSessions = rctx.Config.SessionOps.GetAllSessions()
-      let asm = System.Reflection.Assembly.GetExecutingAssembly()
-      let version =
-        asm.GetName().Version
-        |> Option.ofObj
-        |> Option.map (fun v -> v.ToString())
-        |> Option.defaultValue "unknown"
+      let version = ReleaseVersion.current ()
       let daemonProcess = System.Diagnostics.Process.GetCurrentProcess()
       let! sessionPairs =
         allSessions
@@ -2356,23 +2365,7 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
     } :> Task
   ) |> ignore
   app.MapGet("/version", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
-    task {
-      let asm = typeof<Bozzetto.BozzettoModel>.Assembly
-      let v = asm.GetName().Version
-      let infoVersion =
-        asm.GetCustomAttributes(typeof<System.Reflection.AssemblyInformationalVersionAttribute>, false)
-        |> Array.tryHead
-        |> Option.map (fun a -> (a :?> System.Reflection.AssemblyInformationalVersionAttribute).InformationalVersion)
-        |> Option.defaultValue (string v)
-      do! jsonResponse ctx 200
-            (JsonValue.Object [
-              "version", JsonValue.String infoVersion
-              "protocolVersion", HttpJson.integer 1
-              "apiVersion", HttpJson.integer Bozzetto.EndpointContracts.apiVersion
-              "server", JsonValue.String "bozzetto"
-              "mcp", JsonValue.Bool true
-              "sse", JsonValue.Bool true ])
-    } :> Task
+    writeVersionResponse ctx :> Task
   ) |> ignore
 
 let mapDiagnosticsRoutes (app: WebApplication) (rctx: RouteContext) =

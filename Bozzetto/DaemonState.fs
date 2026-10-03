@@ -8,11 +8,7 @@ open Bozzetto
 // serializer (roast-5 §1). This file keeps only daemon info/probe state.
 
 module DaemonInfo =
-  let version =
-    System.Reflection.Assembly.GetExecutingAssembly().GetName().Version
-    |> Option.ofObj
-    |> Option.map (fun v -> v.ToString())
-    |> Option.defaultValue "unknown"
+  let version = ReleaseVersion.current ()
 
   let otelConfigured =
     System.Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT")

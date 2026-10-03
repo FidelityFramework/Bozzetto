@@ -2,7 +2,7 @@
   "name": "bozzetto",
   "displayName": "Bozzetto — Live F# Development",
   "description": "Send F# code for evaluation, type-checking, and live test feedback.",
-  "version": "0.6.836",
+  "version": "0.1.0",
   "publisher": "fidelityframework",
   "license": "MIT",
   "icon": "icon.png",

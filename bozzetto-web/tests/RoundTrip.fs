@@ -13,6 +13,7 @@ open Bozzetto.Web.Shared.Protocol
 
 module FrontendCodec = Bozzetto.Web.Frontend.Codec
 module BackendCodec = Bozzetto.Web.Mock.Codec
+module DiagnosticText = Bozzetto.Web.Frontend.DiagnosticText
 
 [<Emit("process.exitCode = $0")>]
 let private setExitCode (code: int) : unit = jsNative
@@ -62,7 +63,7 @@ let private fullSession = {
   CleanupPending = true
   FormatterCleanupPending = true
   Current = Some artifact
-  BackendError = Some "backend\nline two"
+  BackendError = Some "Backend refused:\r\n\tline two <script>literal text</script>\n\t日本語 🎼"
   FormatterError = Some "formatter"
   CleanupError = Some "cleanup"
   WorkerRetirementRequired = Some "retire"
@@ -225,6 +226,30 @@ let private badCommands = [
 // ── Run ────────────────────────────────────────────────────────────────────
 
 let private run () =
+  let diagnosticCases = [
+    "", []
+    "[ERROR] AX4001 callback refused\n", [ "error", "ERROR"; "error", "AX4001" ]
+    "\t[WARN] compiler warning\r\n", [ "warning", "WARN" ]
+    " [INFO] informational message", [ "info", "INFO" ]
+    "error CCS8018: invalid suffix\n", [ "error", "error"; "error", "CCS8018" ]
+    "/src/a.clef:12: warning CCS8019: width alias\r\n", [ "warning", "warning"; "warning", "CCS8019" ]
+    "C:\\work\\b.clef:7: info CCS1001: unreachable", [ "info", "info"; "info", "CCS1001" ]
+    "An error inside a message is ordinary text.\nThe [WARN] word is also ordinary.\n", []
+    "[ERROR] Function <script>literal text</script>\n\tRegion = 'packet\n\t日本語 🎼", [ "error", "ERROR" ]
+  ]
+  for trace, expected in diagnosticCases do
+    let segments = DiagnosticText.segments trace
+    check ("diagnostic original text preserved " + trace) (segments |> Array.map (fun token -> token.text) |> String.concat "" = trace)
+    let marked = segments |> Array.filter (fun token -> token.severity <> "") |> Array.map (fun token -> token.severity, token.text) |> Array.toList
+    check ("only explicit diagnostic prefixes colored " + trace) (marked = expected)
+  for newline in [ "\n"; "\r\n" ] do
+    for indent in [ ""; " "; "\t"; "\t  " ] do
+      for label, kind in [ "ERR", "error"; "WARNING", "warning"; "WRN", "warning"; "INF", "info"; "info", "info" ] do
+        let trace = indent + "[" + label + "] <&> diagnostic" + newline + "\tplain error warning info" + newline
+        let segments = DiagnosticText.segments trace
+        check "severity aliases preserve every line/tab/text character" (segments |> Array.map (fun token -> token.text) |> String.concat "" = trace)
+        check "severity aliases mark only their explicit prefix" (segments |> Array.filter (fun token -> token.severity <> "") |> Array.map (fun token -> token.severity, token.text) = [| kind, label |])
+
   commands |> List.iteri (fun i command ->
     let frame = { CommandFrame.Correlation = (if i = 0 then System.Int32.MaxValue else i + 1); Command = command }
     let wire = FrontendCodec.encodeCommand frame
