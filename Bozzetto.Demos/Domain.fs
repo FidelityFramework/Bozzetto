@@ -80,33 +80,34 @@ type Display = Display of string
 // The closed vocabularies from §5.
 // ---------------------------------------------------------------------------
 
+/// The client a scenario is filmed through. The legacy web dashboard client
+/// was removed with the daemon's dashboard; the editors and the Agent/MCP
+/// viz page remain.
 [<RequireQualifiedAccess>]
 type Client =
-  | Dashboard
   | VsCode
   | Neovim
   /// The Agent/MCP actor's own on-screen viz page (demo-actors-plan.md
-  /// §2.4) — added here (the plan's own §0 overview text only lists three,
-  /// written before this island's analysis) because `Scenario.Client` is a
-  /// required field and `agent-mcp` is not filmed through any editor: it has
-  /// no ClickThenTypeThenClick, no DOM, only a real MCP transcript. Additive
-  /// only — no existing case changed.
+  /// §2.4): `Scenario.Client` is a required field and `agent-mcp` is not
+  /// filmed through any editor — it has no editor input at all, only a real
+  /// MCP transcript.
   | Agent
 
 module Client =
-  /// Every editor client a HOT-RELOAD scenario can be filmed through (§6's
-  /// "3 clients × 3 runnable samples = 9 hot-reload scenarios" comprehension
-  /// — `DomainTests.fs` pins this exact count). Deliberately excludes
+  /// Every editor client a HOT-RELOAD scenario can be filmed through
+  /// ("2 clients × 2 runnable samples = 4 hot-reload scenarios" —
+  /// `DomainTests.fs` pins this exact count). Deliberately excludes
   /// `Client.Agent`: the Agent/MCP actor authors no hot-reload scenarios at
-  /// all (demo-actors-plan.md §2.4 lists exactly one scenario, `agent-mcp`,
-  /// outside the hot-reload matrix entirely) — including it here would
-  /// silently inflate that matrix to 12 pairs with 3 non-existent
-  /// "hr-*-agent-*" scenarios this actor never builds.
-  let all : Client list = [ Client.Dashboard; Client.VsCode; Client.Neovim ]
+  /// all (demo-actors-plan.md §2.4) — including it here would silently
+  /// inflate that matrix with "hr-agent-*" scenarios this actor never builds.
+  let all : Client list = [ Client.VsCode; Client.Neovim ]
 
+/// The kind of app a hot-reload scenario's App co-actor captures. Both
+/// remaining kinds draw their own window on the cell's display; the former
+/// `Web` kind (a website captured through a second Chromium) left with the
+/// Datastar web sample.
 [<RequireQualifiedAccess>]
 type AppKind =
-  | Web
   | Raylib
   | Console
   | NoApp
@@ -121,27 +122,25 @@ type Capability =
 
 [<RequireQualifiedAccess>]
 type Sample =
-  | WebappDatastar
   | RaylibGame
   | ConsoleTicker
   | FromCSharp
 
 module Sample =
-  /// Samples a `HotReload` scenario can actually edit-and-rerun live (§6:
-  /// "9 hot-reload" = 3 clients × these 3 samples). `FromCSharp` is used only
-  /// by the live-testing scenarios, fixed per client, so it is excluded here.
-  let runnable : Sample list = [ Sample.WebappDatastar; Sample.RaylibGame; Sample.ConsoleTicker ]
+  /// Samples a `HotReload` scenario can actually edit-and-rerun live
+  /// ("4 hot-reload" = 2 clients × these 2 samples). `FromCSharp` is a test
+  /// project, not a runnable app, so it is excluded here.
+  let runnable : Sample list = [ Sample.RaylibGame; Sample.ConsoleTicker ]
 
   /// The sample's real project directory, relative to the repo root — a
   /// scenario that wants to show Bozzetto opening a REAL project (§10: not a
-  /// bare Quick Start temp session, which has nothing to auto-open and
-  /// nothing to eval against the project's own code) resolves this and
-  /// hands it to `Runtime.fs`, the one place with a `repoRoot` to make it
-  /// absolute. Exhaustive over every `Sample` case so a new sample can never
-  /// silently have no real directory to point a session at.
+  /// bare temp session, which has nothing to open and nothing to run against
+  /// the project's own code) resolves this and hands it to `Runtime.fs`, the
+  /// one place with a `repoRoot` to make it absolute. Exhaustive over every
+  /// `Sample` case so a new sample can never silently have no real directory
+  /// to point a session at.
   let relativePath (sample: Sample) : string =
     match sample with
-    | Sample.WebappDatastar -> "samples/demos/Bozzetto.Samples.WebappDatastar"
     | Sample.RaylibGame -> "samples/demos/Bozzetto.Samples.RaylibGame"
     | Sample.ConsoleTicker -> "samples/demos/Bozzetto.Samples.ConsoleTicker"
     | Sample.FromCSharp -> "samples/from-csharp/Bozzetto.Samples.FromCSharp"
@@ -149,8 +148,8 @@ module Sample =
   /// The sample project's own `.fsproj` file name — every real sample
   /// directory names its lone `.fsproj` identically to its own containing
   /// directory (confirmed directly: `find samples -name '*.fsproj'` — e.g.
-  /// `samples/demos/Bozzetto.Samples.WebappDatastar/
-  /// Bozzetto.Samples.WebappDatastar.fsproj`), so this is DERIVED from
+  /// `samples/demos/Bozzetto.Samples.ConsoleTicker/
+  /// Bozzetto.Samples.ConsoleTicker.fsproj`), so this is DERIVED from
   /// `relativePath`'s own last segment rather than a second literal per case
   /// that could silently drift from the first. Used to build the argument
   /// `sagefs.nvim`'s non-interactive `:SageFsCreateSession <project>`
@@ -160,19 +159,20 @@ module Sample =
   let projectFileName (sample: Sample) : string =
     (relativePath sample).Split('/') |> Array.last |> sprintf "%s.fsproj"
 
+/// How a scenario's panes tile the screen (`Layout.rects`): an editor beside
+/// the app it drives, an editor alone, or the Agent/MCP viz page alone.
 [<RequireQualifiedAccess>]
 type LayoutTemplate =
   | EditorLeft
   | EditorFull
-  | DashboardOnly
+  | AgentOnly
 
 /// An actor is one thing the runner controls inside a cell: an editor, the
-/// dashboard, the app under test, or a scripted agent. Distinct from `Client`
-/// because a scenario always has exactly one `Client` (the editor "on
-/// camera") but a `Layout`/`ScenarioPlan` places *every* actor in the cell.
+/// app under test, or a scripted agent. Distinct from `Client` because a
+/// scenario always has exactly one `Client` (the editor "on camera") but a
+/// `Layout`/`ScenarioPlan` places *every* actor in the cell.
 [<RequireQualifiedAccess>]
 type ActorId =
-  | Dashboard
   | VsCode
   | Neovim
   | App
@@ -194,41 +194,35 @@ module ScenarioId =
 
   let private clientToken (client: Client) =
     match client with
-    | Client.Dashboard -> "dashboard"
     | Client.VsCode -> "vscode"
     | Client.Neovim -> "neovim"
     | Client.Agent -> "agent"
 
   let private appToken (appKind: AppKind) =
     match appKind with
-    | AppKind.Web -> Some "web"
     | AppKind.Raylib -> Some "raylib"
     | AppKind.Console -> Some "console"
     | AppKind.NoApp -> None
 
   /// Derives the kebab-case scenario id from the three facets that define a
-  /// scenario. §5 gives only the function's signature and §6.1/§6 give six
-  /// worked outputs, not the algorithm — this is the shape inferred to
-  /// reproduce all six exactly:
-  ///   "hr-dashboard-vscode-web"    (HotReload, VsCode,  Web)
-  ///   "hr-neovim-neovim-raylib"    (HotReload, Neovim,  Raylib)
-  ///   "hr-dashboard-vscode-console"(HotReload, VsCode,  Console)
-  ///   "lt-vscode"                  (LiveTesting, VsCode, NoApp)
-  ///   "repl-neovim"                (Repl, Neovim, NoApp)
-  ///   "sessions-dashboard"         (Sessions, Dashboard, NoApp)
-  /// TODO(shape): a `HotReload` scenario names both a "narrator" pane (the
-  /// Bozzetto dashboard, unless the client itself IS Neovim — its own
-  /// statusline narrates instead) and the app kind, because those demos show
-  /// a separate app pane; every other capability has no app pane
-  /// (`AppKind.NoApp`) and no narrator, so its id is just "<cap>-<client>".
+  /// scenario:
+  ///   "hr-vscode-raylib"   (HotReload, VsCode, Raylib)
+  ///   "hr-neovim-console"  (HotReload, Neovim, Console)
+  ///   "lt-vscode"          (LiveTesting, VsCode, NoApp)
+  ///   "repl-neovim"        (Repl, Neovim, NoApp)
+  /// A `HotReload` scenario names the app kind because those demos show a
+  /// separate app pane; every other capability has no app pane
+  /// (`AppKind.NoApp`), so its id is just "<cap>-<client>". The plan's
+  /// original ids also carried a "narrator" token ("hr-dashboard-vscode-*",
+  /// "hr-neovim-neovim-*") naming the web dashboard pane that narrated
+  /// beside the editor; that pane was removed with the dashboard, so the
+  /// token is gone too.
   let derive (capability: Capability) (client: Client) (appKind: AppKind) : ScenarioId =
     let cap = capabilityToken capability
     let clientTok = clientToken client
     let tokens =
       match capability with
-      | Capability.HotReload ->
-        let narrator = match client with Client.Neovim -> "neovim" | _ -> "dashboard"
-        [ narrator; clientTok ] @ (appToken appKind |> Option.toList)
+      | Capability.HotReload -> clientTok :: (appToken appKind |> Option.toList)
       | Capability.LiveTesting
       | Capability.Repl
       | Capability.Sessions
@@ -236,21 +230,20 @@ module ScenarioId =
     cap :: tokens |> String.concat "-" |> ScenarioId
 
   /// An explicit escape hatch for scenario ids that do NOT compose from
-  /// `Capability × Client × AppKind` — today only the Phase-0/1 throwaway
-  /// smoke scenario (`hello-dashboard`, demo-gif-plan.md §10 Phase 1), which
-  /// predates the matrix and is never one of the `matrix` values in §6. Every
-  /// matrix-composed scenario must go through `derive`, never this.
+  /// `Capability × Client × AppKind` — today the Agent-client scenarios
+  /// (`agent-mcp`, `cohort-landing`), which sit outside the editor matrix.
+  /// Every matrix-composed scenario must go through `derive`, never this.
   let ofRaw (text: string) : ScenarioId = ScenarioId text
 
   let value (ScenarioId s) : string = s
 
 // ---------------------------------------------------------------------------
 // Leaf "named value" types — closed or validated data referenced by the
-// worked example in §6.1 via a lowerCamelCase companion-module member
-// (`Dwell.short`, `Region.clock`, `SampleFile.homePage`, `DashboardId.runApp`,
-// `CostClass.web`, `Signal.appOutputChanged`), the way the plan's own code
-// reads. Each type keeps its DU cases (or validated constructor) PascalCase;
-// the module supplies the readable, doc-literal alias.
+// worked example via a lowerCamelCase companion-module member
+// (`Dwell.short`, `Region.clock`, `SampleFile.ticker`, `CostClass.console`,
+// `Signal.appOutputChanged`), the way the plan's own code reads. Each type
+// keeps its DU cases (or validated constructor) PascalCase; the module
+// supplies the readable, doc-literal alias.
 // ---------------------------------------------------------------------------
 
 /// A caption band's text (§9: "≤ 70 characters, enforced by the `Caption`
@@ -280,13 +273,11 @@ module Text =
   /// A scenario built as a pure, static `Scenario` value has no `repoRoot`
   /// to make an absolute sample-project path with (only `Runtime.fs`, which
   /// builds the `Wire.ScenarioPlan`, knows that) — a scenario that needs to
-  /// type one (§10: driving the dashboard's real "open a project" flow
-  /// against a sample under `samples/`, instead of the Quick Start temp
-  /// session that has nothing to auto-open) embeds this token in the typed
-  /// `Text` instead of a literal path; `Runtime.fs`'s `wireStepOf` is the
-  /// one place with a `repoRoot` to substitute it before the text ever
-  /// reaches a real keystroke, so nothing downstream ever sees or types the
-  /// literal token itself.
+  /// type one (e.g. a sample directory under `samples/`) embeds this token
+  /// in the typed `Text` instead of a literal path; `Runtime.fs`'s
+  /// `wireStepOf` is the one place with a `repoRoot` to substitute it before
+  /// the text ever reaches a real keystroke, so nothing downstream ever sees
+  /// or types the literal token itself.
   [<Literal>]
   let RepoRootToken = "{{REPO_ROOT}}"
 
@@ -337,10 +328,9 @@ module Region =
 type SampleFile = { Sample: Sample; RelativePath: string }
 
 module SampleFile =
-  /// TODO(shape): the actual relative path inside
-  /// `Bozzetto.Samples.WebappDatastar` is a Wave-2/G-gap concern; this names
-  /// the file the worked example (§6.1) opens and edits.
-  let homePage = { Sample = Sample.WebappDatastar; RelativePath = "wwwroot/index.html" }
+  /// The console ticker's pure core, where its hot-reload knob (`renderLine`'s
+  /// `message`) lives — the file the worked example opens and edits.
+  let ticker = { Sample = Sample.ConsoleTicker; RelativePath = "Ticker.fs" }
 
 /// The measured (never guessed, §4.2) resource cost of recording one
 /// scenario, used by `Schedule.plan` to pack cells without exceeding the
@@ -351,60 +341,8 @@ module CostClass =
   /// TODO(shape): placeholders until `bozzetto-demos measure` (§4.2) fills
   /// `costclass.json` — the plan is explicit these numbers are calibrated,
   /// not guessed, so these are deliberately round starting points.
-  let web = { Cpu = 2; MemoryGb = 2.5; DurationSeconds = 20.0 }
   let raylib = { Cpu = 2; MemoryGb = 1.5; DurationSeconds = 20.0 }
   let console = { Cpu = 1; MemoryGb = 1.0; DurationSeconds = 15.0 }
-
-/// Every dashboard element a demo can click, one DU mirroring the
-/// `data-testid`s the dashboard renders (§4.3 Targets, gap G4) — contract-
-/// tested against `DashboardFragments.fs` in Wave 2 so a renamed button
-/// breaks a test, not a demo.
-[<RequireQualifiedAccess>]
-type DashboardId =
-  | RunApp
-  | StopApp
-  | SessionCard
-  | QuickStart
-  | Eval
-  | Reset
-  | HardReset
-  | Clear
-  | WatchAll
-  | UnwatchAll
-  /// The live-testing panel's ON/OFF toggle button — a real `data-testid`
-  /// already in the dashboard's markup (`DashboardFragments.fs`'s
-  /// `renderLiveTestingPanel`, `testid "live-testing-toggle"`), not one added
-  /// for this tool.
-  | LiveTestingToggle
-
-module DashboardId =
-  let runApp = DashboardId.RunApp
-  let stopApp = DashboardId.StopApp
-  let sessionCard = DashboardId.SessionCard
-  let quickStart = DashboardId.QuickStart
-  let eval = DashboardId.Eval
-  let reset = DashboardId.Reset
-  let hardReset = DashboardId.HardReset
-  let clear = DashboardId.Clear
-  let watchAll = DashboardId.WatchAll
-  let unwatchAll = DashboardId.UnwatchAll
-  let liveTestingToggle = DashboardId.LiveTestingToggle
-
-  /// The exhaustive DU → `data-testid` mapping (§4.3, G4) — the one place a
-  /// dashboard button name and its DOM contract can drift apart.
-  let testId (id: DashboardId) : string =
-    match id with
-    | DashboardId.RunApp -> "run-app"
-    | DashboardId.StopApp -> "stop-app"
-    | DashboardId.SessionCard -> "session-card"
-    | DashboardId.QuickStart -> "quick-start"
-    | DashboardId.Eval -> "eval"
-    | DashboardId.Reset -> "reset"
-    | DashboardId.HardReset -> "hard-reset"
-    | DashboardId.Clear -> "clear"
-    | DashboardId.WatchAll -> "watch-all"
-    | DashboardId.UnwatchAll -> "unwatch-all"
-    | DashboardId.LiveTestingToggle -> "live-testing-toggle"
 
 /// A VS Code command id a demo invokes via `executeCommand` (§4.4) — never a
 /// bare string at a call site.
@@ -454,10 +392,9 @@ type Signal =
   | AppOutputChanged
   | HotReloadApplied
   | TestRunCompleted
-  /// The daemon's own session-status label (§9 fix) has actually reached
-  /// "Ready" — not just "the session card appeared", which fires while the
-  /// session is still `WarmingUp` and stops the recording before anything
-  /// interesting happens.
+  /// The session has actually reached "Ready" — not merely been created,
+  /// which happens while it is still `WarmingUp` and would stop the
+  /// recording before anything interesting happens.
   | SessionReady
 
 module Signal =
@@ -580,19 +517,11 @@ type ClientCommand =
 
 [<RequireQualifiedAccess>]
 type Target =
-  | DashboardElement of DashboardId
   | EditorPosition of file: SampleFile * line: int * column: int
   | PaletteItem of VsCodeCommand
   | NvimCommandLine
   | AppWindowPoint of RelativePoint
   | WindowCenter of ActorId
-  /// An explicit escape hatch for a dashboard element that is not in the
-  /// `DashboardId` vocabulary because it carries no `data-testid` (e.g. the
-  /// eval code textarea, which has only a plain `id`) — a raw CSS/Playwright
-  /// selector, used ONLY when adding a real `data-testid` to the dashboard
-  /// is not warranted for one demo-only target. Every other target stays a
-  /// closed, typed vocabulary; this is the deliberate, documented exception.
-  | DashboardCssSelector of selector: string
 
 /// A key on the chord/shortcut vocabulary (§4.3 `Keymap`). `Char` covers
 /// arbitrary typed text (fed by `Cadence.keys`); the named letters below are
@@ -676,38 +605,42 @@ type Action =
   | Setup of ClientCommand
   | Await of Signal
   /// Type `text` at `typeTarget` (clicking it first, exactly like `Type`),
-  /// THEN click `submitTarget` — e.g. type an F# expression into the eval
-  /// box, then click the `[EVAL]` button — as one filmed step, with the
-  /// cursor moving continuously from the type target to the submit target
-  /// rather than resetting. Distinct from two separate `Step`s so the
-  /// caption ("3/3 · Evaluate F#") narrates it as the one beat it visually
-  /// is; §9's "watch Bozzetto evaluate F# live" demo needs exactly this.
+  /// THEN click `submitTarget` — e.g. type into an input, then press its
+  /// submit control — as one filmed step, with the cursor moving
+  /// continuously from the type target to the submit target rather than
+  /// resetting. Distinct from two separate `Step`s so the caption narrates
+  /// it as the one beat it visually is. (Introduced for the retired web
+  /// dashboard's eval box; no current scenario uses it.)
   | TypeThenClick of typeTarget: Target * text: Text * seed: CadenceSeed * submitTarget: Target
   /// Click `preClickTarget` (e.g. expand a collapsed panel), THEN type
   /// `text` at `typeTarget`, THEN click `submitTarget` — all as one
-  /// uninterrupted step. Distinct from chaining a separate pre-click step
-  /// before a `TypeThenClick` one: measured directly against real
-  /// recordings, a dashboard whose collapsed-panel state does not survive
-  /// its own server-driven re-render (a genuine upstream defect, out of
-  /// scope here) can re-collapse the panel in the gap BETWEEN two steps —
-  /// even a short one — so the expand click and the typing that depends on
-  /// it must land inside the SAME step, with no step boundary between them.
+  /// uninterrupted step, with no step boundary between the expand click and
+  /// the typing that depends on it (a surface that re-renders between steps
+  /// can otherwise undo the expand). (Introduced for the retired web
+  /// dashboard's collapsible eval panel; no current scenario uses it.)
   | ClickThenTypeThenClick of preClickTarget: Target * typeTarget: Target * text: Text * seed: CadenceSeed * submitTarget: Target
 
 [<RequireQualifiedAccess>]
 type Expectation =
-  | PageShows of DashboardId * Text
   | AppState of AppRunStateCase
   | EditorSaved of SampleFile
   | TestOutcome of TestId * Outcome
   | NvimBufferContains of Text
   | AppOutputChanged of Region
-  /// A raw selector's text content contains `text` — the general-purpose
-  /// observation `PageShows` cannot express (it only checks a `DashboardId`
-  /// selector's PRESENCE, never its text — §9's "session reached Ready", not
-  /// just "the card exists", and "the eval result value appeared" both need
-  /// a text-content check on an arbitrary selector, not just a data-testid
-  /// existence check).
+  /// The session the on-camera editor created is ready, proven through that
+  /// editor actor's OWN observation channel (`Runtime.fs`'s
+  /// `expectationWire`): VS Code polls the daemon's `/health` session status
+  /// for `Ready` (the same source the extension's status bar reads); Neovim
+  /// asks the plugin over RPC whether it holds an active session — a weaker
+  /// signal than VS Code's (session present, not necessarily warm). This
+  /// replaced the retired web dashboard's status badge, which every editor
+  /// scenario used to read through a narrator pane.
+  | SessionReady
+  /// The opaque observation string the Agent/MCP actor receives on the wire
+  /// (`Actors/Agent.fs`'s `parseWire`/`parseCohortWire` decode `selector`;
+  /// `text` is always `""` for it). The name is historical — it began as a
+  /// DOM text check against the retired web dashboard; no editor actor
+  /// observes it (`Runtime.fs` lowers it to an unobserved step for them).
   | PageTextContains of selector: string * text: string
 
 type Step =
@@ -834,7 +767,8 @@ type Style =
     Bad: string }
 
 module Style =
-  /// The Kanagawa Wave palette already used by `Bozzetto/dashboard.css` (§9).
+  /// The Kanagawa Wave palette (§9) — the palette the retired web
+  /// dashboard's stylesheet used, kept so recordings keep their look.
   let kanagawa =
     { Ink = "#dcd7ba"
       Ground = "#1f1f28"
@@ -867,7 +801,7 @@ type ComposePlan =
     Captions: Caption list
     // Same length as Segments/Captions — one per step, in step order; `[]` for
     // a step with no pointer motion. Magnifier is the editor pane's rect when
-    // the layout has one (None for DashboardOnly). (§4.6)
+    // the layout has one (None for AgentOnly). (§4.6)
     PointerPaths: Point list list
     // Same length as Segments — each segment's own local timing, used to
     // place the cursor holds and the click ripple within THAT segment's own

@@ -257,8 +257,7 @@ automatically once a session is created:
 boz                       # start the daemon bare, waits for clients
 ```
 
-Create a session for your project from an editor, MCP, or the dashboard
-(`http://localhost:47750/dashboard`), start your app in it — either you run it yourself
+Create a session for your project from an editor or MCP, start your app in it — either you run it yourself
 in the REPL, or `run_app` runs it for you — then just edit `.fs` files and save. Look for
 `[DevReload]`/`[HotReload]` log lines in the daemon console.
 

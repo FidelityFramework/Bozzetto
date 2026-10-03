@@ -18,7 +18,6 @@ let private xmlEscape (s: string) : string =
 /// always has exactly one `Client` — the editor 'on camera'").
 let private clientActorId (client: Client) : ActorId =
   match client with
-  | Client.Dashboard -> ActorId.Dashboard
   | Client.VsCode -> ActorId.VsCode
   | Client.Neovim -> ActorId.Neovim
   | Client.Agent -> ActorId.Agent
@@ -30,8 +29,6 @@ let private clientActorId (client: Client) : ActorId =
 /// measure.
 let private targetActorId (client: Client) (target: Target) : ActorId option =
   match target with
-  | Target.DashboardElement _ -> Some ActorId.Dashboard
-  | Target.DashboardCssSelector _ -> Some ActorId.Dashboard
   | Target.EditorPosition _ -> Some (clientActorId client)
   | Target.PaletteItem _ -> Some (clientActorId client)
   | Target.NvimCommandLine -> Some ActorId.Neovim

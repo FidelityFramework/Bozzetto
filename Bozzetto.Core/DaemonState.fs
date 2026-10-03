@@ -110,17 +110,6 @@ module DaemonState =
       | _ -> DateTime.UtcNow
     | None -> DateTime.UtcNow
 
-  let private fallbackInfo mcpPort dashboardPort =
-    { Pid = 0
-      Port = mcpPort
-      DashboardPort = dashboardPort
-      StartedAt = DateTime.UtcNow
-      WorkingDirectory = Environment.CurrentDirectory
-      Version = "unknown"
-      ApiVersion = None
-      SessionCount = None
-      ComponentFailures = [] }
-
   let private tryGetStringArrayProperty name (root: Map<string, JsonValue>) : string list =
     match root.TryFind name with
     | Some (JsonValue.Array values) -> values |> List.choose JsonValue.asString
@@ -153,40 +142,23 @@ module DaemonState =
     with _ ->
       None
 
-  /// Probe the daemon's /api/daemon-info endpoint on the dashboard port.
-  /// Falls back to probing /dashboard if /api/daemon-info isn't available
-  /// (e.g. older daemon versions).
+  /// Probe the daemon's /api/daemon-info endpoint on its control port (MCP
+  /// port + 1). That endpoint is the discovery contract; nothing else on the
+  /// control port identifies a daemon.
   let probeDaemonHttpAsync (mcpPort: int) : Async<DaemonInfo option> = async {
-    let dashboardPort = mcpPort + 1
+    let controlPort = mcpPort + 1
     try
       let! resp =
-        httpClient.GetAsync(sprintf "http://localhost:%d/api/daemon-info" dashboardPort)
+        httpClient.GetAsync(sprintf "http://localhost:%d/api/daemon-info" controlPort)
         |> Async.AwaitTask
       match resp.IsSuccessStatusCode with
       | true ->
         let! json = resp.Content.ReadAsStringAsync() |> Async.AwaitTask
         return tryParseDaemonInfoJson mcpPort json
-      | false ->
-        let! fallbackResp =
-          httpClient.GetAsync(sprintf "http://localhost:%d/dashboard" dashboardPort)
-          |> Async.AwaitTask
-        match fallbackResp.IsSuccessStatusCode with
-        | true ->
-          return Some (fallbackInfo mcpPort dashboardPort)
-        | false -> return None
+      | false -> return None
     with ex ->
-      Utils.Log.warn "[DaemonState] MCP status probe failed on port %d: %s" mcpPort ex.Message
-      try
-        let! fallbackResp =
-          httpClient.GetAsync(sprintf "http://localhost:%d/dashboard" dashboardPort)
-          |> Async.AwaitTask
-        match fallbackResp.IsSuccessStatusCode with
-        | true ->
-          return Some (fallbackInfo mcpPort dashboardPort)
-        | false -> return None
-      with ex2 ->
-        Utils.Log.warn "[DaemonState] Dashboard fallback also failed on port %d: %s" dashboardPort ex2.Message
-        return None
+      Utils.Log.warn "[DaemonState] Daemon probe failed on control port %d: %s" controlPort ex.Message
+      return None
   }
 
   /// Synchronous wrapper for callers that can't be async yet.
@@ -201,14 +173,14 @@ module DaemonState =
   let readOnPortAsync (mcpPort: int) = probeDaemonHttpAsync mcpPort
   let readOnPort (mcpPort: int) = probeDaemonHttp mcpPort
 
-  /// Request graceful shutdown via the dashboard API.
+  /// Request graceful shutdown via the control listener.
   let shutdownClient = new System.Net.Http.HttpClient(Timeout = Timeouts.shutdownHttpClient)
 
   let requestShutdownAsync (mcpPort: int) = async {
-    let dashboardPort = mcpPort + 1
+    let controlPort = mcpPort + 1
     try
       let! resp =
-        shutdownClient.PostAsync(sprintf "http://localhost:%d/api/shutdown" dashboardPort, null)
+        shutdownClient.PostAsync(sprintf "http://localhost:%d/api/shutdown" controlPort, null)
         |> Async.AwaitTask
       return resp.IsSuccessStatusCode
     with ex ->

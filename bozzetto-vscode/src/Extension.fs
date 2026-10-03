@@ -11,7 +11,6 @@ module ErrorPresentationPure = Bozzetto.Vscode.ErrorPresentationPure
 module Diag = Bozzetto.Vscode.DiagnosticsListener
 module Lens = Bozzetto.Vscode.CodeLensProvider
 module Completion = Bozzetto.Vscode.CompletionProvider
-module SessionCtx = Bozzetto.Vscode.SessionContextTreeProvider
 module Sessions = Bozzetto.Vscode.SessionsTreeProvider
 module LiveTest = Bozzetto.Vscode.LiveTestingListener
 module TestCtrl = Bozzetto.Vscode.TestControllerAdapter
@@ -68,7 +67,6 @@ let mutable knownSessions: Client.SessionInfo array = [||]
 let mutable currentWorkflowLabel: string = "REPL"
 let mutable liveTestListener: LiveTest.LiveTestingListener option = None
 let mutable testAdapter: TestCtrl.TestAdapter option = None
-let mutable dashboardPanel: WebviewPanel option = None
 let mutable typeExplorer: TypeExpl.TypeExplorer option = None
 
 // Crash detection: track connected→offline transitions
@@ -774,7 +772,6 @@ let refreshStatus () =
         activeSessionWorkingDirectory <- None
         knownSessions <- [||]
         liveTestListener |> Option.iter (fun l -> l.SetSessionFilter None)
-        SessionCtx.setSession c None
         Sessions.setSession c None
         setContext "bozzetto:daemonRunning" false
         setContext "bozzetto:hasSession" false
@@ -844,7 +841,6 @@ let refreshStatus () =
             sb?accessibilityInformation <- createObj [ "label" ==> view.Tooltip ]
           sb.backgroundColor <- None
           let activeId = activeSessionId
-          SessionCtx.setSession c activeId
           Sessions.setSession c activeId
           TypeExpl.setClient (Some c)
         | Some "Starting" | Some "Restarting" | Some "Warming Up" ->
@@ -1229,7 +1225,7 @@ let evalCore (code: string) (filePath: string option) (evalMode: string option) 
         let! ready = awaitSelectedSessionReady c sessionId
         if not ready then
           if evalId = myId then evalId <- 0
-          return EvalError "Session did not become ready in time. Check the dashboard for status."
+          return EvalError "Session did not become ready in time. Check the Sessions view or the Bozzetto output for its status."
         else
           (getOutput()).appendLine "Session ready, evaluating..."
           let startTime = performanceNow ()
@@ -1728,7 +1724,6 @@ let sessionMenu () =
           items.Add "$(debug-restart) Reset Session"
           items.Add "$(refresh) Hard Reset (Rebuild)"
         | _ -> ()
-        items.Add "$(dashboard) Open Dashboard"
         items.Add "$(gear) Cycle Density"
 
       let! picked = Window.showQuickPick (items.ToArray()) "Bozzetto"
@@ -1744,8 +1739,6 @@ let sessionMenu () =
           do! resetSessionCmd ()
         | s when s.Contains "Hard Reset" ->
           do! hardResetCmd ()
-        | s when s.Contains "Open Dashboard" ->
-          Commands.executeCommand "bozzetto.openDashboard" |> ignore
         | s when s.Contains "Cycle Density" ->
           cycleDensity ()
         | s when s.Contains "──" -> () // separator
@@ -1852,38 +1845,6 @@ let rec waitForDaemonGone (attempts: int) : JS.Promise<unit> =
       | true ->
         do! sleep 500
         do! waitForDaemonGone (attempts - 1)
-  }
-
-let openDashboard () =
-  promise {
-    match client with
-    | None -> ()
-    | Some c ->
-      let! _ = discoverDaemonPorts c
-      let dashUrl = Client.dashboardUrl c
-      let dashboardHtml =
-        sprintf """<!DOCTYPE html>
-<html style="height:100%%;margin:0;padding:0">
-<head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src http://localhost:*; style-src 'unsafe-inline'"></head>
-<body style="height:100%%;margin:0;padding:0">
-<iframe src="%s" style="width:100%%;height:100%%;border:none"></iframe>
-</body>
-</html>""" dashUrl
-
-      match dashboardPanel with
-      | Some panel ->
-        panel.webview.html <- dashboardHtml
-        panel.reveal 1
-      | None ->
-        let panel =
-          Window.createWebviewPanel
-            "bozzettoDashboard"
-            "Bozzetto Dashboard"
-            2  // ViewColumn.Beside
-            (createObj [ "enableScripts" ==> true ])
-        panel.webview.html <- dashboardHtml
-        panel.onDidDispose (fun () -> dashboardPanel <- None) |> ignore
-        dashboardPanel <- Some panel
   }
 
 let evalAdvance () =
@@ -2005,10 +1966,9 @@ let promptAutoStart () =
       let! choice =
         Window.showInformationMessage
           (sprintf "Bozzetto daemon is not running. Start it for %s?" proj)
-          [| "Start Bozzetto"; "Open Dashboard"; "Not Now" |]
+          [| "Start Bozzetto"; "Not Now" |]
       match choice with
       | Some "Start Bozzetto" -> do! startDaemon ()
-      | Some "Open Dashboard" -> do! openDashboard ()
       | _ -> ()
   }
 
@@ -2349,10 +2309,6 @@ let activate (context: ExtensionContext) =
   context.subscriptions.Add docChangeSub
 
 
-  // Session Context TreeView
-  SessionCtx.register context
-  SessionCtx.setSession c None
-
   // Sessions TreeView
   Sessions.register context
   Sessions.setSession c None
@@ -2388,7 +2344,6 @@ let activate (context: ExtensionContext) =
       do! waitForDaemonGone 20
       do! startDaemon ()
     } |> promiseIgnoreLog logToOutput)
-  reg "bozzetto.openDashboard" (fun _ -> openDashboard () |> promiseIgnoreLog logToOutput)
   // `[Reconnect]` was offered on the "daemon connection lost" dialog and
   // executed `bozzetto.reconnect`, which existed nowhere. The rejected promise
   // went to the output channel, so pressing the button looked like it worked.
@@ -3229,7 +3184,4 @@ let deactivate () =
   disposeDaemonConnectionResources ()
   typeExplorer |> Option.iter (fun te -> te.dispose ())
   typeExplorer <- None
-  dashboardPanel |> Option.iter (fun p -> p.dispose () |> ignore)
-  dashboardPanel <- None
-  SessionCtx.stopAutoRefresh ()
   InlineDeco.clearAllDecorations ()

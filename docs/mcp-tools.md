@@ -44,7 +44,8 @@ curl --fail --max-time 3 http://127.0.0.1:47749/health
 curl --fail --max-time 3 http://127.0.0.1:47749/api/composer/sessions
 ```
 
-The dashboard is on **47750**; the Composer page is on **47749**. SSE compatibility
+The Composer page is on **47749**; **47750** carries only the minimal control
+listener (`/api/daemon-info`, `/api/shutdown`) behind `boz status` and `boz stop`. SSE compatibility
 is available at `http://127.0.0.1:47749/sse`. For individual client workflows,
 `boz mcp` remains a stdio bridge:
 
@@ -226,7 +227,7 @@ Listing a tool does not establish an available execution provider.
 | `hard_reset_fsi_session` | Full reset: rebuilds the project, reloads, starts fresh. Needed after `.fsproj` or package changes. |
 | `get_available_projects` | Discover `.fsproj` / `.sln` / `.slnx` files under a directory. |
 | `list_runnable_projects` | List the session's projects and which ones `run_app` can run (`OutputType=Exe`). |
-| `switch_workflow` | Switch the session's workflow: `repl` (Interactive), `livetesting` (Live Testing), or `live` (Hot Reload, aliases `hotreload`/`weblive`/`web`, kept for backward compatibility). Creates a new session in the target workflow and stops the old one; VS Code and the dashboard's own `POST /api/sessions/{sid}/workflow` route restart the same session id in place instead. |
+| `switch_workflow` | Switch the session's workflow: `repl` (Interactive), `livetesting` (Live Testing), or `live` (Hot Reload, aliases `hotreload`/`weblive`/`web`, kept for backward compatibility). Creates a new session in the target workflow and stops the old one; VS Code's own `POST /api/sessions/{sid}/workflow` route restarts the same session id in place instead. |
 
 ### Hot reload and running apps
 
@@ -247,7 +248,7 @@ Listing a tool does not establish an available execution provider.
 | `targeted_verify` | Plan a trustworthy verification pass for one changed behavior. Refuses to claim green when session trust is ambiguous or loaded code is stale. It doesn't run tests itself. It returns the next trustworthy move. |
 | `explain_test_failure` | Enriched failure context for a test that recently went from passing to failing. |
 
-F# live-testing runs are driven by file saves or editor/dashboard run controls;
+F# live-testing runs are driven by file saves or editor run controls;
 agents read results through `list_tests`, `explain_test_failure` and `diagnose`.
 
 ### Analysis and diagnostics

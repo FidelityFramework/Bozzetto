@@ -261,7 +261,7 @@ module Instrumentation =
 
   /// SSE/long-lived paths to suppress in ASP.NET Core HTTP span instrumentation.
   let sseFilterPaths =
-    [ "/events"; "/diagnostics"; "/__bozzetto__/reload"; "/sse"; "/dashboard/stream"; "/health" ]
+    [ "/events"; "/diagnostics"; "/__bozzetto__/reload"; "/sse"; "/health" ]
 
   /// Returns true if the HTTP path should be instrumented (not an SSE long-lived path).
   let shouldFilterHttpSpan (path: string) =

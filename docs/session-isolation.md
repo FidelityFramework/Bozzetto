@@ -3,13 +3,12 @@
 > **Status note:** This document records the design that introduced
 > per-client session routing. I'm keeping it as a design record rather than
 > rewriting it as a live reference, because the "before" bug below is exactly
-> the kind of thing worth remembering how I fixed. What shipped matches this
-> design: the dashboard's SSE stream now tracks a per-connection viewing
-> session driven by a Datastar signal (`viewingSessionId`), not a URL query
-> parameter or a shared global. See `createStreamHandler` in
-> `Bozzetto/Dashboard.fs` if you want to see the real thing instead of the plan
-> for it. The clients are editor integrations, dashboard tabs, and MCP
-> connections.
+> the kind of thing worth remembering how I fixed. The dashboard sections
+> (per-SSE-connection routing through a Datastar signal, the connectivity
+> banner and their tests) describe the legacy web dashboard, which has since
+> been removed from Bozzetto along with Datastar; they remain here as history.
+> The per-client rule still holds for the current clients: editor
+> integrations and MCP connections.
 
 ## Problem
 

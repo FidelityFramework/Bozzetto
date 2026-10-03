@@ -219,7 +219,7 @@ Because Bozzetto is written in F#, it gets to:
 - **Hot-reload F# source files** into a live FSI session. The language's own REPL is first-class, so I'm not bolting one on
 - **Use FSharp.Compiler.Service** directly for real-time diagnostics, completions, and symbol analysis
 - **Generate Fable JavaScript** for the VS Code extension from the same F# source
-- **Share types** between the CLI, dashboard, editor integrations, and test project with minimal translation
+- **Share types** between the CLI, editor integrations, and test project with minimal translation
 
 None of that is a side effect of choosing F#. It's what made this specific project possible to build the way
 I built it. A language that hot-reloads its own source and compiles to JS for free is doing a lot of the
@@ -233,7 +233,7 @@ heavy lifting so I don't have to.
 |--------|-------|
 | Tests | thousands (auto-derived into the README badge) |
 | Property tests | hundreds |
-| Current client surfaces | VS Code, Neovim, web dashboard, MCP |
+| Current client surfaces | VS Code, Neovim, MCP |
 | Runtime overhead of units of measure | 0 bytes (erased at compile time) |
 | Null reference exceptions | 0 (by design) |
 | Unhandled pattern matches | 0 (compiler-enforced) |
@@ -247,8 +247,8 @@ dotnet tool install --global Bozzetto
 boz
 ```
 
-That starts the daemon in the foreground. It's not a REPL by itself, it's the thing your editor, an MCP
-client, or the dashboard talks to. Point one of them at `MyProject.fsproj` and it spins up a session for you.
+That starts the daemon in the foreground. It's not a REPL by itself, it's the thing your editor or an MCP
+client talks to. Point one of them at `MyProject.fsproj` and it spins up a session for you.
 
 ---
 

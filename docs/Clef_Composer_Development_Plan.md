@@ -10,7 +10,7 @@ The [October 1 Clefx host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.
 
 Bozzetto's broader destination is coordinated Fidelity development across application code, compilers, runtimes and target devices. This plan delivers its first-horizon compiler and workspace foundation, including a Clef/Composer CPU REPL backed by LLVM ORC JIT. Incremental compilation and explicit session authority establish the foundation for that experience. Bozzetto on 47749/47750 is the only daemon surface; embedded production FSI hosting is retired and no separate F# REPL service is part of this plan. Changes to Bozzetto's own F# implementation are validated with `dotnet build` and the unfiltered test suite; expanding Bozzetto’s inherited F# REPL is not a delivery priority.
 
-An editor user and an agent attached to the same session must operate on the same compiler generation and observe the same diagnostics, build results, cancellations and execution refusals. Composer must also be usable through MCP without requiring an editor or Bozzetto's dashboard.
+An editor user and an agent attached to the same session must operate on the same compiler generation and observe the same diagnostics, build results, cancellations and execution refusals. Composer must also be usable through MCP without requiring an editor or Bozzetto's browser UI.
 
 The ownership below governs this provider integration. Broader host, device and runtime coordination requires the additional component agreements in the [proposed contracts](Bozzetto_Fidelity_Component_Contracts.md).
 
@@ -106,7 +106,7 @@ Partially delivered: the browser supports explicit open, reservation, build, sta
 
 Follow the [integrated editor workspace checkpoint](Bozzetto_Editor_Workspace_Direction_2026-09-30.md): consolidate compiler-owned checking, proof scheduling and immutable observations behind the supervised workspace service; attach VS Code and Neovim through thin adapters and let Atelier consume the same contracts when implemented. Add a shared compiler artifact inventory and exact-byte evidence views within this integration. Preserve useful source grammar and freshness handling while replacing inherited Ionide assumptions wherever they obstruct the shared service or native hosting.
 
-Add editor/dashboard actions for explicit Clef project open, reservation before save, build progress, diagnostics, evidence inspection, cancellation and gated run. Present provider and current generation clearly. Automatic rebuilds must preserve reservation, supersession and epoch rules; a filesystem change notification alone cannot authorize execution.
+Add editor/browser actions for explicit Clef project open, reservation before save, build progress, diagnostics, evidence inspection, cancellation and gated run. Present provider and current generation clearly. Automatic rebuilds must preserve reservation, supersession and epoch rules; a filesystem change notification alone cannot authorize execution.
 
 Show source diagnostics, proof outcomes and artifact admission as separate states. Preserve refusals and diagnostic provenance. Investigate and validate F#/.NET compiler-host changes through `dotnet build` and the unfiltered test suite; no separate F# REPL service is part of that work. Apply compiler replacement through the provider epoch fence, with an observable withdrawal/restart for every affected session.
 
@@ -124,7 +124,7 @@ The compiler MCP vocabulary belongs to the Composer integration: project open, r
 
 Standalone mode owns its explicitly created sessions. Bozzetto mode forwards to Bozzetto-owned sessions. An attach operation, if provided, must identify the owning host and route there; it must never silently reopen a project in another worker and present it as the same session. Independent sessions for the same source tree must be explicit and have separate outputs and authority.
 
-Keep the initial reusable implementation together with the provider work; choose the final package/repository ownership with the auditor before packaging the standalone host. Do not copy a second adapter into Composer. Standalone usability must not require a Bozzetto source checkout, dashboard, editor or live Bozzetto daemon.
+Keep the initial reusable implementation together with the provider work; choose the final package/repository ownership with the auditor before packaging the standalone host. Do not copy a second adapter into Composer. Standalone usability must not require a Bozzetto source checkout, browser UI, editor or live Bozzetto daemon.
 
 Acceptance: real MCP clients exercise both deployments against the same operation contract. Check tool/resource schemas, structured refusals, cancellation, disconnect cleanup and clean process shutdown. In integrated mode, both human and MCP clients demonstrably share the same authority. A standalone session makes its distinct ownership explicit.
 
@@ -195,7 +195,7 @@ Self-hosting is a near-term design constraint. No separate F# REPL service is pa
 | FSharp.Compiler.Service / FSI, Fantomas, Ionide project loading, Harmony, Cecil | Existing F# evaluation, project resolution and patching in Bozzetto.Core | Isolate and remove from the Clef-only host, which must not reference or load these assemblies. Until then they remain retained host code, not a product surface; no separate F# REPL service is part of this boundary. |
 | Composer managed DLL closure and .NET worker | Today's compiler is managed | Replace worker implementation with a native/self-hosted compiler process using the same versioned JSON authority contract; native build/run/refusal tests must pass without dotnet installed. |
 | ModelContextProtocol .NET SDK / ASP.NET Core | Current MCP transport/hosting | Keep protocol schemas independent of SDK types. A native transport implementation must pass the same tool/resource and lifecycle conformance tests; SDK-specific code remains at the hosting edge. |
-| Falco, adaptive state and .NET logging/telemetry/storage bindings | Current dashboard and daemon implementation | Extract session state transitions and projections from framework types before replacing host infrastructure; prove human/MCP views retain identical authority. |
+| Adaptive state and .NET logging/telemetry/storage bindings | Current daemon implementation | Extract session state transitions and projections from framework types before replacing host infrastructure; prove human/MCP views retain identical authority. |
 | Expecto / FsCheck / managed build tools | Current implementation validation | Reuse language-neutral wire fixtures and process tests across managed and native hosts. Managed test tooling can remain a development aid while native deployment loses its runtime dependency. |
 
 The current source has not yet achieved these separations: Core directly references FCS and Harmony and the daemon references Core. The new Composer worker already avoids a reference to Bozzetto.Core and serializes explicit data, not CLR type names or opaque compiler objects. Its build currently copies the compiler distribution's full DLL directory; narrow that to a compiler-owned deployment manifest rather than maintaining a guessed allowlist in Bozzetto.
@@ -233,7 +233,7 @@ Proof caching and shared-memory PSG distribution remain separate compiler work; 
 
 ## Product identity and coexistence
 
-Bozzetto is a hard fork with CLI `boz`, namespaces/packages `Bozzetto`, state under `.bozzetto`, and loopback defaults **47749 (MCP)** / **47750 (dashboard)**. These deliberately differ from SageFs 37749/37750. Explicit port overrides remain available. Product references are migrated throughout sources, project paths, editor commands, scripts and agent instructions. Real upstream URLs, legal credit and third-party package identities remain truthful; see the [migration inventory](Bozzetto_Identity_Migration_Inventory.md).
+Bozzetto is a hard fork with CLI `boz`, namespaces/packages `Bozzetto`, state under `.bozzetto`, and loopback defaults **47749 (MCP)** / **47750 (control listener)**. These deliberately differ from SageFs 37749/37750. Explicit port overrides remain available. Product references are migrated throughout sources, project paths, editor commands, scripts and agent instructions. Real upstream URLs, legal credit and third-party package identities remain truthful; see the [migration inventory](Bozzetto_Identity_Migration_Inventory.md).
 
 ## Reference findings
 

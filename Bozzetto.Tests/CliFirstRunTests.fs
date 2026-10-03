@@ -77,13 +77,13 @@ let unimplementedFlagRejectionTests =
       Program.unimplementedFlagRejection [| "--mcp-port"; "47700" |]
       |> Expect.isEmpty "normal daemon args are never rejected"
 
-    testCase "--proj is rejected with guidance naming the dashboard" <| fun () ->
+    testCase "--proj is rejected with guidance naming where to create a session" <| fun () ->
       let rejected = Program.unimplementedFlagRejection [| "--proj"; "Foo.fsproj" |]
       match rejected with
       | [ (flag, guidance) ] ->
         flag |> Expect.equal "flag identified" Args.UnimplementedFlag.Proj
         guidance |> Expect.stringContains "guidance names the concrete next step" "session"
-        guidance |> Expect.stringContains "guidance names where to do it" "dashboard"
+        guidance |> Expect.stringContains "guidance names where to do it" "MCP client"
       | other -> failtestf "expected exactly one rejection, got %A" other
 
     testCase "--sln gets the same guidance shape as --proj" <| fun () ->
@@ -271,7 +271,7 @@ let daemonLaunchContractTests =
       Program.CliCommand.parse [| "gui" |]
       |> Expect.equal "gui should be recognized as deprecated" (Program.DeprecatedClient "gui")
       Program.deprecatedClientMessage "tui"
-      |> Expect.stringContains "deprecation should direct users to the maintained UI" "/dashboard"
+      |> Expect.stringContains "deprecation should direct users to the maintained UI" "/composer"
     }
 
     test "daemon launch decision starts new daemon when only default port is occupied" {

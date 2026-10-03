@@ -7,12 +7,8 @@ open Bozzetto
 open Bozzetto.WarmUp
 open Bozzetto.Utils
 open Bozzetto.Server
-open Bozzetto.Server.DashboardTypes
-open Falco
-open Falco.Routing
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Builder
-open Microsoft.AspNetCore.ResponseCompression
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open OpenTelemetry.Logs
@@ -112,8 +108,6 @@ type DaemonInfra = {
   StateChangedEvent: Event<SseEvent>
   /// Timeout for agent-facing worker fetches (MCP tools, SSE).
   McpFetchTimeoutSec: float
-  /// Timeout for user-facing worker fetches (dashboard).
-  DashboardFetchTimeoutSec: float
 }
 
 /// Create one-time daemon infrastructure (logger, HTTP client, friction store, CTS).
@@ -284,7 +278,6 @@ let createDaemonInfrastructure () : DaemonInfra =
     Cts = new CancellationTokenSource()
     StateChangedEvent = Event<SseEvent>()
     McpFetchTimeoutSec = 5.0
-    DashboardFetchTimeoutSec = 0.5
   }
 
 /// Interpret the manifest owner's answer to a --prune request. Synchronous and
@@ -701,24 +694,6 @@ let logManifestCommit (log: ILogger) (level: LogLevel) (what: string) (result: F
   | Error err ->
     log.LogWarning("{What} failed: {Error}", what, Features.ManifestOwner.CommitError.describe err)
 
-/// Get session state from CQRS snapshot.
-let getSessionStateFromSnapshot (readSnapshot: unit -> SessionManager.QuerySnapshot) (sid: WorkerProtocol.SessionId) =
-  let snapshot = readSnapshot()
-  match SessionManager.QuerySnapshot.tryGetSession sid snapshot with
-  | Some info -> WorkerProtocol.SessionLifecycleStatus.toSessionState info.Status
-  | None -> SessionState.Uninitialized
-
-/// Get working directory for a session from CQRS snapshot.
-let getSessionWorkingDirFromSnapshot (readSnapshot: unit -> SessionManager.QuerySnapshot) (sid: WorkerProtocol.SessionId) =
-  let snapshot = readSnapshot()
-  match SessionManager.QuerySnapshot.tryGetSession sid snapshot with
-  | Some info -> info.WorkingDirectory
-  | None -> ""
-
-/// Get warmup status message for a session.
-let getStatusMsgFromSnapshot (readSnapshot: unit -> SessionManager.QuerySnapshot) (sid: WorkerProtocol.SessionId) =
-  readSnapshot().WarmupProgress |> Map.tryFind sid
-
 /// Whether an eval-stats read reflects the worker's actual answer, or the
 /// daemon's own inability to obtain one. Collapsing both into
 /// `EvalStats.empty` (the old behaviour) made "no evals yet" and "worker
@@ -796,50 +771,6 @@ let getEvalStatsFromWorker
   let! reading = getEvalStatsReadingFromWorker getProxy sid
   return EvalStatsReading.toEvalStats reading
 }
-
-/// Create read-only warmup proxy endpoints for retained session metadata.
-let createWorkerReadEndpoints
-  (getWorkerBaseUrl: WorkerProtocol.SessionId -> string option)
-  (httpClient: Net.Http.HttpClient)
-  : HttpEndpoint list =
-  let proxyToWorker (sidStr: string) (workerPath: string) (httpCall: string -> Threading.Tasks.Task<string * int>) (ctx: HttpContext) = task {
-    match WorkerProtocol.SessionId.validate sidStr with
-    | Error _ ->
-      ctx.Response.StatusCode <- 400
-      do! ctx.Response.WriteAsJsonAsync({| error = "Invalid session ID" |})
-    | Ok sid ->
-    match getWorkerBaseUrl sid with
-    | Some baseUrl ->
-      try
-        let url = sprintf "%s%s" baseUrl workerPath
-        let! (respBody, statusCode) = httpCall url
-        ctx.Response.ContentType <- "application/json"
-        ctx.Response.StatusCode <- statusCode
-        do! ctx.Response.WriteAsync(respBody)
-      with ex ->
-        // Log the detail server-side; never leak ex.Message (URLs, paths,
-        // exception internals) into the client body.
-        Log.warn "[workerReadProxy] proxy to worker failed for %s%s: %s\n%s"
-          (WorkerProtocol.SessionId.value sid) workerPath ex.Message
-          (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
-        ctx.Response.StatusCode <- 502
-        do! ctx.Response.WriteAsJsonAsync({| error = "Worker metadata request failed" |})
-    | None ->
-      ctx.Response.StatusCode <- 404
-      do! ctx.Response.WriteAsJsonAsync({| error = "Session not found or not ready" |})
-  }
-  let proxyGet (sid: string) (workerPath: string) (ctx: HttpContext) =
-    proxyToWorker sid workerPath (fun url -> task {
-      use timeoutCts = new System.Threading.CancellationTokenSource(5000)
-      use linked = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, timeoutCts.Token)
-      let! resp = httpClient.GetStringAsync(url, linked.Token)
-      return (resp, 200)
-    }) ctx
-  let extractSid = Dashboard.routeValue "sid"
-  let proxyGetRoute path = Dashboard.mapGetRaw (sprintf "/api/sessions/{sid}%s" path) extractSid (fun sid -> fun ctx -> proxyGet sid path ctx)
-  [
-    proxyGetRoute "/warmup-context"
-  ]
 
 /// A Composer termination failure must not skip manifest and session cleanup.
 let internal completeShutdown
@@ -953,12 +884,12 @@ let private dispatchDiscoveredTests
         match IO.Directory.Exists dir with
         | true ->
           // Pruned BEFORE descending (SafeDirectoryWalk) against the SAME
-          // canonical noise list the dashboard/MCP discovery walks use
+          // canonical noise list the MCP discovery walk uses
           // (bin/obj/.git/node_modules/... — this ad-hoc filter only ever
           // checked two of them), and cycle-proof: a directory symlink
           // loop under `dir` used to make `GetFiles(_, _, AllDirectories)`
           // never come back.
-          let result = SafeDirectoryWalk.walkFiles dir (fun f -> f.EndsWith(".fs", StringComparison.OrdinalIgnoreCase)) isNoiseProjectPath SafeDirectoryWalk.Bounds.standard
+          let result = SafeDirectoryWalk.walkFiles dir (fun f -> f.EndsWith(".fs", StringComparison.OrdinalIgnoreCase)) McpAdapter.isNoiseProjectPath SafeDirectoryWalk.Bounds.standard
           if result.Truncated then
             log.LogWarning("[Daemon] Tree-sitter file walk in {Dir} hit its depth/entry bound — some test files may be missed", dir)
           result.Files
@@ -1324,37 +1255,6 @@ let resolveSaveObserver
     |> List.tryFind (fun (_, record) -> record.Session = Some sidStr)
     |> Option.map (fun (m, _) -> m, relPath))
 
-/// Get previous sessions: active from CQRS snapshot + historical from binary manifest.
-let getPreviousSessions
-  (manifestOwner: Features.ManifestOwner.Handle)
-  (readSnapshot: unit -> SessionManager.QuerySnapshot) = task {
-  let snapshot = readSnapshot()
-  let activeSessions =
-    SessionManager.QuerySnapshot.allSessions snapshot
-    |> List.map (fun (info: WorkerProtocol.SessionInfo) ->
-      { PreviousSession.Id = WorkerProtocol.SessionId.value info.Id
-        PreviousSession.WorkingDir = info.WorkingDirectory
-        PreviousSession.Projects = info.Projects
-        PreviousSession.LastSeen = info.LastActivity })
-  let activeIds = activeSessions |> List.map (fun s -> s.Id) |> Set.ofList
-  let! manifest = manifestOwner.Read()
-  let historicalSessions =
-    match manifest with
-    | Ok daemonState ->
-      daemonState.Sessions
-      |> Map.values
-      |> Seq.filter (fun r -> r.StoppedAt.IsSome && not (activeIds.Contains r.SessionId))
-      |> Seq.map (fun r ->
-        { PreviousSession.Id = r.SessionId
-          PreviousSession.WorkingDir = r.WorkingDir
-          PreviousSession.Projects = r.Projects
-          PreviousSession.LastSeen = r.StoppedAt |> Option.map (fun t -> t.DateTime) |> Option.defaultValue r.CreatedAt.DateTime })
-      |> Seq.toList
-    | Error _ -> []
-  return activeSessions @ historicalSessions
-}
-
-/// Start dashboard web server with Brotli compression.
 /// How a timer's disposal ended: its in-flight callback finished, or it did not in time.
 [<RequireQualifiedAccess>]
 type TimerStop =
@@ -1381,52 +1281,6 @@ let disposeTimerAndWait (timer: System.Threading.Timer) (timeout: TimeSpan) : Ta
         // The timer may still signal the event later, so it stays undisposed.
         return TimerStop.StillRunning
   }
-
-let startDashboardServer
-  (log: ILogger)
-  (bindHost: Bozzetto.BozzettoConfig.LoopbackHost)
-  (ownOrigins: Bozzetto.Server.HttpOriginGuard.OwnOrigins)
-  (dashboardPort: int)
-  (endpoints: HttpEndpoint list)
-  (stopping: System.Threading.CancellationToken) = task {
-  try
-    let builder = WebApplication.CreateBuilder()
-    builder.Logging
-      .AddFilter("Microsoft.AspNetCore", LogLevel.Warning)
-      .AddFilter("Microsoft.Hosting", LogLevel.Warning)
-    |> ignore
-    builder.Services.AddResponseCompression(fun opts ->
-      opts.EnableForHttps <- true
-      // The dashboard's repeated full-#main morph compresses extremely well
-      // (highly repetitive markup) — payload economy belongs to the
-      // transport, not to fragmenting the render into per-panel patches.
-      // text/event-stream is NOT in ResponseCompressionDefaults.MimeTypes,
-      // so it must be added explicitly for the SSE stream to compress at all.
-      // A client that disconnects mid-stream can make the compression
-      // middleware's own teardown log a warning for that one connection
-      // (Kestrel isolates the failure to that connection; it does not affect
-      // other sessions or the daemon process) — an acceptable, already-guarded
-      // cost for compressing the dominant per-tick payload.
-      opts.MimeTypes <- Seq.append ResponseCompressionDefaults.MimeTypes [ "text/event-stream" ]
-      opts.Providers.Add<BrotliCompressionProvider>()
-      opts.Providers.Add<GzipCompressionProvider>()
-    ) |> ignore
-    builder.Services.Configure<BrotliCompressionProviderOptions>(fun (opts: BrotliCompressionProviderOptions) ->
-      opts.Level <- System.IO.Compression.CompressionLevel.Fastest
-    ) |> ignore
-    let app = builder.Build()
-    app.Urls.Add(Bozzetto.BozzettoConfig.LoopbackHost.listenUrl bindHost dashboardPort)
-    app.UseResponseCompression() |> ignore
-    // Origin/CSRF gate (see HttpOriginGuard): only this daemon's own pages and
-    // local tooling reach the dashboard's mutating endpoints (eval, session
-    // create/stop, shutdown).
-    Bozzetto.Server.McpServer.useOriginGuard ownOrigins app
-    app.UseRouting().UseFalco(endpoints) |> ignore
-    log.LogInformation("Dashboard available at http://localhost:{Port}/dashboard", dashboardPort)
-    do! McpServer.runUntilCancelled app stopping
-  with ex ->
-    log.LogWarning("Dashboard failed to start: {Error}", ex.Message)
-}
 
 /// Preserve old F# session manifests without reading, rewriting or resuming
 /// them. Embedded production FSI hosting is retired; the daemon no longer launches an F# host.
@@ -1587,57 +1441,34 @@ let createElmRuntime
       ct
   runtime
 
-/// Dispatch an Elm output event and wait until the target session's output
-/// buffer has committed. The daemon state event is raised by OnModelChanged
-/// after the model update, so this avoids returning a dashboard action while
-/// its long-lived SSE stream still sees the previous output snapshot.
-let dispatchOutputAndWait
-  (elmRuntime: ElmRuntime<BozzettoModel, BozzettoMsg, RenderRegion>)
-  (stateChanged: IEvent<SseEvent>)
-  (sessionId: string)
-  (message: BozzettoMsg)
-  = task {
-    let beforeVersion = elmRuntime.GetModel().RecentOutput.GetBuffer(sessionId).Version
-    let committed = System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously)
-    use _subscription =
-      stateChanged.Subscribe(fun _ ->
-        let afterVersion = elmRuntime.GetModel().RecentOutput.GetBuffer(sessionId).Version
-        match afterVersion > beforeVersion with
-        | true -> committed.TrySetResult(true) |> ignore
-        | false -> ())
-    elmRuntime.Dispatch message
-    let! completed = System.Threading.Tasks.Task.WhenAny(committed.Task, System.Threading.Tasks.Task.Delay(2000))
-    return obj.ReferenceEquals(completed, committed.Task) && committed.Task.Result
-  }
-
 /// Which required listener(s) never stayed up during the startup window. The
-/// MCP host and the dashboard host each run until the daemon's own
-/// `stopping` token is cancelled (`runUntilCancelled`/`startDashboardServer`)
+/// MCP host and the control host each run until the daemon's own
+/// `stopping` token is cancelled (`runUntilCancelled`/`ControlListener.start`)
 /// — completing on their own this early can only mean their bind failed.
 /// Both catch and LOG their own bind exception rather than letting it
-/// propagate (`startMcpServer`, `startDashboardServer`), so a faulted `Task`
+/// propagate (`startMcpServer`, `ControlListener.start`), so a faulted `Task`
 /// never happens here: `IsCompleted` this early is the only signal there is.
 [<RequireQualifiedAccess>]
 type ListenerBindFailure =
   | Mcp
-  | Dashboard
+  | Control
   | Both
 
 /// Pure classification of the two host tasks' completion state at the end of
 /// the startup window. `None` is the healthy case: neither task has ever
 /// returned, because neither one is supposed to until shutdown.
-let listenerBindFailureOf (mcpCompletedEarly: bool) (dashboardCompletedEarly: bool) : ListenerBindFailure option =
-  match mcpCompletedEarly, dashboardCompletedEarly with
+let listenerBindFailureOf (mcpCompletedEarly: bool) (controlCompletedEarly: bool) : ListenerBindFailure option =
+  match mcpCompletedEarly, controlCompletedEarly with
   | false, false -> None
   | true, true -> Some ListenerBindFailure.Both
   | true, false -> Some ListenerBindFailure.Mcp
-  | false, true -> Some ListenerBindFailure.Dashboard
+  | false, true -> Some ListenerBindFailure.Control
 
 let describeListenerBindFailure =
   function
   | ListenerBindFailure.Mcp -> "the MCP listener"
-  | ListenerBindFailure.Dashboard -> "the dashboard listener"
-  | ListenerBindFailure.Both -> "the MCP and dashboard listeners"
+  | ListenerBindFailure.Control -> "the control listener"
+  | ListenerBindFailure.Both -> "the MCP and control listeners"
 
 /// Exit code for a startup that never got both required listeners up. Kept
 /// distinct from a bare `1` so log-reading tooling can name this failure mode
@@ -1645,7 +1476,7 @@ let describeListenerBindFailure =
 let listenerBindFailureExitCode = 1
 
 /// Run Bozzetto as a headless daemon.
-/// MCP server + SessionManager + Dashboard — all frontends are clients.
+/// MCP server + SessionManager + control listener — all frontends are clients.
 /// Every session is a worker sub-process managed by SessionManager.
 ///
 /// `ownership` (multi-agent vision §3.1, §10 item 2) is this daemon's own
@@ -1675,7 +1506,6 @@ let run
   let frictionStore = infra.FrictionStore
   let daemonStreamId = infra.DaemonStreamId
   let mcpFetchTimeoutSec = infra.McpFetchTimeoutSec
-  let dashboardFetchTimeoutSec = infra.DashboardFetchTimeoutSec
   let stateChangedEvent = infra.StateChangedEvent
 
   log.LogInformation("Bozzetto daemon v{Version} starting on port {Port}", version, mcpPort)
@@ -2450,8 +2280,10 @@ let run
     let machineMemory = Bozzetto.Features.MachineMemory.current ()
     let telemetry =
       Bozzetto.Server.DaemonTelemetry.sample (
-        (System.Diagnostics.Process.GetCurrentProcess().Id, "daemon")
-        :: (SessionManager.QuerySnapshot.allSessions (readSnapshot ())
+        Bozzetto.Server.DaemonTelemetry.ownedProcesses
+          (System.Diagnostics.Process.GetCurrentProcess().Id)
+          composer.WorkerPid
+          (SessionManager.QuerySnapshot.allSessions (readSnapshot ())
            |> List.choose (fun session ->
              WorkerProtocol.SessionLifecycleStatus.workerPid session.Status
              |> Option.map (fun pid -> pid, "worker:" + WorkerProtocol.SessionId.value session.Id))))
@@ -2482,8 +2314,8 @@ let run
             MemoryPressure = Bozzetto.Features.MemoryPressureWatch.currentLevel () }
       : Bozzetto.Features.HealthSnapshot)
 
-  // Both listeners share one origin set: the dashboard page (mcpPort + 1, see
-  // dashboardPort below) calls MCP-port endpoints as a same-site own origin.
+  // Both listeners share one origin set: the MCP port and the control
+  // listener's port (mcpPort + 1, see controlPort below).
   let daemonOrigins = Bozzetto.Server.HttpOriginGuard.OwnOrigins.ofPorts [ mcpPort; mcpPort + 1 ]
 
   let mcpTask =
@@ -2843,15 +2675,18 @@ let run
     watcherSyncTimerRef <- t
     t
 
-  // Start dashboard web server on MCP port + 1
-  let dashboardPort = mcpPort + 1
+  // The control listener binds MCP port + 1.
+  let controlPort = mcpPort + 1
+  // Browser connections that register a stream with the daemon. The legacy
+  // dashboard was the only one that did; nothing registers today, so the TTL
+  // check below currently sees zero browsers and counts MCP activity alone.
   let connectionTracker = ConnectionTracker()
 
   // TTL idle-check (ownership rule 2, §3.1): when this daemon carries a
   // --ttl (explicit, or the nested-checkout default), self-terminate once
   // there are no live sessions and no MCP/SSE clients for at least that
   // long. "Clients" is approximated from what the daemon already tracks —
-  // connected dashboard tabs (ConnectionTracker) and recent MCP tool
+  // registered browser streams (ConnectionTracker) and recent MCP tool
   // activity (AgentActivityTracker) — rather than a new connection count.
   // One-shot timer, same reschedule-after-completion idiom as the other
   // periodic checks above.
@@ -2929,475 +2764,24 @@ let run
       ttlTimerRef <- t
       Some t
 
-  // Dashboard status helpers — partially applied module-level functions
-  let getSessionState = getSessionStateFromSnapshot readSnapshot
-  let getEvalStatsAsync = getEvalStatsFromWorker sessionOps.GetProxy
-  let getSessionWorkingDir = getSessionWorkingDirFromSnapshot readSnapshot
-  let getStatusMsg = getStatusMsgFromSnapshot readSnapshot
-
-  let sessionThemes = DashboardTypes.loadThemes DaemonState.BozzettoDir
-
-  let dashboardQueries : DashboardQueries = {
-    GetSessionState = getSessionState
-    GetStatusMsg = getStatusMsg
-    GetEvalStats = getEvalStatsAsync
-    GetFrictionStore = fun () -> task { return frictionStore }
-    GetSessionWorkingDir = getSessionWorkingDir
-    GetElmRegionsForSession = fun sessionId ->
-      ElmDaemon.renderRegionsForSession elmRuntime (WorkerProtocol.SessionId.value sessionId) |> Some
-    GetPreviousSessions = fun () ->
-      getPreviousSessions manifestOwner readSnapshot
-    GetAllSessions = fun () -> task { return SessionManager.QuerySnapshot.allSessions (readSnapshot()) }
-    GetWarmupContext = fun sessionId ->
-      fetchWorkerEndpoint sessionId "/warmup-context" dashboardFetchTimeoutSec
-        (WorkerProtocol.Serialization.deserialize<WarmupContext>)
-    GetWarmupProgress = fun sessionId ->
-      let snapshot = readSnapshot()
-      match Map.tryFind sessionId snapshot.WarmupProgress with
-      | Some progress -> progress
-      | None -> ""
-    GetSessionTestSummary = fun sessionId ->
-      let sidStr = WorkerProtocol.SessionId.value sessionId
-      let lt = BozzettoModel.cycleForSession sidStr (elmRuntime.GetModel())
-      let state = lt.TestState
-      match state.Activation with
-      | Features.LiveTesting.LiveTestingActivation.Inactive -> None
-      | _ ->
-      let entries =
-        Features.LiveTesting.LiveTestState.statusEntriesForSession sidStr state
-      match entries.Length with
-      | 0 -> None
-      | _ ->
-        Features.LiveTesting.TestSummary.fromStatuses
-          state.Activation (entries |> Array.map (fun e -> e.Status))
-        |> Some
-    GetSessionCoverageSummary = fun sessionId ->
-      let sidStr = WorkerProtocol.SessionId.value sessionId
-      let lt = BozzettoModel.cycleForSession sidStr (elmRuntime.GetModel())
-      let state = lt.TestState
-      match state.Activation with
-      | Features.LiveTesting.LiveTestingActivation.Inactive -> None
-      | _ ->
-      // `state` belongs wholly to this session (see `BozzettoModel.cycleForSession`).
-      let bitmaps = state.TestCoverageBitmaps |> Map.values |> Seq.toArray
-      match bitmaps.Length with
-      | 0 -> None
-      | _ ->
-        Features.LiveTesting.CoverageSummary.fromBitmaps 16 (bitmaps |> Seq.ofArray)
-        |> Some
-    GetSessionTestTreemap = fun sessionId ->
-      let sidStr = WorkerProtocol.SessionId.value sessionId
-      let lt = BozzettoModel.cycleForSession sidStr (elmRuntime.GetModel())
-      let state = lt.TestState
-      match state.Activation with
-      | Features.LiveTesting.LiveTestingActivation.Inactive -> [||]
-      | _ ->
-      let entries =
-        Features.LiveTesting.LiveTestState.statusEntriesForSession sidStr state
-      Features.LiveTesting.TestTreemap.fromStatusEntries entries
-    GetSessionCoverageTreemap = fun sessionId ->
-      let sidStr = WorkerProtocol.SessionId.value sessionId
-      let lt = BozzettoModel.cycleForSession sidStr (elmRuntime.GetModel())
-      match lt.TestState.Activation with
-      | Features.LiveTesting.LiveTestingActivation.Inactive -> None
-      | _ ->
-      let maps =
-        match Map.tryFind sidStr lt.InstrumentationMaps with
-        | Some m when m.Length > 0 -> m
-        | _ -> lt.InstrumentationMaps |> Map.values |> Seq.collect id |> Array.ofSeq
-      let merged = Features.LiveTesting.InstrumentationMap.merge maps
-      match merged.Slots.Length = 0 with
-      | true -> None
-      | false ->
-      // `lt.TestState` belongs wholly to this session (see `BozzettoModel.cycleForSession`).
-      let sessionTestIds = lt.TestState.TestCoverageBitmaps |> Map.keys |> Set.ofSeq
-      let compatibleBitmap (tid: Features.LiveTesting.TestId) =
-        Map.tryFind tid lt.TestState.TestCoverageBitmaps
-        |> Option.filter (fun bm -> bm.Count = merged.TotalProbes)
-      let sessionBitmaps = sessionTestIds |> Seq.choose compatibleBitmap |> Seq.toArray
-      match sessionBitmaps.Length = 0 with
-      | true -> None
-      | false ->
-      let combinedHits =
-        sessionBitmaps
-        |> Array.reduce (fun acc bm ->
-          { acc with Bits = Array.init acc.Bits.Length (fun i -> acc.Bits.[i] ||| bm.Bits.[i]) })
-        |> Features.LiveTesting.CoverageBitmap.toBoolArray
-      let entries = Features.LiveTesting.LiveTestState.statusEntriesForSession sidStr lt.TestState
-      let failedTestIds =
-        entries
-        |> Array.choose (fun e ->
-          match e.Status with
-          | Features.LiveTesting.TestRunStatus.Failed _ -> Some e.TestId
-          | _ -> None)
-        |> Set.ofArray
-      let passedTestIds =
-        entries
-        |> Array.choose (fun e ->
-          match e.Status with
-          | Features.LiveTesting.TestRunStatus.Passed _ -> Some e.TestId
-          | _ -> None)
-        |> Set.ofArray
-      // Probes hit by any failing test — these taint their file/symbol red
-      // even where the merged (all-tests) coverage otherwise looks green.
-      let failingSlotIndices =
-        sessionTestIds
-        |> Seq.filter failedTestIds.Contains
-        |> Seq.choose compatibleBitmap
-        |> Seq.collect (fun bm ->
-          seq { for i in 0 .. merged.Slots.Length - 1 do
-                  if Features.LiveTesting.CoverageBitmap.isSet i bm then yield i })
-        |> Set.ofSeq
-      let projectDirs =
-        match SessionManager.QuerySnapshot.tryGetSession sessionId (readSnapshot()) with
-        | None -> []
-        | Some info ->
-          info.Projects
-          |> List.map (fun p ->
-            System.IO.Path.GetFileNameWithoutExtension p, System.IO.Path.GetDirectoryName p)
-      let facts =
-        merged.Slots
-        |> Array.indexed
-        |> Array.groupBy (fun (_, sp) -> sp.File)
-        |> Array.map (fun (file, idxSps) ->
-          let probeCount = idxSps.Length
-          let coveredCount = idxSps |> Array.filter (fun (i, _) -> combinedHits.[i]) |> Array.length
-          let hasFailing = idxSps |> Array.exists (fun (i, _) -> failingSlotIndices.Contains i)
-          let projectName = Features.Treemap.CoverageTreemapNode.projectNameForFile projectDirs file
-          let symbols =
-            lt.AnalysisCache.FileSymbols
-            |> Map.tryFind file
-            |> Option.defaultValue []
-            |> List.map (fun sr ->
-              let testIds =
-                lt.DepGraph.SymbolToTests |> Map.tryFind sr.SymbolFullName |> Option.defaultValue [||]
-              ({ SymbolName = sr.SymbolFullName
-                 Line = sr.Line
-                 TestCount = testIds.Length
-                 PassingCount = testIds |> Array.filter passedTestIds.Contains |> Array.length
-                 FailingCount = testIds |> Array.filter failedTestIds.Contains |> Array.length }
-               : Features.Treemap.SymbolCoverageFact))
-          ({ FilePath = file
-             ProjectName = projectName
-             ProbeCount = probeCount
-             CoveredCount = coveredCount
-             HasFailingTest = hasFailing
-             Symbols = symbols }
-           : Features.Treemap.FileCoverageFact))
-        |> Array.toList
-      Some (Features.Treemap.CoverageTreemapNode.build "Solution" facts)
-    GetSessionBindings = fun sessionId ->
-      match System.Threading.Volatile.Read(&sharedBindingScope.contents) with
-      | Some scope ->
-        scope.ActiveBindings
-        |> Map.values |> Array.ofSeq
-      | None -> [||]
-    GetBindingScopeSnapshot = fun () -> System.Threading.Volatile.Read(&sharedBindingScope.contents)
-    GetLiveBindings = fun sessionId ->
-      Bozzetto.Features.LiveBindingsAdaptive.tryGet liveBindingsAdaptive (WorkerProtocol.SessionId.value sessionId)
-    GetLiveTestingStatus = fun () ->
-      let model = elmRuntime.GetModel()
-      let activeId =
-        Bozzetto.ActiveSession.sessionId model.Sessions.ActiveSessionId
-        |> Option.map WorkerProtocol.SessionId.value |> Option.defaultValue ""
-      Bozzetto.Features.LiveTesting.LiveTestCycleState.liveTestingStatusBarForSession activeId model.LiveTesting
-    GetLiveTestActivity = fun sessionId ->
-      BozzettoModel.liveTestActivityFor sessionId (elmRuntime.GetModel())
-    GetLiveTestingActive = fun () ->
-      let model = elmRuntime.GetModel()
-      match model.LiveTesting.TestState.Activation with
-      | Bozzetto.Features.LiveTesting.LiveTestingActivation.Active -> true
-      | Bozzetto.Features.LiveTesting.LiveTestingActivation.Inactive -> false
-    GetEvalTimeline = fun () ->
-      let state = System.Threading.Volatile.Read(&sharedFeatureState.contents)
-      Bozzetto.Features.EvalTimeline.timelineStats 20 state.CachedTimeline
-    GetDaemonHealth = getDaemonHealth
-    GetFailureNarratives = fun () ->
-      let model = elmRuntime.GetModel()
-      let testState = model.LiveTesting.TestState
-      match testState.Activation with
-      | Features.LiveTesting.LiveTestingActivation.Inactive -> []
-      | _ ->
-      testState.Cached.FailureNarratives
-      |> Map.toList
-      |> List.choose (fun (testId, narrative) ->
-        testState.DiscoveredTests
-        |> Array.tryFind (fun tc -> tc.Id = testId)
-        |> Option.map (fun tc -> tc.DisplayName, narrative))
-    GetCurrentDiagnostics = fun () ->
-      let model = elmRuntime.GetModel()
-      model.Diagnostics
-      |> Features.DiagnosticsStore.allFlat
-      |> List.map Diagnostic.fromFeatureDiag
-      |> List.sortBy (fun d -> match d.Severity with DiagError -> 0 | DiagWarning -> 1)
-    GetFilmstripEntries = fun () ->
-      let state = System.Threading.Volatile.Read(&sharedFeatureState.contents)
-      // The 20 most recent evals, oldest first — the filmstrip shows its
-      // newest frame last. (Reversing the whole history and taking 20 showed
-      // the session's FIRST 20 evals forever, after walking up to 10k cells.)
-      Bozzetto.Features.FeatureHooks.recentEvals 20 state
-      |> List.map (fun entry ->
-        let outcome =
-          match entry.Result with
-          | r when r.Contains("Operation was cancelled") -> EvalCancelled
-          | r when r.Contains("error FS") || r.Contains("; error") || r.StartsWith("error") -> EvalError
-          | _ -> EvalSuccess
-        let label =
-          let first = entry.Code.Split('\n') |> Array.tryHead |> Option.defaultValue ""
-          if first.Length > 60 then first.[..59] else first
-        { Index = entry.CellIndex
-          Label = label
-          DurationMs = entry.DurationMs
-          Outcome = outcome
-          Timestamp = entry.Timestamp })
-    GetTestSourceLocations = fun () ->
-      let model = elmRuntime.GetModel()
-      model.ResolvedSourceLocations
-    GetSessionAgentBadges = fun sessionId ->
-      let presences =
-        AgentActivityTracker.getActivePresences
-          activityTracker (Some (WorkerProtocol.SessionId.value sessionId)) (TimeSpan.FromMinutes 5.0) DateTime.UtcNow
-      presences
-      |> List.map (fun p ->
-        let freshness = SessionOperations.AgentPresence.freshness DateTime.UtcNow (TimeSpan.FromMinutes 2.0) p
-        let cssClass =
-          match freshness with
-          | SessionOperations.AgentFreshness.Fresh -> "badge-agent"
-          | SessionOperations.AgentFreshness.Stale -> "badge-agent badge-agent-stale"
-        let intentLabel =
-          match p.Intent with
-          | Some i -> i
-          | None -> ""
-        let detail =
-          match p.RecentFiles with
-          | [] -> ""
-          | files -> files |> List.truncate 3 |> String.concat ", "
-        { Name = p.AgentName; IntentLabel = intentLabel; CssClass = cssClass; DetailLabel = detail })
-    GetSessionGuidanceCss = fun sessionId ->
-      let presences =
-        AgentActivityTracker.getActivePresences
-          activityTracker (Some (WorkerProtocol.SessionId.value sessionId)) (TimeSpan.FromMinutes 5.0) DateTime.UtcNow
-      let workers =
-        presences
-        |> List.filter (fun p -> p.Role = SessionOperations.OccupantRole.Worker)
-      match workers with
-      | [] -> ""
-      | _ -> "guidance-contested"
-    GetSessionSelfHostStaleness = fun sessionId ->
-      let snap = readSnapshot()
-      // Only a session that adopted its own Bozzetto.Core carries an AdoptedCore
-      // identity, so the on-disk scan runs ONLY for those (rare) self-hosting
-      // sessions — the common dashboard tick pays nothing.
-      match snap.AdoptedCore |> Map.tryFind sessionId with
-      | None -> None
-      | Some adopted ->
-        match SessionManager.QuerySnapshot.tryGetSession sessionId snap with
-        | None -> None
-        | Some info ->
-          Bozzetto.HostCoreAdoption.newestCandidateIdentity info.Projects
-          |> Bozzetto.HostCoreAdoption.selfHostFreshness (Some adopted)
-          |> Bozzetto.HostCoreAdoption.formatFreshnessAffordance
-    GetSessionWorkflow = fun sessionId ->
-      match SessionManager.QuerySnapshot.tryGetSession sessionId (readSnapshot()) with
-      | Some info -> info.Workflow
-      | None -> WorkflowTypes.SessionWorkflow.Interactive
-    GetSessionActiveProject = fun sessionId ->
-      match SessionManager.QuerySnapshot.tryGetSession sessionId (readSnapshot()) with
-      | Some info -> info.ActiveProject
-      | None -> None
-    GetSessionProjectRoles = fun sessionId ->
-      match SessionManager.QuerySnapshot.tryGetSession sessionId (readSnapshot()) with
-      | Some info -> info.ProjectRoles
-      | None -> []
-    GetSessionApp = fun sessionId ->
-      match SessionManager.QuerySnapshot.tryGetSession sessionId (readSnapshot()) with
-      | Some info -> info.App
-      | None -> AppRun.AppRunState.NotRunning
-    GetSessionEvalCounts = fun () ->
-      // From the finished-eval counter the Elm update keeps. The registry's
-      // own SessionSnapshot.EvalCount is never filled in (it's always 0).
-      EvalTally.toList (elmRuntime.GetModel().EvalsFinished)
-      |> List.choose (fun (key, n) ->
-        match WorkerProtocol.SessionId.validate key with
-        | Ok sid -> Some (sid, n)
-        | Error _ -> None)
-      |> Map.ofList
-    IsCreatingSession = fun () -> elmRuntime.GetModel().CreatingSession
-  }
-
-  let dashboardActions : DashboardActions = {
-    SwitchWorkflow = Dashboard.switchWorkflow sessionOps
-    EvalCode = fun sid code -> task {
-      let sidStr = WorkerProtocol.SessionId.value sid
-      let! result = proxyToSession getProxyStr notifyWorkerDiedStr sidStr (WorkerProtocol.WorkerMessage.EvalCode(code, "dash"))
-      match result with
-      | Ok (WorkerProtocol.WorkerResponse.EvalResult(_, Ok msg, diags, _metadata)) ->
-        let! _ =
-          dispatchOutputAndWait
-            elmRuntime
-            stateChangedEvent.Publish
-            sidStr
-            (BozzettoMsg.Event (
-              TuiEvent.EvalCompleted (sidStr, msg, diags |> List.map WorkerProtocol.WorkerDiagnostic.toDiagnostic)))
-        // Live binding watch window: pulled AFTER the eval reply, never
-        // attached to it (roast-4 #2) — fire-and-forget so a slow or failed
-        // reflection walk can never delay the caller's eval result. Fed into
-        // the adaptive store; subscribers fire only on real change, and the
-        // existing EvalCompleted → ModelChanged morph re-renders the panel.
-        Async.Start (
-          async {
-            let! liveResult =
-              proxyToSession getProxyStr notifyWorkerDiedStr sidStr
-                (WorkerProtocol.WorkerMessage.GetLiveValues (sprintf "live-%s" sidStr))
-              |> Async.AwaitTask
-            match liveResult with
-            | Ok (WorkerProtocol.WorkerResponse.LiveValuesResult(_, json)) ->
-              try
-                let snap =
-                  WorkerProtocol.Serialization.deserialize<Bozzetto.Features.LiveValueTree.LiveValueSnapshot> json
-                Bozzetto.Features.LiveBindingsAdaptive.update liveBindingsAdaptive sidStr { snap with SessionId = sidStr }
-              with ex ->
-                Log.warn "[DaemonMode] Failed to parse live value snapshot for %s: %s" sidStr ex.Message
-            | Ok other ->
-              Log.warn "[DaemonMode] Unexpected live-values response for %s: %A" sidStr other
-            | Error e ->
-              Log.warn "[DaemonMode] Live value pull failed for %s: %s" sidStr (BozzettoError.describe e)
-          })
-        return Ok msg
-      | Ok (WorkerProtocol.WorkerResponse.EvalResult(_, Error err, _, _)) ->
-        let msg = BozzettoError.describe err
-        let! _ =
-          dispatchOutputAndWait
-            elmRuntime
-            stateChangedEvent.Publish
-            sidStr
-            (BozzettoMsg.Event (TuiEvent.EvalFailed (sidStr, msg)))
-        return Error msg
-      | Ok other -> return Error (sprintf "Unexpected: %A" other)
-      | Error e -> return Error (BozzettoError.describe e)
-    }
-    CancelEval = fun sid -> task {
-      let sidStr = WorkerProtocol.SessionId.value sid
-      let! result = proxyToSession getProxyStr notifyWorkerDiedStr sidStr WorkerProtocol.WorkerMessage.CancelEval
-      return
-        match result with
-        | Ok (WorkerProtocol.WorkerResponse.EvalCancelled true) -> Ok "Cancellation requested — evaluation cancelled."
-        | Ok (WorkerProtocol.WorkerResponse.EvalCancelled false) -> Ok "No evaluation in progress."
-        | Ok other -> Error (sprintf "Unexpected: %A" other)
-        | Error e -> Error (BozzettoError.describe e)
-    }
-    ResetSession = fun sid -> task {
-      let sidStr = WorkerProtocol.SessionId.value sid
-      let! result = proxyToSession getProxyStr notifyWorkerDiedStr sidStr (WorkerProtocol.WorkerMessage.ResetSession "dash")
-      return
-        match result with
-        | Ok (WorkerProtocol.WorkerResponse.ResetResult(_, Ok ())) -> Ok "Session reset successfully"
-        | Ok (WorkerProtocol.WorkerResponse.ResetResult(_, Error e)) -> Error (sprintf "Reset failed: %A" e)
-        | Ok other -> Error (sprintf "Unexpected: %A" other)
-        | Error e -> Error (BozzettoError.describe e)
-    }
-    HardResetSession = fun sid -> task {
-      let! result = sessionOps.RestartSession sid true
-      return
-        result
-        |> Result.map (sprintf "Hard reset: %s")
-        |> Result.mapError (fun e -> sprintf "Hard reset failed: %s" (BozzettoError.describe e))
-    }
-    Dispatch = fun msg -> elmRuntime.Dispatch msg
-    SwitchSession = fun sid -> task {
-      let sidStr = WorkerProtocol.SessionId.value sid
-      elmRuntime.Dispatch(BozzettoMsg.Event (TuiEvent.SessionSwitched (None, sidStr)))
-      stateChangedEvent.Trigger(SessionSwitched sid)
-      return Ok (sprintf "Switched to session '%s'" sidStr)
-    }
-    StopSession = fun sid -> task {
-      let sidStr = WorkerProtocol.SessionId.value sid
-      let! result = sessionOps.StopSession sidStr
-      elmRuntime.Dispatch(BozzettoMsg.Editor EditorAction.ListSessions)
-      return result |> Result.mapError BozzettoError.describe
-    }
-    PurgeSession = fun sid -> task {
-      let sidStr = WorkerProtocol.SessionId.value sid
-      let! result = sessionOps.PurgeSession sidStr
-      elmRuntime.Dispatch(BozzettoMsg.Editor EditorAction.ListSessions)
-      return result |> Result.mapError BozzettoError.describe
-    }
-    CreateSession = fun targets workingDir -> task {
-      let! result = sessionOps.CreateSession targets workingDir WorkflowTypes.SessionWorkflow.Interactive
-      elmRuntime.Dispatch(BozzettoMsg.Editor EditorAction.ListSessions)
-      return result
-        |> Result.map (fun sidStr -> WorkerProtocol.SessionId.validate sidStr |> Result.defaultValue (WorkerProtocol.SessionId.newId ()))
-        |> Result.mapError BozzettoError.describe
-    }
-    ShutdownCallback = Some (fun () -> cts.Cancel())
-  }
-
-  let dashboardInfra : DashboardInfra = {
+  // The control listener: discovery (/api/daemon-info), graceful shutdown,
+  // and the /composer redirect. Its own WebApplication, so it still answers
+  // when the MCP listener is down (see ControlListener).
+  let controlDeps : ControlListener.ControlDeps = {
     Version = version
     McpPort = mcpPort
-    StateChanged = stateChangedEvent.Publish
-    ConnectionTracker = Some connectionTracker
-    SessionThemes = sessionThemes
     GetSessionCount = fun () -> task {
       let! sessions = sessionOps.GetAllSessions()
       return sessions.Length
     }
-    SystemAlarmBuffer =
-      // Intercept SystemAlarm events and prepend to the buffer (max 3, newest-first).
-      let buf : Bozzetto.Server.DashboardTypes.SystemAlarmEntry list ref = ref []
-      stateChangedEvent.Publish.Add(fun change ->
-        match change with
-        | SystemAlarm (phase, msg) ->
-          let entry : Bozzetto.Server.DashboardTypes.SystemAlarmEntry =
-            { Phase = phase; Message = msg; Timestamp = System.DateTimeOffset.UtcNow }
-          buf.Value <- (entry :: buf.Value) |> List.truncate 3
-        | _ -> ())
-      buf
-    TriggerStateChange = fun () -> stateChangedEvent.Trigger (ModelChanged (0, 0))
-    ActivityTracker = Some activityTracker
-    LiveBindingsAdaptive = Some liveBindingsAdaptive
-    ConnectionChannels = System.Collections.Concurrent.ConcurrentDictionary<string, MailboxProcessor<DashboardStreamCommand>>()
-    // Wait-free (D4): dereferences CohortOwner's published frame pointer
-    // directly — no mailbox round-trip, no IO.
-    ReadCohortFrame = cohortOwner.ReadFrame
-    ReadCohortLedger = cohortLedgerPort.ReadAll
-    GetCompletions = fun (sessionId: WorkerProtocol.SessionId) (code: string) (cursorPos: int) -> task {
-      try
-        let! proxy = sessionOps.GetProxy sessionId
-        match proxy with
-        | Some send ->
-          let replyId = sprintf "dash-comp-%d" (System.Random.Shared.Next())
-          let! resp =
-            send (WorkerProtocol.WorkerMessage.GetCompletions(code, cursorPos, replyId))
-            |> Async.StartAsTask
-          return
-            match resp with
-            | WorkerProtocol.WorkerResponse.CompletionResult(_, items) ->
-              items |> List.map (fun label ->
-                { Bozzetto.Features.AutoCompletion.DisplayText = label
-                  Bozzetto.Features.AutoCompletion.ReplacementText = label
-                  Bozzetto.Features.AutoCompletion.Kind = Bozzetto.Features.AutoCompletion.CompletionKind.Variable
-                  Bozzetto.Features.AutoCompletion.GetDescription = None })
-            | _ -> []
-        | None -> return []
-      with
-      | :? System.Net.Http.HttpRequestException | :? Threading.Tasks.TaskCanceledException -> return []
-      | ex ->
-        Log.error "[getCompletions] Error for session: %s (%s)\n%s" ex.Message (ex.GetType().Name) (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
-        return []
-    }
+    Shutdown = fun () -> cts.Cancel()
   }
 
-  let dashboardEndpoints =
-    Dashboard.createEndpoints dashboardQueries dashboardActions dashboardInfra
-
-  let workerReadEndpoints = createWorkerReadEndpoints getWorkerBaseUrl httpClient
-
-  let dashboardTask =
-    startDashboardServer log bindHost daemonOrigins dashboardPort (dashboardEndpoints @ workerReadEndpoints) cts.Token
+  let controlTask =
+    ControlListener.start log bindHost daemonOrigins controlPort controlDeps cts.Token
 
   // Workers handle their own warmup, middleware, and file watching.
-  // The daemon just needs to wait for the MCP and dashboard servers.
+  // The daemon just needs to wait for the MCP and control listeners.
 
   Console.CancelKeyPress.Add(fun e ->
     e.Cancel <- true
@@ -3430,14 +2814,14 @@ let run
     |> SessionManager.killWorkerPids
     composer.WorkerPid |> Option.toList |> SessionManager.killWorkerPids)
 
-  // Start MCP and dashboard servers FIRST so ports are listening
+  // Start the MCP and control listeners FIRST so ports are listening
   let mcpRunning =
     System.Threading.Tasks.Task.Run(
       System.Func<System.Threading.Tasks.Task>(fun () -> mcpTask),
       cts.Token)
-  let dashboardRunning =
+  let controlRunning =
     System.Threading.Tasks.Task.Run(
-      System.Func<System.Threading.Tasks.Task>(fun () -> dashboardTask),
+      System.Func<System.Threading.Tasks.Task>(fun () -> controlTask),
       cts.Token)
 
   // Brief yield to let servers bind their ports
@@ -3448,7 +2832,7 @@ let run
   // logged why, above). Reporting "ready" over a listener that never bound
   // left every client/test polling a port nobody would ever answer on until
   // ITS OWN timeout, instead of a daemon that fails fast and says why.
-  match listenerBindFailureOf mcpRunning.IsCompleted dashboardRunning.IsCompleted with
+  match listenerBindFailureOf mcpRunning.IsCompleted controlRunning.IsCompleted with
   | Some failure ->
     log.LogError(
       "Bozzetto daemon failed to start: {Listener} did not stay up (see the bind error logged above). Exiting.",
@@ -3463,9 +2847,9 @@ let run
     startupSpan.SetTag("startup_ms", startupSw.Elapsed.TotalMilliseconds) |> ignore
     Instrumentation.succeedSpan startupSpan
   | false -> ()
-  log.LogInformation("Bozzetto daemon ready in {StartupMs:F0}ms (PID {Pid}, MCP port {McpPort}, dashboard port {DashboardPort})",
-    startupSw.Elapsed.TotalMilliseconds, Environment.ProcessId, mcpPort, dashboardPort)
-  log.LogInformation("Dashboard: http://localhost:{Port}/dashboard", dashboardPort)
+  log.LogInformation("Bozzetto daemon ready in {StartupMs:F0}ms (PID {Pid}, MCP port {McpPort}, control port {ControlPort})",
+    startupSw.Elapsed.TotalMilliseconds, Environment.ProcessId, mcpPort, controlPort)
+  log.LogInformation("Composer: http://localhost:{Port}/composer", mcpPort)
   log.LogInformation("SSE events: http://localhost:{Port}/events", mcpPort)
   log.LogInformation("Health: http://localhost:{Port}/health", mcpPort)
 
@@ -3482,7 +2866,7 @@ let run
       OwnerPid = ownership.OwnerPid
       OwnerStart = ownership.OwnerStartTicks
       McpPort = mcpPort
-      DashboardPort = dashboardPort
+      DashboardPort = controlPort
       DataDir = DaemonState.BozzettoDir }
   try
     DaemonOwnership.DaemonInfoFile.write DaemonState.BozzettoDir daemonInfoFile
@@ -3582,7 +2966,7 @@ let run
       } :> System.Threading.Tasks.Task)
 
   try
-    let! _ = System.Threading.Tasks.Task.WhenAny(mcpRunning, dashboardRunning)
+    let! _ = System.Threading.Tasks.Task.WhenAny(mcpRunning, controlRunning)
     ()
   with
   | :? OperationCanceledException -> ()

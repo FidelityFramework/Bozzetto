@@ -140,12 +140,6 @@ let webMarkerDriftTests =
       |> ProjectKind.label
       |> Expect.equal "a native game dominates the runtime shape" "native-gui"
 
-    testCase "raw StarFederation Datastar is web" <| fun _ ->
-      let refs = [ "StarFederation.Datastar.FSharp"; "FSharp.Core" ]
-      ProjectKind.classify refs
-      |> ProjectKind.label
-      |> Expect.equal "a raw Datastar project is a web app" "web"
-
     testCase "marker matching is case-insensitive" <| fun _ ->
       ProjectKind.classify [ "falco" ]
       |> ProjectKind.label

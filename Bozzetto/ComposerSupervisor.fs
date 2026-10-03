@@ -85,6 +85,10 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
     | true, value -> value
     | _ -> { Activity = 0L; Active = 0; Last = None }
   let cached session = lock gate (fun () -> match snapshots.TryGetValue session with true, snapshot -> Some snapshot | _ -> None)
+  let directory () =
+    lock gate (fun () ->
+      { Configured = configured; Revision = revision; Worker = worker |> Option.filter _.IsProcessAlive |> Option.map _.Handshake
+        Sessions = snapshots.Values |> Seq.toArray })
   let unknownAuthority request =
     let target = ComposerWire.target request |> Option.defaultValue { Host = ""; Epoch = ""; Provider = ProviderIdentity.ClefComposer }
     { Host = target.Host; Epoch = target.Epoch; Provider = target.Provider; Session = ComposerWire.session request; Generation = 0L }
@@ -402,8 +406,12 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
       let! _ = Task.WhenAll pending
       ()
     | _ -> ()
-    return lock gate (fun () -> { Configured = configured; Revision = revision; Worker = worker |> Option.filter _.IsProcessAlive |> Option.map _.Handshake; Sessions = snapshots.Values |> Seq.toArray })
+    return directory ()
   }
+
+  /// The directory as last observed, without a status read through the
+  /// worker. Change pushes read this, so observing a change cannot cause one.
+  member _.CachedDirectory() = directory ()
 
   member _.StopAsync() = task {
     let failures = ResizeArray<exn>()

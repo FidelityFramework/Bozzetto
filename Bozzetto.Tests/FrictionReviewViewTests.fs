@@ -11,7 +11,6 @@ module Bozzetto.Tests.FrictionReviewViewTests
 open System
 open Expecto
 open Expecto.Flip
-open Falco.Markup
 open Bozzetto.Features.FrictionTelemetryTypes
 open Bozzetto.Features.FrictionTelemetry
 open Bozzetto.Features.FrictionSanitize
@@ -207,31 +206,4 @@ let tests =
       let observedSignals = detectAll DetectorConfig.defaults []
       let snap = build report observedSignals []
       snap.ObservedSignals |> Expect.isEmpty "an empty event stream must yield zero observed signals"
-
-    // ── B8: renderFrictionPanel markup ───────────────────────────────────
-
-    testCase "renderFrictionPanel renders the observed-friction section with one row per signal" <| fun _ ->
-      let report = Summaries.frictionReport harvestReplayEvents []
-      let observedSignals = detectAll harvestReplayConfig harvestReplayEvents
-      let snap = build report observedSignals []
-      let html = DashboardFragments.renderFrictionPanel snap |> renderNode
-
-      html |> Expect.stringContains "should render the observed-friction section header" "Observed friction"
-      html
-      |> Expect.stringContains
-        "should render a row naming the unattributed-failure signal"
-        "observed.unattributed-failure"
-      html
-      |> Expect.stringContains
-        "should render a row naming the excessive-polling signal"
-        "observed.excessive-polling"
-
-    testCase "renderFrictionPanel renders a quiet line when there are zero observed signals — whole panel still renders" <| fun _ ->
-      let empty = Summaries.frictionReport [] []
-      let snap = build empty [] []
-      let html = DashboardFragments.renderFrictionPanel snap |> renderNode
-
-      html |> Expect.stringContains "should still render the observed-friction section header" "Observed friction"
-      html |> Expect.stringContains "zero signals should render the quiet line" "No observed friction yet"
-      html |> Expect.stringContains "the rest of the panel should still render" "No local friction recorded yet"
   ]

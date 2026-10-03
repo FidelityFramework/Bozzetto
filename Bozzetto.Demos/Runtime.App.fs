@@ -20,7 +20,6 @@ open Bozzetto.Demos.Domain
 let appConfigOf (appKind: AppKind) : Wire.AppConfig =
   let token =
     match appKind with
-    | AppKind.Web -> Some "web"
     | AppKind.Raylib -> Some "raylib"
     | AppKind.Console -> Some "console"
     | AppKind.NoApp -> None
@@ -29,7 +28,7 @@ let appConfigOf (appKind: AppKind) : Wire.AppConfig =
 
 /// Extra RO binds the App co-actor's cell needs beyond `Runtime.Core.cellSpec`'s
 /// fixed set (§2.3 external-deps doctrine: fail loud per kind if a real
-/// dependency is absent — but every dependency the three `AppKind`s need
+/// dependency is absent — but every dependency the two `AppKind`s need
 /// TODAY is already reachable inside the cell without an extra bind: the
 /// repo's own sample projects and their restored NuGet packages are covered
 /// by the fixed `repoRoot`/`nugetPackagesDir` binds, and the system
@@ -45,20 +44,8 @@ let actorBinds (_appKind: AppKind) : (string * string) list = []
 /// (§2.3: "the App actor only finds, places, and observes the window the
 /// session spawned; it does not start it") — the second window this actor
 /// captures is the RESULT of a `WireStep` the primary actor drives DURING
-/// recording (a dashboard/editor "Run App" click reaching the daemon's own
+/// recording (an editor "Run App" command reaching the daemon's own
 /// run-app endpoint), not a cell-boot-time concern, so there is no bash
 /// fragment to splice into `innerScript` ahead of the cell-agent for any
 /// `AppKind`.
 let actorPrologue (_appKind: AppKind) : string list = []
-
-/// Resolves the `Actors.App.LaunchConfig.AppUrl` for `AppKind.Web` from the
-/// daemon's run-app response port, once the cell-agent has one to hand over
-/// (§2.3 — the App actor never resolves this itself). `None` for
-/// `Raylib`/`Console` (they have no URL, only a display window) and for
-/// `NoApp` (no window at all).
-let resolveAppUrl (appKind: AppKind) (workerBaseUrl: string) : string option =
-  match appKind with
-  | AppKind.Web -> Some workerBaseUrl
-  | AppKind.Raylib
-  | AppKind.Console
-  | AppKind.NoApp -> None

@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The Braidpoint logo palette (braidpoint-site/hugo/static/images/
+   BraidpointcolorLogo_small.svg) as theme-aware RGB triplets. A plain name is
+   the logo's exact color, used as a fill under white text. An `-ink` name is
+   the shade of that hue which reads as text or a border on the theme's own
+   background: the logo color itself on white, a lighter tint on #1a1a1a. */
+@layer base {
+  :root,
+  [data-theme="light"] {
+    --bp-ring: 186 83 13;       /* #ba530d burnt-orange ring */
+    --bp-orange: 236 105 17;    /* #ec6911 orange */
+    --bp-rust: 190 53 14;       /* #be350e rust red */
+    --bp-rust-ink: 190 53 14;
+    --bp-teal: 70 143 153;      /* #468f99 teal */
+    --bp-teal-ink: 47 111 120;  /* #2f6f78 */
+    --bp-blue: 49 81 130;       /* #315182 slate blue */
+    --bp-blue-ink: 49 81 130;
+    --bp-plum: 107 20 76;       /* #6b144c plum */
+    --bp-plum-ink: 107 20 76;
+  }
+
+  [data-theme="dark"] {
+    --bp-rust-ink: 232 113 79;  /* #e8714f */
+    --bp-teal-ink: 95 179 189;  /* #5fb3bd */
+    --bp-blue-ink: 123 159 212; /* #7b9fd4 */
+    --bp-plum-ink: 210 127 178; /* #d27fb2 */
+  }
+
+  /* Montserrat for text and Nunito for headings, as on the Braidpoint site;
+     local faces only (tailwind.config.js has the fallbacks). */
+  body {
+    @apply font-sans;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
+  }
+
+  /* Fira Code with ligatures for code, as on the Braidpoint site. */
+  code, pre, kbd, .font-mono {
+    font-feature-settings: "liga" 1, "calt" 1;
+  }
+
+  /* Glide between the themes instead of snapping; never for reduced motion. */
+  @media (prefers-reduced-motion: no-preference) {
+    body, .navbar, .card, .panel {
+      transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+    }
+  }
+}
+
+@layer components {
+  /* The Braidpoint card and code-block treatment: a slightly raised panel,
+     one subtle border, rounded corners. */
+  .panel {
+    @apply bg-base-200 border border-base-content/10 rounded-xl shadow-sm;
+  }
+
+  /* Inline code, as the Braidpoint site sets it: orange on a raised chip. */
+  .chip-code {
+    @apply bg-base-300 text-accent font-mono px-1.5 py-0.5 rounded;
+  }
+
+  /* Reservations: plum. */
+  .btn.btn-plum:not(:disabled) {
+    color: rgb(var(--bp-plum-ink));
+    border-color: rgb(var(--bp-plum-ink) / 0.7);
+    background-color: transparent;
+  }
+  .btn.btn-plum:not(:disabled):hover {
+    color: #ffffff;
+    border-color: rgb(var(--bp-plum));
+    background-color: rgb(var(--bp-plum));
+  }
+  .badge.badge-plum {
+    color: #ffffff;
+    border-color: rgb(var(--bp-plum));
+    background-color: rgb(var(--bp-plum));
+  }
+
+  /* Destructive actions (close a session, retire the worker): rust. */
+  .btn.btn-rust:not(:disabled) {
+    color: rgb(var(--bp-rust-ink));
+    border-color: rgb(var(--bp-rust-ink) / 0.7);
+    background-color: transparent;
+  }
+  .btn.btn-rust:not(:disabled):hover,
+  .btn.btn-rust-armed:not(:disabled) {
+    color: #ffffff;
+    border-color: rgb(var(--bp-rust));
+    background-color: rgb(var(--bp-rust));
+  }
+
+  /* Form focus, as on the Braidpoint site, in the teal state color. */
+  .input:focus,
+  .input:focus-within {
+    @apply outline-none ring-2 ring-info ring-offset-1 ring-offset-base-100;
+  }
+}

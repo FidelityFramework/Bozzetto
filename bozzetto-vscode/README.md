@@ -100,7 +100,7 @@ The status bar (bottom of VS Code) shows three items:
 | | `🧪 No tests` | No tests discovered yet |
 | **Eval performance** | `P50: 12ms P95: 45ms` | Eval latency percentiles with sparkline |
 
-Click the daemon status item to open the dashboard.
+Click the daemon status item to open the session menu.
 
 ---
 
@@ -131,7 +131,6 @@ Click the daemon status item to open the dashboard.
 - F# type errors and warnings stream in via SSE as you edit, appearing as native VS Code squiggles
 
 ### Session Management
-- **Session Context sidebar** — Loaded assemblies, opened namespaces, failed opens, warmup details
 - **Sessions sidebar** — View all sessions with inline switch/stop/reset actions
 - **Multi-session** — Create, switch, and manage multiple sessions from the command palette
 - **Export session** — Save current session state as a `.fsx` script
@@ -141,8 +140,7 @@ Click the daemon status item to open the dashboard.
 - **Type Explorer sidebar** — Browse .NET types and namespaces interactively from the activity bar
 - **Event history** — Browse recent pipeline events via QuickPick
 - **FSI bindings browser** — View all current FSI bindings
-- **Dashboard webview** — Open the Bozzetto dashboard directly inside VS Code
-- **Status bar** — Active project, eval count, test summary, eval performance sparkline. Click to open dashboard.
+- **Status bar** — Active project, eval count, test summary, eval performance sparkline. Click for the session menu.
 - **Auto-start** — Detects `.fsproj`/`.sln`/`.slnx` files and offers to start Bozzetto automatically
 - **Ionide integration** — Hijacks Ionide's `FSI: Send Selection` commands so Alt+Enter routes through Bozzetto
 - **7 custom theme colors** — Inline result colors respect your VS Code theme
@@ -176,7 +174,7 @@ The extension still shares upstream's identifier and command labels. See the [fo
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `bozzetto.mcpPort` | `47749` | Bozzetto MCP server port |
-| `bozzetto.dashboardPort` | `47750` | Legacy fallback dashboard port. Bozzetto normally discovers the daemon and derives the dashboard port from the MCP port. |
+| `bozzetto.dashboardPort` | `47750` | The daemon's control port (daemon-info and shutdown). Bozzetto derives it from the MCP port (MCP port + 1). |
 | `bozzetto.autoStart` | `true` | Automatically start Bozzetto when opening F# projects |
 | `bozzetto.projectPath` | `""` | Explicit `.fsproj` path (auto-detect if empty) |
 | `bozzetto.logLevel` | `"info"` | Output channel verbosity (`debug`, `info`, `error` — no `warn` level) |
@@ -212,7 +210,6 @@ The extension still shares upstream's identifier and command labels. See the [fo
 | Bozzetto: Start Daemon | — | Start the Bozzetto daemon |
 | Bozzetto: Stop Daemon | — | Stop the Bozzetto daemon |
 | Bozzetto: Restart Daemon | — | Restart the Bozzetto daemon |
-| Bozzetto: Open Dashboard | — | Open web dashboard in VS Code |
 | Bozzetto: Check Health | — | Run the extension's health check |
 | Bozzetto: Create Session | — | Create a new FSI session |
 | Bozzetto: Switch Session | — | Switch to a different session |
@@ -227,7 +224,6 @@ The extension still shares upstream's identifier and command labels. See the [fo
 | Bozzetto: Show FSI Bindings | — | Browse current FSI bindings |
 | Bozzetto: Configure Warmup Auto-Open | — | Create or open `.bozzetto/config.fsx` |
 | Bozzetto: Refresh Sessions | — | Refresh the Sessions sidebar |
-| Bozzetto: Refresh Session Context | — | Refresh the Session Context sidebar |
 | Bozzetto: Open Getting Started Sample | — | Open the bundled getting-started `.fsx` |
 
 The Sessions sidebar also has inline per-row actions (Switch To, Stop, Reset) — click the icons on a session row instead of going through the command palette.
@@ -252,7 +248,6 @@ The Sessions sidebar also has inline per-row actions (Switch To, Stop, Reset) �
 
 | View | Location | Description |
 |------|----------|-------------|
-| Session Context | Activity Bar | Assemblies, namespaces, warmup details |
 | Sessions | Activity Bar | All sessions with inline switch/stop/reset |
 | API Browser | Activity Bar | Browse .NET types and namespaces (the Type Explorer) |
 

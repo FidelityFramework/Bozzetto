@@ -80,8 +80,7 @@ let integrationRegistryTests =
       // was only ever borrowed for an event handle. They run in the default suite.
       [ "Daemon CLI subcommands"; "Daemon lifecycle"
         "HTTP API"; "MCP Server Integration tests"
-        "Session reset"; "Falco web application tests"
-        "Package/Namespace Explorer"; "checkFSharpCode backing function" ]
+        "Session reset"; "Package/Namespace Explorer"; "checkFSharpCode backing function" ]
       |> List.filter (fun suite ->
         not (hostNames |> List.exists (fun n -> n.Contains("[Integration] " + suite))))
       |> Expect.isEmpty "every listed suite runs under --integration-host"

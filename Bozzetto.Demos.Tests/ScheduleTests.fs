@@ -15,13 +15,13 @@ open Bozzetto.Demos.Schedule
 
 let private propConfig = { FsCheckConfig.defaultConfig with maxTest = 100 }
 
-/// Every id `ScenarioId.derive` can mint: 5 capabilities × 3 clients × 4 app
-/// kinds collapses to 24 distinct values, because every non-`HotReload`
+/// Every id `ScenarioId.derive` can mint: 5 capabilities × 2 clients × 3 app
+/// kinds collapses to 14 distinct values, because every non-`HotReload`
 /// capability's id ignores `AppKind` entirely (Domain.fs `ScenarioId.derive`).
 let private allScenarioIds : ScenarioId list =
   [ for capability in [ Capability.HotReload; Capability.LiveTesting; Capability.Repl; Capability.Sessions; Capability.Agent ] do
       for client in Client.all do
-        for appKind in [ AppKind.Web; AppKind.Raylib; AppKind.Console; AppKind.NoApp ] ->
+        for appKind in [ AppKind.Raylib; AppKind.Console; AppKind.NoApp ] ->
           ScenarioId.derive capability client appKind ]
   |> List.distinct
 
@@ -31,10 +31,10 @@ let private allScenarioIds : ScenarioId list =
 let private mkScenario (id: ScenarioId) (cost: CostClass) : Scenario =
   { Id = id
     Capability = Capability.Repl
-    Client = Client.Dashboard
+    Client = Client.VsCode
     App = AppKind.NoApp
     Sample = Sample.ConsoleTicker
-    Layout = LayoutTemplate.DashboardOnly
+    Layout = LayoutTemplate.EditorFull
     Steps = []
     Cost = cost
     Masks = [] }

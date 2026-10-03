@@ -28,7 +28,6 @@
     <Compile Include="CodeBlocks.fs" />
     <Compile Include="CodeLensProvider.fs" />
     <Compile Include="CompletionProvider.fs" />
-    <Compile Include="SessionContextTreeProvider.fs" />
     <Compile Include="SessionsTreeProvider.fs" />
     <Compile Include="TypeExplorerProvider.fs" />
     <Compile Include="TestControllerAdapter.fs" />

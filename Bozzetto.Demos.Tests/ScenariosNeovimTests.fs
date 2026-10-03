@@ -1,8 +1,9 @@
 /// Proves the shape of `Scenarios.Neovim.fs` — stable derived ids matching
-/// the plan's own naming (`ScenarioId.derive`), the right client/layout per
+/// the matrix naming (`ScenarioId.derive`), the right client/layout per
 /// scenario, and (§9's "never fake a step" doctrine, applied at the data
-/// level) that every step which types text also has its OWN, separate
-/// `Action.Chord [ Key.Escape ]` step before the next command-line step —
+/// level) that every step which types into the editor is followed by its
+/// OWN, separate `Action.Chord [ Key.Escape ]` step before the next
+/// command-line step —
 /// the concrete regression this file guards is folding an embedded ESC byte
 /// into a `Text` (silently dropped by `Keymap.resolve`, per `Cadence.fs`'s
 /// own doc), which a purely visual read of the scenario file will not catch
@@ -35,34 +36,21 @@ let tests =
       for s in scenarios do
         s.Client |> Expect.equal (sprintf "%s is filmed through Neovim" (ScenarioId.value s.Id)) Client.Neovim
 
-    testCase "replNeovim derives to 'repl-neovim' and lives on the EditorFull layout with no app pane" <| fun _ ->
-      replNeovim.Id |> ScenarioId.value |> Expect.equal "matches the plan's own worked id" "repl-neovim"
-      replNeovim.App |> Expect.equal "no app pane for a Repl scenario" AppKind.NoApp
-      replNeovim.Layout |> Expect.equal "EditorFull (editor + dashboard narrator, no app pane)" LayoutTemplate.EditorFull
-
-    testCase "ltNeovim derives to 'lt-neovim', opens the real FromCSharp test project, and its LAST step is honestly wired but not-yet-passing (§5's LT blocker, mirrored from lt-dashboard)" <| fun _ ->
-      ltNeovim.Id |> ScenarioId.value |> Expect.equal "matches the plan's own worked id" "lt-neovim"
-      ltNeovim.Sample |> Expect.equal "the real Expecto test project, not a runnable hot-reload sample" Sample.FromCSharp
-
-      // Observes through the shared Dashboard narrator pane (`Expectation.
-      // PageTextContains`), not `NvimBufferContains` — the live-testing
-      // panel's "✓" text is daemon/dashboard state, never written into
-      // nvim's own buffer/extmarks (`Scenarios.Neovim.fs`'s own top doc).
-      match ltNeovim.Steps |> List.last with
-      | { Action = Action.Await sig_; Expect = Expectation.PageTextContains(selector, text) } ->
-        sig_ |> Expect.equal "waits for the real test-run-completed signal, not a click" Signal.testRunCompleted
-        selector |> Expect.equal "observes the live-testing panel, the real source of this text" "#live-testing-panel"
-        text |> Expect.equal "checks for the real pass checkmark" "✓"
-      | other -> failtestf "expected the last step to Await testRunCompleted / expect a checkmark, got %A" other
-
-    testCase "the three hot-reload scenarios derive the plan's own ids and each keeps the client's own AppKind" <| fun _ ->
-      [ hrNeovimNeovimWeb, "hr-neovim-neovim-web", AppKind.Web
-        hrNeovimNeovimRaylib, "hr-neovim-neovim-raylib", AppKind.Raylib
-        hrNeovimNeovimConsole, "hr-neovim-neovim-console", AppKind.Console ]
+    testCase "the hot-reload scenarios derive the matrix ids and each keeps the client's own AppKind" <| fun _ ->
+      [ hrNeovimRaylib, "hr-neovim-raylib", AppKind.Raylib
+        hrNeovimConsole, "hr-neovim-console", AppKind.Console ]
       |> List.iter (fun (s, expectedId, expectedApp) ->
-        s.Id |> ScenarioId.value |> Expect.equal "derived id matches the plan's own naming" expectedId
+        s.Id |> ScenarioId.value |> Expect.equal "derived id matches the matrix naming" expectedId
         s.App |> Expect.equal "app kind" expectedApp
-        s.Layout |> Expect.equal "hot-reload scenarios use EditorLeft (editor + dashboard narrator + app pane)" LayoutTemplate.EditorLeft)
+        s.Layout |> Expect.equal "hot-reload scenarios use EditorLeft (editor + app pane)" LayoutTemplate.EditorLeft)
+
+    testCase "each hot-reload scenario's session step is proven through the editor's own readiness channel, never a removed dashboard pane" <| fun _ ->
+      for s in scenarios do
+        match s.Steps with
+        | { Action = Action.Setup(ClientCommand.CreateSession sample); Expect = Expectation.SessionReady } :: _ ->
+          sample |> Expect.equal (sprintf "%s creates a session for its own sample" (ScenarioId.value s.Id)) s.Sample
+        | first :: _ -> failtestf "%s: expected the first step to create a session and expect SessionReady, got %A" (ScenarioId.value s.Id) first
+        | [] -> failtestf "%s has no steps" (ScenarioId.value s.Id)
 
     testCase "every Action.Type step's own Text never embeds a raw ESC byte — leaving insert mode is always its own Chord step (regression guard for the silently-dropped-keystroke bug this file's doc names)" <| fun _ ->
       for s in scenarios do
@@ -71,24 +59,26 @@ let tests =
           | Some text -> text.Contains '' |> Expect.isFalse (sprintf "%s: no embedded ESC (\\u001b) in typed text" (Caption.value step.Caption))
           | None -> ()
 
-    testCase "every scenario that types an expression into the editor (not the command line) is immediately followed by an explicit Escape-chord step before the next Action.Type at the command line" <| fun _ ->
-      // Structural proof for repl-neovim's own doctrine (see its doc
-      // comment): an editor-targeted Type step is followed by
+    testCase "every scenario that types into the editor (not the command line) is immediately followed by an explicit Escape-chord step before the next Action.Type at the command line" <| fun _ ->
+      // Structural proof for the hot-reload helper's own doctrine (see its
+      // doc comment): an editor-targeted Type step is followed by
       // Chord[Escape] before any subsequent command-line Type step.
-      let steps = replNeovim.Steps
+      for s in scenarios do
+        let steps = s.Steps
 
-      let editorTypeIndices =
-        steps
-        |> List.indexed
-        |> List.choose (fun (i, step) ->
-          match step.Action with
-          | Action.Type(Target.WindowCenter ActorId.Neovim, _, _) -> Some i
-          | _ -> None)
+        let editorTypeIndices =
+          steps
+          |> List.indexed
+          |> List.choose (fun (i, step) ->
+            match step.Action with
+            | Action.Type(Target.WindowCenter ActorId.Neovim, _, _)
+            | Action.Type(Target.EditorPosition _, _, _) -> Some i
+            | _ -> None)
 
-      editorTypeIndices
-      |> List.isEmpty
-      |> Expect.isFalse "repl-neovim types at least one expression into the editor"
+        editorTypeIndices
+        |> List.isEmpty
+        |> Expect.isFalse (sprintf "%s types at least once into the editor" (ScenarioId.value s.Id))
 
-      for i in editorTypeIndices do
-        steps.[i + 1].Action |> isEscapeChord |> Expect.isTrue (sprintf "step %d (an editor Type) is immediately followed by Chord[Escape]" i)
+        for i in editorTypeIndices do
+          steps.[i + 1].Action |> isEscapeChord |> Expect.isTrue (sprintf "%s step %d (an editor Type) is immediately followed by Chord[Escape]" (ScenarioId.value s.Id) i)
   ]

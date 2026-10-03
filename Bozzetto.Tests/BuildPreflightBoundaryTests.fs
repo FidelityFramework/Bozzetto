@@ -75,8 +75,7 @@ let tests =
           DaemonStreamId = "retirement-test"
           Cts = Unchecked.defaultof<_>
           StateChangedEvent = Unchecked.defaultof<_>
-          McpFetchTimeoutSec = 1.0
-          DashboardFetchTimeoutSec = 1.0 }
+          McpFetchTimeoutSec = 1.0 }
       do! resumePreviousSessions infra Unchecked.defaultof<_> Unchecked.defaultof<_> null (fun () -> failwith "retired sessions must not resume")
     }
 

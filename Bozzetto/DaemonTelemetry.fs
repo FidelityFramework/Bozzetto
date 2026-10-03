@@ -53,6 +53,14 @@ let private processTelemetry (role: string) (previous: Previous option) (now: Da
     with _ ->
         None
 
+/// The processes the daemon owns, labelled as the health views show them:
+/// the daemon itself, its Composer worker while one is alive, then the
+/// inherited F# session workers (already labelled by their caller).
+let ownedProcesses (daemonPid: int) (composerWorker: int option) (sessionWorkers: (int * string) list) : (int * string) list =
+  (daemonPid, "daemon")
+  :: (composerWorker |> Option.map (fun pid -> pid, "composer-worker") |> Option.toList)
+  @ sessionWorkers
+
 let sample (processes: (int * string) list) : Snapshot =
     let now = DateTimeOffset.UtcNow
     let sampled = ResizeArray<int * Previous * ProcessTelemetry>()

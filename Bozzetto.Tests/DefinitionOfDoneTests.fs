@@ -52,7 +52,7 @@ let repoRoot = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, ".."))
 
 let matrixPath = Path.Combine(repoRoot, "quality", "definition-of-done.json")
 
-let requiredClients = set [ "dashboard"; "vscode"; "neovim" ]
+let requiredClients = set [ "vscode"; "neovim" ]
 let requiredCapabilities = set [ "hot-reload"; "live-testing"; "friction" ]
 let allowedStatuses = set [ "verified"; "deferred"; "not-applicable" ]
 
@@ -387,13 +387,10 @@ let private externalRow (id: string) (capability: string) (client: string) =
 /// for the row carrying `replacedId`.
 let private matrixReplacing (replacedId: string) (replacement: string) =
   let baseRows =
-    [ ciRow "HR-DASH" "hot-reload" "dashboard"
-      ciRow "HR-VSC" "hot-reload" "vscode"
+    [ ciRow "HR-VSC" "hot-reload" "vscode"
       externalRow "HR-NVIM" "hot-reload" "neovim"
-      ciRow "LT-DASH" "live-testing" "dashboard"
       ciRow "LT-VSC" "live-testing" "vscode"
       externalRow "LT-NVIM" "live-testing" "neovim"
-      ciRow "FR-DASH" "friction" "dashboard"
       ciRow "FR-VSC" "friction" "vscode"
       externalRow "FR-NVIM" "friction" "neovim" ]
   baseRows
@@ -446,9 +443,9 @@ let definitionOfDoneTests =
 
     testCase "WHY — a deferred row blocks release readiness, because that projection is what --release-readiness and the publish gate consume" <| fun () ->
       let deferred =
-        """{ "id": "LT-DASH", "capability": "live-testing", "client": "dashboard", "status": "deferred",
+        """{ "id": "LT-VSC", "capability": "live-testing", "client": "vscode", "status": "deferred",
              "issue": 128, "expires": "2099-01-01", "reason": "runner runs in no pipeline" }"""
-      matrixReplacing "LT-DASH" deferred
+      matrixReplacing "LT-VSC" deferred
       |> checkSynthetic probeThatResolvesEverything true
       |> errorsMentioning "blocks release readiness"
       |> Expect.isNonEmpty "a deferred obligation must block the release projection"
@@ -460,9 +457,9 @@ let definitionOfDoneTests =
 
     testCase "WHY — free-text evidence is rejected outright, because a non-empty string is exactly what let a deleted CI job pass for a week" <| fun () ->
       let freeText =
-        """{ "id": "HR-DASH", "capability": "hot-reload", "client": "dashboard", "status": "verified",
+        """{ "id": "HR-VSC", "capability": "hot-reload", "client": "vscode", "status": "verified",
              "evidence": "HotReloadBrowserTests.fs — CI dashboard-browser-e2e green at d3647cf" }"""
-      matrixReplacing "HR-DASH" freeText
+      matrixReplacing "HR-VSC" freeText
       |> checkSynthetic probeThatResolvesEverything false
       |> errorsMentioning "typed object"
       |> Expect.isNonEmpty "prose evidence must fail the gate"
@@ -521,38 +518,38 @@ let definitionOfDoneTests =
 
     testCase "WHY — an unknown evidence kind fails closed rather than falling through to a pass" <| fun () ->
       let unknown =
-        """{ "id": "HR-DASH", "capability": "hot-reload", "client": "dashboard", "status": "verified",
+        """{ "id": "HR-VSC", "capability": "hot-reload", "client": "vscode", "status": "verified",
              "evidence": { "kind": "vibes", "summary": "it felt right" } }"""
-      matrixReplacing "HR-DASH" unknown
+      matrixReplacing "HR-VSC" unknown
       |> checkSynthetic probeThatResolvesEverything false
       |> errorsMentioning "unknown evidence kind"
       |> Expect.isNonEmpty "an unrecognised evidence kind must be an error, never a pass"
 
     testCase "WHY — a deferral without a reason fails, because a parked obligation with no re-verification path is an abandonment" <| fun () ->
       let reasonless =
-        """{ "id": "LT-DASH", "capability": "live-testing", "client": "dashboard", "status": "deferred",
+        """{ "id": "LT-VSC", "capability": "live-testing", "client": "vscode", "status": "deferred",
              "issue": 128, "expires": "2099-01-01" }"""
-      matrixReplacing "LT-DASH" reasonless
+      matrixReplacing "LT-VSC" reasonless
       |> checkSynthetic probeThatResolvesEverything false
       |> errorsMentioning "deferral reason"
       |> Expect.isNonEmpty "a deferral must say what would re-verify it"
 
     testCase "WHY — 'green locally' is still never evidence" <| fun () ->
       let local =
-        """{ "id": "HR-DASH", "capability": "hot-reload", "client": "dashboard", "status": "verified",
+        """{ "id": "HR-VSC", "capability": "hot-reload", "client": "vscode", "status": "verified",
              "evidence": { "kind": "ci", "tests": ["Bozzetto.Tests/Some.fs"], "runner": "--integration-host",
                            "stage": "integration host", "run": "35523239725", "summary": "green locally" } }"""
-      matrixReplacing "HR-DASH" local
+      matrixReplacing "HR-VSC" local
       |> checkSynthetic probeThatResolvesEverything false
       |> errorsMentioning "'green locally' is not evidence"
       |> Expect.isNonEmpty "locally-observed greenness is not something anyone else can open"
 
     testCase "WHY — ci evidence with neither a run id nor a commit SHA fails, because evidence nobody else can open is not evidence (roast-4 #12)" <| fun () ->
       let unresolvable =
-        """{ "id": "HR-DASH", "capability": "hot-reload", "client": "dashboard", "status": "verified",
+        """{ "id": "HR-VSC", "capability": "hot-reload", "client": "vscode", "status": "verified",
              "evidence": { "kind": "ci", "tests": ["Bozzetto.Tests/Some.fs"], "runner": "--integration-host",
                            "stage": "integration host", "summary": "it passed" } }"""
-      matrixReplacing "HR-DASH" unresolvable
+      matrixReplacing "HR-VSC" unresolvable
       |> checkSynthetic probeThatResolvesEverything false
       |> errorsMentioning "run id or commit SHA"
       |> Expect.isNonEmpty "a verified row must be resolvable by someone else"
@@ -566,7 +563,7 @@ let definitionOfDoneTests =
       probe.RunnerInvokedByCi "--integration-host"
       |> Expect.isTrue "ci-pipeline.fsx must be seen to run the integration-host suite"
       probe.RunnerInvokedByCi "--integration-browser"
-      |> Expect.isTrue "ci-pipeline.fsx must be seen to run the dashboard browser journeys"
+      |> Expect.isFalse "the dashboard browser tier was removed with Datastar and must never resolve again"
       probe.RunnerInvokedByCi "--no-such-runner-flag"
       |> Expect.isFalse "a runner no pipeline line mentions must not resolve"
       probe.StageExists "test tiers"

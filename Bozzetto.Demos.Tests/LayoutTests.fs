@@ -15,7 +15,7 @@ open Bozzetto.Demos.Domain
 let private screen = { Width = 1280; Height = 720 }
 
 let private allTemplates =
-  [ LayoutTemplate.EditorLeft; LayoutTemplate.EditorFull; LayoutTemplate.DashboardOnly ]
+  [ LayoutTemplate.EditorLeft; LayoutTemplate.EditorFull; LayoutTemplate.AgentOnly ]
 
 let private isMultipleOf8 (n: int) = n % 8 = 0
 
@@ -59,32 +59,27 @@ let tests =
             rectsOverlap distinctRects.[i] distinctRects.[j]
             |> Expect.isFalse (sprintf "%A panes %A and %A should not overlap" template distinctRects.[i] distinctRects.[j])
 
-    testCase "EditorLeft tiles the screen exactly with 8px gutters (§9)" <| fun _ ->
+    testCase "EditorLeft tiles the screen exactly with an 8px gutter (§9)" <| fun _ ->
       let placed = Bozzetto.Demos.Layout.rects LayoutTemplate.EditorLeft screen
       let editor = placed.[ActorId.VsCode]
-      let dashboard = placed.[ActorId.Dashboard]
       let app = placed.[ActorId.App]
+      editor.W |> Expect.equal "the editor column keeps §9's 704px width" 704
       editor.H |> Expect.equal "the editor pane spans the full screen height" screen.Height
-      (dashboard.X - (editor.X + editor.W))
-      |> Expect.equal "8px gutter between the editor column and the right column" 8
-      (app.Y - (dashboard.Y + dashboard.H)) |> Expect.equal "8px gutter between the dashboard and app panes" 8
-      (editor.W + 8 + dashboard.W) |> Expect.equal "editor + gutter + right column tiles the screen width exactly" screen.Width
-      (dashboard.H + 8 + app.H) |> Expect.equal "dashboard + gutter + app tiles the screen height exactly" screen.Height
-      dashboard.W |> Expect.equal "dashboard and app share the same pane width" app.W
+      app.H |> Expect.equal "the app pane spans the full screen height" screen.Height
+      (editor.Y, app.Y) |> Expect.equal "both columns start at the top edge" (0, 0)
+      (app.X - (editor.X + editor.W)) |> Expect.equal "8px gutter between the editor column and the app column" 8
+      (editor.W + 8 + app.W) |> Expect.equal "editor + gutter + app tiles the screen width exactly" screen.Width
 
-    testCase "EditorFull tiles the screen exactly with an 8px gutter (§9)" <| fun _ ->
+    testCase "EditorFull gives the editor the entire screen" <| fun _ ->
       let placed = Bozzetto.Demos.Layout.rects LayoutTemplate.EditorFull screen
-      let editor = placed.[ActorId.VsCode]
-      let dashboard = placed.[ActorId.Dashboard]
-      editor.H |> Expect.equal "the editor pane spans the full screen height" screen.Height
-      dashboard.H |> Expect.equal "the dashboard pane spans the full screen height" screen.Height
-      (dashboard.X - (editor.X + editor.W)) |> Expect.equal "8px gutter between editor and dashboard" 8
-      (editor.W + 8 + dashboard.W) |> Expect.equal "editor + gutter + dashboard tiles the screen width exactly" screen.Width
+      placed.[ActorId.VsCode]
+      |> Expect.equal "the editor pane fills the whole 1280x720 screen" { X = 0; Y = 0; W = screen.Width; H = screen.Height }
+      placed.ContainsKey ActorId.App |> Expect.isFalse "EditorFull places no app pane"
 
-    testCase "DashboardOnly fills the entire screen (§9)" <| fun _ ->
-      let placed = Bozzetto.Demos.Layout.rects LayoutTemplate.DashboardOnly screen
-      placed.[ActorId.Dashboard]
-      |> Expect.equal "the dashboard pane fills the whole 1280x720 screen" { X = 0; Y = 0; W = screen.Width; H = screen.Height }
+    testCase "AgentOnly gives the Agent viz page the entire screen" <| fun _ ->
+      let placed = Bozzetto.Demos.Layout.rects LayoutTemplate.AgentOnly screen
+      placed
+      |> Expect.equal "the Agent pane alone fills the whole 1280x720 screen" (Map.ofList [ ActorId.Agent, { X = 0; Y = 0; W = screen.Width; H = screen.Height } ])
 
     testCase "VsCode and Neovim share the same editor rect (only one client is on camera per scenario)" <| fun _ ->
       for template in [ LayoutTemplate.EditorLeft; LayoutTemplate.EditorFull ] do

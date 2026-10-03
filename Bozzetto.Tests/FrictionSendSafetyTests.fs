@@ -1,49 +1,11 @@
 module Bozzetto.Tests.FrictionSendSafetyTests
 
-/// Phase 4 P0 safety tests (quality-gap plan):
-/// - Dashboard send destination must be restricted (no SSRF/proxy via an
-///   arbitrary client-supplied endpoint; no plaintext token over http).
-/// - The F# sanitizer must redact secrets from free text.
+/// Phase 4 P0 safety tests (quality-gap plan): the F# sanitizer must redact
+/// secrets from free text.
 
 open Expecto
 open Expecto.Flip
-open Bozzetto.Server.Dashboard
 open Bozzetto.Features.FrictionSanitize
-
-[<Tests>]
-let frictionSendSafetyTests =
-  testList "Friction send safety" [
-
-    testCase "https endpoints are allowed" <| fun _ ->
-      isAllowedFrictionEndpoint "https://bozzetto-reports.example.workers.dev/ingest"
-      |> Expect.isTrue "https worker endpoint should be allowed"
-
-    testCase "loopback http endpoints are allowed (local receiver dev)" <| fun _ ->
-      isAllowedFrictionEndpoint "http://127.0.0.1:8787/ingest"
-      |> Expect.isTrue "loopback http should be allowed for wrangler dev"
-      isAllowedFrictionEndpoint "http://localhost:8787/ingest"
-      |> Expect.isTrue "localhost http should be allowed for wrangler dev"
-
-    testCase "non-loopback http endpoints are rejected (token would cross in plaintext)" <| fun _ ->
-      isAllowedFrictionEndpoint "http://bozzetto-reports.example.workers.dev/ingest"
-      |> Expect.isFalse "plaintext http to a remote host must be rejected"
-
-    testCase "file and other schemes are rejected (no SSRF primitive)" <| fun _ ->
-      isAllowedFrictionEndpoint "file:///etc/passwd"
-      |> Expect.isFalse "file scheme must be rejected"
-      isAllowedFrictionEndpoint "ftp://example.com/x"
-      |> Expect.isFalse "ftp scheme must be rejected"
-      isAllowedFrictionEndpoint "gopher://example.com/x"
-      |> Expect.isFalse "gopher scheme must be rejected"
-
-    testCase "malformed endpoints are rejected" <| fun _ ->
-      isAllowedFrictionEndpoint ""
-      |> Expect.isFalse "empty endpoint must be rejected"
-      isAllowedFrictionEndpoint "not a url"
-      |> Expect.isFalse "non-URL string must be rejected"
-      isAllowedFrictionEndpoint "https://"
-      |> Expect.isFalse "scheme-only URL must be rejected"
-  ]
 
 /// F# sanitizer properties — the plan requires shared sanitizer parity and
 /// property coverage (previously only the TypeScript side was tested).

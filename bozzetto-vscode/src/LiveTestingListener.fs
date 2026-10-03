@@ -556,8 +556,8 @@ let start (port: int) (callbacks: LiveTestingCallbacks) (onReconnect: (unit -> u
           coverageViews <-
             Map.add view.FilePath (generation, Array.append existing [| view |]) coverageViews
         callbacks.OnCoverageView view generation
-        // Live bound-value watch window — intentionally a no-op for now;
-        // the dashboard consumes this event. Handled explicitly for parity.
+        // Live bound-value watch window — intentionally a no-op for now.
+        // Handled explicitly for parity.
         ()
       | _ ->
         ())

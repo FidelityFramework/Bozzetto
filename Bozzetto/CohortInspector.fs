@@ -1,42 +1,38 @@
-/// Phase 2 item 16 of bozzetto-multiagent-vision.md (§6.5 "the inspector" —
-/// "`/dashboard/inspect/<kind>/<id>` ... retargets a side panel ... with the
-/// raw frame row — the `Claim` record, the member's `SeatState` and lease,
-/// the test's `TestRunKey` and bitmap popcount, the span's stages — rendered
-/// *verbatim* as a definition list; `/` opens an entity search").
+/// Phase 2 item 16 of bozzetto-multiagent-vision.md (§6.5 "the inspector":
+/// the raw frame row — the `Claim` record, the member's `SeatState` and
+/// lease, the test's `TestRunKey` and bitmap popcount — as a verbatim field
+/// list, plus an entity search).
 ///
-/// The vision text describes selection as a `Ds.post` that retargets *this
-/// tab's* stream (§6.5 "Selection is a POST, never a signal") — this island
-/// instead ships the inspector as its own `GET` request/response page per
-/// this item's brief, so it needs no SSE stream and is independently
-/// deep-linkable/bookmarkable; wiring it into the cockpit's POST-retarget
-/// pattern later is additive, not a rewrite of this module's pure core.
-/// Likewise "server-side prefix trie" is the vision's engine choice for
-/// autocomplete-as-you-type at cockpit scale; v1's `search` is a plain
-/// substring scan — correct and small-cohort-cheap (§5.1's v1 scope is one
-/// daemon-scoped cohort), swappable for a trie later without changing the
+/// The pure core only: entity lookup (`inspect`/`inspectRaw`) and search over
+/// the cohort ledger, frame and session list. It has no HTTP or HTML surface
+/// of its own; the legacy dashboard page that rendered it was removed with
+/// Datastar, and a browser UI can project `InspectorModel`/`SearchResult`
+/// directly. "Server-side prefix trie" is the vision's engine choice for
+/// autocomplete at cockpit scale; v1's `search` is a plain substring scan —
+/// correct and small-cohort-cheap, swappable later without changing the
 /// `SearchResult` contract.
 ///
 /// Entity kinds and their sources, scoped to what the shipped read models
 /// actually carry (checked against `Cohort.fs` before writing this):
 ///  - **member** / **claim** / **landing** — `Cohort.replay` over the ledger
-///    (`DashboardInfra.ReadCohortLedger`) reconstructs the full `CohortState`
-///    (`Cohort.fs:280`), which carries the RAW records the vision asks for
-///    verbatim: `Claim<'m>` (with `Purpose`/`Since`, `Cohort.fs:219`) and
-///    `LandingRequest<'m>` (with `Statement`/`State`, `Cohort.fs:266`) are
-///    NOT reachable from `CohortFrame` alone — the frame's claim arrays drop
-///    `Purpose`/`Since` (`Cohort.fs:966-972`), and the frame has no landing
-///    fields at all (deferred per `Cohort.fs`'s own module doc, `Cohort.fs:42-47`).
-///  - **test** — `CohortFrame.TestIds`/`Pass`/`Fail`/`Stale`
-///    (`DashboardInfra.ReadCohortFrame`). The frame's bitplane rows are
-///    session-INDEXED, not session-IDENTIFIED (`project`, `Cohort.fs:1011`,
-///    keeps only `SessionGens: int64[]`, never the `SessionSnapshot.SessionId`/
-///    `Member` that produced each row) — so a test's per-session identity
-///    cannot be sourced from the frame. What CAN: exactly what the vision
-///    text names for this row, "the test's ... bitmap popcount" — the pass/
-///    fail/stale counts across all reporting sessions.
-///  - **session** — the daemon's session list (`DashboardQueries.GetAllSessions`,
-///    passed in already-fetched so this module's own functions stay pure and
-///    synchronous) — `WorkerProtocol.SessionInfo` (`WorkerProtocol.fs:345`).
+///    reconstructs the full `CohortState` (`Cohort.fs:280`), which carries the
+///    RAW records the vision asks for verbatim: `Claim<'m>` (with
+///    `Purpose`/`Since`, `Cohort.fs:219`) and `LandingRequest<'m>` (with
+///    `Statement`/`State`, `Cohort.fs:266`) are NOT reachable from
+///    `CohortFrame` alone — the frame's claim arrays drop `Purpose`/`Since`
+///    (`Cohort.fs:966-972`), and the frame has no landing fields at all
+///    (deferred per `Cohort.fs`'s own module doc, `Cohort.fs:42-47`).
+///  - **test** — `CohortFrame.TestIds`/`Pass`/`Fail`/`Stale`. The frame's
+///    bitplane rows are session-INDEXED, not session-IDENTIFIED (`project`,
+///    `Cohort.fs:1011`, keeps only `SessionGens: int64[]`, never the
+///    `SessionSnapshot.SessionId`/`Member` that produced each row) — so a
+///    test's per-session identity cannot be sourced from the frame. What
+///    CAN: exactly what the vision text names for this row, "the test's ...
+///    bitmap popcount" — the pass/fail/stale counts across all reporting
+///    sessions.
+///  - **session** — the daemon's session list, passed in already-fetched so
+///    this module's own functions stay pure and synchronous —
+///    `WorkerProtocol.SessionInfo` (`WorkerProtocol.fs:345`).
 module Bozzetto.Server.CohortInspector
 
 open System
@@ -45,8 +41,6 @@ open Bozzetto.Cohort
 open Bozzetto.MemberTable
 open Bozzetto.WorkerProtocol
 open Bozzetto.WorkflowTypes
-open Falco.Markup
-open Bozzetto.Server.DashboardFragments
 
 [<RequireQualifiedAccess>]
 type EntityKind =
@@ -358,94 +352,3 @@ let search
           None)
     memberResults @ claimResults @ landingResults @ testResults @ sessionResults
     |> List.sortBy (fun r -> EntityKind.label r.Kind, r.Id)
-
-// ── Rendering — Falco.Markup, the same `textEnc`/`attrEnc` escaping
-// discipline `DashboardFragments`/`CohortTerritory`/`CohortLanes` use
-// (`DashboardFragments.fs:28-52`'s `htmlEscape`, reused here rather than
-// reimplemented). Deterministic: the same `InspectorModel`/query+results
-// always renders byte-identical markup. ───────────────────────────────
-
-let private renderFieldList (fields: Field list) : XmlNode =
-  Elem.create "dl" [] (
-    fields
-    |> List.collect (fun f ->
-      [ Elem.create "dt" [] [ textEnc f.Label ]
-        Elem.create "dd" [] [ textEnc f.Value ] ]))
-
-/// The inspector's content — a title plus the entity's raw fields as a
-/// definition list, or a clean not-found message. No page chrome; see
-/// `renderInspectorPage` for the full document the route serves.
-let renderInspector (model: InspectorModel) : XmlNode =
-  match model with
-  | InspectorModel.Found(kind, _id, title, fields) ->
-    Elem.div [ testid "inspector-found" ] [
-      Elem.h2 [] [ textEnc title ]
-      Elem.p [] [ textEnc (sprintf "kind: %s" (EntityKind.toUrlSegment kind)) ]
-      renderFieldList fields
-    ]
-  | InspectorModel.NotFound(kindOpt, id) ->
-    Elem.div [ testid "inspector-not-found" ] [
-      Elem.h2 [] [ Text.raw "Not found" ]
-      Elem.p [] [
-        textEnc (
-          match kindOpt with
-          | Some kind -> sprintf "No %s with id '%s'." ((EntityKind.label kind).ToLowerInvariant()) id
-          | None -> sprintf "Unrecognized entity kind for id '%s'." id)
-      ]
-    ]
-
-let private inspectHref (kind: EntityKind) (id: string) : string =
-  attrEnc (sprintf "/dashboard/inspect/%s/%s" (EntityKind.toUrlSegment kind) (Uri.EscapeDataString id))
-
-/// The search box plus its results — content only, see `renderSearchPage`
-/// for the full document.
-let renderSearchResults (query: string) (results: SearchResult list) : XmlNode =
-  Elem.div [ testid "inspector-search" ] [
-    Elem.h2 [] [ Text.raw "Search" ]
-    Elem.form [ Attr.action "/dashboard/inspect"; Attr.method "get" ] [
-      Elem.input [ Attr.type' "text"; Attr.name "q"; Attr.value (attrEnc query); Attr.placeholder "member, claim, landing, test, or session id" ]
-      Elem.button [ Attr.type' "submit" ] [ Text.raw "Search" ]
-    ]
-    (match results, query.Trim() with
-     | [], "" -> Elem.p [] [ Text.raw "Type to search members, claims, landings, tests, and sessions." ]
-     | [], _ -> Elem.p [] [ Text.raw "No matches." ]
-     | _ ->
-       Elem.ul [ testid "inspector-search-results" ] (
-         results
-         |> List.map (fun r ->
-           Elem.li [] [
-             Elem.a [ Attr.href (inspectHref r.Kind r.Id) ] [
-               textEnc (sprintf "[%s] %s" (EntityKind.label r.Kind) r.Label)
-             ]
-           ])))
-  ]
-
-let private pageShell (title: string) (content: XmlNode) : XmlNode =
-  Elem.html [] [
-    Elem.head [] [
-      Elem.title [] [ textEnc title ]
-      Elem.link [ Attr.rel "stylesheet"; Attr.href "/dashboard/dashboard.css" ]
-    ]
-    Elem.body [] [
-      Elem.div [ Attr.style "padding: 1rem; font-family: 'JetBrains Mono', monospace;" ] [
-        Elem.p [] [
-          Elem.a [ Attr.href "/dashboard" ] [ Text.raw "&larr; Dashboard" ]
-          Text.raw "&nbsp;&nbsp;"
-          Elem.a [ Attr.href "/dashboard/inspect" ] [ Text.raw "Search" ]
-        ]
-        content
-      ]
-    ]
-  ]
-
-/// The full page `GET /dashboard/inspect/<kind>/<id>` serves.
-let renderInspectorPage (model: InspectorModel) : XmlNode =
-  let title =
-    match model with
-    | InspectorModel.Found(_, _, t, _) -> t
-    | InspectorModel.NotFound(_, id) -> sprintf "Not found: %s" id
-  pageShell title (renderInspector model)
-
-/// The full page `GET /dashboard/inspect` serves.
-let renderSearchPage (query: string) (results: SearchResult list) : XmlNode =
-  pageShell "Inspector search" (renderSearchResults query results)

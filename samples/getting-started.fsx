@@ -130,6 +130,5 @@ describe -3  // → "negative"
 // 🎮 Fun demos:
 //    samples/demos/raylib-hello.fsx  — draw graphics with Raylib
 //    samples/demos/raylib-game.fsx   — a simple game
-//    samples/demos/webapp-datastar.fsx — reactive web app
 //
 // Happy hacking! 🦅

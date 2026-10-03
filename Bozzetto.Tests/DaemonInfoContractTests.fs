@@ -3,12 +3,12 @@ module Bozzetto.Tests.DaemonInfoContractTests
 open Expecto
 open Expecto.Flip
 open Bozzetto
-open Bozzetto.Server.DashboardTypes
+open Bozzetto.Server.ControlListener
 
 [<Tests>]
 let daemonInfoContractTests =
   testList "DaemonInfoContract" [
-    testCase "create derives dashboard port and api version" <| fun () ->
+    testCase "create derives the control port and api version" <| fun () ->
       let contract =
         DaemonInfoContract.create
           4242
@@ -19,7 +19,7 @@ let daemonInfoContractTests =
           3
 
       contract.Pid |> Expect.equal "pid round-trips" 4242
-      contract.DashboardPort |> Expect.equal "dashboard port derived from mcp" 47750
+      contract.DashboardPort |> Expect.equal "control port derived from mcp" 47750
       contract.ApiVersion |> Expect.equal "apiVersion matches endpoint contract" EndpointContracts.apiVersion
 
     testCase "create preserves working directory and session count" <| fun () ->
@@ -35,7 +35,7 @@ let daemonInfoContractTests =
       contract.WorkingDirectory |> Expect.equal "working directory round-trips" @"C:\repo"
       contract.SessionCount |> Expect.equal "session count round-trips" 0
 
-    testCase "create derives dashboard port from a custom smoke MCP port" <| fun () ->
+    testCase "create derives the control port from a custom smoke MCP port" <| fun () ->
       let contract =
         DaemonInfoContract.create
           11
@@ -46,5 +46,5 @@ let daemonInfoContractTests =
           1
 
       contract.McpPort |> Expect.equal "custom mcp port round-trips" 37851
-      contract.DashboardPort |> Expect.equal "dashboard port stays offset from custom mcp port" 37852
+      contract.DashboardPort |> Expect.equal "control port stays offset from custom mcp port" 37852
   ]

@@ -55,9 +55,10 @@ Triggers → Custom Domains.
 
 ### 5. Configure Bozzetto
 
-In the Bozzetto dashboard, open the Friction panel (right-side drawer).
-Enter your endpoint URL and (if set) the ingest token. The endpoint
-URL and token are stored locally — never sent anywhere automatically.
+The Friction panel that held the endpoint URL and ingest token was part
+of the legacy web dashboard, which has been removed. Bozzetto still
+records friction locally, but no current Bozzetto client submits reports
+to this Worker.
 
 ## What the Worker accepts
 
@@ -119,7 +120,7 @@ anything sensitive ever lands here, it's a bug — report it.
 
 ## What Bozzetto sends
 
-The Bozzetto dashboard's Friction panel lets you:
+The removed legacy dashboard's Friction panel was the only sender. It let you:
 
 1. Generate a friction report from local telemetry
 2. See both the **raw** report (with your free-text `reason` fields) and
@@ -128,8 +129,8 @@ The Bozzetto dashboard's Friction panel lets you:
 4. Click "Send" to POST to this Worker
 5. See the response (success / error) and the reportId for reference
 
-Nothing is sent automatically. The button is opt-in per report. The
-endpoint URL is empty by default.
+Nothing was sent automatically: sending was opt-in per report, and the
+endpoint URL was empty by default.
 
 ## What the Bozzetto daemon never sends
 
@@ -140,9 +141,9 @@ endpoint URL is empty by default.
 - Raw eval code
 - Anything beyond the structured schema
 
-Free-text `reason` fields ARE sent, but the user reviews and edits them
-in the dashboard before clicking Send. The server re-sanitizes them
-as defense-in-depth.
+Free-text `reason` fields ARE part of the schema; the removed dashboard
+let the user review and edit them before clicking Send. The server
+re-sanitizes them as defense-in-depth.
 
 ## Development
 

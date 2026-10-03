@@ -76,24 +76,6 @@ type SessionInfo =
     /// THIS — no surface re-derives a verdict of its own.
     health: SessionsTreePure.SessionHealth }
 
-type LoadedAssemblyInfo =
-  { Name: string
-    Path: string
-    NamespaceCount: int
-    ModuleCount: int }
-
-type OpenedBindingInfo =
-  { Name: string
-    IsModule: bool
-    Source: string }
-
-type WarmupContextInfo =
-  { SourceFilesScanned: int
-    AssembliesLoaded: LoadedAssemblyInfo array
-    NamespacesOpened: OpenedBindingInfo array
-    FailedOpens: string array array
-    WarmupDurationMs: int }
-
 [<Import("httpGet", "./http-helpers.js")>]
 let httpGetRaw (url: string) (timeout: int) : JS.Promise<{| statusCode: int; body: string |}> = jsNative
 
@@ -112,7 +94,6 @@ let create (mcpPort: int) (dashboardPort: int) (log: string -> unit) =
     log = log }
 
 let baseUrl (c: Client) = sprintf "http://localhost:%d" c.mcpPort
-let dashboardUrl (c: Client) = sprintf "http://localhost:%d/dashboard" c.dashboardPort
 
 let updatePorts (mcpPort: int) (dashboardPort: int) (c: Client) =
   c.mcpPort <- mcpPort
@@ -128,12 +109,6 @@ let httpGet (c: Client) (path: string) (timeout: int) =
 
 let httpPost (c: Client) (path: string) (body: string) (timeout: int) =
   httpPostRaw (sprintf "%s%s" (baseUrl c) path) body timeout
-
-let dashHttpGet (c: Client) (path: string) (timeout: int) =
-  httpGetRaw (sprintf "http://localhost:%d%s" c.dashboardPort path) timeout
-
-let dashHttpPost (c: Client) (path: string) (body: string) (timeout: int) =
-  httpPostRaw (sprintf "http://localhost:%d%s" c.dashboardPort path) body timeout
 
 // ── JSON field helpers (null-safe boundary parsing) ──────────────────────
 
@@ -208,31 +183,6 @@ let getRaw (ctx: string) (path: string) (timeout: int) (c: Client) : JS.Promise<
     with ex ->
       c.log (sprintf "[warn] %s: %O" ctx ex)
       return None
-  }
-
-/// GET from dashboard port, parse JSON on 200, None otherwise.
-let dashGetJson<'a> (ctx: string) (path: string) (timeout: int) (parse: obj -> 'a) (c: Client) : JS.Promise<'a option> =
-  promise {
-    try
-      let! resp = dashHttpGet c path timeout
-      match resp.statusCode with
-      | 200 -> return jsonParse resp.body |> parse |> Some
-      | _ -> return None
-    with ex ->
-      c.log (sprintf "[warn] %s: %O" ctx ex)
-      return None
-  }
-
-/// POST to dashboard port, succeed on 2xx, fail otherwise.
-let dashPostOutcome (ctx: string) (path: string) (body: string) (timeout: int) (c: Client) : JS.Promise<ApiOutcome> =
-  promise {
-    try
-      let! resp = dashHttpPost c path body timeout
-      match resp.statusCode with
-      | s when s >= 200 && s < 300 -> return Succeeded None
-      | _ -> return Failed (sprintf "%s: HTTP %d" ctx resp.statusCode)
-    with err ->
-      return Failed (sprintf "%s: %s" ctx (string err))
   }
 
 let isRunning (c: Client) =
@@ -399,7 +349,7 @@ let stopSession (sessionId: string) (c: Client) =
 /// where `startDaemon` short-circuits on a running daemon, so restart silently
 /// did nothing having just told you to go use the terminal.
 ///
-/// The route lives on the DASHBOARD port, not the MCP one.
+/// The route lives on the daemon's control port (`dashboardPort`), not the MCP one.
 let shutdownDaemon (c: Client) : JS.Promise<ApiOutcome> =
   promise {
     try
@@ -451,14 +401,9 @@ let private syncDiscoveredPorts (status: SystemStatus) (c: Client) =
     updatePorts next.McpPort next.DashboardPort c
   | false -> ()
 
-let private fallbackStatusForPort (mcpPort: int) =
-  { supervised = false
-    restartCount = 0
-    version = "unknown"
-    apiVersion = 0
-    mcpPort = Some mcpPort
-    dashboardPort = Some (deriveDashboardPort mcpPort) }
-
+/// `GET /api/daemon-info` on the control port is the discovery contract: a
+/// candidate that does not answer it with 200 is not a daemon this extension
+/// can talk to.
 let private probeDaemonInfoAt (mcpPort: int) =
   promise {
     let dashboardPort = deriveDashboardPort mcpPort
@@ -467,14 +412,8 @@ let private probeDaemonInfoAt (mcpPort: int) =
       let! daemonInfoResp = httpGetRaw (sprintf "http://localhost:%d/api/daemon-info" dashboardPort) 2000
 
       match daemonInfoResp.statusCode with
-      | 200 ->
-        return Some (jsonParse daemonInfoResp.body |> parseSystemStatus)
-      | _ ->
-        let! dashboardResp = httpGetRaw (sprintf "http://localhost:%d/dashboard" dashboardPort) 2000
-
-        match dashboardResp.statusCode with
-        | 200 -> return Some (fallbackStatusForPort mcpPort)
-        | _ -> return None
+      | 200 -> return Some (jsonParse daemonInfoResp.body |> parseSystemStatus)
+      | _ -> return None
     with _ ->
       return None
   }
@@ -511,40 +450,6 @@ let getSystemStatus (c: Client) =
     return result
   }
 
-let parseWarmupContext (parsed: obj) =
-  let assemblies =
-    fieldArray "assembliesLoaded" parsed
-    |> Option.defaultValue [||]
-    |> Array.map (fun a ->
-      { Name = fieldString "name" a |> Option.defaultValue ""
-        Path = fieldString "path" a |> Option.defaultValue ""
-        NamespaceCount = fieldInt "namespaceCount" a |> Option.defaultValue 0
-        ModuleCount = fieldInt "moduleCount" a |> Option.defaultValue 0 })
-  let opened =
-    fieldArray "namespacesOpened" parsed
-    |> Option.defaultValue [||]
-    |> Array.map (fun b ->
-      { Name = fieldString "name" b |> Option.defaultValue ""
-        IsModule = fieldBool "isModule" b |> Option.defaultValue false
-        Source = fieldString "source" b |> Option.defaultValue "" })
-  let failed =
-    fieldArray "failedOpens" parsed
-    |> Option.defaultValue [||]
-    |> Array.map (fun f -> tryCastStringArray f |> Option.defaultValue [||])
-  let timing = fieldObj "phaseTiming" parsed
-  let totalMs =
-    match timing with
-    | None -> fieldInt "warmupDurationMs" parsed |> Option.defaultValue 0
-    | Some t -> fieldInt "totalMs" t |> Option.defaultValue 0
-  { SourceFilesScanned = fieldInt "sourceFilesScanned" parsed |> Option.defaultValue 0
-    AssembliesLoaded = assemblies
-    NamespacesOpened = opened
-    FailedOpens = failed
-    WarmupDurationMs = totalMs }
-
-let getWarmupContext (sessionId: string) (c: Client) =
-  dashGetJson "getWarmupContext" (sprintf "/api/sessions/%s/warmup-context" sessionId) 5000 parseWarmupContext c
-
 type CompletionResult =
   { label: string
     kind: string
@@ -558,8 +463,7 @@ let getCompletions (code: string) (cursorPosition: int) (workingDirectory: strin
         {| code = code
            cursor_position = cursorPosition
            working_directory = workingDirectory |> Option.defaultValue "" |}
-      // The dashboard endpoint is SSE for its live dropdown. Editor clients
-      // need the JSON contract exposed by the MCP HTTP API.
+      // Editor clients use the JSON completion contract on the MCP HTTP API.
       let! resp = httpPost c "/api/completions" (jsonStringify payload) 10000
       match resp.statusCode with
       | 200 ->
@@ -609,8 +513,7 @@ let exploreCompletions (qualifiedName: string) (sessionId: string) (c: Client) =
   promise {
     try
       let code = sprintf "%s." qualifiedName
-      // /dashboard/completions answers as an SSE stream for the dashboard's dropdown;
-      // the JSON contract is the MCP API, routed to this session by id.
+      // The JSON completion contract is the MCP API, routed to this session by id.
       let body = jsonStringify {| code = code; cursor_position = code.Length; sessionId = sessionId |}
       let! resp = httpPost c "/api/completions" body 10000
       match resp.statusCode with

@@ -9,14 +9,11 @@
 ///
 /// The "second window" here is a tiny, purpose-built Xlib client this file
 /// spawns on its own connection (`FakeAppWindow` below) rather than a real
-/// browser: `Actors.App.launch`'s `Raylib`/`Console` path (the ONLY path
-/// that does its own X11 window discovery — `Web` never touches X11 at all,
-/// it drives Chromium through `Actors/Dashboard.fs`'s Playwright handle) is
-/// exercised against exactly the shape those kinds actually produce — one
-/// stable top-level window that maps once and stays put — which is a more
-/// faithful stand-in for "the app the daemon's run-app started" than a real
-/// browser's own multi-window, multi-generation startup churn under
-/// software rendering.
+/// app: `Actors.App.launch`'s `Raylib`/`Console` path (its X11 window
+/// discovery) is exercised against exactly the shape those kinds actually
+/// produce — one stable top-level window that maps once and stays put —
+/// which is a faithful, deterministic stand-in for "the app the daemon's
+/// run-app started".
 module Bozzetto.Demos.Tests.AppActorTests
 
 open System
@@ -190,9 +187,6 @@ let private xvfbAvailable =
 
 let private baseConfig (displayName: string) : App.LaunchConfig =
   { Display = displayName
-    AppUrl = None
-    ChromePath = "/usr/bin/chromium"
-    UserDataDir = ""
     ReadyTimeoutMs = 15_000 }
 
 [<Tests>]
@@ -207,14 +201,6 @@ let tests =
         match result with
         | Error message -> message |> Expect.stringContains "explains why NoApp cannot launch" "NoApp"
         | Ok _ -> failwith "AppKind.NoApp must never succeed — there is no window to capture"
-
-      testCase "AppKind.Web with no resolved AppUrl fails loud instead of hanging" <| fun _ ->
-        let config = { baseConfig ":1234" with AppUrl = None }
-        let result = App.launch config { X = 0; Y = 0; W = 100; H = 100 } AppKind.Web |> Async.RunSynchronously
-
-        match result with
-        | Error message -> message |> Expect.stringContains "explains the missing AppUrl" "AppUrl"
-        | Ok _ -> failwith "AppKind.Web with no AppUrl must never succeed"
 
       testCase "a genuinely absent second window times out with an actionable Error, never a hang" <| fun _ ->
         if not xvfbAvailable then

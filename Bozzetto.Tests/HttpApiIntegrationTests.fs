@@ -22,16 +22,16 @@ let repoRoot =
   Path.GetFullPath(
     Path.Combine(__SOURCE_DIRECTORY__, ".."))
 
-// The Falco + Datastar sample webapp. The HTTP API integration tests run
-// against this instead of Bozzetto.Tests.fsproj so the session loads a small,
-// separate project whose init profile starts a real app.
-let webSampleProject =
+// The console ticker sample. The HTTP API integration tests run against this
+// instead of Bozzetto.Tests.fsproj so the session loads a small, separate
+// project that ci-pipeline.fsx builds before the integration tiers.
+let sampleProject =
   Path.Combine(
     repoRoot,
-    "samples", "demos", "Bozzetto.Samples.WebappDatastar",
-    "Bozzetto.Samples.WebappDatastar.fsproj")
+    "samples", "demos", "Bozzetto.Samples.ConsoleTicker",
+    "Bozzetto.Samples.ConsoleTicker.fsproj")
 
-let testProjectDir = Path.GetDirectoryName(webSampleProject)
+let testProjectDir = Path.GetDirectoryName(sampleProject)
 
 let smokeSampleProject =
   Path.Combine(
@@ -57,8 +57,8 @@ let private reportsPid = Bozzetto.Tests.TestInfrastructure.DaemonIdentity.report
 let private daemonStartupHealthMaxAttempts =
   int (Math.Ceiling(daemonStartupHealthTimeout.TotalMilliseconds / daemonStartupHealthPollInterval.TotalMilliseconds))
 
-/// A daemon binds TWO ports: the MCP port it is given, and the dashboard at
-/// that port + 1. Both are released before the daemon starts — a
+/// A daemon binds TWO ports: the MCP port it is given, and the control
+/// listener at that port + 1. Both are released before the daemon starts — a
 /// check-then-use window that cannot be closed without handing a bound
 /// socket to another process. `startDaemonWithArgs` therefore does not trust
 /// the port afterwards: it proves the daemon that answers is the one it
@@ -147,7 +147,7 @@ let startDaemonWithArgs (port: int) (workingDir: string) (args: string list) = t
   // take the port first: ours failed to bind and exited, the neighbour's /health
   // answered, this returned "ready", and the test failed seconds later with
   // `Connection refused` once the neighbour shut down — passing every time in
-  // isolation and failing under full-suite load. The dashboard's
+  // isolation and failing under full-suite load. The control listener's
   // /api/daemon-info reports the daemon's own pid, so readiness is proven
   // against the process this call spawned, and an early exit fails fast with a
   // message that says what happened instead of a misleading error later.
@@ -176,7 +176,7 @@ let startDaemonWithArgs (port: int) (workingDir: string) (args: string list) = t
     client.Dispose()
     failwith (
       sprintf
-        "Daemon exited with code %d before becoming ready on port %d — most often the port (or its +1 dashboard port) was taken between reservation and bind by a parallel suite's daemon."
+        "Daemon exited with code %d before becoming ready on port %d — most often the port (or its +1 control port) was taken between reservation and bind by a parallel suite's daemon."
         code port)
   | false, false ->
     try proc.Kill() with _ -> ()
@@ -400,7 +400,7 @@ let integrationTests =
 
     Integration.retireFSharp <| testTask "GET /health includes session diagnostics when a session exists" {
       let client = getSharedClient()
-      do! ensureSession client webSampleProject testProjectDir
+      do! ensureSession client sampleProject testProjectDir
       let payload =
         {| code = "let healthDiagnostics = 42;;"
            working_directory = testProjectDir |}
@@ -460,7 +460,7 @@ let integrationTests =
 
     Integration.retireFSharp <| testTask "POST /exec reports eval failure truthfully (200, success=false)" {
       let client = getSharedClient()
-      do! ensureSession client webSampleProject testProjectDir
+      do! ensureSession client sampleProject testProjectDir
       let payload =
         {| code = """let x: int = "not an int";;"""
            working_directory = testProjectDir |}
@@ -509,7 +509,7 @@ let integrationTests =
 
     Integration.retireFSharp <| testTask "POST /exec routes to existing session by working_directory" {
       let client = getSharedClient()
-      do! ensureSession client webSampleProject testProjectDir
+      do! ensureSession client sampleProject testProjectDir
       let payload =
         {| code = "let routedEval = true;;"
            working_directory = testProjectDir |}
@@ -532,7 +532,7 @@ let integrationTests =
 
     Integration.retireFSharp <| testTask "Multiple sequential evals maintain session scope" {
       let client = getSharedClient()
-      do! ensureSession client webSampleProject testProjectDir
+      do! ensureSession client sampleProject testProjectDir
       let p1 = {| code = "let scopeVal = 42;;" ; working_directory = testProjectDir |}
       let! s1, _ = postJson client "/exec" p1
       s1 |> Expect.equal "eval1 200" 200
@@ -567,7 +567,7 @@ let integrationTests =
 
     Integration.retireFSharp <| testTask "POST /exec then GET /api/status shows eval count > 0" {
       let client = getSharedClient()
-      do! ensureSession client webSampleProject testProjectDir
+      do! ensureSession client sampleProject testProjectDir
       let payload =
         {| code = "let apiTestVal = 42;;"
            working_directory = testProjectDir |}
@@ -710,7 +710,7 @@ let integrationTests =
 
     Integration.retireFSharp <| testTask "GET /api/recent-events returns content after eval" {
       let client = getSharedClient()
-      do! ensureSession client webSampleProject testProjectDir
+      do! ensureSession client sampleProject testProjectDir
       let payload =
         {| code = "1 + 1;;"
            working_directory = testProjectDir |}
@@ -726,7 +726,7 @@ let integrationTests =
 
     Integration.retireFSharp <| testTask "POST /reset resets the session" {
       let client = getSharedClient()
-      do! ensureSession client webSampleProject testProjectDir
+      do! ensureSession client sampleProject testProjectDir
       let payload = {| code = "let resetTestVal = 1;;" ; working_directory = testProjectDir |}
       let! evalStatus, _ = postJson client "/exec" payload
       evalStatus |> Expect.equal "eval 200" 200
@@ -742,7 +742,7 @@ let integrationTests =
 
     Integration.retireFSharp <| testTask "POST /reset after eval allows re-eval" {
       let client = getSharedClient()
-      do! ensureSession client webSampleProject testProjectDir
+      do! ensureSession client sampleProject testProjectDir
       let p1 = {| code = "let resetReeval = 99;;" ; working_directory = testProjectDir |}
       let! _, _ = postJson client "/exec" p1
 
@@ -795,7 +795,7 @@ let integrationTests =
 
     Integration.retireFSharp <| testTask "POST /api/sessions/stop stops a session" {
       let client = getSharedClient()
-      do! ensureSession client webSampleProject testProjectDir
+      do! ensureSession client sampleProject testProjectDir
       let p = {| code = "let stopTest = 1;;" ; working_directory = testProjectDir |}
       let! _, _ = postJson client "/exec" p
 
@@ -819,7 +819,7 @@ let integrationTests =
 
     Integration.retireFSharp <| testTask "POST /hard-reset with rebuild=false succeeds" {
       let client = getSharedClient()
-      do! ensureSession client webSampleProject testProjectDir
+      do! ensureSession client sampleProject testProjectDir
       let payload = {| code = "let hrTest = 1;;" ; working_directory = testProjectDir |}
       let! evalStatus, _ = postJson client "/exec" payload
       evalStatus |> Expect.equal "eval 200" 200
@@ -843,7 +843,7 @@ let httpApiRoutingTests =
       let! proc, client =
         startDaemonWithArgs port repoRoot []
       try
-        // Every other test in this file requests `webSampleProject`, the
+        // Every other test in this file requests `sampleProject`, the
         // actual .fsproj sitting in `testProjectDir` (see its own comment:
         // "instead of Bozzetto.Tests.fsproj so the session loads a small,
         // separate project"). This one named the literal string
@@ -855,7 +855,7 @@ let httpApiRoutingTests =
         // deterministically times out waiting for a Ready that was never
         // coming for the wrong project name.
         let! createStatus, createBody =
-          createSession client webSampleProject testProjectDir
+          createSession client sampleProject testProjectDir
         createStatus |> Expect.equal "session create should succeed" 200
 
         let! ready, sessionsBody =

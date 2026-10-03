@@ -6,8 +6,8 @@ module Bozzetto.Demos.Compose
 open Bozzetto.Demos.Domain
 
 /// The editor pane to magnify (§4.6's magnifier: "a 2× picture-in-picture of
-/// the edited line"), if the layout places one. A `LayoutTemplate.DashboardOnly`
-/// scenario (§9: sessions/agent demos) has no editor pane, so `Magnifier` is
+/// the edited line"), if the layout places one. A `LayoutTemplate.AgentOnly`
+/// scenario (agent/cohort demos) has no editor pane, so `Magnifier` is
 /// `None` for it — never a made-up rect. Which *step* is a `Type` action (so
 /// the magnifier should only show for that step, not the whole video) needs
 /// `StepLog` to carry the originating `Action`, which it does not yet

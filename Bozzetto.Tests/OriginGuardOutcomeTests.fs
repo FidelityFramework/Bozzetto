@@ -8,7 +8,7 @@ module Bozzetto.Tests.OriginGuardOutcomeTests
 /// in the default suite and it is a good test. It cannot fail when the
 /// middleware is not INSTALLED — and installation is the part that carries the
 /// risk: `useOriginGuard` is called from exactly two places
-/// (`McpServer.fs` for the MCP listener, `DaemonMode.fs` for the dashboard
+/// (`McpServer.fs` for the MCP listener, `ControlListener.fs` for the control
 /// listener), each one line, each easy to drop or to move after `UseRouting`
 /// where it can no longer stop a route from running. Today a regression that
 /// deletes either line ships green, and the standing audit finding is that any
@@ -41,14 +41,14 @@ module Infra = Bozzetto.Tests.TestInfrastructure
 
 // ─── The daemon under test ──────────────────────────────────────────────────
 
-/// The daemon binds the MCP port AND the dashboard on port+1 — both proven
+/// The daemon binds the MCP port AND the control listener on port+1 — both proven
 /// free right now by `Harness.reserveLoopbackPort` (`TestPorts.reservePair`
 /// underneath), scanning only this tier's assigned BOZZETTO_TEST_PORT_RANGE
 /// when ci-pipeline.fsx runs several tiers concurrently, so a
 /// concurrently-running tier's daemon can never win the reserve-then-bind
 /// race for this pair.
 let private mcpPort = Harness.reserveLoopbackPort ()
-let private dashboardPort = mcpPort + 1
+let private controlPort = mcpPort + 1
 
 /// A directory the "attacker" would point a session at. Real and readable, so
 /// a create that got through would genuinely succeed — the rejection cannot be
@@ -126,26 +126,27 @@ let private sendTo (port: int) (p: Probe) = task {
 }
 
 let private sendToMcp (p: Probe) = sendTo mcpPort p
-let private sendToDashboard (p: Probe) = sendTo dashboardPort p
+let private sendToControl (p: Probe) = sendTo controlPort p
 
 /// The harness hands the daemon back once `/health` answers on the MCP port —
-/// which says nothing about the dashboard. The daemon binds the two listeners
-/// independently (`startDashboardServer` is a separate WebApplication started
-/// after the MCP host, and it SWALLOWS a bind failure with a log line), so a
-/// dashboard probe sent on MCP readiness alone can land on a port that is not
-/// listening yet, or never will. Wait for the dashboard's own listener,
-/// bounded, so a genuine "the dashboard never came up" failure reports itself
-/// as that instead of as a bare connection-refused inside an assertion.
-let private awaitDashboardListener () = task {
+/// which says nothing about the control listener. The daemon binds the two
+/// listeners independently (`ControlListener.start` is a separate
+/// WebApplication started after the MCP host, and it SWALLOWS a bind failure
+/// with a log line), so a control probe sent on MCP readiness alone can land
+/// on a port that is not listening yet, or never will. Wait for the control
+/// listener itself, bounded, so a genuine "the control listener never came
+/// up" failure reports itself as that instead of as a bare connection-refused
+/// inside an assertion.
+let private awaitControlListener () = task {
   let! up =
     Infra.waitForAsync 60_000 (fun () -> task {
       try
-        let! status, _ = sendToDashboard (probe HttpMethod.Get "/dashboard")
+        let! status, _ = sendToControl (probe HttpMethod.Get "/api/daemon-info")
         return status > 0
       with _ -> return false })
   up
   |> Expect.isTrue
-       (sprintf "the daemon's dashboard listener must come up on port %d" dashboardPort)
+       (sprintf "the daemon's control listener must come up on port %d" controlPort)
 }
 
 let private sessionCount (client: HttpClient) = task {
@@ -271,23 +272,16 @@ let originGuardOutcomeTests =
 
     // ── The SECOND listener ─────────────────────────────────────────────────
 
-    testTask "the dashboard listener is guarded too, and shutdown survives the attack" {
-      // The dashboard is a separate WebApplication with its own one-line
-      // `useOriginGuard` call. Dropping either line leaves the other green, so
-      // both listeners are asserted.
-      do! awaitDashboardListener ()
-      let! rejectedEval =
-        probe HttpMethod.Post "/dashboard/eval"
-        |> jsonBody {| code = "1 + 1;;" |}
-        |> fun p -> { p with Origin = Some "http://evil.example"; SecFetchSite = Some "cross-site" }
-        |> sendToDashboard
-      rejectedEval |> expectRejection 403 "http://evil.example"
-
+    testTask "the control listener is guarded too, and shutdown survives the attack" {
+      // The control listener is a separate WebApplication with its own
+      // one-line `useOriginGuard` call. Dropping either line leaves the other
+      // green, so both listeners are asserted.
+      do! awaitControlListener ()
       let! rejectedShutdown =
         { probe HttpMethod.Post "/api/shutdown" with
             Origin = Some "http://evil.example"
             SecFetchSite = Some "cross-site" }
-        |> sendToDashboard
+        |> sendToControl
       rejectedShutdown |> expectRejection 403 "http://evil.example"
 
       // The outcome: the daemon is still alive and still serving. A 403 that
@@ -299,22 +293,19 @@ let originGuardOutcomeTests =
       status |> Expect.equal "the daemon still serves /health after the attack" 200
     }
 
-    // ── The dashboard's own page must still work ────────────────────────────
+    // ── The control listener's own origin must still work ──────────────────
 
-    testTask "the dashboard's own origin is allowed through to its routes" {
-      // Same-origin, own Origin header: this is what Datastar sends from the
-      // real dashboard page. A guard that rejected it would be a broken
-      // product, so the gate asserts the allow direction on this listener too.
-      do! awaitDashboardListener ()
+    testTask "the control listener's own origin is allowed through to its routes" {
+      // Same-origin, own Origin header. A guard that rejected it would break
+      // the daemon's own pages, so the gate asserts the allow direction on
+      // this listener too.
+      do! awaitControlListener ()
       let! status, body =
-        probe HttpMethod.Post "/dashboard/eval"
-        |> jsonBody {| code = "1 + 1;;" |}
-        |> fun p ->
-          { p with
-              Origin = Some (sprintf "http://127.0.0.1:%d" dashboardPort)
-              SecFetchSite = Some "same-origin" }
-        |> sendToDashboard
+        { probe HttpMethod.Get "/api/daemon-info" with
+            Origin = Some (sprintf "http://127.0.0.1:%d" controlPort)
+            SecFetchSite = Some "same-origin" }
+        |> sendToControl
       status
-      |> Expect.notEqual (sprintf "the dashboard's own page must not be refused (body: %s)" body) 403
+      |> Expect.equal (sprintf "the control listener's own origin must reach /api/daemon-info (body: %s)" body) 200
     }
   ]

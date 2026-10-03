@@ -2,12 +2,13 @@
 
 One Bozzetto daemon runs per machine. It starts with no project loaded, and creates sessions on demand. I didn't
 want a daemon that assumes it knows what you're working on before you've told it. Each session is a separate OS
-worker process with its own FSI, loaded project assemblies, and file watcher. VS Code, Neovim, the web
-dashboard, and MCP clients all talk to the daemon through session-scoped HTTP and SSE contracts. See the
+worker process with its own FSI, loaded project assemblies, and file watcher. VS Code, Neovim, and MCP
+clients all talk to the daemon through session-scoped HTTP and SSE contracts. See the
 [architecture diagram](../Readme.md#-one-daemon-every-client) for how clients connect.
 
 The daemon listens on port 47749 for MCP (streamable HTTP at `/`, legacy SSE at `/sse`) and the editor state
-stream (`/events`). The web dashboard runs on port 47750 at `/dashboard`. Target framework is net10.0; the
+stream (`/events`). Port 47750 carries only a minimal control listener (`/api/daemon-info`, `/api/shutdown`),
+kept separate from the MCP listener so `boz status` and `boz stop` still get answers if it dies. Target framework is net10.0; the
 solution file is `Bozzetto.slnx`.
 
 The test suite uses Expecto unit tests, FsCheck property-based state-machine tests, Verify snapshots, and
@@ -20,7 +21,7 @@ numbers can lag between restamps. If you spot a stale number, that's why.
 
 ```
 Bozzetto.Core/       — Shared engine, session, testing, persistence, and protocol logic
-Bozzetto/            — CLI tool, daemon, MCP server, and dashboard
+Bozzetto/            — CLI tool, daemon, and MCP server
 Bozzetto.Tests/      — Expecto test project
 bozzetto-vscode/     — VS Code extension (Fable F#→JS)
 docs/              — GitHub Pages site
@@ -33,7 +34,7 @@ The separate upstream Neovim plugin, [sagefs.nvim](https://github.com/WillEhrend
 Current clients use the daemon as the source of truth:
 
 ```
-Editor / Dashboard / MCP command
+Editor / MCP command
   → session-scoped daemon endpoint
     → isolated FSI worker
       → structured result and SSE state updates

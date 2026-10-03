@@ -1,24 +1,20 @@
 /// `agent-mcp` (demo-actors-plan.md §2.4, matrix #17): a real, three-tool
 /// MCP exchange against the cell's own daemon — `create_project_session` opens
-/// the SAME real `WebappDatastar` sample every other scenario proves against
-/// (never a bare Quick Start session with nothing real to evaluate, §10),
-/// `get_session_status` is genuinely polled until the daemon itself reports
-/// `"state":"Ready"`, and `send_fsharp_code` evaluates a live expression
-/// (`List.sum [ 1 .. 10 ]`, the SAME expression `repl-dashboard` already
-/// proves against a real session — see `Actors/Agent.fs`'s `argumentsFor`
-/// doc comment for why the project's OWN qualified state is deliberately
-/// NOT used here: a real, live `record agent-mcp` run reproduced a genuine
-/// session-warmup race in the product's own auto-open pipeline, out of this
-/// island's scope to fix) — each step's Expectation is proven by a REAL MCP
-/// JSON-RPC response, never a DOM string: see `Actors/Agent.fs`'s own doc
-/// comment for exactly how a non-input `LiveActor.Observe` receives and
-/// executes this.
+/// the real `ConsoleTicker` sample (never a bare session with nothing real
+/// to evaluate, §10), `get_session_status` is genuinely polled until the
+/// daemon itself reports `"state":"Ready"`, and `send_fsharp_code` evaluates
+/// a live expression (`List.sum [ 1 .. 10 ]` — see `Actors/Agent.fs`'s
+/// `argumentsFor` doc comment for why a project-independent expression is
+/// used) — each step's Expectation is proven by a REAL MCP JSON-RPC
+/// response, never a DOM string: see `Actors/Agent.fs`'s own doc comment for
+/// exactly how a non-input `LiveActor.Observe` receives and executes this.
 module Bozzetto.Demos.Scenarios.Agent
 
 open Bozzetto.Demos.Domain
 
 /// Packs `"<step label><tool name>"` into `PageTextContains`'s
-/// selector field — the one opaque, freeform string the Agent actor's
+/// selector field (a historical name — `Domain.fs`'s own doc) — the one
+/// opaque, freeform string the Agent actor's
 /// `Observe` receives on the wire (`Actors/Agent.fs`'s `parseWire`/
 /// `argumentsFor`/`expectedSubstringFor` do the real work of resolving
 /// arguments and checking the real response; nothing here is a DOM
@@ -33,8 +29,7 @@ let private mcpStep (label: string) (tool: McpTool) : Expectation =
 /// This step's Action carries no click/type target at all — there is
 /// nothing to click for a step whose real substance is an MCP tool call —
 /// so `Action.Await` (already the domain's own "no click, just wait for
-/// something real to happen" shape, exactly what `lt-dashboard`'s step 4
-/// uses) is the honest fit. The carried `Signal` is not yet read by
+/// something real to happen" shape) is the honest fit. The carried `Signal` is not yet read by
 /// `Runtime.fs`'s `wireStepOf` for any `Action.Await` case (documentation
 /// only, today) — `SessionReady` is the closest existing case to "the real
 /// MCP exchange for this step has genuinely completed".
@@ -45,8 +40,11 @@ let agentMcp: Scenario =
     Capability = Capability.Agent
     Client = Client.Agent
     App = AppKind.NoApp
-    Sample = Sample.WebappDatastar
-    Layout = LayoutTemplate.DashboardOnly
+    // The lightest real sample: `record` pre-builds `scenario.Sample` on the
+    // host for every scenario, and this demo's expression does not depend on
+    // the project's own code.
+    Sample = Sample.ConsoleTicker
+    Layout = LayoutTemplate.AgentOnly
     Steps =
       [ { Caption = Caption.mk "1/3 · create_project_session opens a real project — a genuine MCP tool call"
           Action = mcpAction
@@ -60,7 +58,7 @@ let agentMcp: Scenario =
           Action = mcpAction
           Expect = mcpStep "3/3 " (McpTool.current CurrentMcpTool.SendFsharpCode)
           Dwell = Dwell.long } ]
-    Cost = CostClass.web
+    Cost = CostClass.console
     Masks = [] }
 
 let scenarios: Scenario list = [ agentMcp ]

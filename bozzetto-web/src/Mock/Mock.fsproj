@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Dev-only mock of Bozzetto's /ui/bridge, compiled by Fable for node and
+       loaded by the Vite dev server in mock mode. Never welded. -->
+  <PropertyGroup>
+    <RootNamespace>Bozzetto.Web.Mock</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../Shared/Protocol.fs" />
+    <Compile Include="Codec.fs" />
+    <Compile Include="Bridge.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fable.Core" />
+  </ItemGroup>
+
+</Project>

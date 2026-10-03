@@ -61,7 +61,7 @@ let explicitDaemonInvocationUsesAlternatePort (args: string array) =
   requestedPort <> defaultPort
 
 let deprecatedClientMessage name =
-  sprintf "The '%s' client is deprecated and no longer shipped. Use http://localhost:47750/dashboard." name
+  sprintf "The '%s' client is deprecated and no longer shipped. Use an editor integration, an MCP client, or the Composer page at http://localhost:47749/composer." name
 
 let waitForDaemonReady
   (sleep: int -> unit)
@@ -123,9 +123,9 @@ let private unimplementedFlagGuidance =
   function
   | Args.UnimplementedFlag.Proj
   | Args.UnimplementedFlag.Sln ->
-    "The daemon no longer loads a project at startup — it always starts bare. Start `boz`, then create a session for your project from your editor, an MCP client, or the dashboard (http://localhost:47750/dashboard)."
+    "The daemon no longer loads a project at startup — it always starts bare. Start `boz`, then create a session for your project from your editor or an MCP client."
   | Args.UnimplementedFlag.NoWatch ->
-    "File watching has no daemon-startup or session-creation control today — every worker is spawned with watching on, and no client (MCP, dashboard, editors) can request otherwise yet. This flag is accepted for recognition but does nothing."
+    "File watching has no daemon-startup or session-creation control today — every worker is spawned with watching on, and no client (MCP, editors) can request otherwise yet. This flag is accepted for recognition but does nothing."
 
 /// `boz <unimplemented flags>` must refuse rather than silently start a
 /// daemon that ignored what was asked of it. Pure decision over the raw args:
@@ -401,7 +401,7 @@ let statusCommand
     printfn "  Started:    %s" (info.StartedAt.ToString("o"))
     printfn "  Directory:  %s" info.WorkingDirectory
     printfn "  Version:    %s" info.Version
-    printfn "  Dashboard:  http://localhost:%d/dashboard" info.DashboardPort
+    printfn "  Composer:   http://localhost:%d/composer" info.Port
     printfn "  MCP (Streamable HTTP): http://localhost:%d/" info.Port
     printfn "  MCP (SSE, older clients): http://localhost:%d/sse" info.Port
     match fetchSessionCount info with
@@ -527,12 +527,12 @@ let main args =
     printfn "  Bozzetto runs as a daemon by default. The daemon provides:"
     printfn "    MCP server      http://localhost:47749/     (Streamable HTTP)"
     printfn "                    http://localhost:47749/sse (SSE for older clients)"
-    printfn "    Dashboard       http://localhost:47750/dashboard  (live web UI)"
     printfn "    Composer        http://localhost:47749/composer   (shared Clef projects)"
+    printfn "    Control         http://localhost:47750/api/daemon-info  (status and shutdown)"
     printfn "  URLs above use the default ports."
     printfn ""
-    printfn "  The dashboard, MCP agents, and editor integrations are clients of the daemon."
-    printfn "  If a daemon is already running, `boz` reports its dashboard URL."
+    printfn "  The Composer page, MCP agents, and editor integrations are clients of the daemon."
+    printfn "  If a daemon is already running, `boz` reports its Composer URL."
     printfn ""
     printfn "Clef/Composer Quick Start:"
     printfn "  1. boz status — find the shared daemon. If absent, use scripts/start-shared-daemon"
@@ -623,7 +623,7 @@ let main args =
       runDaemon args
     | false, AttachToExistingDaemon info ->
       printfn "Bozzetto daemon already running (PID %d, port %d)." info.Pid info.Port
-      printfn "Dashboard: http://localhost:%d/dashboard" info.DashboardPort
+      printfn "Composer: http://localhost:%d/composer" info.Port
       0
     | false, StartNewDaemon ->
       runDaemon args

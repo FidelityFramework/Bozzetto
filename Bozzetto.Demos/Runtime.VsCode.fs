@@ -8,7 +8,7 @@
 ///
 /// Deliberate shape choice: `Bozzetto.Demos.Actors.VsCode.launch` (not a bash
 /// `innerScript` prologue) owns spawning VS Code — see that module's own
-/// doc for why (symmetry with `Actors/Dashboard.fs`, and it is the shape
+/// doc for why (symmetry with the other self-spawning actors, and it is the shape
 /// actually proven live against a real VS Code build on Xvfb). This module
 /// therefore contributes cell BINDS (the VS Code build + this extension
 /// directory, both RO) rather than an `actorPrologue` bash fragment; the

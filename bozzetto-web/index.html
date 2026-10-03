@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bozzetto</title>
+  <!-- The Clef logo, served by the daemon beside this page (relative, so no
+       URL is welded in). As on clef-lang.com, the app switches the SVG to
+       favicon-dark.svg under a dark color scheme. -->
+  <link rel="icon shortcut" href="favicon.ico" sizes="32x32">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" id="favicon-svg">
+  <!-- No-flash backgrounds (Braidpoint base-100): dark first; the app applies
+       the saved theme. -->
+  <style>
+    html { background-color: #1a1a1a; }
+    html[data-theme="light"] { background-color: #ffffff; }
+    body { background-color: inherit; }
+  </style>
+  <link rel="stylesheet" href="./src/Frontend/styles.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="./output/Main.fs.jsx"></script>
+</body>
+</html>

@@ -311,6 +311,16 @@ module ExpensiveWorkLease =
     | Some lease when lease.Holder = holder -> release leaseId state
     | _ -> state, ReleaseOutcome.AlreadyGone
 
+  /// A granted lease as observers see it. Never its LeaseId: that is the
+  /// release capability. Named (not anonymous) so another assembly can take
+  /// it as a parameter; qualified so its labels shadow no other record's.
+  [<RequireQualifiedAccess>]
+  type GrantView = { Holder: string; Kind: string; GrantedAt: DateTimeOffset; ExpiresAt: DateTimeOffset }
+
+  /// A queued request as observers see it.
+  [<RequireQualifiedAccess>]
+  type QueueView = { Holder: string; Kind: string; RequestedAt: DateTimeOffset }
+
   /// For observability — `get_fsi_status`/a health payload's own view of
   /// the pool: how many leases are out and how deep the queue is, after
   /// reclaiming anything expired.
@@ -323,18 +333,15 @@ module ExpensiveWorkLease =
         live.Active
         |> List.sortBy (fun lease -> lease.Holder, Kind.toToken lease.Kind)
         |> List.map (fun lease ->
-          {|
-            Holder = lease.Holder
-            Kind = Kind.toToken lease.Kind
-            ExpiresAt = lease.ExpiresAt
-          |})
+          { GrantView.Holder = lease.Holder
+            GrantView.Kind = Kind.toToken lease.Kind
+            GrantView.GrantedAt = lease.GrantedAt
+            GrantView.ExpiresAt = lease.ExpiresAt })
       Queue =
         live.Queue
         |> List.sortBy (fun request -> request.Seq)
         |> List.map (fun request ->
-          {|
-            Holder = request.Holder
-            Kind = Kind.toToken request.Kind
-            RequestedAt = request.FirstAskedAt
-          |})
+          { QueueView.Holder = request.Holder
+            QueueView.Kind = Kind.toToken request.Kind
+            QueueView.RequestedAt = request.FirstAskedAt })
     |}

@@ -17,8 +17,8 @@
 /// this actor needs here keeps that shared edge exactly as Island F left it).
 ///
 /// Selector vocabulary (the opaque strings `ResolveRect`/`Observe` take, per
-/// the seam's own doc: "DOM for dashboard, ext-host for VS Code, RPC for
-/// nvim" — `CellAgent.fs`'s `LiveActor` doc): see `Selector` below. It is
+/// the seam's own doc: "RPC for nvim" — `Actors/Actor.fs`'s `LiveActor`
+/// doc): see `Selector` below. It is
 /// deliberately shaped to be the direct wire-string image of the two
 /// Neovim-specific `Domain` cases already reserved for this actor
 /// (`Target.NvimCommandLine`, `Expectation.NvimBufferContains`) plus the
@@ -603,8 +603,8 @@ let private isTruthy (text: string) : bool =
   | _ -> true
 
 /// Observes a `Selector` through nvim's own RPC — the actor's semantic
-/// surface, exactly like the Dashboard actor's DOM `WaitForSelectorAsync`
-/// (§4.7 layer 1: proof the action actually worked, never a pixel guess).
+/// surface (§4.7 layer 1: proof the action actually worked, never a pixel
+/// guess).
 /// Polls every 300ms until `timeoutMs` elapses; an unrecognized selector
 /// returns `false` rather than a silent, fabricated pass (the job's own
 /// "never fake a step" rule).
@@ -648,11 +648,9 @@ let observe (handle: Handle) (selector: string) (timeoutMs: float) : Async<bool>
 /// commands (`sagefs.nvim/lua/sagefs/commands.lua`, `app_run.lua` — real
 /// user commands, not invented ones: `SageFsRunApp`/`SageFsStopApp`/
 /// `SageFsCreateSession`/`SageFsEvalLine` are all registered there at the
-/// pinned commit this actor's `Runtime.Neovim.fs` resolves). No `WireStep`
-/// encodes a client command yet (Island F builds no actor logic there
-/// either — see `Actors/Dashboard.fs`'s identical `Command = fun _ -> ...`
-/// no-op doc), so this is genuinely implemented and ready, not yet called by
-/// anything.
+/// pinned commit this actor's `Runtime.Neovim.fs` resolves). Reached through
+/// `Wire.WireStep.SetupCommand` (`Action.Setup`'s wire image, dispatched by
+/// `CellAgent.fs`'s `runStep`).
 let command (handle: Handle) (token: string) : Async<unit> =
   async {
     let run cmd =
@@ -690,10 +688,8 @@ let close (handle: Handle) : Async<unit> =
   }
 
 /// Wraps this actor behind the cell-agent's actor-dispatch seam (Island F,
-/// demo-actors-plan.md §1.2/§1.3) — the same shape `Actors/Dashboard.fs`
-/// exposes. Not yet reachable from `CellAgent.assembleActors` (that `match`
-/// only ever builds `"dashboard"` today — see this island's final report for
-/// why extending it is out of this island's own never-touch scope).
+/// demo-actors-plan.md §1.2/§1.3) — the same shape every other actor
+/// exposes; `CellAgent.assembleActors`'s `"neovim"` arm builds it.
 let toLiveActor (handle: Handle) : LiveActor =
   { Id = ActorId.Neovim
     ResolveRect = resolveRect handle

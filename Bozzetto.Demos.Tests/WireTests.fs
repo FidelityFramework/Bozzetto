@@ -9,44 +9,43 @@ open Expecto.Flip
 open Bozzetto.Demos.Wire
 
 let private samplePlan: ScenarioPlan =
-  { ScenarioId = "hello-dashboard"
+  { ScenarioId = "hr-vscode-console"
     ChromePath = "/chrome-bin/chrome"
-    PageUrl = "http://127.0.0.1:47750/dashboard"
     UserDataDir = "/home/demo/chrome-profile"
     OutDir = "/out"
     Steps =
       [ { Index = 0
-          Caption = "1/1 · Press Quick Start"
+          Caption = "1/1 · Change the message"
           PreClickSelector = None
-          ClickSelector = Some "[data-testid=quick-start]"
-          TypeText = None
+          ClickSelector = Some "editor"
+          TypeText = Some "let message = \"hot-reloaded live\""
           SubmitSelector = None
-          ExpectSelector = Some "[data-testid=session-card]"
+          ExpectSelector = Some "app-output-changed"
           DwellMs = 1500
           TargetActor = None
           ChordKeys = None
           SetupCommand = None
-          ObserveActor = None } ]
-    Client = "dashboard"
-    VsCode = None
+          ObserveActor = Some "app" } ]
+    Client = "vscode"
+    VsCode = Some { ExtensionDevPath = Some "/vscode-ext" }
     Nvim = None
-    App = None
-    ActorRects = []
-    WorkspaceDir = None
+    App = Some { Kind = Some "console" }
+    ActorRects = [ { ActorToken = "vscode"; X = 0; Y = 0; W = 704; H = 720 }; { ActorToken = "app"; X = 712; Y = 0; W = 568; H = 720 } ]
+    WorkspaceDir = Some "/repo/samples/demos/Bozzetto.Samples.ConsoleTicker"
     NvimOpenFilePath = None }
 
 let private sampleStepLog: StepLog =
-  { ScenarioId = "hello-dashboard"
+  { ScenarioId = "hr-vscode-console"
     Steps =
       [ { Index = 0
-          Caption = "1/1 · Press Quick Start"
+          Caption = "1/1 · Change the message"
           Segment = "/out/step-00.mkv"
           StartedMs = 0L
           EndedMs = 2140L
           PointerPath = [ [| 620; 300 |]; [| 630; 298 |] ]
           ObservedAtMs = 1980L
           Outcome = "Passed"
-          Message = "'[data-testid=session-card]' appeared" } ] }
+          Message = "'app-output-changed' appeared" } ] }
 
 [<Tests>]
 let tests =
@@ -83,17 +82,17 @@ let tests =
 
       awaitOnly |> serializePlan |> deserializePlan |> Expect.equal "round-trips with every optional field None" awaitOnly
 
-    testCase "a TypeThenClick step's SubmitSelector round-trips (the chained 'type, then click Eval' beat, §9)" <| fun _ ->
+    testCase "a TypeThenClick step's SubmitSelector round-trips (the chained 'type, then press submit' beat)" <| fun _ ->
       let typeThenClick =
         { samplePlan with
             Steps =
               [ { Index = 0
-                  Caption = "3/3 · Evaluate F#"
+                  Caption = "3/3 · Type and submit"
                   PreClickSelector = None
-                  ClickSelector = Some "#eval-textarea"
-                  TypeText = Some "[1..10] |> List.sum"
-                  SubmitSelector = Some "[data-testid=eval]"
-                  ExpectSelector = Some "[data-testid=session-output]:has-text(\"55\")"
+                  ClickSelector = Some "commandline"
+                  TypeText = Some ":w"
+                  SubmitSelector = Some "window-center"
+                  ExpectSelector = Some "saved"
                   DwellMs = 2000
                   TargetActor = None
                   ChordKeys = None
@@ -102,17 +101,17 @@ let tests =
 
       typeThenClick |> serializePlan |> deserializePlan |> Expect.equal "round-trips with SubmitSelector populated" typeThenClick
 
-    testCase "a ClickThenTypeThenClick step's PreClickSelector round-trips (the 'expand the collapsed accordion, then type, then click Eval' beat, §9)" <| fun _ ->
+    testCase "a ClickThenTypeThenClick step's PreClickSelector round-trips (the 'expand a panel, then type, then press submit' beat)" <| fun _ ->
       let clickThenTypeThenClick =
         { samplePlan with
             Steps =
               [ { Index = 0
-                  Caption = "3/3 · Evaluate F#"
-                  PreClickSelector = Some "#evaluate-section summary"
-                  ClickSelector = Some "#eval-textarea"
-                  TypeText = Some "[1..10] |> List.sum"
-                  SubmitSelector = Some "[data-testid=eval]"
-                  ExpectSelector = Some "[data-testid=session-output]:has-text(\"55\")"
+                  Caption = "3/3 · Expand, type and submit"
+                  PreClickSelector = Some "statusline"
+                  ClickSelector = Some "commandline"
+                  TypeText = Some ":w"
+                  SubmitSelector = Some "window-center"
+                  ExpectSelector = Some "saved"
                   DwellMs = 2000
                   TargetActor = None
                   ChordKeys = None

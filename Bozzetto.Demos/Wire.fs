@@ -17,13 +17,13 @@ open System.Text.Json.Serialization
 /// One step already resolved to primitive, cell-agent-executable terms: an
 /// OPTIONAL selector to click FIRST, before anything else this step does
 /// (`PreClickSelector` — `Action.ClickThenTypeThenClick`'s "expand this
-/// collapsed panel" beat, with NO gap before the click/type that follows,
-/// §9's "watch Bozzetto evaluate F# live" demo), a `data-testid` CSS selector
-/// to click (if any), the text to type (if any), a SECOND selector to click
-/// right after typing (`SubmitSelector` — the "type here, then click the
-/// [EVAL] button" beat), the selector this step's `Expectation` must
-/// observe (if any), and how long to dwell after that observation lands
-/// (§9's "≥ 1.0s dwell").
+/// collapsed panel" beat, with NO gap before the click/type that follows),
+/// the target actor's selector to click (if any), the text to type (if any),
+/// a SECOND selector to click right after typing (`SubmitSelector` —
+/// `Action.TypeThenClick`'s "type here, then press submit" beat), the
+/// selector this step's `Expectation` must observe (if any), and how long to
+/// dwell after that observation lands (§9's "≥ 1.0s dwell"). Selectors are
+/// opaque strings in the vocabulary of whichever actor resolves them.
 type WireStep =
   { Index: int
     Caption: string
@@ -33,8 +33,8 @@ type WireStep =
     SubmitSelector: string option
     ExpectSelector: string option
     DwellMs: int
-    /// Which actor drives this step — `"dashboard"|"vscode"|"neovim"|"app"|
-    /// "agent"` (Island F, demo-actors-plan.md §1.2). `None` defaults to the
+    /// Which actor drives this step — `"vscode"|"neovim"|"app"|"agent"`
+    /// (Island F, demo-actors-plan.md §1.2). `None` defaults to the
     /// plan's own `Client`; a joint scenario (e.g. an editor's hot-reload
     /// demo stepping between the editor and the App co-actor) sets this per
     /// step once the editor/App islands land. Every plan built before Island
@@ -59,23 +59,20 @@ type WireStep =
     /// Which actor OBSERVES this step's `ExpectSelector` — distinct from
     /// `TargetActor` because a step's own input and its expectation can be
     /// proven through two different live actors in the SAME cell (e.g. an
-    /// editor client types into its own window, but the daemon's session
-    /// state that proves the eval/toggle landed is read off the shared
-    /// Dashboard narrator pane `EditorFull`/`EditorLeft` always places
-    /// alongside it — Scenarios.VsCode.fs's own documented reasoning).
-    /// `None` defaults to `TargetActor` (the pre-existing, single-actor
-    /// behavior every Dashboard/Agent scenario already relies on) — purely
+    /// editor client saves a file, and the App co-actor observes the running
+    /// app's output change). `None` defaults to `TargetActor` (the
+    /// single-actor behavior every Agent scenario relies on) — purely
     /// additive.
     ObserveActor: string option }
 
 /// One actor's placed rect for this scenario's `LayoutTemplate`
 /// (`Layout.rects`, flattened to primitive fields the cell-agent can place a
-/// real window at) — without this every non-Dashboard-only scenario would
-/// have no way to tell the cell-agent where on `:99` each actor's window
-/// belongs, and every actor would silently overlap at a hardcoded
-/// full-screen rect (the pre-seam Dashboard-only assumption). `ActorToken`
-/// is the same wire vocabulary `Client`/`TargetActor` already use
-/// (`"dashboard"|"vscode"|"neovim"|"app"|"agent"`).
+/// real window at) — without this a multi-pane scenario would have no way to
+/// tell the cell-agent where on `:99` each actor's window belongs, and every
+/// actor would silently overlap at a hardcoded full-screen rect (the
+/// pre-seam single-actor assumption). `ActorToken` is the same wire
+/// vocabulary `Client`/`TargetActor` already use
+/// (`"vscode"|"neovim"|"app"|"agent"`).
 type WireRect =
   { ActorToken: string
     X: int
@@ -110,20 +107,21 @@ type NvimConfig =
     PluginRuntimePath: string option }
 
 type AppConfig =
-  { /// Which `AppKind` (`"web"|"raylib"|"console"`) the App co-actor should
+  { /// Which `AppKind` (`"raylib"|"console"`) the App co-actor should
     /// launch (§2.3). Filled by the App island.
     Kind: string option }
 
 /// The JSON the runner sends a cell-agent over the one stdio pipe (§4.1).
+/// `ChromePath`/`UserDataDir` are the bundled Chromium and its profile
+/// directory, used by the Agent actor's viz page.
 type ScenarioPlan =
   { ScenarioId: string
     ChromePath: string
-    PageUrl: string
     UserDataDir: string
     OutDir: string
     Steps: WireStep list
-    /// Which actor this scenario is filmed through — `"dashboard"|"vscode"|
-    /// "neovim"|"agent"` (Island F, demo-actors-plan.md §1.2). `Runtime.fs`
+    /// Which actor this scenario is filmed through — `"vscode"|"neovim"|
+    /// "agent"` (Island F, demo-actors-plan.md §1.2). `Runtime.fs`
     /// always fills this from `Domain.Scenario.Client`, so it is never
     /// actually absent on the wire; kept a plain `string`, not a DU, because
     /// this module is deliberately primitive-typed (see the module doc
@@ -134,15 +132,14 @@ type ScenarioPlan =
     App: AppConfig option
     /// Every actor's placed rect for this scenario's layout (`WireRect`
     /// above) — `[]` means "place everything full-screen" (the pre-seam
-    /// Dashboard-only default `CellAgent.fs` falls back to), so an old plan
+    /// single-actor default `CellAgent.fs` falls back to), so an old plan
     /// with no rects still renders exactly as before.
     ActorRects: WireRect list
     /// The real, absolute, already-`{{REPO_ROOT}}`-resolved sample project
-    /// directory a non-Dashboard client actor opens as its workspace (VS
-    /// Code's positional folder argument, Neovim's `--listen`-launched
-    /// cwd/opened file) — `None` when the scenario's own `Client` needs
-    /// nothing opened this way (Dashboard drives its own "Open Directory"
-    /// picker instead; Agent finds the repo itself, `Actors/Agent.fs`'s
+    /// directory an editor client actor opens as its workspace (VS Code's
+    /// positional folder argument, Neovim's `--listen`-launched cwd/opened
+    /// file) — `None` when the scenario's own `Client` needs nothing opened
+    /// this way (Agent finds the repo itself, `Actors/Agent.fs`'s
     /// `RepoRoot.find`).
     WorkspaceDir: string option
     /// The real, absolute file Neovim opens on launch (its positional CLI
@@ -158,7 +155,7 @@ type ScenarioPlan =
     /// testing sample has one) — never a guess at file content, only at
     /// which REAL file to open. `None` only for clients that do not open a
     /// single file this way (VS Code opens the whole `WorkspaceDir` folder;
-    /// Dashboard/Agent need neither).
+    /// Agent needs neither).
     NvimOpenFilePath: string option }
 
 /// One step's result, as the cell-agent streams back (§4.1, §4.5). `Segment`

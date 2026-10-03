@@ -15,7 +15,7 @@
 #
 # This script does not know anything about Bozzetto beyond the isolation
 # convention (an mcp port and a BOZZETTO_DATA_DIR handed to the job's own
-# driver script). Each job's driver (e.g. drive-dashboard.sh) is the part
+# driver script). Each job's driver (e.g. drive-cohort.sh) is the part
 # that actually knows how to stand up and drive a Bozzetto daemon for its
 # particular demo. This script does NOT edit or replace record-x11.sh /
 # record-terminal.sh — it drives them.
@@ -28,7 +28,7 @@
 #   output=PATH               where to write the final .gif
 #                              (default: <out-dir>/<name>.gif)
 #   args=EXTRA ARGS             extra args appended verbatim to the driver
-#                              invocation (e.g. --bozzetto-bin / --chromium)
+#                              invocation (e.g. --bozzetto-bin)
 #
 # Every video-job driver is invoked as:
 #   <driver> --mcp-port PORT --data-dir DIR --duration SECONDS <args>
@@ -38,9 +38,9 @@
 #   <driver> --mcp-port PORT --data-dir DIR <args>
 # (no $DISPLAY — terminal jobs never touch X.)
 #
-# Example (the dashboard proof run):
-#   scripts/demos/record-orchestrator.sh --pool 2 \
-#     --job 'name=dashboard;type=video;driver=scripts/demos/drive-dashboard.sh;duration=6;args=--bozzetto-bin /path/to/Bozzetto --chromium /usr/bin/chromium'
+# Example (the cohort landing-gate transcript):
+#   scripts/demos/record-orchestrator.sh \
+#     --job 'name=cohort;type=terminal;driver=scripts/demos/drive-cohort.sh;args=--bozzetto-bin /path/to/Bozzetto'
 
 set -euo pipefail
 
@@ -80,7 +80,8 @@ Options:
                          47749/47750 (the real daemon) and any other
                          range in use on this box.
   --port-step N               Port spacing between jobs (default: 10 — a
-                         daemon uses its port and port+1 for the dashboard;
+                         daemon uses its port and port+1 for its control
+                         listener;
                          the gap leaves room for the worker's own dynamic
                          port allocation without colliding with the next
                          job's daemon).

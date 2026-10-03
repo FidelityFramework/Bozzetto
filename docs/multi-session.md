@@ -12,7 +12,7 @@ one shared FSI process for both is a recipe for a bad afternoon.
 
 ## Creating Sessions
 
-Clients (editors, AI agents, the dashboard) create sessions on demand. The
+Clients (editors and AI agents) create sessions on demand. The
 daemon starts bare and waits for create requests.
 
 ```
@@ -53,5 +53,5 @@ this.
 Each client keeps its own active session. Switching in one client doesn't
 move any other client. An editor forcing every other window and every
 other agent onto whatever session it just switched to was the actual bug
-this whole design exists to not have. VS Code, Neovim, and the dashboard all
+this whole design exists to not have. VS Code and Neovim both
 expose these actions in their UIs.

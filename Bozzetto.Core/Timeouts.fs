@@ -122,16 +122,6 @@ module Timeouts =
   let watchdogInterval = TimeSpan.FromSeconds(5.0)
   let watchdogGracePeriod = TimeSpan.FromSeconds(30.0)
 
-  // -- Dashboard / UI --
-  let dashboardPollInterval = TimeSpan.FromMilliseconds(100.0)
-  let sseEventInterval = TimeSpan.FromSeconds(1.0)
-  /// Server SSE heartbeat cadence: the stream loop patches a heartbeat signal at
-  /// least this often (even on no-change ticks) so the client can prove liveness.
-  let dashboardHeartbeat = envOrDefault "BOZZETTO_DASHBOARD_HEARTBEAT_SECONDS" 5.0
-  /// Client staleness budget: if no heartbeat arrives within this window the
-  /// dashboard flips Signals.Connected=false and shows the disconnect banner.
-  let dashboardStaleAfter = envOrDefault "BOZZETTO_DASHBOARD_STALE_AFTER_SECONDS" 15.0
-
   // -- Daemon / Server --
   let workerEndpointFetch = TimeSpan.FromMilliseconds(500.0)
   /// How long the daemon waits before listening again after a worker's reload
@@ -167,7 +157,7 @@ module Timeouts =
 
   // -- Session Lifecycle --
   let sessionDispose = TimeSpan.FromSeconds(10.0)
-  /// How long a Ready session can go untouched before the dashboard calls it
+  /// How long a Ready session can go untouched before clients call it
   /// idle instead of running. Only Ready is time-gated this way — Evaluating
   /// and Building are never idle regardless of age (see SessionDisplay.displayStatus).
   /// Env-overridable so an integration test can prove the boundary without
@@ -184,9 +174,6 @@ module Timeouts =
   /// Deadline for a killed worker to be restarted on a new pid in the
   /// crash/restart integration smoke. Replaces the bare 60_000L literal.
   let integrationWorkerRestart = envOrDefault "BOZZETTO_TEST_WORKER_RESTART_SECONDS" 60.0
-  /// Warmup deadline for a browser-journey dashboard session (cold Chromium +
-  /// Release sample). Replaces the 300.0s literals in DashboardBrowserRunner.
-  let browserJourneyWarmup = envOrDefault "BOZZETTO_TEST_BROWSER_WARMUP_SECONDS" 300.0
   /// Build deadline for the web-app hot-reload verification sample.
   /// Replaces the 180000ms literal.
   let webAppHotReloadBuild = envOrDefault "BOZZETTO_TEST_WEBAPP_BUILD_SECONDS" 180.0

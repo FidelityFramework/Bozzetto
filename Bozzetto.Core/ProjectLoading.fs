@@ -667,8 +667,8 @@ let loadSolution (logger: ILogger) (config: Args.ProjectLoadConfig) (onProgress:
       let refs = ManualProjectParse.collectBinReferences logger projects
       // LibPaths must lead with the project's bin dir so FSI's assembly probe
       // resolves the project's own dependency versions (Falco, Npgsql, ...)
-      // BEFORE the worker process's own copies (Bozzetto bundles Falco for its
-      // dashboard — a version collision breaks #load with 0x80131040).
+      // BEFORE the worker process's own copies (a version collision breaks
+      // #load with 0x80131040).
       let binLibPaths =
         projects
         |> List.map (fun projPath ->

@@ -126,15 +126,4 @@ let healthSurfacingTests =
     testCase "a normal verdict carries no evidence and says so" <| fun _ ->
       HealthAnomaly.verdictName HealthAnomaly.Verdict.Normal |> Expect.equal "named, not blank" "normal"
       HealthAnomaly.evidenceOf HealthAnomaly.Verdict.Normal |> Expect.isNone "nothing to report"
-
-    testCase "the dashboard view carries a sentence per anomaly" <| fun _ ->
-      let snap = snapshotWith [ HealthAnomaly.Verdict.Broken(evidence HealthAnomaly.SignalId.WorkerRss 51_700.0) ] [ readySession ]
-      let view = Bozzetto.Server.DashboardTypes.DaemonHealthView.fromSnapshot snap
-      view.Anomalies |> Expect.hasLength "one anomaly, one line" 1
-      view.Anomalies.Head |> Expect.stringContains "it names the signal" "worker_rss"
-      view.Anomalies.Head |> Expect.stringContains "and what it is now" "5.17e+04"
-
-    testCase "a healthy daemon's view has nothing to show" <| fun _ ->
-      let view = Bozzetto.Server.DashboardTypes.DaemonHealthView.fromSnapshot (snapshotWith [] [ readySession ])
-      view.Anomalies |> Expect.isEmpty "no anomaly, no noise in the panel"
   ]

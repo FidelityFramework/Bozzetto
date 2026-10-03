@@ -37,7 +37,7 @@ open Bozzetto.Demos.Actors.Actor
 
 /// The cell's own daemon always listens on this fixed MCP port inside
 /// `--unshare-net` (demo-actors-plan.md §0/§2.4 — the SAME literal
-/// `Runtime.fs`'s own private `McpPort` uses for the dashboard's URL). Kept
+/// `Runtime.fs`'s own private `McpPort` declares). Kept
 /// as this actor's own constant rather than threading it through `Wire.fs`
 /// (a seam-core file this island does not touch): the value is fixed for
 /// every cell and never varies per scenario.
@@ -46,10 +46,9 @@ let private McpBaseUrl = "http://127.0.0.1:47749/"
 
 /// ---------------------------------------------------------------------
 /// A hand-rolled MCP "Streamable HTTP" JSON-RPC client. Not `private`: the
-/// RED tests build an `Agent.Handle` directly (mirroring exactly how
-/// `CellAgentTests.fs` already builds a `Dashboard.Handle` to prove the
-/// dispatch seam without a live browser/daemon), which needs `Rpc.Session`
-/// nameable from the test project.
+/// RED tests build an `Agent.Handle` directly (proving the dispatch seam
+/// without a live browser/daemon), which needs `Rpc.Session` nameable from
+/// the test project.
 /// ---------------------------------------------------------------------
 module Rpc =
 
@@ -490,8 +489,8 @@ type Handle =
 /// record `Bozzetto.Demos.Tests.AgentTests`'s
 /// "a malformed wire selector fails closed" test constructs directly with
 /// a positional field literal (`Playwright = ...; Context = ...; Page =
-/// ...; Session = ...; InitResult = ...`), mirroring `CellAgentTests.fs`'s
-/// own `Dashboard.Handle` test — a REQUIRED field added to `Handle` here
+/// ...; Session = ...; InitResult = ...`) — a REQUIRED field added to
+/// `Handle` here
 /// would break that pre-existing, out-of-scope test file's compile for
 /// every future actor-state addition, which is exactly the kind of
 /// ripple a wire-widening correction should not cause (`parseCohortWire`
@@ -529,10 +528,11 @@ module private CohortState =
   let claimsFor (handle: Handle) : Collections.Generic.Dictionary<string, string * int64> =
     claimsByHandle.GetValue(handle.Session, (fun _ -> Collections.Generic.Dictionary()))
 
-/// Xvfb runs `-nocursor` — see `Actors/Dashboard.fs`'s identical doc comment
-/// for why every page this project drives also forces `cursor: none`
-/// itself: the synthetic-cursor design needs zero real cursors of any kind
-/// in the captured frame.
+/// Xvfb runs `-nocursor` (§4.3, `Runtime.fs`), which suppresses the X11
+/// hardware cursor — but not Chromium's own CSS-drawn cursor (the hand over
+/// `cursor: pointer` elements, the I-beam over text). The synthetic-cursor
+/// design needs zero real cursors of any kind in the captured frame, so the
+/// page this actor drives forces `cursor: none` on every element itself.
 let private hideRealCursor (page: IPage) : Async<unit> =
   async {
     let! _ = page.AddStyleTagAsync(PageAddStyleTagOptions(Content = "*, *::before, *::after { cursor: none !important; }")) |> Async.AwaitTask
@@ -545,7 +545,7 @@ let private hideRealCursor (page: IPage) : Async<unit> =
 /// never a static asset file (this island does not add one to the shared
 /// `.fsproj`'s asset list) and never a `data:` URL (avoids Chromium's
 /// `--app=data:` edge cases). `rect` places the window exactly like every
-/// other actor (`Actors/Dashboard.fs`'s `launch`).
+/// other actor. Waits on `LoadState.Load`, never `NetworkIdle`.
 let launch (chromePath: string) (userDataDir: string) (rect: Rect) : Async<Handle> =
   async {
     let htmlPath = Path.Combine("/home/demo", "agent-viz.html")
@@ -621,7 +621,7 @@ let private pushEntry (page: IPage) (entry: TranscriptEntry) : Async<unit> =
     with _ ->
       // A Page-less test `Handle` (RED tests build one with
       // `Unchecked.defaultof<IPage>` to prove dispatch/parsing without a
-      // live browser, mirroring `CellAgentTests.fs`'s Dashboard test)
+      // live browser)
       // cannot render into a page that does not exist — the real MCP call
       // this wraps has already genuinely happened either way, so a render
       // failure here is swallowed rather than losing that real result.
@@ -852,8 +852,11 @@ let parseArgsEncoded (argsEncoded: string) : (string * string) list =
       | i -> Some(pair.Substring(0, i), pair.Substring(i + 1)))
     |> Array.toList
 
+/// The real sample `agent-mcp` opens (`Scenarios.Agent.fs`'s own
+/// `Sample`): the lightest runnable one, since the evaluated expression does
+/// not depend on the project's own code.
 let private sampleDir (repoRoot: string) : string =
-  Path.Combine(repoRoot, Sample.relativePath Sample.WebappDatastar)
+  Path.Combine(repoRoot, Sample.relativePath Sample.ConsoleTicker)
 
 /// The real arguments this actor sends per tool — resolved from a real
 /// `repoRoot`, never a literal/guessed path. Not `private`:
@@ -870,11 +873,9 @@ let argumentsFor (repoRoot: string) (tool: McpTool) : Result<(string * string) l
     | Some proj -> Ok [ "project", proj; "working_directory", dir ]
   | McpTool.Current CurrentMcpTool.GetSessionStatus -> Ok [ "working_directory", dir ]
   | McpTool.Current CurrentMcpTool.SendFsharpCode ->
-    // Deliberately `List.sum [ 1 .. 10 ]` — the SAME expression
-    // `repl-dashboard` already proves live — and NOT the project's own
-    // qualified `Bozzetto.Samples.WebappDatastar.Program.todos.Length`
-    // (evaluated successfully by dashboard-driven scenarios elsewhere).
-    // Confirmed directly, live, against this exact sample+daemon: a
+    // Deliberately `List.sum [ 1 .. 10 ]`, NOT a fully-qualified reference
+    // to the project's own code. Confirmed directly, live (against the
+    // since-removed web sample this scenario first opened): a
     // `get_session_status` `"state":"Ready"` reply can land a moment BEFORE
     // the project's own compiled assembly is reliably resolvable for a
     // fully-qualified reference — a real `record agent-mcp` run reproduced
@@ -886,8 +887,7 @@ let argumentsFor (repoRoot: string) (tool: McpTool) : Result<(string * string) l
     // namespace at all, so it proves the SAME thing this step needs (a
     // real MCP `send_fsharp_code` round trip evaluating live) without
     // gambling the recording on a race outside this island's scope to fix
-    // (AGENTS.md: don't chase product bugs from a demo island — mirrors
-    // `lt-dashboard`'s own documented, out-of-scope discovery race).
+    // (AGENTS.md: don't chase product bugs from a demo island).
     Ok [ "agentName", "bozzetto-demos-agent"; "code", "List.sum [ 1 .. 10 ]"; "working_directory", dir ]
   | other -> Error(sprintf "the agent-mcp scenario has no arguments recipe for tool '%s'" (McpTool.value other))
 
@@ -896,7 +896,7 @@ let argumentsFor (repoRoot: string) (tool: McpTool) : Result<(string * string) l
 /// without erroring" is checked for it; `get_session_status`/
 /// `send_fsharp_code` have a real, specific, evidence-backed expected
 /// substring (the status tool's own structured `"state":"Ready"` payload;
-/// `repl-dashboard`'s own proven "int = 55" for this exact expression).
+/// FSI's own "int = 55" result line for this exact expression).
 let private expectedSubstringFor (tool: McpTool) : string =
   match tool with
   | McpTool.Current CurrentMcpTool.GetSessionStatus -> "\"state\":\"Ready\""

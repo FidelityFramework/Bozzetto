@@ -26,13 +26,13 @@ open Bozzetto.Demos.Actors
 let tests =
   testList "Agent/MCP actor" [
 
-    testCase "agent-mcp is registered, Agent-cliented, DashboardOnly-laid-out, and opens the real webapp sample (never a bare Quick Start session, §10)" <| fun _ ->
+    testCase "agent-mcp is registered, Agent-cliented, AgentOnly-laid-out, and opens a real sample project (never a bare session, §10)" <| fun _ ->
       let scenario = Bozzetto.Demos.Scenarios.Agent.agentMcp
       scenario.Id |> ScenarioId.value |> Expect.equal "scenario id (the CLI verb: record agent-mcp)" "agent-mcp"
       scenario.Client |> Expect.equal "client" Client.Agent
       scenario.Capability |> Expect.equal "capability" Capability.Agent
-      scenario.Layout |> Expect.equal "layout (no editor/app pane for an MCP-only demo)" LayoutTemplate.DashboardOnly
-      scenario.Sample |> Expect.equal "opens the real webapp sample, not a bare session" Sample.WebappDatastar
+      scenario.Layout |> Expect.equal "layout (no editor/app pane for an MCP-only demo)" LayoutTemplate.AgentOnly
+      scenario.Sample |> Expect.equal "opens the real console ticker sample, not a bare session" Sample.ConsoleTicker
       scenario.Steps
       |> List.length
       |> Expect.equal "three real tool calls: create_project_session, get_session_status, send_fsharp_code" 3
@@ -85,7 +85,7 @@ let tests =
 
     testCase "Actors.Agent.parseWire fails closed (None) on any selector that isn't this actor's own encoding — never a guess" <| fun _ ->
       Agent.parseWire "not-a-real-selector" |> Expect.equal "no separator, no match" None
-      Agent.parseWire "[data-testid=session-output]:has-text(\"Ready\")" |> Expect.equal "a Dashboard-shaped selector is not this actor's encoding" None
+      Agent.parseWire "[data-testid=session-output]:has-text(\"Ready\")" |> Expect.equal "a CSS-shaped selector is not this actor's encoding" None
 
     testCase "the cell-agent dispatch seam routes the 'agent' wire token to ActorId.Agent" <| fun _ ->
       Bozzetto.Demos.CellAgent.actorIdOfString "agent" |> Expect.equal "wire token 'agent' resolves" (Some ActorId.Agent)
@@ -93,8 +93,8 @@ let tests =
     testCase "a malformed wire selector fails closed — Observe returns false without ever touching the daemon or a live Page" <| fun _ ->
       // A Page built from Unchecked.defaultof is never dereferenced here:
       // parseWire returns None BEFORE any Page/HTTP access, exactly like
-      // CellAgentTests.fs's Dashboard.Handle test proves Id without ever
-      // touching Playwright fields it wasn't given real values for.
+      // CellAgentTests.fs's VsCode.Handle test proves Id without ever
+      // touching fields it wasn't given real values for.
       let handle: Agent.Handle =
         { Playwright = Unchecked.defaultof<_>
           Context = Unchecked.defaultof<_>
@@ -129,8 +129,8 @@ let tests =
         |> List.tryFind (fun (k, _) -> k = "project")
         |> Option.map snd
         |> Expect.equal
-          "passes the real, existing .fsproj for the WebappDatastar sample"
-          (Some(Path.Combine(repoRoot, "samples", "demos", "Bozzetto.Samples.WebappDatastar", "Bozzetto.Samples.WebappDatastar.fsproj")))
+          "passes the real, existing .fsproj for the ConsoleTicker sample"
+          (Some(Path.Combine(repoRoot, "samples", "demos", "Bozzetto.Samples.ConsoleTicker", "Bozzetto.Samples.ConsoleTicker.fsproj")))
 
         args
         |> List.tryFind (fun (k, _) -> k = "project")

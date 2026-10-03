@@ -11,7 +11,7 @@ rather hear about it than have you quietly work around it.
 |:-------|:--------|
 | **VS Code** | `Ctrl+Shift+P` → "Bozzetto: Check Health" |
 | **Neovim** | `:checkhealth bozzetto` |
-| **CLI / dashboard** | `boz status` and `http://localhost:47750/dashboard` |
+| **CLI** | `boz status` |
 
 ---
 
@@ -52,7 +52,7 @@ Bozzetto needs a project file. Either:
 - Set the project path explicitly:
   - **VS Code**: `bozzetto.projectPath` in settings, or use "Bozzetto: Switch Project"
   - **Neovim**: `:SageFsSwitchProject` or set `vim.g.sagefs_project_path`
-  - **CLI / dashboard**: start `boz`, then create or switch to a session for `path/to/MyApp.fsproj`
+  - **CLI**: start `boz`, then create or switch to a session for `path/to/MyApp.fsproj`
 
 ### Wrong project selected (multi-project workspace)
 
@@ -60,7 +60,7 @@ When a workspace has multiple `.fsproj` files, Bozzetto picks one. If it chose
 the wrong one:
 - **VS Code**: Run "Bozzetto: Switch Project" from the command palette
 - **Neovim**: `:SageFsSwitchProject`
-- **CLI / dashboard**: create or switch to a session for `path/to/CorrectProject.fsproj`
+- **CLI**: create or switch to a session for `path/to/CorrectProject.fsproj`
 
 The active project is shown in the status bar.
 
@@ -146,14 +146,11 @@ NuGet while the CLI still can't see it.
 - Verify live testing is enabled: check your editor's test status indicator
 - Check run policies: some test categories (integration, browser) default to
   `demand` (manual trigger only)
-- Check live-test status in your editor: `:SageFsLiveTestStatus` (Neovim), the Tests pane (VS Code), or the web dashboard
+- Check live-test status in your editor: `:SageFsLiveTestStatus` (Neovim) or the Tests pane (VS Code)
 
 ### SSE connections dropping
 
 - Set proxy/reverse-proxy timeout ≥ 60 seconds
-- Bozzetto sends a keepalive comment on the dashboard's SSE stream every 5
-  seconds by default (`BOZZETTO_DASHBOARD_HEARTBEAT_SECONDS`), well inside
-  Kestrel's own keep-alive window
 - Corporate proxies may need explicit WebSocket/SSE passthrough configuration
 
 ### Eval watchdog — detecting daemon crash during eval
@@ -187,7 +184,6 @@ starting Bozzetto (or in your shell profile).
 | `BOZZETTO_BUILD_TIMEOUT_MINUTES` | `10` | Max time for `dotnet build` during hard reset |
 | `BOZZETTO_WORKER_HTTP_READ_SECONDS` | `30` | HTTP read timeout for daemon→worker communication |
 | `BOZZETTO_WORKER_STARTUP_TIMEOUT_MS` | `120000` | Worker process startup timeout (milliseconds) |
-| `BOZZETTO_DASHBOARD_HEARTBEAT_SECONDS` | `5` | Dashboard SSE keepalive/heartbeat cadence |
 | `BOZZETTO_BIND_HOST` | `localhost` | Loopback bind address: `localhost`, `127.0.0.1` or `::1`. Any other value stops the daemon at startup (see [Docker / Remote Containers](#docker--remote-containers)) |
 | `BOZZETTO_MCP_PORT` | `47749` | MCP server port |
 
@@ -276,7 +272,7 @@ container's loopback instead:
 - **Docker on Linux**: `docker run --network host ...`
 - **Anything with SSH**: `ssh -L 47749:localhost:47749 -L 47750:localhost:47750 <host>`
 
-Browser requests must come from the dashboard itself. A page served from any
+Browser requests must come from the daemon's own pages (such as `/composer`). A page served from any
 other origin, including another `localhost` port, is refused. Request bodies
 must be sent as `Content-Type: application/json`.
 

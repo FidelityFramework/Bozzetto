@@ -172,8 +172,8 @@ let runTests argv =
   // isolated BOZZETTO_DATA_DIRs, the HTTP API against the samples. The set is
   // structural: every suite registered as `Integration.Host`
   // (TestInfrastructure.Integration), so a new host suite runs here by
-  // construction. Suites that need a browser or VS Code are registered against
-  // their own entry points (--integration-browser and --integration-disconnect below).
+  // construction. Suites that need dedicated infrastructure are registered
+  // against their own entry points (--integration-composer below).
   //
   // `--shard k/n` runs only this process's share. The suites are sequenced
   // WITHIN a process because they share in-process state (below); that reason
@@ -247,36 +247,6 @@ let runTests argv =
       Bozzetto.Composer.Tests.LiveProviderTests.tests
     ]
     let result = Bozzetto.Tests.TestInfrastructure.TrustSignal.run "--integration-composer" composerArgv suite
-    Environment.Exit result
-    result
-  | false ->
-
-  // Run the [Integration] Dashboard browser journeys (Playwright.NET) with the
-  // daemon lifecycle owned in-process: boot an isolated daemon on reserved
-  // ports, create a Ready session on the WebappDatastar sample, run the
-  // journeys, tear down. CI invokes this with --integration-browser after a
-  // Release build (plus `playwright install chromium` for the .NET driver).
-  let isIntegrationBrowser = argv |> Array.exists (fun a -> a = "--integration-browser")
-  match isIntegrationBrowser with
-  | true ->
-    let result = Bozzetto.Tests.DashboardBrowserRunner.runBrowserJourneys argv
-    Environment.Exit result
-    result
-  | false ->
-
-  // Run the [Integration] dashboard disconnect-indicator browser journeys
-  // (Playwright.NET): the daemon dying mid-stream must surface a visible
-  // banner, including under client/server clock skew. This suite owns its
-  // own isolated daemon end to end (never touches ports 47749/47750), so the
-  // entry point is a direct call, unlike the HR/LT/browser runners above. CI
-  // invokes this via `Bozzetto.Tests.dll --integration-disconnect` after a
-  // Release build. Previously registered as Integration.Dedicated but never
-  // dispatched here (outcome-gate-sweep.md §2.2/Fact 2 dark-gate class) —
-  // DashboardDisconnectIndicatorBrowserTests.fs's own header used to say so.
-  let isIntegrationDisconnect = argv |> Array.exists (fun a -> a = "--integration-disconnect")
-  match isIntegrationDisconnect with
-  | true ->
-    let result = Bozzetto.Tests.DashboardDisconnectIndicatorBrowserTests.runDisconnectIndicatorJourney argv
     Environment.Exit result
     result
   | false ->

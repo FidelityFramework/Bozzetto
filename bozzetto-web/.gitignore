@@ -1,0 +1,11 @@
+# Fable outputs (frontend JSX, mock bridge, codec tests)
+output/
+output-mock/
+output-test/
+.fable/
+
+# Vite bundle and the default weld output
+dist/
+
+node_modules/
+.vite/

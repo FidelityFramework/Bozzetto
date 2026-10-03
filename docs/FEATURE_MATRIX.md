@@ -1,6 +1,6 @@
 # Bozzetto Feature Matrix
 
-The product surfaces are the web dashboard, editor integrations (VS Code and Neovim), and MCP.
+The product surfaces are editor integrations (VS Code and Neovim) and MCP.
 
 Raylib application and game projects are supported too. The demos in `samples/demos/` show Bozzetto
 providing live development for Raylib projects.
@@ -9,23 +9,23 @@ providing live development for Raylib projects.
 
 ## Core Evaluation
 
-| Feature | VS Code | Neovim | Web Dashboard | MCP |
-|:--------|:-------:|:------:|:-------------:|:---:|
-| Evaluate code, blocks, or files | Supported | Supported | Supported | Supported |
-| Display evaluation results | Supported | Supported | Supported | Supported |
-| Cancel a running evaluation | Supported | Supported | Supported | Supported |
-| Evaluation history | Supported | Supported | Supported | Supported |
-| Session-scoped diagnostics | Supported | Supported | Supported | Supported |
+| Feature | VS Code | Neovim | MCP |
+|:--------|:-------:|:------:|:---:|
+| Evaluate code, blocks, or files | Supported | Supported | Supported |
+| Display evaluation results | Supported | Supported | Supported |
+| Cancel a running evaluation | Supported | Supported | Supported |
+| Evaluation history | Supported | Supported | Supported |
+| Session-scoped diagnostics | Supported | Supported | Supported |
 
 ## Session Management
 
-| Feature | VS Code | Neovim | Web Dashboard | MCP |
-|:--------|:-------:|:------:|:-------------:|:---:|
-| Create and switch sessions | Supported | Supported | Supported | Supported |
-| Soft reset | Supported | Supported | Supported | Supported |
-| Hard reset and rebuild | Supported | Supported | Supported | Supported |
-| Multi-session selection | Supported | Supported | Supported | Supported |
-| Per-client active session | Supported | Supported | Supported | Supported |
+| Feature | VS Code | Neovim | MCP |
+|:--------|:-------:|:------:|:---:|
+| Create and switch sessions | Supported | Supported | Supported |
+| Soft reset | Supported | Supported | Supported |
+| Hard reset and rebuild | Supported | Supported | Supported |
+| Multi-session selection | Supported | Supported | Supported |
+| Per-client active session | Supported | Supported | Supported |
 
 ## Live Testing
 
@@ -37,28 +37,28 @@ best coverage; xUnit (including v3), NUnit, MSTest, and TUnit are also detected.
 
 Live testing is also a workflow, not only a toggle. See [Workflow Modes](workflow-modes.md).
 
-| Feature | VS Code | Neovim | Web Dashboard | MCP |
-|:--------|:-------:|:------:|:-------------:|:---:|
-| Test discovery and execution | Supported | Supported | Supported | Supported |
-| Run affected tests on save | Supported | Supported | Shared | Shared |
-| Test result panel | Supported | Supported | Supported | N/A |
-| Test gutter markers | Supported | Supported | N/A | N/A |
-| Coverage gutters | Supported | Supported | N/A | N/A |
-| Failure narratives | Supported | Supported | Supported | Supported |
-| Explain test failures and causal changes | Shared | Shared | Supported | Supported |
+| Feature | VS Code | Neovim | MCP |
+|:--------|:-------:|:------:|:---:|
+| Test discovery and execution | Supported | Supported | Supported |
+| Run affected tests on save | Supported | Supported | Shared |
+| Test result panel | Supported | Supported | N/A |
+| Test gutter markers | Supported | Supported | N/A |
+| Coverage gutters | Supported | Supported | N/A |
+| Failure narratives | Supported | Supported | Supported |
+| Explain test failures and causal changes | Shared | Shared | Supported |
 
 ## Code Intelligence
 
-| Feature | VS Code | Neovim | Web Dashboard | MCP |
-|:--------|:-------:|:------:|:-------------:|:---:|
-| Completions | Supported | Supported | N/A | N/A |
-| CodeLens | Supported | Supported | N/A | N/A |
-| Dependency and coverage queries | Shared | Shared | Supported | Supported |
-| Domain model and pipeline analysis | Shared | Shared | Partial | Supported |
+| Feature | VS Code | Neovim | MCP |
+|:--------|:-------:|:------:|:---:|
+| Completions | Supported | Supported | N/A |
+| CodeLens | Supported | Supported | N/A |
+| Dependency and coverage queries | Shared | Shared | Supported |
+| Domain model and pipeline analysis | Shared | Shared | Supported |
 
 Completions and CodeLens are editor features backed by FSharp.Compiler.Service; they are not MCP tools. Neither
 is the type explorer, the call graph, the test-run policy control, or the test trace. Those are HTTP endpoints
-the editors and the dashboard call (`GET /api/dependency-graph`, `POST /api/live-testing/policy`,
+the editors call (`GET /api/dependency-graph`, `POST /api/live-testing/policy`,
 `GET /api/live-testing/test-trace`). The `get_completions` and `explore_type` members in `Bozzetto/McpTools.fs`
 carry a `[<Description>]` but no `[<McpServerTool>]` attribute, so they aren't part of the advertised tool
 surface at all. I checked, this table isn't guessing. [`LIVE_TESTING_GUIDE.md`](LIVE_TESTING_GUIDE.md) is the
@@ -77,13 +77,13 @@ changed types restart the app instead of patching it, and Bozzetto tells you tha
 silently serving stale code. [Hot Reload](hot-reload.md) carries the full what-reloads / what-restarts table,
 each row pinned by an executable test; this page deliberately doesn't duplicate it.
 
-| Feature | VS Code | Neovim | Web Dashboard | MCP |
-|:--------|:-------:|:------:|:-------------:|:---:|
-| File watching and reload state | Supported | Supported | Supported | Supported |
-| Browser refresh status | Supported | Supported | Supported | Supported |
-| Health and connection state | Supported | Supported | Supported | Supported |
-| Warmup progress | Supported | Supported | Supported | Supported |
-| Typed errors and recovery guidance | Supported | Supported | Supported | Supported |
+| Feature | VS Code | Neovim | MCP |
+|:--------|:-------:|:------:|:---:|
+| File watching and reload state | Supported | Supported | Supported |
+| Browser refresh status | Supported | Supported | Supported |
+| Health and connection state | Supported | Supported | Supported |
+| Warmup progress | Supported | Supported | Supported |
+| Typed errors and recovery guidance | Supported | Supported | Supported |
 
 ## Client Roles
 
@@ -91,7 +91,6 @@ each row pinned by an executable test; this page deliberately doesn't duplicate 
 |:-------|:-------------|:----------|
 | **VS Code** | Full editor workflow: inline results, testing, coverage, and navigation | HTTP commands + SSE |
 | **Neovim** | Full editor workflow: inline results, testing, coverage, and navigation | HTTP commands + SSE |
-| **Web Dashboard** | Browser-based session operations, output, test state, diagnostics, and observability | Falco.Datastar + SSE |
 | **MCP** | Agent and programmatic access to FSI, sessions, tests, and diagnostics | Streamable HTTP at `/`; legacy SSE at `/sse` |
 
 ## Common Editor Commands
@@ -106,7 +105,6 @@ each row pinned by an executable test; this page deliberately doesn't duplicate 
 | Switch project | Command palette | `:SageFsSwitchProject` |
 | Enable / disable live testing | Command palette | `:SageFsEnableTesting` / `:SageFsDisableTesting` |
 | Switch workflow | Command palette | `:SageFsWorkflow live\|repl` |
-| Open dashboard | Command palette | `:SageFsDashboard` |
 
 > The Neovim column is a copy of the plugin's own keymaps, which live in the separate [`sagefs.nvim`](https://github.com/WillEhrendreich/sagefs.nvim#keymaps) repository. That README is authoritative, and nothing in this repo verifies it. This table used to list `<leader>se` / `<leader>sf` / `<leader>sc`, which the plugin doesn't bind: it puts everything under `<leader>r` precisely because LazyVim reserves `<leader>s` for Search. It also listed `:SageFsResetSession` and `:SageFsToggleLiveTesting`, neither of which exists. Both were my mistakes, now fixed.
 

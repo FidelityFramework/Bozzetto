@@ -84,7 +84,7 @@ QUICK REFERENCE - KEY FILES & FUNCTIONS
    - There is no run_tests, enable_live_testing, get_live_test_status,
      get_test_trace, explain_test_run, or get_file_coverage MCP tool. Live-testing
      enable/disable/status/run are HTTP API endpoints under /api/live-testing/...
-     used by editors and the dashboard, on purpose. This is machinery an editor
+     used by editors, on purpose. This is machinery an editor
      drives, not something an agent should be poking at directly.
 
 8. Per-Line Coverage Data:

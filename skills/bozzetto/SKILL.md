@@ -72,8 +72,8 @@ broken. Preserve a running shared daemon and its active sessions.
    is the most expensive failure in this whole document. See "a stale daemon"
    under "Things that will bite you" for the disguises it wears.
 
-   Read its version from `get_daemon_status`, `boz status`, or the dashboard's
-   `/api/daemon-info`, and compare it against the code you're about to work on.
+   Read its version from `get_daemon_status`, `boz status`, or the control listener's
+   `/api/daemon-info` on port 47750, and compare it against the code you're about to work on.
    In the Bozzetto repo itself that's `Directory.Build.props`; anywhere else it's
    "was this daemon started after the last build of this project?" If you can't
    tell, the cheap tell is whether a symbol you just added is visible in the

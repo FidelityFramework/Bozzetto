@@ -486,8 +486,8 @@ let checkFsiAvailable () =
     checkFsiFromProbe (FsiFailedToStart ex.Message)
 
 // This check is intentionally NOT recursive (TopDirectoryOnly) — it only
-// looks directly in `dir`. Other surfaces (Mcp.getAvailableProjects,
-// DashboardTypes' project resolver) search all subdirectories; this check
+// looks directly in `dir`. Other surfaces (Mcp.getAvailableProjects) search
+// all subdirectories; this check
 // says so explicitly rather than implying it looked everywhere.
 let checkFsproj (dir: string) =
   match findFsproj dir with
@@ -526,7 +526,7 @@ type PortOwner =
   | Other
 
 /// Pure decision, no I/O: classify a port's occupancy against an (optional)
-/// daemon probe. `daemonInfo` carries both the MCP port and the dashboard
+/// daemon probe. `daemonInfo` carries both the MCP port and the control
 /// port the probed daemon reports, so either port this check runs against can
 /// match it.
 let classifyPortOwner (port: int) (isFree: bool) (daemonInfo: DaemonInfo option) : PortOwner =
@@ -661,7 +661,7 @@ let runAll (dir: string) (mcpPort: int) (dashPort: int) =
     checkDirectoryConfig dir
     checkBindHost ()
     checkPortAgainstDaemon "MCP port"       mcpPort daemonInfo
-    checkPortAgainstDaemon "Dashboard port" dashPort daemonInfo
+    checkPortAgainstDaemon "Control port"   dashPort daemonInfo
     checkDaemonFromInfo daemonInfo
     checkDaemonSessionAuthority dir mcpPort ]
 

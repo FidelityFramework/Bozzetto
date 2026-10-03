@@ -18,8 +18,8 @@ active-and-idle, active-and-evaluating, or faulted. Two types model this:
 - `SessionPhase` — the **rich internal representation**, making impossible states
   unrepresentable. Carries domain data only where meaningful (e.g., `AppState` is
   only present when `Active`).
-- `SessionState` — the **external/legacy representation**, exposed to MCP clients
-  and the dashboard. Has an extra `Uninitialized` value not reachable from `SessionPhase`.
+- `SessionState` — the **external/legacy representation**, exposed to MCP clients.
+  Has an extra `Uninitialized` value not reachable from `SessionPhase`.
 
 ---
 

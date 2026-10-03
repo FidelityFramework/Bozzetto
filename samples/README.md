@@ -47,7 +47,6 @@ Working applications demonstrating Bozzetto capabilities:
 ```
 demos/Bozzetto.Samples.RaylibHello/      Raylib graphics — animated shapes
 demos/Bozzetto.Samples.RaylibGame/       Raylib game — star catcher with scoring
-demos/Bozzetto.Samples.WebappDatastar/   Falco web app — reactive todo list
 ```
 
 ## Running the Projects
@@ -60,7 +59,7 @@ dotnet run
 ```
 
 Test projects show Expecto results in the terminal.
-Demo projects launch their application (Raylib window or web server).
+Demo projects launch their application (a Raylib window).
 
 ### Option 2: Bozzetto (best experience)
 

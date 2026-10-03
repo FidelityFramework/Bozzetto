@@ -75,9 +75,10 @@ module BozzettoBinary =
 /// Readiness for a daemon a test spawned itself. "Something answered on the
 /// port" is not readiness: ports are reserved then released before the daemon
 /// binds, so another suite's daemon can be the one answering, and a daemon
-/// binds its MCP port and its dashboard (MCP+1) separately, so one can answer
-/// before the other listens. Both mistakes have produced flakes here. The rule
-/// is: the dashboard's /api/daemon-info reports the pid we spawned.
+/// binds its MCP port and its control listener (MCP+1) separately, so one can
+/// answer before the other listens. Both mistakes have produced flakes here.
+/// The rule is: the control listener's /api/daemon-info reports the pid we
+/// spawned.
 module DaemonIdentity =
   /// Does a /api/daemon-info body name this pid?
   let reportsPid (body: string) (pid: int) =
@@ -442,7 +443,7 @@ module Integration =
   /// "every tier is invoked by CI" structural test — so "dispatched" and
   /// "invoked" are checked against the same set rather than two hand copies.
   let dispatchedEntryPoints =
-    [ "--integration-composer"; "--integration-browser"; "--integration-disconnect" ]
+    [ "--integration-composer" ]
 
   /// The tree a plain default run (`--summary`, no `--all`/`--integration`)
   /// actually executes: every [<Tests>] value in this assembly, minus the

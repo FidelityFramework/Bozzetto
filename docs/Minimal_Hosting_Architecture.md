@@ -28,7 +28,7 @@ implementation already exists.
 | FSharp.Core and the .NET runtime | Execute the current F# implementation and its typed data structures. | Clef's own types and semantics; no CLR representation may silently become a language rule. |
 | F# Async, Task adapters, cancellation tokens and synchronization primitives | Start explicitly demanded work; serialize shared state; distinguish cancellation from failure; drain owned work. | Cold admission, shared-demand cancellation, exact completion classification and cleanup before close completes. |
 | Process, stream, file and watcher APIs | Launch owned tools/artifacts, exchange bounded messages, detect edits and manage leases. | Reservation before source mutation, authority checked at actual launch, bounded framing, process identity and joined cleanup. |
-| ASP.NET, Falco and MCP hosting | Serve browser/editor/agent protocols. | The same typed workspace operations and authority checks, regardless of transport. External JSON protocols do not determine the internal graph representation. |
+| ASP.NET and MCP hosting | Serve browser/editor/agent protocols. | The same typed workspace operations and authority checks, regardless of transport. External JSON protocols do not determine the internal graph representation. |
 | Diagnostics and logging | Observe lifecycle and failures. | Observation cannot authorize work, change proof outcomes or hide cleanup failure. |
 
 FSharp.Compiler.Service, Ionide project loading, Fantomas parsing and managed

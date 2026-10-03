@@ -11,12 +11,13 @@ open Bozzetto.Demos.Domain
 open Bozzetto.Demos.Compose
 
 // ---------------------------------------------------------------------------
-// A StepLog shaped like the §6.1 worked scenario (hrDashboardVscodeWeb from
-// DomainTests): 5 steps, one of them (the dashboard click) with a non-empty
-// pointer path, the rest with no recorded motion (e.g. `Await`, `Chord`).
+// A StepLog shaped like the worked scenario (hrVsCodeConsole from
+// DomainTests): 5 steps, one of them (the command-palette click) with a
+// non-empty pointer path, the rest with no recorded motion (e.g. `Await`,
+// `Chord`).
 // ---------------------------------------------------------------------------
 
-let private scenarioId = ScenarioId.derive Capability.HotReload Client.VsCode AppKind.Web
+let private scenarioId = ScenarioId.derive Capability.HotReload Client.VsCode AppKind.Console
 
 let private stepRecord index caption segment pointerPath : StepRecord =
   { Index = index
@@ -31,22 +32,21 @@ let private stepRecord index caption segment pointerPath : StepRecord =
 let private heroStepLog : StepLog =
   { ScenarioId = scenarioId
     Steps =
-      [ stepRecord 0 "Run the web app" "/out/step-00.mkv" []
-        stepRecord 1 "1/4 · Press Run on the session card" "/out/step-01.mkv"
+      [ stepRecord 0 "Open the ticker" "/out/step-00.mkv" []
+        stepRecord 1 "1/4 · Run the app from the command palette" "/out/step-01.mkv"
           [ { X = 620; Y = 300 }; { X = 630; Y = 298 } ]
-        stepRecord 2 "2/4 · Change the heading" "/out/step-02.mkv" []
+        stepRecord 2 "2/4 · Change the message" "/out/step-02.mkv" []
         stepRecord 3 "3/4 · Save" "/out/step-03.mkv" []
-        stepRecord 4 "4/4 · The running site repaints — no reload" "/out/step-04.mkv" [] ] }
+        stepRecord 4 "4/4 · The running ticker updates — no restart" "/out/step-04.mkv" [] ] }
 
 let private editorLeftLayout : Map<ActorId, Rect> =
   Map.ofList [
     ActorId.VsCode, { X = 0; Y = 0; W = 704; H = 720 }
-    ActorId.Dashboard, { X = 712; Y = 0; W = 568; H = 356 }
-    ActorId.App, { X = 712; Y = 364; W = 568; H = 356 }
+    ActorId.App, { X = 712; Y = 0; W = 568; H = 720 }
   ]
 
-let private dashboardOnlyLayout : Map<ActorId, Rect> =
-  Map.ofList [ ActorId.Dashboard, { X = 0; Y = 0; W = 1280; H = 720 } ]
+let private agentOnlyLayout : Map<ActorId, Rect> =
+  Map.ofList [ ActorId.Agent, { X = 0; Y = 0; W = 1280; H = 720 } ]
 
 // ---------------------------------------------------------------------------
 // A hand-rolled FsCheck generator for StepLog. `Caption`/`ScenarioId` have
@@ -99,21 +99,21 @@ let tests =
       |> List.map Caption.value
       |> Expect.equal
         "one caption per step, matching the StepLog's own step order"
-        [ "Run the web app"
-          "1/4 · Press Run on the session card"
-          "2/4 · Change the heading"
+        [ "Open the ticker"
+          "1/4 · Run the app from the command palette"
+          "2/4 · Change the message"
           "3/4 · Save"
-          "4/4 · The running site repaints — no reload" ]
+          "4/4 · The running ticker updates — no restart" ]
 
     testCase "plan produces one pointer-path entry per step, empty where the step had no motion" <| fun _ ->
       let composePlan = plan heroStepLog editorLeftLayout Style.kanagawa
       composePlan.PointerPaths
       |> List.map List.isEmpty
       |> Expect.equal
-        "only the dashboard-click step (index 1) carries a recorded pointer path"
+        "only the command-palette click step (index 1) carries a recorded pointer path"
         [ true; false; true; true; true ]
 
-    testCase "plan carries exactly one non-empty pointer path for the §6.1 scenario's one click step" <| fun _ ->
+    testCase "plan carries exactly one non-empty pointer path for the worked scenario's one click step" <| fun _ ->
       let composePlan = plan heroStepLog editorLeftLayout Style.kanagawa
       composePlan.PointerPaths
       |> List.filter (List.isEmpty >> not)
@@ -140,8 +140,8 @@ let tests =
       composePlan.Magnifier
       |> Expect.equal "the VS Code pane's own rect" (Some { X = 0; Y = 0; W = 704; H = 720 })
 
-    testCase "plan has no magnifier when the layout has no editor pane (DashboardOnly, §9)" <| fun _ ->
-      let composePlan = plan heroStepLog dashboardOnlyLayout Style.kanagawa
+    testCase "plan has no magnifier when the layout has no editor pane (AgentOnly)" <| fun _ ->
+      let composePlan = plan heroStepLog agentOnlyLayout Style.kanagawa
       composePlan.Magnifier |> Expect.isNone "no editor pane to magnify"
 
     testCase "plan threads the given style through unchanged" <| fun _ ->

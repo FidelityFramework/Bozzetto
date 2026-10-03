@@ -35,7 +35,7 @@ hit save, and it still feels great every time it works.
 | **Broken code** | Dead: must compile to instrument | Tree-sitter/LSP works mid-keystroke |
 | **Scope** | Rebuilds impacted projects | Single function definition |
 | **Frameworks** | xUnit, NUnit, MSTest | + Expecto, TUnit, extensible; FsCheck `[<Property>]` tests are discovered and shown in the live panel |
-| **Clients** | Visual Studio only | Neovim, VS Code, web dashboard, MCP |
+| **Clients** | Visual Studio only | Neovim, VS Code, MCP |
 | **Platform** | Windows only (ProjFS) | Cross-platform (.NET) |
 | **Cost** | ~$250/month Enterprise license | Free, MIT |
 

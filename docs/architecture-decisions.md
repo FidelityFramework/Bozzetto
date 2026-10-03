@@ -2,7 +2,7 @@
 
 These are the key decisions that shape Bozzetto's architecture, written to explain the reasoning behind them for future contributors, not just the decisions themselves.
 
-> **Historical status:** ADR-2 and ADR-5, along with the frontend lists in other early ADRs, describe the former built-in SageTUI, legacy TUI, and `Bozzetto.Gui` Raylib product frontends. Those frontends are now deprecated, and for current product direction these decisions are superseded by the web dashboard, editor integrations, and MCP. The original records are unchanged and kept as architectural history. Raylib application and game demos are not deprecated.
+> **Historical status:** ADR-2 and ADR-5, along with the frontend lists in other early ADRs, describe the former built-in SageTUI, legacy TUI, and `Bozzetto.Gui` Raylib product frontends. Those frontends are now deprecated, and for current product direction these decisions are superseded by the browser UI, editor integrations, and MCP. The original records are unchanged and kept as architectural history. Raylib application and game demos are not deprecated.
 
 ---
 

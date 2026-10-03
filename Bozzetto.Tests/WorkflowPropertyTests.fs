@@ -10,7 +10,7 @@ open Bozzetto.WorkflowTypes
 let projectKindTests =
   testList "ProjectKind classification" [
     testCase "web frameworks classify as Web" <| fun _ ->
-      ProjectKind.classify [ "Falco.Datastar"; "FSharp.Core" ] |> ProjectKind.label
+      ProjectKind.classify [ "Falco"; "FSharp.Core" ] |> ProjectKind.label
       |> Expect.equal "Falco is web" "web"
       ProjectKind.classify [ "Microsoft.AspNetCore.App" ] |> ProjectKind.label
       |> Expect.equal "AspNetCore is web" "web"

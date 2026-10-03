@@ -7,8 +7,8 @@ Source: `Bozzetto.Core/Theme.fs`
 
 ## Purpose
 
-The `Theme` module defines a typed color palette for the Bozzetto TUI, GUI, and
-dashboard. It provides:
+The `Theme` module defines a typed color palette for the Bozzetto TUI and GUI.
+It provides:
 
 1. **`ThemeConfig`** — a 34-field record where each field is a named hex RGB
    string (format `#rrggbb`), covering foreground colors, background colors,

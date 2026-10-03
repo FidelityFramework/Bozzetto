@@ -2,156 +2,150 @@
 
 **Interactive development coordination for the Fidelity Framework.**
 
-Bozzetto is being built to connect editing, compiler evidence and live application behavior across people and agents. A shared local compiler workspace and CPU REPL are the firm next direction. Interactive development across nearby devices and authenticated remote sites are broader directions to explore as demand is demonstrated.
-
-The working foundation today is an explicit Clef/Composer project session: humans and agents share edit reservations, incremental CPU native builds, accepted-artifact evidence and gated execution through MCP and the browser. Shared editor workspaces, CPU ORC execution, arbitrary application selections and distributed hot module reload (HMR) are development horizons described below.
+Bozzetto connects editing, compiler evidence and running code across the people and agents working on a Clef project. It hosts explicit Composer project sessions in which edits are reserved before they are made, builds are incremental and native, and execution is admitted only for an artifact the compiler has accepted. MCP clients and the browser work through the same sessions and the same authority.
 
 [Development horizons](docs/Bozzetto_Development_Horizons.md) · [Fidelity component contracts](docs/Bozzetto_Fidelity_Component_Contracts.md) · [Get started](#get-started) · [Documentation](docs/README.md)
 
 ## The Name
 
-A *bozzetto* (Italian, pronounced bot-SET-oh) is the small model a sculptor shapes in clay or wax before starting the full work. The word is the diminutive of *bozzo*, which means "sketch" or "rough stone" ([Merriam-Webster](https://www.merriam-webster.com/dictionary/bozzetto), [Britannica](https://www.britannica.com/art/bozzetto)). A patron sees the bozzetto and asks for changes while a change still costs little.
+A *bozzetto* (Italian, pronounced bot-SET-oh) is the small model a sculptor shapes in clay or wax before starting the full work. The word is the diminutive of *bozzo*, "sketch" or "rough stone" ([Merriam-Webster](https://www.merriam-webster.com/dictionary/bozzetto), [Britannica](https://www.britannica.com/art/bozzetto)). A patron sees the bozzetto and asks for changes while a change still costs little.
 
-The model gives an idea enough substance to be judged. Proportion, movement and the relationship between parts become visible before the sculptor commits to the finished material. We chose the name for that exchange between making and examining: trying a definition or a change against a real project, seeing its consequences, and revising it while the work is still open. Compiler evidence and interactive execution should make that process available to developers, with people and agents able to inspect the same work.
+The model gives an idea enough substance to be judged: proportion, movement and the relationship between parts become visible before the sculptor commits to the finished material. Bozzetto offers the same exchange between making and examining. A definition or a change is tried against a real project, its consequences are shown as compiler evidence and execution, and it is revised while the work is still open, with people and agents inspecting the same work.
 
-The connection to **Atelier** is deliberate. An *atelier* is an artist's workshop, the place where sketches, models, tools and unfinished pieces can be brought together. Fidelity's planned Atelier editing and workbench interface should give developers that kind of working space: source beside compiler graphs, proof evidence, execution results and debugging views. Bozzetto is the companion that coordinates the shared compiler workspace and execution behind those views, through Composer's contracts. Atelier provides the place to arrange, edit and inspect the work; Bozzetto keeps the sessions and execution that people and agents are working on coordinated.
+The connection to **Atelier** is deliberate. An *atelier* is an artist's workshop, where sketches, models, tools and unfinished pieces are brought together. Atelier is Fidelity's editing and workbench environment: source beside compiler graphs, proof evidence, execution results and debugging views. Bozzetto is its companion, coordinating the shared compiler workspace and execution behind those views through Composer's contracts. Atelier is the place to arrange, edit and inspect the work; Bozzetto keeps the sessions and execution that people and agents rely on coordinated, so no single interface becomes the owner of compiler meaning.
 
-That relationship is a design direction, with the current Composer foundation described below. It allows Atelier, other editors, the browser and MCP clients to participate in the same development process without making a particular interface the owner of compiler meaning. As the workbench grows from local CPU experiments toward the broader horizons, the name continues to describe its purpose: give an idea a form that can be examined and changed before committing it to the finished application.
+<a id="-one-daemon-every-client"></a>
+<a id="how-bozzetto-works"></a>
 
-## The Working Foundation
+## How Bozzetto Works
 
-Bozzetto's daemon owns one Composer supervisor shared by MCP tools, the `composer://sessions` resource and the `/composer` browser page. The **Composer workspace host (`Bozzetto.Composer`)** owns the live compiler project sessions behind those interfaces. Each project is opened explicitly from an absolute `.fidproj` path. Operations carry host, session and compiler epoch identity.
+One long-running daemon owns a single Composer supervisor. Every client — MCP agents, the browser dashboard and command-line tools — reaches the same supervisor, which drives an isolated compiler worker holding the live project sessions.
 
-| Operation | Current behavior |
+```mermaid
+flowchart LR
+  MCP[MCP clients] --> D[Bozzetto daemon]
+  Browser[Browser dashboard] --> D
+  CLI[boz CLI] --> C[Control listener]
+  C --> D
+  D --> S[Composer supervisor]
+  S --> W[Isolated compiler worker]
+  W --> P[Explicit Clef project sessions]
+```
+
+A project is opened explicitly from an absolute `.fidproj` path, and every operation carries the identity of its host, session and compiler epoch:
+
+| Operation | Meaning |
 |---|---|
-| Open | Create an explicit Composer project session. |
-| Reserve | Withdraw the old artifact's run authority before source or dependency edits. |
+| Open | Create a Composer project session for an explicit project. |
+| Reserve | Withdraw the current artifact's run authority before source or dependency edits. |
 | Build | Compile the reserved revision and return diagnostics and artifact evidence. |
-| Run | Ask Composer to revalidate inputs and executable bytes, then execute the accepted native artifact. |
-| Cancel, close or retire | Withdraw authority and report cleanup; compiler replacement requires a fresh worker epoch. |
+| Run | Have Composer revalidate inputs and executable bytes, then execute the accepted native artifact. |
+| Cancel, close or retire | Withdraw authority and report cleanup; replacing the compiler starts a fresh worker epoch. |
 
-The [October 1 promoted-distribution assessment](docs/Bozzetto_Incremental_Workflow_Auditor_Assessment_2026-09-30.md#october-1-promoted-distribution-repeat) records the completed compiler promotion, the full 29-case provider tier and a repeated cold/unchanged/edited native journey. This establishes the bounded scalar workflow; native Lazy/Result boundaries and broader language coverage remain open. Object reuse does not imply proof-result reuse or a measured performance gain.
+Status and artifact paths are evidence, not permission: execution always passes through Composer's revalidation. Incremental dependency bookkeeping and the lifetimes of explicitly started work are delegated to [Fidelity.FSharp.Incremental](docs/Bozzetto_Incremental_Foundation_Adoption.md), the foundation shared with the Clef/CCS/Baker/Composer pipeline; Bozzetto does not keep a separate invalidation mechanism.
 
-The reviewed CLI/help deployment and compiler promotion are separate changes, recorded in the [continuation follow-up](docs/Bozzetto_Compiler_Continuation_Followup_2026-09-30.md). A newer checkout or CLI alone does not change the compiler executing a session.
+The daemon exposes three surfaces:
+
+- **MCP** (Streamable HTTP on port 47749): the `composer_*` tools and the `composer://sessions` resource.
+- **The browser dashboard** (`/dashboard` on 47749): a [Partas.Solid](https://github.com/shayanhabibi/Partas.Solid) application in [`bozzetto-web/`](bozzetto-web/README.md). The page and daemon share one typed vocabulary of commands and events over a single WebSocket bridge. The daemon acts as the update function, and the page's reactive stores fold the events it pushes. The design follows Fidelity's WREN stack, so the same protocol can later be served by a native Clef backend over BAREWire.
+- **The control listener** (port 47750): daemon identity and shutdown for `boz status` and `boz stop`. It is a separate listener so that it answers even when the MCP listener has failed.
+
+The host and compiler worker run on .NET. Their contracts are written so that native hosting can replace them without making CLR types, a particular editor or a transport the source of compiler authority. Bozzetto does not host an F# REPL; interactive Clef execution is a Composer backend built on LLVM ORC.
 
 ## Development Horizons
 
-H1 is the firm local development direction; **H1 is not complete**. H2 and H3 are exploratory directions, not delivery promises. Before committing an implementation tranche for arbitrary cross-target execution, preservation of target numeric semantics or remote sites, establish demonstrated customer, developer or engineering demand, a concrete workload and the value that justifies the compiler, proof and hardware complexity.
-
-| Horizon | Intended development experience | Work still required |
+| Horizon | Development experience | What it requires |
 |---|---|---|
-| **H1 — One local compiler workspace** | Editors, MCP clients and the browser share identified source snapshots, compiler evidence and execution state. A CPU REPL uses LLVM ORC JIT; native hosting removes the managed bootstrap requirement. | Broader compiler parity and validated distribution promotion, shared checks and overlays, artifact correspondence, ORC state/callback lifetime, and native host conformance. |
-| **H2 — Application code across local and LAN targets** | Select application code for interactive execution in its real context; develop across CPUs, accelerators and devices, including mobile devices and systems with unified memory. | Selection and effect contracts, named target arithmetic contexts, target-specific deployment, state transfer and honest reload/restart/reprogram behavior. |
+| **H1 — One local compiler workspace** | Editors, MCP clients and the browser share identified source snapshots, compiler evidence and execution state. A CPU REPL uses LLVM ORC JIT, and a native host removes the managed bootstrap. | Compiler parity and repeatable distribution promotion, shared checks and overlays, artifact correspondence, ORC state and callback lifetimes, native host conformance. |
+| **H2 — Application code across local and LAN targets** | Select application code for interactive execution in its real context, across CPUs, accelerators and devices, including mobile devices and unified-memory systems. | Selection and effect contracts, named target arithmetic contexts, target-specific deployment, state transfer and honest reload, restart or reprogram behavior. |
 | **H3 — Coordinated remote sites** | Authenticated site nodes extend the same workflow to remote accelerators and devices across WAN links. | Site identity and authorization, remote admission and ownership, transfer provenance, cancellation, disconnect recovery and observable execution. |
 
-H1 starts with one compiler-owned workspace shared across interfaces. Lattice's current editor session and Bozzetto's Composer project session do not become that workspace merely by opening the same path. CPU ORC execution and a native host are distinct workstreams, each requiring its own acceptance evidence. Compiler parity and repeatable promotion remain prerequisites as language coverage grows; one promoted scalar workflow does not settle those broader gates.
+H1 is the committed local direction. H2 and H3 are exploratory: an implementation tranche for cross-target execution, target numeric semantics or remote sites follows demonstrated demand, a concrete workload and value that justifies its compiler, proof and hardware cost.
 
-H2's objective remains arbitrary application code selection: let a developer select useful code wherever it occurs in an application. Moving it into a pure function or a Common module is not a prerequisite. The compiler must identify the selection's dependencies, captures, effects and target requirements, and either admit that execution with explicit state and lifetime rules or explain the refusal. Effects remain real application behavior.
+H1 begins with one compiler-owned workspace shared across interfaces; editors that open the same path do not thereby share a workspace. CPU ORC execution and the native host are distinct workstreams with their own acceptance evidence.
 
-A selection's **named arithmetic context** belongs to compiler admission and its proof claim. Choosing CPU-native arithmetic versus preserving another target's arithmetic in ORC can substantially change proof obligations and hardware capability requirements. Host arithmetic must not silently stand in for that target. These distinctions need explicit evaluation across heterogeneous CPUs and accelerators, mobile devices and systems with unified memory; shared memory alone does not settle code, state or synchronization contracts.
+H2 aims at arbitrary selection: a developer selects useful code wherever it occurs, without first moving it into a pure function or a common module. The compiler identifies the selection's dependencies, captures, effects and target requirements, and either admits the execution with explicit state and lifetime rules or explains the refusal. A selection's **named arithmetic context** belongs to compiler admission and its proof claim; host arithmetic never silently stands in for a target's. Hot module reload reports what actually happened on each target — preserved state, restart, device reprogramming or explicit migration — rather than promising continuity.
 
-HMR should describe what actually happened on each target. A compatible update may preserve a running application's state; another change may require restart, device reprogramming or explicit state migration. Those outcomes must stay visible. Continuous execution is a capability to establish for a particular target and change, not a promise implied by calling every update HMR.
+H3 carries those rules through authenticated site nodes, keeping ownership and evidence clear when compilation, deployment and execution occur at different sites, including across interrupted WAN connections.
 
-H3 would extend those rules through authenticated site nodes, retaining clear ownership and evidence when compilation, deployment and execution occur at different sites, including during interrupted WAN connections. No remote-site API or distributed execution capability is delivered by today's local provider.
-
-The [horizons document](docs/Bozzetto_Development_Horizons.md) develops these scenarios and gates. The [near-term implementation plan](docs/Clef_Composer_Development_Plan.md) orders the current compiler/workspace work.
+The [horizons document](docs/Bozzetto_Development_Horizons.md) develops these scenarios and gates, and the [development plan](docs/Clef_Composer_Development_Plan.md) orders the first-horizon work.
 
 ## Roles in Fidelity
-
-The intended component contracts keep compiler meaning, interaction and execution coordination distinct:
 
 | Component | Responsibility |
 |---|---|
 | Composer / Clef Compiler Service | Source snapshots, semantic and proof authority, compiler evidence, target-specific build and execution admission. |
-| Bozzetto | Selected workspace and session ownership, worker lifecycle, client routing, work coordination and supervised execution through compiler contracts. |
+| Bozzetto | Workspace and session ownership, worker lifecycle, client routing, work coordination and supervised execution through compiler contracts. |
 | Lattice | Language and proof tooling for editors, navigation and linked source/evidence views. |
 | Atelier | A development environment presenting the same workspace through its own interaction and rendering choices. |
 
-These responsibilities guide integration; they do not claim that every client already shares one workspace. Bozzetto must carry compiler-authored evidence faithfully, including its source, target and revision identity. See the [Fidelity component contracts](docs/Bozzetto_Fidelity_Component_Contracts.md) for the wider boundaries and outstanding decisions.
+Bozzetto carries compiler-authored evidence faithfully, with its source, target and revision identity; it never manufactures compiler meaning of its own. The [component contracts](docs/Bozzetto_Fidelity_Component_Contracts.md) set out the wider boundaries.
 
 ## Get Started
 
-### 1. Use the reviewed installation
-
 <a id="installation"></a>
 
-The [live provider checkpoint](docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md) documents the launcher, runtime and connection setup. Read its [deployment correction](docs/Bozzetto_Live_Provider_Audit_Response_2026-09-30.md) and the [October 1 promotion](docs/Bozzetto_Incremental_Workflow_Auditor_Assessment_2026-09-30.md#october-1-promoted-distribution-repeat) for subsequent deployment identities. No Bozzetto package is published to NuGet.
+### 1. Install
 
-For host development, use the SDK pinned in `global.json` and follow [the contributing guide](CONTRIBUTING.md). Building or packaging the host alone does not configure or promote a Composer distribution.
+Bozzetto is distributed as a reviewed release bundle — daemon and Composer worker — launched through the installed `boz` command; it is not published to NuGet. `scripts/ship` gates a commit and pushes it, and the main build promotes the gated bundle. For host development, use the SDK pinned in `global.json` and follow [the contributing guide](CONTRIBUTING.md); building the host does not change the compiler distribution a session runs.
 
-### 2. Connect to the shared daemon
-
-From this checkout:
+### 2. Start the shared daemon
 
 ```bash
 scripts/start-shared-daemon
 ```
 
-The helper preserves an existing listener. New daemons use the installed `boz`, the dedicated external workspace `${XDG_DATA_HOME:-$HOME/.local/share}/bozzetto/workspace`, and logs under `${XDG_STATE_HOME:-$HOME/.local/state}/bozzetto/`. Keep the shared daemon independent of any individual MCP client's lifetime.
-
-Inspect daemon and provider state with bounded requests:
+The helper leaves an existing daemon in place. A new daemon runs from the dedicated workspace `${XDG_DATA_HOME:-$HOME/.local/share}/bozzetto/workspace` and logs to `${XDG_STATE_HOME:-$HOME/.local/state}/bozzetto/`, independent of any client's lifetime. Inspect it with bounded requests:
 
 ```bash
 boz status
-curl --fail --max-time 3 http://127.0.0.1:47749/health
 curl --fail --max-time 3 http://127.0.0.1:47749/api/composer/sessions
 ```
 
-### 3. Open the browser or connect MCP
+### 3. Connect
 
 | Interface | Address |
 |---|---|
-| Composer browser page | `http://127.0.0.1:47749/composer` |
+| Browser dashboard | `http://127.0.0.1:47749/dashboard` |
 | Streamable HTTP MCP | `http://127.0.0.1:47749/` |
-| Dashboard | `http://127.0.0.1:47750/` |
 | Composer session resource | `composer://sessions` through MCP |
+| Control listener | `http://127.0.0.1:47750/api/daemon-info` |
 
-Confirm that your connected agent exposes `composer_list_sessions` and `composer_open_project`. See [agent setup](docs/agents.md) and the [MCP reference](docs/mcp-tools.md); a configuration entry alone does not establish a live connection.
+A connected agent exposes `composer_list_sessions` and `composer_open_project`; see [agent setup](docs/agents.md) and the [MCP reference](docs/mcp-tools.md).
 
 ### 4. Open, reserve, build and run
 
-1. Open an absolute `.fidproj` using the browser or `composer_open_project`.
-2. Retain the returned host, session and compiler epoch for subsequent operations.
-3. Call `composer_reserve_edit` and receive success before changing source or dependencies.
+1. Open an absolute `.fidproj` from the dashboard or with `composer_open_project`.
+2. Keep the returned host, session and compiler epoch for the operations that follow.
+3. Reserve with `composer_reserve_edit` before changing source or dependencies.
 4. Make the edit, then pass the single-use reservation to `composer_build`.
 5. Inspect the result and execute through `composer_run_current`.
 
-The browser uses the same authority. An edit reservation, cancellation or worker retirement withdraws prior run authority. Status and artifact paths are evidence; execution always passes through Composer's revalidation gate.
+## Repository Layout
 
-## Current Host Structure
+| Path | Contents |
+|---|---|
+| `Bozzetto/` | Daemon supervision, CLI, MCP, control listener and the dashboard bridge. |
+| `Bozzetto.Composer/` | The Composer worker and adapter. |
+| `Bozzetto.Core/` | Shared and inherited implementation. |
+| `bozzetto-web/` | The Partas.Solid dashboard and the shared bridge protocol. |
+| `bozzetto-vscode/` | The VS Code extension. |
+| `Bozzetto.Tests/`, `Bozzetto.Composer.Tests/` | Test suites. |
 
-<a id="-one-daemon-every-client"></a>
-<a id="how-bozzetto-works"></a>
-
-```mermaid
-flowchart LR
-  MCP[MCP clients] --> D[Bozzetto daemon]
-  Browser[Composer browser page] --> D
-  D --> S[Shared Composer supervisor]
-  S --> W[Isolated compiler worker]
-  W --> P[Explicit Clef project sessions]
-```
-
-The host and compiler worker use .NET today. Their public contracts should support the native hosting horizon without making CLR types, a particular editor or a transport the source of compiler authority.
-
-Fidelity.FSharp.Incremental is the selected shared foundation for incremental dependencies and explicitly started work across Bozzetto and the Clef/CCS/Baker/Composer pipeline. Its [planned adoption](docs/Bozzetto_Incremental_Foundation_Adoption.md) connects interim .NET hosting to self-hosting through portable ownership and lifetime contracts. Integration is still ahead.
-
-`Bozzetto/` contains daemon supervision, CLI, MCP and browser routes; `Bozzetto.Composer/` contains the worker and adapter. `Bozzetto.Core/` holds shared and inherited implementation. Tests live in `Bozzetto.Tests/` and `Bozzetto.Composer.Tests/`. The [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md) removes embedded production FSI hosting from this checkout; a real Clef interactive host remains future work.
-
-The [documentation index](docs/README.md) retains implementation and compatibility guides, editor references and application samples, including the Raylib window and game demos.
+The [documentation index](docs/README.md) covers implementation guides, editor references and application samples, including the Raylib window and game demos.
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for repository standards and implementation workflows. Use the [horizons](docs/Bozzetto_Development_Horizons.md) and [component contracts](docs/Bozzetto_Fidelity_Component_Contracts.md) to place new work, and preserve the distinction between a proposed capability and its executed acceptance evidence.
-
-## Heritage and License
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for repository standards and workflows, and use the [horizons](docs/Bozzetto_Development_Horizons.md) and [component contracts](docs/Bozzetto_Fidelity_Component_Contracts.md) to place new work. A proposed capability and its acceptance evidence are distinct; keep them so.
 
 <a id="fork-status"></a>
 <a id="hard-fork-lineage"></a>
 <a id="acknowledgments"></a>
 
-Bozzetto is a hard fork of [SageFs](https://github.com/WillEhrendreich/SageFs), Will Ehrendreich's live F# development daemon. Its persistent REPL, daemon architecture and hot reload engine supplied the working foundation: keep a project alive, try a change and see its effect through shared tools. [Fable.SageFs](https://github.com/shayanhabibi/Fable.SageFs), by Shayan Habibi, brought the Fable compiler into that live session and allowed its own transforms to be revised from the REPL. That example helped inspire Bozzetto's compiler workbench direction.
+## Heritage and License
 
-Bozzetto carries those ideas into Fidelity's broader compiler, device and workbench remit. Today's Composer integration uses explicit worker retirement and replacement; live compiler patching and Clef ORC execution remain separate work. [Upstream heritage](UPSTREAM_HERITAGE.md) records the fork history, original authorship and wider dependency credits.
+Bozzetto is a hard fork of [SageFs](https://github.com/WillEhrendreich/SageFs), Will Ehrendreich's live F# development daemon. Its persistent REPL, daemon architecture and hot reload engine supplied the working foundation: keep a project alive, try a change and see its effect through shared tools. [Fable.SageFs](https://github.com/shayanhabibi/Fable.SageFs), by Shayan Habibi, brought the Fable compiler into that live session and let its own transforms be revised from the REPL, an example that helped inspire Bozzetto's compiler workbench direction.
+
+Bozzetto carries those ideas into Fidelity's compiler, device and workbench remit. [Upstream heritage](UPSTREAM_HERITAGE.md) records the fork history, original authorship and wider dependency credits.
 
 [MIT license](LICENSE), with the original copyright notice preserved.

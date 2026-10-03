@@ -453,15 +453,15 @@ let tests =
         leaves |> List.exists isCrop |> Expect.isTrue "magnifier crops the editor pane"
         leaves |> List.exists isOverlay |> Expect.isTrue "magnifier overlays the PiP onto the main frame"
 
-      testCase "render omits the magnifier crop when the plan has none (DashboardOnly layouts, §9)" <| fun _ ->
+      testCase "render omits the magnifier crop when the plan has none (AgentOnly layouts)" <| fun _ ->
         let leaves = render noMagnifierPlan |> allLeaves
         leaves |> List.exists isCrop |> Expect.isFalse "no editor pane to magnify"
 
-      testCase "a single-step plan (hello-dashboard's shape) still renders a valid graph with one input pad" <| fun _ ->
+      testCase "a single-step plan still renders a valid graph with one input pad" <| fun _ ->
         let oneStepPlan =
           { samplePlan with
               Segments = [ "/out/step-00.mkv" ]
-              Captions = [ Caption.mk "1/1 · Press Quick Start" ]
+              Captions = [ Caption.mk "1/1 · Run the app" ]
               PointerPaths = [ [ { X = 620; Y = 300 }; { X = 630; Y = 298 } ] ]
               Timings = [ timing 0 2500 1800 ]
               Magnifier = None }

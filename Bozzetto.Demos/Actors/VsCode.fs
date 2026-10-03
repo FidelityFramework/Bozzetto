@@ -3,10 +3,10 @@
 /// `executeCommand`/the `bozzetto.debug.rectFor` loopback control channel
 /// (`bozzetto-vscode/src/Extension.fs`/`DebugRects.fs`) — never CDP, never
 /// `--remote-debugging-port` (issue #133's flakiness, forbidden outright by
-/// H5). Mirrors `Actors/Dashboard.fs`'s shape exactly: `launch` owns
+/// H5). Follows the shared actor shape (`Actors/Actor.fs`): `launch` owns
 /// spawning the real process (a deliberate, documented choice — see the
-/// module doc on `launch` below), `resolveRect`/`observe`/`close` are moved
-/// onto the shared `LiveActor` record the same way Dashboard's are.
+/// module doc on `launch` below), `resolveRect`/`observe`/`close` are exposed
+/// on the shared `LiveActor` record the same way every other actor's are.
 ///
 /// SPIKE PROOF (demo-actors-plan.md §4/§7's "spike the one unknown first"):
 /// this actor's launch + control-channel design was proven live against the
@@ -137,9 +137,9 @@ let private tryPlaceWindow (rect: Rect) : Async<unit> =
 /// `--ozone-platform=x11`, and `BOZZETTO_DEBUG_RECTS_PORT` so the extension's
 /// loopback control channel binds to a port this actor already knows.
 /// `launch` — not a bash `innerScript` prologue — owns spawning, exactly
-/// like `Actors/Dashboard.fs`'s `launch` owns spawning Chromium: the two
-/// editor/browser actors should be symmetric, and this shape is the one
-/// actually proven live (see the module doc above), so `Runtime.VsCode.fs`
+/// like the Agent actor's `launch` owns spawning Chromium: actors that spawn
+/// their own window should be symmetric, and this shape is the one actually
+/// proven live (see the module doc above), so `Runtime.VsCode.fs`
 /// contributes cell BINDS (the resolved VS Code build + this extension
 /// directory, RO) rather than a bash-level launch fragment.
 let launch
@@ -229,8 +229,8 @@ let launch
 
 /// GETs `url`, returning `None` on any failure OR a genuine JSON `null`
 /// body (`bozzetto.debug.rectFor`'s own honest-absence contract) — never
-/// throws past this function, mirroring `Dashboard.fs`'s `resolveRect`
-/// swallowing its own Playwright timeouts into `None`.
+/// throws past this function — a failed lookup is an honest `None`, never
+/// an exception that takes the cell-agent down.
 let private tryGetJson (http: HttpClient) (url: string) : Async<JsonElement option> =
   async {
     try
@@ -329,8 +329,8 @@ let observe (handle: Handle) (daemonBaseUrl: string) (selector: string) (timeout
 /// delay fires means `Client.listSessions` already sees a session, so that
 /// flow's own `[||] -> prompt` branch never triggers — no dialog ever
 /// appears to race. `projects = []` (never a project literal): the daemon
-/// auto-discovers the lone `.fsproj` in `workingDirectory`, exactly
-/// `hello-dashboard`'s own real-project doctrine (`Scenarios.fs`).
+/// auto-discovers the lone `.fsproj` in `workingDirectory` — a REAL
+/// project, never a bare temp session (§10).
 let command (handle: Handle) (daemonBaseUrl: string) (token: string) : Async<unit> =
   async {
     if token.StartsWith "create-session-api:" then
@@ -365,11 +365,10 @@ let close (handle: Handle) : Async<unit> =
   }
 
 /// Wraps this actor behind the cell-agent's actor-dispatch seam (Island F,
-/// demo-actors-plan.md §1.2) — the same shape `Actors/Dashboard.fs`'s
+/// demo-actors-plan.md §1.2) — the same shape every other actor's
 /// `toLiveActor` exposes. `Command` is genuinely implemented (see its own
 /// doc above) — the only token it knows is `"create-session-api:..."`;
-/// everything else is still a no-op, exactly `Dashboard.fs`'s own doctrine
-/// for an unrecognized command.
+/// everything else is a no-op.
 let toLiveActor (handle: Handle) (daemonBaseUrl: string) : LiveActor =
   { Id = ActorId.VsCode
     ResolveRect = resolveRect handle

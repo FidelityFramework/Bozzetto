@@ -37,7 +37,7 @@ We made the Clef Compiler Service from the F# compiler service, and Lattice from
 
 ## Coexistence with Upstream
 
-Bozzetto now uses package `Bozzetto`, command `boz`, state directory `~/.bozzetto`, MCP port `47749` and dashboard port `47750`. SageFs and Fable.SageFs retain their separate identities. Upstream SageFs keeps its own default MCP port `37749` and dashboard port `37750`, so the defaults do not collide; no SageFS service is part of Bozzetto's workflows. The [identity migration checkpoint](docs/Bozzetto_Identity_Migration_Inventory.md) records the implementation and validation scope.
+Bozzetto now uses package `Bozzetto`, command `boz`, state directory `~/.bozzetto`, MCP port `47749` and control-listener port `47750`. SageFs and Fable.SageFs retain their separate identities. Upstream SageFs keeps its own default MCP port `37749` and dashboard port `37750`, so the defaults do not collide; no SageFS service is part of Bozzetto's workflows. The [identity migration checkpoint](docs/Bozzetto_Identity_Migration_Inventory.md) records the implementation and validation scope.
 
 We no longer track upstream SageFs. The fork has moved on, and later upstream changes are not taken into Bozzetto.
 
@@ -53,7 +53,7 @@ The following credits were retained from the repository README when its focus mo
 - [Fable.SageFs](https://github.com/shayanhabibi/Fable.SageFs), by Shayan Habibi: the compiler-residency and live compiler-editing reference described above.
 - [FsiX](https://github.com/soweli-p/FsiX): the original F# Interactive experience credited by SageFs.
 - [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim): the separate upstream Neovim plugin.
-- [Falco](https://github.com/pimbrouwers/Falco) and [Falco.Datastar](https://github.com/spiraloss/Falco.Datastar): the dashboard framework.
+- [Falco](https://github.com/pimbrouwers/Falco) and [Falco.Datastar](https://github.com/spiraloss/Falco.Datastar): the framework of the inherited web dashboard, since removed from Bozzetto.
 - [Ionide.ProjInfo](https://github.com/ionide/proj-info/): project file parsing.
 - [Raylib-cs](https://github.com/ChrisDill/Raylib-cs): graphics and game demos.
 - [Fable](https://fable.io/): F# to JavaScript compilation for the retained VS Code extension.

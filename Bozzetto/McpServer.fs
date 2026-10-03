@@ -635,7 +635,7 @@ let guardRequestOf (ctx: Microsoft.AspNetCore.Http.HttpContext) : Bozzetto.Serve
 
 /// Browser-origin/CSRF gate (see HttpOriginGuard for the threat model).
 /// Before any route runs it rejects requests from pages that are not this
-/// daemon's own (`own` — every loopback origin of the MCP and dashboard
+/// daemon's own (`own` — every loopback origin of the MCP and control
 /// listeners) and unsafe requests whose body is not labelled JSON. Local
 /// tooling (curl, MCP, editors, CLI — no browser headers) passes.
 let originGuardMiddleware
@@ -652,7 +652,7 @@ let originGuardMiddleware
     do! jsonResponse ctx status (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (sprintf "Request rejected: %s" reason) ])
 }
 
-/// Install the origin gate on a daemon web host (MCP and dashboard share it).
+/// Install the origin gate on a daemon web host (MCP and control share it).
 let useOriginGuard (own: Bozzetto.Server.HttpOriginGuard.OwnOrigins) (app: WebApplication) : unit =
   app.Use(Func<Microsoft.AspNetCore.Http.HttpContext, Func<Task>, Task>(fun ctx next ->
     originGuardMiddleware own ctx next :> Task)) |> ignore
@@ -775,7 +775,7 @@ type McpServerConfig = {
   Port: int
   /// Loopback interface to listen on (BozzettoConfig.BindHost, validated at startup).
   BindHost: Bozzetto.BozzettoConfig.LoopbackHost
-  /// The daemon's own origins (MCP + dashboard listeners) for the origin gate.
+  /// The daemon's own origins (MCP + control listeners) for the origin gate.
   OwnOrigins: Bozzetto.Server.HttpOriginGuard.OwnOrigins
   SessionOps: Bozzetto.SessionManagementOps
   ElmRuntime: Bozzetto.ElmRuntime<Bozzetto.BozzettoModel, Bozzetto.BozzettoMsg, Bozzetto.RenderRegion> option
@@ -3223,6 +3223,9 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       app.Use(Func<Microsoft.AspNetCore.Http.HttpContext, Func<Task>, Task>(fun ctx next ->
         errorHandlingMiddleware ctx next :> Task)) |> ignore
       useOriginGuard cfg.OwnOrigins app
+      // After the origin gate: a WebSocket handshake is a GET, and the gate's
+      // exact-Origin check is what keeps other pages off the UI bridge.
+      app.UseWebSockets() |> ignore
       app.MapMcp() |> ignore
 
       // Phase 3: Route context + routes
@@ -3272,6 +3275,8 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       mapLiveTestingRoutes app rctx
       mapAnalysisRoutes app rctx
       Bozzetto.Server.ComposerRoutes.mapRoutes app composer
+      Bozzetto.Server.UiBridge.create composer cfg.Port cfg.GetDaemonHealth app.Lifetime.ApplicationStopping
+      |> Bozzetto.Server.UiBridge.mapRoutes app
 
       let _stateSub =
         cfg.StateChanged |> Option.map (fun evt ->
@@ -3288,14 +3293,14 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
           Hint = sprintf "Run 'boz status' to find the process holding port %d, or start this daemon with --mcp-port to pick a different one." cfg.Port }
     | ex ->
       // This is the daemon's primary agent/editor interface dying while the
-      // process itself keeps running (the dashboard is a separate
-      // WebApplication — see startDashboardServer — so it can stay up while
+      // process itself keeps running (the control listener is a separate
+      // WebApplication — see ControlListener.start — so it can stay up while
       // this fails). Logging here alone is exactly the failure mode this
       // exists to stop: a Task nobody's watching writing to a log file
       // nobody's reading, while `/api/daemon-info` (what `boz status`
       // and every editor's daemon probe actually poll) keeps reporting a
       // healthy daemon. ComponentWatch is shared in-process, so the
-      // dashboard's own app can see this even though the MCP app that
+      // control listener's own app can see this even though the MCP app that
       // detected it never got to start serving anything.
       Log.error "MCP server failed to start (%s): %s\n%s" (ex.GetType().Name) ex.Message (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
       Bozzetto.Features.ComponentWatch.reportFailure

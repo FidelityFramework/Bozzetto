@@ -50,7 +50,7 @@ let tests =
       let scratch = "/tmp/bozzetto-demos-plugin-scratch-example"
       actorBinds scratch |> Expect.equal "one bind, host path == cell path" [ scratch, scratch ]
 
-    testCase "actorPrologue is empty — Actors.Neovim.launch owns the whole kitty+nvim spawn itself, exactly like the Dashboard actor's Chromium launch (Island F's own precedent)" <| fun _ -> actorPrologue |> Expect.isEmpty "no shell-level prologue needed"
+    testCase "actorPrologue is empty — Actors.Neovim.launch owns the whole kitty+nvim spawn itself, exactly like the Agent actor's Chromium launch (Island F's own precedent)" <| fun _ -> actorPrologue |> Expect.isEmpty "no shell-level prologue needed"
 
     testCase "nvimConfig carries the resolved commit AND the pinned checkout's own path through, never the plugin repo's currently-checked-out branch" <| fun _ ->
       let cfg = nvimConfig "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" "/tmp/bozzetto-demos-plugin-scratch-example"

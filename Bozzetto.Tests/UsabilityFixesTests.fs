@@ -1,12 +1,9 @@
-/// Tests for three measured usability defects:
+/// Tests for two measured usability defects:
 ///   1. `boz check` (EnvCheck.fs) — target-framework detection must read
 ///      the actual XML element, not scan raw text (which also matches
 ///      framework monikers named inside a comment); a port held by OUR OWN
 ///      already-running daemon is not a conflict.
 ///   2. `GET /health` (McpServer.fs) — a daemon with zero sessions is healthy.
-///   3. Dashboard cancel-eval wiring (DashboardTypes.fs/DaemonMode.fs) — a
-///      CancelEval action exists and is distinct from the shared eval/reset/
-///      hard-reset in-flight signal.
 module Bozzetto.Tests.UsabilityFixesTests
 
 open System
@@ -154,17 +151,5 @@ let healthyForSessionsTests =
     test "a daemon whose only session is WarmingUp is not healthy" {
       Bozzetto.Server.McpServer.healthyForSessions [ session SessionHealthStatus.WarmingUp ]
       |> Expect.isFalse "still warming up is not (yet) healthy"
-    }
-  ]
-
-// ── 3. Dashboard cancel-eval signal is distinct from the shared action signal ──
-
-[<Tests>]
-let cancelEvalSignalTests =
-  testList "Dashboard cancel-eval signals" [
-
-    test "CancelLoading is a distinct signal name from ActionLoading" {
-      Bozzetto.Server.DashboardTypes.Signals.CancelLoading
-      |> Expect.notEqual "cancel must not share the shared disable signal" Bozzetto.Server.DashboardTypes.Signals.ActionLoading
     }
   ]

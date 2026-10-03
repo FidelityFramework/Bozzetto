@@ -175,14 +175,13 @@ let cohortLanding: Scenario =
     // on the host for EVERY scenario, cohort or not
     // (`buildSampleFromSource repoRoot (Sample.relativePath
     // scenario.Sample)`) — the lightest real sample keeps that
-    // unavoidable pre-build cheap, mirroring how `agent-mcp`
-    // (`Scenarios.Agent.fs`) picks ITS sample the same way, just the
-    // smallest one rather than `WebappDatastar`: this scenario's own
+    // unavoidable pre-build cheap — the same sample `agent-mcp`
+    // (`Scenarios.Agent.fs`) uses for the same reason: this scenario's own
     // real work happens entirely against the separate cohort fixture
     // (`Runtime.Cohort.fs`), never against this sample project at all.
     App = AppKind.NoApp
     Sample = Sample.ConsoleTicker
-    Layout = LayoutTemplate.DashboardOnly
+    Layout = LayoutTemplate.AgentOnly
     Steps =
       [ cohortStep
           "1/8 · alice joins the cohort — she becomes conductor"

@@ -2,8 +2,8 @@
 /// Phase-0 spike's `spike/cell-agent/Program.fs`: the ONE process bwrap runs
 /// as a cell's pid 1. It reads exactly one line of `Wire.ScenarioPlan` JSON
 /// from stdin, assembles the `LiveActor`(s) the plan needs (Island F's
-/// actor-dispatch seam, demo-actors-plan.md §1.2 — the cell-agent no longer
-/// hard-calls `Dashboard.launch` by name), drives the XTest input edge + the
+/// actor-dispatch seam, demo-actors-plan.md §1.2 — the cell-agent never
+/// hard-calls one actor by name), drives the XTest input edge + the
 /// per-step ffmpeg recorder for every step in order through whichever actor
 /// it targets, and writes exactly one line of `Wire.StepLog` JSON to stdout.
 /// Nothing else crosses the namespace wall (§4.1) except the `/out` bind
@@ -35,26 +35,28 @@ let private VsCodeUserDataDirCell = "/home/demo/vsc"
 [<Literal>]
 let private VsCodeControlPort = 47760
 
-/// The daemon's own fixed MCP/dashboard ports every cell binds to (mirrors
-/// `Runtime.Core`'s own `McpPort`/`DashboardPort` literals — re-declared
-/// here for the same never-touch-the-compile-order reason as
-/// `VsCodeUserDataDirCell` above).
+/// The daemon's own fixed MCP port every cell binds to (mirrors
+/// `Runtime.Core`'s own `McpPort` literal — re-declared here for the same
+/// never-touch-the-compile-order reason as `VsCodeUserDataDirCell` above).
 [<Literal>]
 let private McpPortCell = 47749
 
+/// The daemon's control listener port (MCP port + 1). The editor clients'
+/// settings still name it `dashboardPort`/`dashboard_port` — the historical
+/// name of this listener — so it is handed to them under that name; nothing
+/// in the cell opens a web page on it.
 [<Literal>]
 let private DashboardPortCell = 47750
 
 /// Maps a `Wire` `Client`/`TargetActor` string to the strongly-typed
 /// `ActorId` the `LiveActor` map is keyed by (Island F, §1.2). Unrecognized
-/// strings return `None` — never a silent default to Dashboard — so an
-/// unknown or not-yet-implemented actor fails loud instead of quietly
-/// driving the wrong window. Not `private`: `CellAgentTests.fs` exercises
-/// this mapping directly to prove the dispatch seam without spawning a real
-/// cell (Xvfb/Chromium/daemon).
+/// strings (including the retired `"dashboard"`) return `None` — never a
+/// silent default — so an unknown or not-yet-implemented actor fails loud
+/// instead of quietly driving the wrong window. Not `private`:
+/// `CellAgentTests.fs` exercises this mapping directly to prove the dispatch
+/// seam without spawning a real cell (Xvfb/Chromium/daemon).
 let actorIdOfString (s: string) : ActorId option =
   match s with
-  | "dashboard" -> Some ActorId.Dashboard
   | "vscode" -> Some ActorId.VsCode
   | "neovim" -> Some ActorId.Neovim
   | "app" -> Some ActorId.App
@@ -63,9 +65,9 @@ let actorIdOfString (s: string) : ActorId option =
 
 /// The full-screen fallback rect every actor used before `Wire.ScenarioPlan`
 /// carried real per-actor placement (`ActorRects`, seam-integration
-/// threading) — still correct for every `DashboardOnly`-layout scenario
-/// (Dashboard, Agent), and a safe default for anything a plan's own
-/// `ActorRects` genuinely has no entry for.
+/// threading) — the same rect an `AgentOnly`-layout scenario places its one
+/// actor at, and a safe default for anything a plan's own `ActorRects`
+/// genuinely has no entry for.
 let private fullScreenRect: Rect = { X = 0; Y = 0; W = 1280; H = 720 }
 
 /// This actor's placed rect for `token` (`Wire.WireRect.ActorToken`), from
@@ -101,20 +103,15 @@ let private appActorsOf (plan: ScenarioPlan) : Async<Result<Map<ActorId, LiveAct
     | Some kindToken ->
 
     match kindToken with
-    | "web"
     | "raylib"
     | "console" ->
-      let appKind = if kindToken = "web" then AppKind.Web elif kindToken = "raylib" then AppKind.Raylib else AppKind.Console
+      let appKind = if kindToken = "raylib" then AppKind.Raylib else AppKind.Console
 
+      // Both kinds draw their own window on the cell's display
+      // (`Actors/App.fs`'s `launchWindowed`, a real X11 window-discovery
+      // diff) — no URL, no browser.
       let launchConfig: App.LaunchConfig =
         { Display = CellDisplay
-          // A `Web`-kind app's real, daemon-published run-app URL is not yet
-          // threaded onto this wire (`Runtime.fs`'s own documented gap) —
-          // `Raylib`/`Console` need no URL at all (`Actors/App.fs`'s
-          // `launchWindowed`, a real X11 window-discovery diff instead).
-          AppUrl = None
-          ChromePath = plan.ChromePath
-          UserDataDir = "/home/demo/chrome-profile-app"
           ReadyTimeoutMs = App.LaunchConfig.DefaultReadyTimeoutMs }
 
       match! App.launch launchConfig (rectFor plan "app") appKind with
@@ -133,22 +130,14 @@ let private appActorsOf (plan: ScenarioPlan) : Async<Result<Map<ActorId, LiveAct
 let private assembleActors (plan: ScenarioPlan) : Async<Result<Map<ActorId, LiveActor>, string>> =
   async {
     match plan.Client with
-    | "dashboard" ->
-      let! handle = Dashboard.launch plan.ChromePath plan.UserDataDir (rectFor plan "dashboard") plan.PageUrl
-      return Ok(Map.ofList [ ActorId.Dashboard, Dashboard.toLiveActor handle ])
-    // No `plan.PageUrl` (that field stays dashboard-shaped, per
-    // `Runtime.fs`'s `wirePlanOf`): the Agent actor writes and opens its own
-    // `file://` viz page inside the cell and calls the daemon's own
-    // already-bound MCP port directly.
+    // The Agent actor writes and opens its own `file://` viz page inside the
+    // cell and calls the daemon's own already-bound MCP port directly.
     | "agent" ->
       let! handle = Agent.launch plan.ChromePath plan.UserDataDir (rectFor plan "agent")
       return Ok(Map.ofList [ ActorId.Agent, Agent.toLiveActor handle ])
     // The standalone editor arms (demo-actors-plan.md §2.1/§2.2): each
-    // co-launches the SAME shared Dashboard narrator pane `EditorFull`/
-    // `EditorLeft` always places alongside the editor (real, on-screen, and
-    // the actor `expectationWire`'s dashboard-shaped expectations are
-    // genuinely observed through — never a DOM fabrication), plus the App
-    // co-actor when this scenario's layout also reserves it a pane.
+    // launches only its editor; the App co-actor joins later, lazily, when a
+    // scenario's layout reserves it a pane (`runStep`'s own doc).
     | "vscode" ->
       match plan.VsCode, plan.WorkspaceDir with
       | None, _
@@ -160,8 +149,9 @@ let private assembleActors (plan: ScenarioPlan) : Async<Result<Map<ActorId, Live
       | Some extensionDevPath ->
 
       // The extension reads its own `bozzetto.mcpPort`/`bozzetto.dashboardPort`
-      // workspace settings (default 47749/47750 — the REAL daemon's ports)
-      // to build every HTTP call it makes (`BozzettoClient.fs`'s `baseUrl`).
+      // workspace settings (default 47749/47750 — the REAL daemon's MCP and
+      // control ports) to build every HTTP call it makes
+      // (`BozzettoClient.fs`'s `baseUrl`).
       // This cell's daemon listens on the fixed cell ports instead
       // (`McpPortCell`/`DashboardPortCell`), and the real project directory
       // this actor opens as a workspace is RO-bound (shared with the host —
@@ -192,8 +182,6 @@ let private assembleActors (plan: ScenarioPlan) : Async<Result<Map<ActorId, Live
       | Ok handle ->
 
       let vsCodeActor = VsCode.toLiveActor handle DaemonBaseUrl
-      let! dashboardHandle = Dashboard.launch plan.ChromePath plan.UserDataDir (rectFor plan "dashboard") plan.PageUrl
-      let dashboardActor = Dashboard.toLiveActor dashboardHandle
       // The App co-actor is deliberately NOT launched here: it "finds,
       // places, and observes" a window the session's own run-app call
       // produces, and at actor-ASSEMBLY time no session/app has been
@@ -204,7 +192,7 @@ let private assembleActors (plan: ScenarioPlan) : Async<Result<Map<ActorId, Live
       // real recording: `App(Raylib): no new X11 window appeared within
       // 30000ms` at "actor assembly", 0 of the scenario's own steps
       // attempted) — see `run`'s own lazy-launch handling.
-      return Ok(Map.ofList [ ActorId.VsCode, vsCodeActor; ActorId.Dashboard, dashboardActor ])
+      return Ok(Map.ofList [ ActorId.VsCode, vsCodeActor ])
     | "neovim" ->
       match plan.Nvim with
       | None -> return Error "cell-agent: Client 'neovim' requires plan.Nvim (Runtime.fs's wirePlanOf/resolveActorExtras must supply it)"
@@ -236,13 +224,11 @@ let private assembleActors (plan: ScenarioPlan) : Async<Result<Map<ActorId, Live
           plan.WorkspaceDir
 
       let neovimActor = Neovim.toLiveActor neovimHandle
-      let! dashboardHandle = Dashboard.launch plan.ChromePath plan.UserDataDir (rectFor plan "dashboard") plan.PageUrl
-      let dashboardActor = Dashboard.toLiveActor dashboardHandle
       // App co-actor: NOT launched eagerly here — see the identical doc on
       // the "vscode" arm above; `run`'s own lazy-launch handling brings it
       // in once a real `Setup(RunApp)` step has actually run.
-      return Ok(Map.ofList [ ActorId.Neovim, neovimActor; ActorId.Dashboard, dashboardActor ])
-    | other -> return Error(sprintf "cell-agent: unsupported Client '%s' (only 'dashboard'/'agent'/'vscode'/'neovim' are implemented)" other)
+      return Ok(Map.ofList [ ActorId.Neovim, neovimActor ])
+    | other -> return Error(sprintf "cell-agent: unsupported Client '%s' (only 'agent'/'vscode'/'neovim' are implemented)" other)
   }
 
 /// Reconstructs the `Action` kind (Click vs Type) `Input.plan` needs from a
@@ -277,13 +263,13 @@ let private lastPointOr (fallback: Point) (path: int[] list) : Point =
 
 /// Runs one already-resolved `WireStep` end to end: resolve the click
 /// target's live `ScreenRect` through the step's own target actor
-/// (`actors.[targetActor]`, Island F's seam — no more hard-coded Dashboard
+/// (`actors.[targetActor]`, Island F's seam — never a hard-coded actor
 /// handle), deliver the input plan via XTest — chaining a SECOND click at
 /// `SubmitSelector` (if any) starting from wherever the primary action's
 /// motion ended, so the cursor moves on continuously instead of resetting
-/// (§9's "type the expression, then click [EVAL]" demo step) — observe the
-/// expectation through that same actor, and report; recording brackets
-/// exactly this step's active window (§4.5).
+/// (`Action.TypeThenClick`'s "type, then press submit" beat) — observe the
+/// expectation through the step's observer actor, and report; recording
+/// brackets exactly this step's active window (§4.5).
 let private runStep
   (live: XTest.LiveDisplay)
   (mapping: KeyboardMapping)
@@ -309,35 +295,11 @@ let private runStep
     | Some command -> do! actor.Command command
     | None -> ()
 
-    // An editor client (VS Code/Neovim) creates its session directly
-    // through the daemon API/plugin command (`Runtime.fs`'s
-    // `create-session*`/`create-session:*` wire tokens) — no click ever
-    // reaches the Dashboard narrator pane `assembleActors` co-launches
-    // alongside it. The product's own doctrine is that creating a session
-    // never switches the dashboard's main panel away from the "Start a
-    // Session" picker — only clicking a session card does
-    // (`Scenarios.fs`'s `helloDashboard` step 2 comment, and every
-    // Dashboard-client scenario drives that click as a real step of its
-    // own). Left unhandled, the narrator sits on the picker forever and
-    // `#session-output`/`#session-status` never render for an editor
-    // scenario. Mirroring that click here — automatically, right after a
-    // real create-session command, through the narrator's OWN `Command`
-    // (`Actors/Dashboard.fs`'s `"select-session"`) rather than XTest —
-    // means the scenario author never has to add a click step of their
-    // own for a pane that is only ever an observation window, never the
-    // on-camera actor. Guarded to editor clients only: a Dashboard-client
-    // scenario's own `targetActor` IS `ActorId.Dashboard`, and it already
-    // drives its own real, filmed session-card click as a step.
-    if targetActor <> ActorId.Dashboard && (step.SetupCommand |> Option.exists (fun c -> c.StartsWith "create-session")) then
-      match actorsRef.Value |> Map.tryFind ActorId.Dashboard with
-      | Some dashboardActor -> do! dashboardActor.Command "select-session"
-      | None -> ()
-
     // The App co-actor is deliberately launched HERE, lazily, right after a
     // real `"run-app"` command has actually been dispatched to the daemon —
     // never eagerly at initial actor assembly (`assembleActors`'s own doc:
     // launching it upfront made every joint hot-reload scenario fail loud
-    // before its first real step ever ran, because the window/URL it polls
+    // before its first real step ever ran, because the window it polls
     // for genuinely does not exist until run-app has actually happened).
     // Idempotent: only launches once (`not (... .ContainsKey ActorId.App)`),
     // so a scenario with multiple steps naming "run-app" never double-launches.
@@ -413,17 +375,16 @@ let private runStep
       | _ -> preClickPointerPath
 
     // A real user's next click always lands after their FIRST click's own
-    // on-screen effect (a navigation, an SSE-pushed re-render) has actually
-    // shown up — deliver-then-immediately-resolve the next target does not,
-    // and was confirmed directly against real recordings to race a session
-    // card's click against the dashboard's own SSE-driven navigation: the
+    // on-screen effect (a navigation, a re-render) has actually shown up —
+    // deliver-then-immediately-resolve the next target does not, and was
+    // confirmed directly against real recordings (of the since-removed web
+    // dashboard) to race a click against the surface's own navigation: the
     // click was delivered, but `SubmitSelector` resolution (or the FOLLOWING
-    // step's OWN primary resolution) sometimes ran before the session view
-    // had actually mounted, so "#evaluate-section summary"/the eval textarea
-    // intermittently reported "not found" even though the selector itself is
-    // correct. Settling briefly after EVERY delivered click — not just
-    // before a chained `SubmitSelector` — closes the same race for the next
-    // STEP's own primary click too.
+    // step's OWN primary resolution) sometimes ran before the next view had
+    // actually mounted, so a correct selector intermittently reported "not
+    // found". Settling briefly after EVERY delivered click — not just before
+    // a chained `SubmitSelector` — closes the same race for the next STEP's
+    // own primary click too.
     if not (List.isEmpty primaryPointerPath) then
       do! Async.Sleep 500
 
@@ -590,8 +551,8 @@ let run () : Async<int> =
           // `Wire.WireStep.ObserveActor` (seam-integration threading): which
           // actor proves this step's expectation, distinct from the actor
           // that drove its input — defaults to the SAME actor when absent
-          // (every plan built before this field existed, and every
-          // Dashboard/Agent step today), so this is purely additive. NOT
+          // (every plan built before this field existed, and every Agent
+          // step today), so this is purely additive. NOT
           // filtered by "is it live yet" here: the App co-actor's own
           // observing step is often the SAME step that lazily launches it
           // inside `runStep` — `runStep`'s own `Map.tryFind` (falling back

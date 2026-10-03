@@ -10,18 +10,10 @@ open System
 /// Why one list: this used to be two — `ProjectKind.classify`'s private
 /// `webPackages` and `WorkflowDetection.suggest`'s own private near-copy. Two
 /// lists that had to agree, with nothing forcing them to, and they had already
-/// drifted: `StarFederation.Datastar` existed only in the detection copy (and
-/// was misspelled `Starfederation.Datastar`, so with the ordinal, case-SENSITIVE
-/// `String.Contains` it never matched the real package id
-/// `StarFederation.Datastar.FSharp` either). Both paths now read this module,
-/// and `ProjectClassificationTests` iterates `all` so a marker added here is
-/// automatically required to behave identically on both paths.
+/// drifted. Both paths now read this module, and `ProjectClassificationTests`
+/// iterates `all` so a marker added here is automatically required to behave
+/// identically on both paths.
 module WebMarkers =
-
-  /// SSE/hypermedia packages. These are web markers like any other AND they
-  /// additionally change the WORDING of the workflow suggestion, which is the
-  /// only reason they are named separately.
-  let datastar = [ "Falco.Datastar"; "StarFederation.Datastar" ]
 
   /// F# / ASP.NET Core server-side web frameworks.
   ///
@@ -38,11 +30,11 @@ module WebMarkers =
   let projectFile = [ "Microsoft.NET.Sdk.Web" ]
 
   /// The whole vocabulary. Order is irrelevant — matching is substring.
-  let all = serverFrameworks @ datastar @ projectFile |> List.distinct
+  let all = serverFrameworks @ projectFile |> List.distinct
 
   /// Substring match, case-INSENSITIVE. Package ids are not case-normalised by
-  /// NuGet in a way anyone should depend on, and the case-sensitive version of
-  /// this check is exactly what silently broke the Datastar marker.
+  /// NuGet in a way anyone should depend on, and a case-sensitive version of
+  /// this check once silently missed a real package id.
   let private containsCI (needle: string) (haystack: string) =
     haystack.Contains(needle, StringComparison.OrdinalIgnoreCase)
 

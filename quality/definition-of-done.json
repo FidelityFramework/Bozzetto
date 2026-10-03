@@ -15,14 +15,6 @@
   "externalClientsNote": "A client listed here is one this repository structurally cannot execute (its source lives in another repository), so its evidence can only ever be an attestation pinned to a foreign commit — never something the gate re-runs. The list is deliberately short and structural: any client whose tests CAN run from this checkout must use kind 'ci', whose every field the gate resolves against ci-pipeline.fsx, Bozzetto.Tests/Program.fs, Bozzetto.Tests.fsproj and the cited files on disk.",
   "rows": [
     {
-      "id": "HR-DASH-E2E",
-      "capability": "hot-reload",
-      "layer": "real-client-e2e",
-      "client": "dashboard",
-      "status": "not-applicable",
-      "reason": "2026-10-01: managed runtime patching, its daemon endpoints, client commands and acceptance fixtures were removed. Historical receipts remain in git history; they do not establish a current Bozzetto capability. Future native replacement requires its own compiler authority and acceptance. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
-    },
-    {
       "id": "HR-VSC-E2E",
       "capability": "hot-reload",
       "layer": "real-client-e2e",
@@ -37,25 +29,6 @@
       "client": "neovim",
       "status": "not-applicable",
       "reason": "2026-10-01: managed runtime patching, its daemon endpoints, client commands and acceptance fixtures were removed. Historical receipts remain in git history; they do not establish a current Bozzetto capability. Future native replacement requires its own compiler authority and acceptance. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
-    },
-    {
-      "id": "LT-DASH-E2E",
-      "capability": "live-testing",
-      "layer": "real-client-e2e",
-      "client": "dashboard",
-      "status": "not-applicable",
-      "historicalEvidence": {
-        "kind": "ci",
-        "tests": [
-          "Bozzetto.Tests/LiveTestingBrowserTests.fs"
-        ],
-        "runner": "--integration-lt",
-        "stage": "test tiers",
-        "run": "35656311515",
-        "commit": "200e88b6",
-        "summary": "Real Chromium against a real daemon on the FromCSharp sample: enabling live testing discovers the tests, a real edit to Hello.fs shows the failing test live in the panel, and reverting returns it to green. The --integration-lt tier ran 2 of 2 registered, 2 passed (TRUST verdict Trusted) in the gate for commit 200e88b6, whose result main build run 35656311515 promoted and published in its job summary's trust report. Closes #128."
-      },
-      "reason": "2026-10-01: this row describes the retired embedded F# provider. F# hot reload and live testing are retired coverage, not a current Bozzetto capability; the inherited F# host code is retained but is not a product surface. Future Clef/ORC and heterogeneous HMR require their own compiler contracts and acceptance; the preserved historical evidence does not verify those capabilities. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
     },
     {
       "id": "LT-VSC-E2E",
@@ -84,31 +57,12 @@
       "reason": "2026-10-01: this row describes the retired embedded F# provider. F# hot reload and live testing are retired coverage, not a current Bozzetto capability; the inherited F# host code is retained but is not a product surface. Future Clef/ORC and heterogeneous HMR require their own compiler contracts and acceptance; the preserved historical evidence does not verify those capabilities. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
     },
     {
-      "id": "FR-DASH-E2E",
-      "capability": "friction",
-      "layer": "real-client-e2e",
-      "client": "dashboard",
-      "status": "not-applicable",
-      "historicalEvidence": {
-        "kind": "ci",
-        "tests": [
-          "Bozzetto.Tests/DashboardBrowserTests.fs"
-        ],
-        "runner": "--integration-browser",
-        "stage": "test tiers",
-        "run": "35523239725",
-        "commit": "88991359",
-        "summary": "FR journeys in the real-browser dashboard suite: recorded feedback reflects in the friction panel, and the send path validates honestly. Landed as c26220cf; the citation names the live pipeline stage rather than the deleted dashboard-browser-e2e.yml job."
-      },
-      "reason": "2026-10-01: this legacy dashboard friction journey requires a selected embedded F# session, which Bozzetto has retired. The no-session dashboard does not expose that panel. Provider-neutral MCP friction telemetry remains; no current browser-friction verification is claimed. See docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md."
-    },
-    {
       "id": "FR-VSC-E2E",
       "capability": "friction",
       "layer": "real-client-e2e",
       "client": "vscode",
       "status": "not-applicable",
-      "reason": "No friction-reporting surface in bozzetto-vscode (grep: no report_friction UI/command); friction is recorded agent/MCP-side into the daemon's local store and viewed in the dashboard (FR-DASH-E2E verified)."
+      "reason": "No friction-reporting surface in bozzetto-vscode (grep: no report_friction UI/command); friction is recorded agent/MCP-side into the daemon's local store and read back through the MCP friction summary tool."
     },
     {
       "id": "FR-NVIM-E2E",

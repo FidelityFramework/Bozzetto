@@ -79,7 +79,7 @@ let buildDaemonFromSource (repoRoot: string) : Async<Result<string, string>> =
 
 /// Builds `sample`'s real project on the HOST, exactly like
 /// `buildDaemonFromSource` builds the daemon — a scenario that opens a REAL
-/// project inside the cell (§10, `Scenarios.fs`'s `Text.RepoRootToken` path)
+/// project inside the cell (§10, `Sample.relativePath`)
 /// needs that project's `obj`/`bin` ALREADY populated before the cell ever
 /// runs, because the cell has no network (`Sandbox.fs`'s `--unshare-net`):
 /// Bozzetto's own project loader refuses to build/restore anything itself —
@@ -133,9 +133,10 @@ let resolveDotnetRoot () : Async<Result<string, string>> =
 
 /// The bundled Playwright Chromium the Phase-0 spike proved against (§2's
 /// correction: chromium-1208, the revision `Microsoft.Playwright` 1.58.0
-/// expects). Not resolved dynamically inside the cell — the cell only ever
-/// sees this one RO-bound directory, and the actor is handed its executable
-/// path directly, exactly like the spike.
+/// expects) — today it renders the Agent actor's viz page. Not resolved
+/// dynamically inside the cell — the cell only ever sees this one RO-bound
+/// directory, and the actor is handed its executable path directly, exactly
+/// like the spike.
 let private chromiumDir () : string =
   Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache", "ms-playwright", "chromium-1208", "chrome-linux64")
 
@@ -152,24 +153,11 @@ let private assetPath (fileName: string) : string =
 // itself is pure, everything around it (paths, ports) is a runtime concern.
 // ---------------------------------------------------------------------------
 
-let private testIdSelector (id: DashboardId) : string = sprintf "[data-testid=%s]" (DashboardId.testId id)
-
-/// Resolves any dashboard-reachable `Target` to a CSS/Playwright selector —
-/// `DashboardElement` uses the typed `data-testid` vocabulary; `DashboardCssSelector`
-/// is the documented raw-selector escape hatch (`Domain.fs`'s own doc: used
-/// only when a real element has no `data-testid`, e.g. the eval textarea).
-let private dashboardSelector (target: Target) : string option =
-  match target with
-  | Target.DashboardElement id -> Some(testIdSelector id)
-  | Target.DashboardCssSelector selector -> Some selector
-  | _ -> None
-
 /// The wire token for a `Domain.ActorId` — the same closed vocabulary
 /// `clientToken`/`Wire.ScenarioPlan.Client` already use, extended to every
 /// actor (including the App co-actor and `WindowCenter`'s own carried id).
 let private actorIdToken (actorId: ActorId) : string =
   match actorId with
-  | ActorId.Dashboard -> "dashboard"
   | ActorId.VsCode -> "vscode"
   | ActorId.Neovim -> "neovim"
   | ActorId.App -> "app"
@@ -186,10 +174,8 @@ let private actorIdToken (actorId: ActorId) : string =
 /// pane, never a guess at a target this actor cannot honor.
 /// `Target.PaletteItem` has no wire mapping yet: opening the command palette
 /// and running a NAMED command needs a real `executeCommand` channel
-/// `Actors/VsCode.fs`'s `Command` does not implement today (it is a
-/// documented no-op, mirroring Dashboard's own) — honest `None`, never a
-/// guessed click target, exactly `dashboardSelector`'s own `_ -> None`
-/// doctrine.
+/// `Actors/VsCode.fs`'s `Command` does not implement today — honest `None`,
+/// never a guessed click target.
 let private vsCodeTargetSelector (target: Target) : string option =
   match target with
   | Target.EditorPosition _ -> Some "editor"
@@ -210,21 +196,13 @@ let private neovimTargetSelector (target: Target) : string option =
   | _ -> None
 
 /// Resolves `target` to a wire selector string through whichever live
-/// actor `client` is filmed through — the "single extra call site"
-/// `Scenarios.VsCode.fs`'s own doc names as the remaining integration gap.
-/// Dashboard-reachable targets (`DashboardElement`/`DashboardCssSelector`)
-/// resolve identically regardless of `client`, since an editor scenario's
-/// narrator pane is a real, live Dashboard actor too (see `expectationWire`
-/// below) — only the CLICK side is actually client-specific.
+/// actor `client` is filmed through. The Agent client has no click/type
+/// targets at all — its steps are MCP calls carried on the expectation wire.
 let private targetSelector (client: Client) (target: Target) : string option =
-  match dashboardSelector target with
-  | Some selector -> Some selector
-  | None ->
-    match client with
-    | Client.VsCode -> vsCodeTargetSelector target
-    | Client.Neovim -> neovimTargetSelector target
-    | Client.Dashboard
-    | Client.Agent -> None
+  match client with
+  | Client.VsCode -> vsCodeTargetSelector target
+  | Client.Neovim -> neovimTargetSelector target
+  | Client.Agent -> None
 
 /// Substitutes `Text.RepoRootToken` for the real, absolute repo root — the
 /// one runtime fact a pure `Scenario` value can never carry itself (§10).
@@ -236,45 +214,35 @@ let private resolveRepoRootToken (repoRoot: string) (text: string) : string =
 /// actor's own `Observe` understands — distinct from the CLICK-side actor
 /// because a step's input and its proof-of-effect can come from two
 /// different live actors in the same cell (module doc on
-/// `Wire.WireStep.ObserveActor`). `Client.Dashboard`/`Client.Agent` keep the
-/// exact pre-seam behavior (`None` ⇒ default to `TargetActor`) — this
-/// function only ever routes VS Code/Neovim-client expectations elsewhere,
-/// never touching the two clients that already worked.
+/// `Wire.WireStep.ObserveActor`). `None` for the observer means "default to
+/// `TargetActor`"; `None` for the selector means no live actor can observe
+/// this expectation for this client, which the cell-agent scores as Skipped
+/// (honestly unverified), never as a pass.
 let private expectationWire (client: Client) (expect: Expectation) : string option * string option =
-  let dashboardText (selector: string) (text: string) =
-    // Playwright's own CSS extension: `:has-text("...")` is a substring,
-    // whitespace-normalized text match layered onto a plain CSS selector —
-    // exactly what "wait until this element's text contains X" needs,
-    // without inventing a second selector mini-language of our own.
-    sprintf "%s:has-text(\"%s\")" selector text
-
   match expect with
-  | Expectation.PageShows(id, _) ->
-    let selector = Some(testIdSelector id)
-
-    match client with
-    | Client.Dashboard
-    | Client.Agent -> selector, None
-    | Client.VsCode
-    | Client.Neovim -> selector, Some "dashboard"
   | Expectation.PageTextContains(selector, text) ->
-    let wire = Some(dashboardText selector text)
-
     match client with
-    | Client.Dashboard
-    | Client.Agent -> wire, None
-    // The daemon's session/eval/live-testing state is one shared source of
-    // truth regardless of which client drove the input — an editor-driven
-    // step's dashboard-shaped expectation is genuinely, honestly provable
-    // through the SAME shared Dashboard narrator pane `EditorFull`/
-    // `EditorLeft` always places alongside the editor (never fabricated:
-    // the pane is a real, live Chromium window this file also now launches
-    // for these clients — see `assembleActors`' co-launch below).
+    // The Agent actor's opaque wire (`Actors/Agent.fs`'s `parseWire`/
+    // `parseCohortWire` strip this exact `:has-text("...")` suffix — the
+    // encoding is historical, from when this expectation was a DOM text
+    // check, and is kept byte-for-byte so the Agent wire stays stable).
+    | Client.Agent -> Some(sprintf "%s:has-text(\"%s\")" selector text), None
+    // No editor actor reads a page: the web dashboard narrator pane that
+    // used to observe this for editor clients was removed with the
+    // dashboard, so an editor step carrying it is an honest gap.
     | Client.VsCode
-    | Client.Neovim -> wire, Some "dashboard"
+    | Client.Neovim -> None, None
+  // Each editor actor's own readiness channel (`Expectation.SessionReady`'s
+  // doc): VS Code polls the daemon's `/health` session status, Neovim asks
+  // the plugin over RPC for its active session.
+  | Expectation.SessionReady ->
+    match client with
+    | Client.VsCode -> Some "daemon:sessionReady", Some "vscode"
+    | Client.Neovim -> Some "session-ready", Some "neovim"
+    | Client.Agent -> None, None
   | Expectation.NvimBufferContains text -> Some(sprintf "buffer-contains:%s" (Text.value text)), Some "neovim"
   | Expectation.AppOutputChanged _ -> Some "app-output-changed", Some "app"
-  // "is the app's window/URL discoverable yet" — a real, live presence
+  // "is the app's window discoverable yet" — a real, live presence
   // check through the SAME App co-actor that later observes
   // `AppOutputChanged` (`Actors/App.fs`'s own `resolveRect`), never a guess
   // that the daemon's run-app call "must have worked."
@@ -288,7 +256,6 @@ let private expectationWire (client: Client) (expect: Expectation) : string opti
     // VS Code has no wired save-observation channel yet (no ext-host
     // status this actor's `Observe` reads today) — honest gap, not faked.
     | Client.VsCode
-    | Client.Dashboard
     | Client.Agent -> None, None
   | Expectation.TestOutcome _ -> None, None
 
@@ -350,7 +317,6 @@ let private wireStepOf (repoRoot: string) (client: Client) (index: int) (step: S
       match client with
       | Client.Neovim -> Some(sprintf "create-session:%s" (Sample.projectFileName sample))
       | Client.VsCode
-      | Client.Dashboard
       | Client.Agent -> Some(sprintf "create-session-api:%s" (IO.Path.Combine(repoRoot, Sample.relativePath sample)))
     | _ -> None
 
@@ -378,30 +344,23 @@ let private wireStepOf (repoRoot: string) (client: Client) (index: int) (step: S
 /// string `Wire.ScenarioPlan.Client` carries across the sandbox wall.
 let private clientToken (client: Client) : string =
   match client with
-  | Client.Dashboard -> "dashboard"
   | Client.VsCode -> "vscode"
   | Client.Neovim -> "neovim"
-  // Agent island (demo-actors-plan.md §2.4): the ONLY change this island
-  // makes to this function — one new match arm, exactly the shape every
-  // other actor's own arm already takes. The Agent actor needs no
-  // per-client PageUrl/actorBinds from this file (it opens a `file://` page
-  // it writes into the cell itself and calls the daemon's already-bound MCP
-  // port directly — see `Actors/Agent.fs`), so nothing else here changes.
+  // The Agent actor needs no per-client actorBinds from this file (it opens
+  // a `file://` page it writes into the cell itself and calls the daemon's
+  // already-bound MCP port directly — see `Actors/Agent.fs`).
   | Client.Agent -> "agent"
 
-/// The fixed ports every cell uses (§4.1: "the same fixed ports" — legal
-/// because each cell has a private network namespace, so nothing collides).
+/// The fixed MCP port every cell's daemon uses (§4.1: "the same fixed ports"
+/// — legal because each cell has a private network namespace, so nothing
+/// collides). Its control listener is on 47750; nothing here addresses it.
 [<Literal>]
 let private McpPort = 47749
-
-[<Literal>]
-let private DashboardPort = 47750
 
 /// Every actor's placed rect for `scenario.Layout`, flattened to the wire's
 /// primitive `WireRect` — the seam integration's own missing piece
 /// (`assembleActors`/`CellAgent.fs` previously hardcoded a single
-/// full-screen Dashboard rect because nothing on the wire ever said
-/// otherwise).
+/// full-screen rect because nothing on the wire ever said otherwise).
 let private wireRectsOf (scenario: Scenario) : Wire.WireRect list =
   Layout.rects scenario.Layout { Width = 1280; Height = 720 }
   |> Map.toList
@@ -435,8 +394,8 @@ let private actionTargetOf (action: Action) : Target option =
 /// genuinely what the scenario's later steps expect to be open); falls back
 /// to a real, existing `Program.fs` in the workspace (every runnable/
 /// live-testing sample this tool drives has one) when the scenario names no
-/// file at all (e.g. `replNeovim`, which types straight into "whatever
-/// buffer is open"); `None` only if neither exists.
+/// file at all (a scenario that types straight into "whatever buffer is
+/// open"); `None` only if neither exists.
 let private nvimOpenFileOf (repoRoot: string) (scenario: Scenario) : string option =
   let namedFile =
     scenario.Steps
@@ -461,7 +420,6 @@ let private wirePlanOf
   : Wire.ScenarioPlan =
   { Wire.ScenarioId = ScenarioId.value scenario.Id
     Wire.ChromePath = "/chrome-bin/chrome"
-    Wire.PageUrl = sprintf "http://127.0.0.1:%d/dashboard" DashboardPort
     Wire.UserDataDir = "/home/demo/chrome-profile"
     Wire.OutDir = "/out"
     Wire.Steps = scenario.Steps |> List.mapi (wireStepOf repoRoot scenario.Client)
@@ -470,20 +428,17 @@ let private wirePlanOf
     Wire.Nvim = nvimConfig
     Wire.App = appConfig
     Wire.ActorRects = wireRectsOf scenario
-    // Only the editor clients open a real project this way (Dashboard drives
-    // its own "Open Directory" picker; Agent finds the repo itself inside
-    // the cell, `Actors/Agent.fs`'s `RepoRoot.find`).
+    // Only the editor clients open a real project this way (Agent finds the
+    // repo itself inside the cell, `Actors/Agent.fs`'s `RepoRoot.find`).
     Wire.WorkspaceDir =
       match scenario.Client with
       | Client.VsCode
       | Client.Neovim -> Some(IO.Path.Combine(repoRoot, Sample.relativePath scenario.Sample))
-      | Client.Dashboard
       | Client.Agent -> None
     Wire.NvimOpenFilePath =
       match scenario.Client with
       | Client.Neovim -> nvimOpenFileOf repoRoot scenario
       | Client.VsCode
-      | Client.Dashboard
       | Client.Agent -> None }
 
 // ---------------------------------------------------------------------------
@@ -727,7 +682,6 @@ let private resolveActorExtras
     let appPrologue = Runtime.App.actorPrologue scenario.App
 
     match scenario.Client with
-    | Client.Dashboard
     | Client.Agent -> return Ok(appBinds, appPrologue, None, None, appConfig)
     | Client.VsCode ->
       match Runtime.VsCode.resolveCodeBin repoRoot with
@@ -760,8 +714,7 @@ let private resolveActorExtras
       let vsCodeBinds = Runtime.VsCode.cellBinds codeBinDir extDevPath @ [ xdotoolDir, "/xdotool-bin" ]
       let vsCodeConfig = Runtime.VsCode.config "/vscode-ext"
       // No bash-level prologue: `Actors/VsCode.fs`'s `launch` owns spawning
-      // VS Code itself, exactly like the Dashboard actor owns spawning
-      // Chromium (that module's own doc) — nothing to splice into
+      // VS Code itself (that module's own doc) — nothing to splice into
       // `innerScript` ahead of the cell-agent.
       return Ok(appBinds @ vsCodeBinds, appPrologue, Some vsCodeConfig, None, appConfig)
     | Client.Neovim ->
@@ -989,8 +942,8 @@ let record (repoRoot: string) (scenario: Scenario) : Async<Result<Wire.StepLog *
     Directory.CreateDirectory cellOutDir |> ignore
 
     // Seam integration: resolve this scenario's OWN actor binds/prologue/
-    // wire configs (dashboard/agent need none — `[] [] None None appConfig`
-    // reproduces the exact pre-seam cell for them; VS Code/Neovim genuinely
+    // wire configs (agent needs none — `[] [] None None appConfig`
+    // reproduces the exact pre-seam cell for it; VS Code/Neovim genuinely
     // need real, resolved dependencies, and fail loud here rather than
     // producing a silently incomplete cell).
     match! resolveActorExtras repoRoot scenario with

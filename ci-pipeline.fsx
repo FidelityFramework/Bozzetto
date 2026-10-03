@@ -26,10 +26,7 @@
 //     compile + client contract tests (npm run
 //     test:golden + every bozzetto-vscode/tests/*.fsx), then "test tiers": the
 //     default suite and the integration-host suites.
-//   * `ci` adds to "test tiers" — the mutation-score gate and every real-browser
-//                            journey (dashboard,
-//                            disconnect-indicator) — CI-gated so the fast
-//                            local loop never fetches a browser.
+//   * `ci` adds to "test tiers" — the mutation-score gate.
 //   * "test tiers" runs every tier regardless of the others; concurrently, each
 //     in a private copy-on-write clone, where the machine supports it (see the
 //     tier scheduler section and build/TierPlan.fs).
@@ -653,7 +650,6 @@ pipeline "bozzetto" {
     // McpAppRunOutcomeTests started sessioning on ConsoleTicker without one.
     // `Architecture — every sample an integration suite sessions on is built
     // by CI` now fails the fast local suite instead of waiting for CI.
-    run (leasedCommand "full_build" "dotnet build samples/demos/Bozzetto.Samples.WebappDatastar/Bozzetto.Samples.WebappDatastar.fsproj -c Release --nologo")
     run (leasedCommand "full_build" "dotnet build samples/from-csharp/Bozzetto.Samples.FromCSharp/Bozzetto.Samples.FromCSharp.fsproj -c Release --nologo")
     run (leasedCommand "full_build" "dotnet build samples/demos/Bozzetto.Samples.ConsoleTicker/Bozzetto.Samples.ConsoleTicker.fsproj -c Release --nologo")
   }
@@ -698,8 +694,7 @@ pipeline "bozzetto" {
     //             (component FSI, real daemons, provider-refusal boundaries).
     //             Retired F# product journeys are reported separately by the
     //             test registry and never count as passed or ignored evidence.
-    //   `ci`:     the mutation-score gate and every real-browser journey —
-    //             CI-gated so the fast local loop never fetches a browser.
+    //   `ci`:     the mutation-score gate.
     timeoutForStep 5400
     run (fun _ ->
       withTestSuiteLease (fun () -> async {
@@ -714,33 +709,11 @@ pipeline "bozzetto" {
         let always =
           testTier "--summary"
           :: [ for k in 1 .. hostShards -> testTier $"--integration-host --shard {k}/{hostShards} --summary" ]
-        let ciOnly =
-          [ testTier "--mutation-score"
-            testTier "--integration-browser --summary"
-            testTier "--integration-disconnect --summary" ]
-        let browserTiers = ciOnly |> List.filter (fun t -> t.Name <> "--mutation-score")
-        // Chromium is installed ONCE, before any browser tier starts (they run
-        // concurrently). If it fails, those tiers are recorded as failed — never
-        // silently dropped from the report.
-        let! chromium =
-          match ci with
-          | false -> async { return Ok() }
-          | true ->
-            async {
-              let! code =
-                execToLog (TimeSpan.FromMinutes 5.) rootDir [] (Path.Combine(tierWork, "chromium-install.log"))
-                  [ $"{testBinDir}/.playwright/node/linux-x64/node"; $"{testBinDir}/.playwright/package/cli.js"; "install"; "chromium" ]
-              return if code = 0 then Result.Ok() else Result.Error $"Chromium install exited {code}"
-            }
+        let ciOnly = [ testTier "--mutation-score" ]
         let runnable =
-          match ci, chromium with
-          | false, _ -> always
-          | true, Ok () -> always @ ciOnly
-          | true, Error e ->
-            printfn "Chromium install failed (%s): the browser tiers cannot run" e
-            for t in browserTiers do
-              lock invokedTiers (fun () -> invokedTiers.Add((t.Name, t.Args, false)))
-            always @ [ List.head ciOnly ]
+          match ci with
+          | false -> always
+          | true -> always @ ciOnly
         let composerTiers =
           if fsi.CommandLineArgs |> Array.contains "composer" then
             [ testTier "--integration-composer --summary" ]

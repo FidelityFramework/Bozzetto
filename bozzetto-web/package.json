@@ -1,0 +1,32 @@
+{
+  "name": "bozzetto-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fable": "dotnet fable src/Frontend --exclude Partas.Solid.FablePlugin --noCache -o output -e .fs.jsx",
+    "fable:watch": "dotnet fable watch src/Frontend --exclude Partas.Solid.FablePlugin -o output -e .fs.jsx",
+    "fable:mock": "dotnet fable src/Mock --noCache -o output-mock",
+    "fable:test": "dotnet fable tests --noCache -o output-test",
+    "bundle": "vite build",
+    "verify": "node scripts/verify-bundle.js",
+    "weld": "node scripts/weld.js",
+    "build": "npm run fable && npm run bundle && npm run verify && npm run weld",
+    "test": "npm run fable:test && node output-test/RoundTrip.js",
+    "dev": "vite",
+    "dev:mock": "npm run fable:mock && vite --mode mock",
+    "preview:mock": "npm run fable:mock && vite preview --mode mock"
+  },
+  "dependencies": {
+    "daisyui": "^4.12.24",
+    "solid-js": "^1.9.10"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.23",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.19",
+    "vite": "^7.3.6",
+    "vite-plugin-singlefile": "^2.3.3",
+    "vite-plugin-solid": "^2.11.10",
+    "ws": "^8.18.3"
+  }
+}

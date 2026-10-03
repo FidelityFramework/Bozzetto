@@ -38,7 +38,7 @@ Those last two aren't missing features. They're different machines.
 
 | You're building | REPL | Hot reload | Live testing + coverage | Notes |
 |---|---|---|---|---|
-| **Falco** | ✅ | ✅ browser refresh | ✅ | Fully supported; used by Bozzetto's own dashboard |
+| **Falco** | ✅ | ✅ browser refresh | ✅ | Fully supported |
 | **Giraffe** | ✅ | ✅ browser refresh | ✅ | Fully supported |
 | **Saturn** | ✅ | ✅ browser refresh | ✅ | Fully supported |
 | **Oxpecker** | ✅ | ✅ browser refresh | ✅ | Supported since the detection fix below |
@@ -162,10 +162,10 @@ to support**. Your front end runs in its own dev server, in its own process, and
 sees it. Bozzetto hot-reloads your F# API; your front end's own dev server hot-reloads itself.
 That combination works today and always has, because neither side needs the other to change.
 
-HTMX and Datastar go further: because the server renders the markup, hot-reloading the server
-*is* hot-reloading the UI. Bozzetto pushes a browser refresh over SSE on save. `Falco.Htmx`,
-`Oxpecker.Htmx` and `Falco.Datastar` / `StarFederation.Datastar.FSharp` all work. This
-combination is basically my daily driver.
+HTMX goes further: because the server renders the markup, hot-reloading the server
+*is* hot-reloading the UI. Bozzetto pushes a browser refresh over SSE on save. `Falco.Htmx`
+and `Oxpecker.Htmx` both work. Bozzetto no longer has Datastar-specific support: its
+Datastar project markers and Datastar sample were removed.
 
 ---
 

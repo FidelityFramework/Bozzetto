@@ -356,7 +356,7 @@ let private camera (secs: float) : Task<unit> =
 
 // ─────────────────────────────── beats ──────────────────────────────────
 
-let private runBeats (mcpPort: int) (mainRepo: string) (gateTimeoutSeconds: float) (sessionFile: string option) : Task<int> =
+let private runBeats (mcpPort: int) (mainRepo: string) (gateTimeoutSeconds: float) : Task<int> =
   task {
     let mutable failures = 0
     let assertTrue (msg: string) (cond: bool) =
@@ -409,11 +409,6 @@ let private runBeats (mcpPort: int) (mainRepo: string) (gateTimeoutSeconds: floa
     let worktree, branch, sessionId = worktreeBranchAndSessionFromSetIntegrationRefResult setRefResult
     assertTrue "the integration worktree really exists on disk" (Directory.Exists worktree)
     assertTrue "a real integration session was created" (not (String.IsNullOrWhiteSpace sessionId))
-    // Hand the session id back to the driver script so it can navigate the
-    // recorded chromium window to /dashboard?session=<id> — the cohort
-    // panels only render inside a session view, not on the bare no-session
-    // picker page (empirically confirmed via a screenshot probe).
-    sessionFile |> Option.iter (fun p -> File.WriteAllText(p, sessionId))
 
     let! _ =
       waitUntil (seconds 180.0)
@@ -581,11 +576,7 @@ let main argv =
       let mainRepo = argValue argv "--main-repo" None
       pauseSeconds <- argValue argv "--pause-seconds" (Some "3") |> float
       let gateTimeout = argValue argv "--gate-timeout-seconds" (Some "40") |> float
-      let sessionFile =
-        match Array.tryFindIndex ((=) "--session-file") argv with
-        | Some i when i + 1 < argv.Length -> Some argv.[i + 1]
-        | _ -> None
-      let failures = (runBeats port mainRepo gateTimeout sessionFile).GetAwaiter().GetResult()
+      let failures = (runBeats port mainRepo gateTimeout).GetAwaiter().GetResult()
       Console.Out.WriteLine()
       if failures = 0 then
         Console.Out.WriteLine "ALL BEATS PASSED — cohort landing gate proven: good change landed, breaking change automatically blocked."

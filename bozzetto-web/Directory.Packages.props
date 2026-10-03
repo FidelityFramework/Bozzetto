@@ -1,0 +1,19 @@
+<Project>
+  <!-- Central package versions for the Fable subtree only. Isolated from the
+       repository root's Directory.Packages.props, which pins Fable.Core 4.5.0
+       for bozzetto-vscode (Fable 4.29): Partas.Solid 2.1.3 requires
+       Fable.Core >= 5.0.0-beta.1, and inheriting the root pin is an NU1605
+       downgrade. Partas.Solid.FablePlugin 2.1.3 is ABI-bound to Fable.AST
+       5.0.0-beta.2, hence the Fable CLI 5.0.0-alpha.14 tool pin. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- NuGet package, not the local Partas.Solid checkout. -->
+    <PackageVersion Include="Partas.Solid" Version="2.1.3" />
+    <!-- The minimum Partas.Solid 2.1.3 accepts; the mock bridge and the codec
+         tests use the same JS interop surface as the frontend. -->
+    <PackageVersion Include="Fable.Core" Version="5.0.0-beta.1" />
+  </ItemGroup>
+</Project>

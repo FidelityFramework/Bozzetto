@@ -18,15 +18,14 @@ let private propConfig = { FsCheckConfig.defaultConfig with maxTest = 100 }
 /// (§4.10's own categories), so generated `Inputs` lists use ids and
 /// commits a scenario could actually declare, never made-up placeholders.
 let private inputPool : Input list =
-  [ Input.SampleTree Sample.WebappDatastar
-    Input.SampleTree Sample.RaylibGame
+  [ Input.SampleTree Sample.RaylibGame
     Input.SampleTree Sample.ConsoleTicker
     Input.SampleTree Sample.FromCSharp
-    Input.ClientSurface Client.Dashboard
     Input.ClientSurface Client.VsCode
     Input.ClientSurface Client.Neovim
+    Input.ClientSurface Client.Agent
     Input.DaemonRoutes
-    Input.ScenarioDefinition (ScenarioId.derive Capability.HotReload Client.VsCode AppKind.Web)
+    Input.ScenarioDefinition (ScenarioId.derive Capability.HotReload Client.VsCode AppKind.Console)
     Input.ScenarioDefinition (ScenarioId.derive Capability.Repl Client.Neovim AppKind.NoApp)
     Input.StyleAndProfiles
     Input.ToolVersions

@@ -15,10 +15,10 @@ open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
 open Bozzetto.Server
 
-// The daemon's listeners: MCP and dashboard.
+// The daemon's listeners: MCP and control.
 let private mcpPort = 47749
-let private dashboardPort = 47750
-let private own = HttpOriginGuard.OwnOrigins.ofPorts [ mcpPort; dashboardPort ]
+let private controlPort = 47750
+let private own = HttpOriginGuard.OwnOrigins.ofPorts [ mcpPort; controlPort ]
 
 let private request
     (httpMethod: string) (host: string option) (fetchSite: string option) (origin: string option)
@@ -27,7 +27,7 @@ let private request
   { Method = httpMethod; Host = host; SecFetchSite = fetchSite; Origin = origin
     ContentType = contentType; Body = body }
 
-/// A POST with a JSON body — what Datastar, the editors and the CLI send.
+/// A POST with a JSON body — what the daemon's own pages, the editors and the CLI send.
 let private jsonPost host fetchSite origin =
   request "POST" host fetchSite origin (Some "application/json") HttpOriginGuard.Body.Present
 
@@ -53,11 +53,11 @@ let matrixTests =
     testCase "IPv6 loopback Host [::1]:port passes" <| fun _ ->
       decide (jsonPost (Some "[::1]:47749") None None) |> allowed "[::1] is loopback"
 
-    testCase "a Datastar-shaped same-origin POST from the dashboard passes" <| fun _ ->
-      decide (jsonPost (Some "localhost:47750") (Some "same-origin") (Some "http://localhost:47750"))
-      |> allowed "the dashboard's own page must reach its own endpoints"
+    testCase "a same-origin JSON POST from the daemon's own page passes" <| fun _ ->
+      decide (jsonPost (Some "localhost:47749") (Some "same-origin") (Some "http://localhost:47749"))
+      |> allowed "the daemon's own page must reach its own endpoints"
 
-    testCase "the dashboard page posting to the MCP port (same-site, own origin) passes" <| fun _ ->
+    testCase "the control-port origin posting to the MCP port (same-site, own origin) passes" <| fun _ ->
       decide (jsonPost (Some "127.0.0.1:47749") (Some "same-site") (Some "http://127.0.0.1:47750"))
       |> allowed "both listeners are the daemon's own origins"
       decide (jsonPost (Some "[::1]:47749") (Some "same-site") (Some "http://[::1]:47750"))
@@ -127,8 +127,8 @@ let matrixTests =
 
 let private genHostForm = Gen.elements HttpOriginGuard.OwnOrigins.loopbackHostForms
 let private genForeignPort =
-  Gen.choose (1, 65535) |> Gen.filter (fun p -> p <> mcpPort && p <> dashboardPort)
-let private genOwnPort = Gen.elements [ mcpPort; dashboardPort ]
+  Gen.choose (1, 65535) |> Gen.filter (fun p -> p <> mcpPort && p <> controlPort)
+let private genOwnPort = Gen.elements [ mcpPort; controlPort ]
 let private genUnsafeMethod = Gen.elements [ "POST"; "PUT"; "PATCH"; "DELETE"; "post" ]
 let private genAnyMethod = Gen.elements [ "GET"; "HEAD"; "OPTIONS"; "POST"; "PUT"; "PATCH"; "DELETE" ]
 let private genSimpleContentType =
@@ -228,7 +228,7 @@ let private freeLoopbackPort () =
   port
 
 /// A loopback Kestrel host whose own origins are its port and port + 1 (the
-/// daemon's MCP + dashboard pair), running the daemon's origin guard in front
+/// daemon's MCP + control pair), running the daemon's origin guard in front
 /// of an /exec that parses its body the way the real /exec does (readJsonBody).
 /// `executed` counts requests that reached the handler.
 let private startGuardedExec (executed: int ref) : Task<WebApplication * int> = task {
@@ -298,24 +298,24 @@ let httpTests =
       })
     }
 
-    testTask "a Datastar-shaped same-origin JSON POST succeeds" {
+    testTask "a same-origin JSON POST from the daemon's own page succeeds" {
       do! withGuardedExec (fun port executed -> task {
         use! resp =
           post port "/exec" "application/json"
-            [ "Origin", sprintf "http://127.0.0.1:%d" port; "Sec-Fetch-Site", "same-origin"; "Datastar-Request", "true" ]
+            [ "Origin", sprintf "http://127.0.0.1:%d" port; "Sec-Fetch-Site", "same-origin" ]
             """{"code":"1 + 1"}"""
         int resp.StatusCode |> Expect.equal "the daemon's own page must be served" 200
         executed.Value |> Expect.equal "the allowed eval must reach /exec" 1
       })
     }
 
-    testTask "the dashboard origin (the sibling listener) may POST JSON same-site" {
+    testTask "the control-port origin (the sibling listener) may POST JSON same-site" {
       do! withGuardedExec (fun port executed -> task {
         use! resp =
           post port "/exec" "application/json"
             [ "Origin", sprintf "http://localhost:%d" (port + 1); "Sec-Fetch-Site", "same-site" ]
             """{"code":"1 + 1"}"""
-        int resp.StatusCode |> Expect.equal "the dashboard is one of the daemon's own origins" 200
+        int resp.StatusCode |> Expect.equal "the control port is one of the daemon's own origins" 200
         executed.Value |> Expect.equal "the allowed eval must reach /exec" 1
       })
     }

@@ -92,8 +92,8 @@ let tryParseDaemonJsonMcpPort (json: string) =
   |> Option.orElseWith (fun () -> tryParseUrlPort "url" compact)
 
 /// The daemon always starts BARE — it has not loaded a project at startup for a long
-/// time, and a session is created afterwards (from here, an MCP client, or the
-/// dashboard). It now REFUSES to start when handed `--proj`/`--sln`, exiting 2 with
+/// time, and a session is created afterwards (from here or an MCP client). It now
+/// REFUSES to start when handed `--proj`/`--sln`, exiting 2 with
 /// "accepted for recognition but not implemented", rather than accepting a flag and
 /// silently ignoring it. Passing the project here therefore stopped "Start Daemon"
 /// from starting anything at all.

@@ -130,9 +130,9 @@ let proxyTests =
 
 // ---------------------------------------------------------------------------
 // listenerBindFailureOf — the pure classification behind the startup fix:
-// a required listener (MCP and/or dashboard) that never stays up must fail
+// a required listener (MCP and/or control) that never stays up must fail
 // the daemon closed rather than let it announce "ready" (roast-class flake:
-// a taken dashboard port logged "Dashboard failed to start" then "Bozzetto
+// a taken second port logged "Dashboard failed to start" then "Bozzetto
 // daemon ready" anyway). See DaemonIntegrationTests.fs "Daemon startup fails
 // closed" for the real-process proof.
 // ---------------------------------------------------------------------------
@@ -149,9 +149,9 @@ let listenerBindFailureTests =
       listenerBindFailureOf true false
       |> Expect.equal "MCP bind failed" (Some ListenerBindFailure.Mcp)
 
-    testCase "only the dashboard task completing early names the dashboard listener" <| fun _ ->
+    testCase "only the control task completing early names the control listener" <| fun _ ->
       listenerBindFailureOf false true
-      |> Expect.equal "dashboard bind failed" (Some ListenerBindFailure.Dashboard)
+      |> Expect.equal "control bind failed" (Some ListenerBindFailure.Control)
 
     testCase "both tasks completing early names both listeners" <| fun _ ->
       listenerBindFailureOf true true
@@ -160,8 +160,8 @@ let listenerBindFailureTests =
     testCase "describeListenerBindFailure names every case" <| fun _ ->
       describeListenerBindFailure ListenerBindFailure.Mcp
       |> Expect.equal "names the MCP listener" "the MCP listener"
-      describeListenerBindFailure ListenerBindFailure.Dashboard
-      |> Expect.equal "names the dashboard listener" "the dashboard listener"
+      describeListenerBindFailure ListenerBindFailure.Control
+      |> Expect.equal "names the control listener" "the control listener"
       describeListenerBindFailure ListenerBindFailure.Both
-      |> Expect.equal "names both listeners" "the MCP and dashboard listeners"
+      |> Expect.equal "names both listeners" "the MCP and control listeners"
   ]

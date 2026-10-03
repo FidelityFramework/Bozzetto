@@ -3,9 +3,8 @@
 /// — no daemon, no FSI, no I/O, no `Cohort.CohortFrame<'m>` construction.
 /// These pin the char-grid glyphs, the PNG's structural validity and
 /// dimensions, the §6.5 "well under 4 KB for 7,000 x 10" size claim, and
-/// that re-rendering an unchanged matrix produces byte-identical output —
-/// the property `SnapshotRenderGuard` (Dashboard.fs) relies on to Skip a tick
-/// with nothing new to send.
+/// that re-rendering an unchanged matrix produces byte-identical output, so
+/// a consumer can skip a tick with nothing new to send.
 module Bozzetto.Tests.CohortMatrixRenderTests
 
 open System
@@ -13,7 +12,6 @@ open Expecto
 open Expecto.Flip
 open Bozzetto.Features
 open Bozzetto.Features.CohortMatrixRender
-open Bozzetto.Server.Dashboard
 
 let private bigEndianU32 (bytes: byte[]) (offset: int) : uint32 =
   (uint32 bytes.[offset] <<< 24)
@@ -145,7 +143,7 @@ let cohortMatrixRenderTests =
       }
     ]
 
-    testList "determinism — the property SnapshotRenderGuard depends on to Skip an unchanged tick" [
+    testList "determinism — an unchanged matrix re-renders byte-identically" [
       test "toPng is referentially transparent: the same matrix always encodes to byte-identical PNG output" {
         let pass = [| [| true; false; true |]; [| false; true; false |] |]
         let fail = [| [| false; true; false |]; [| true; false; false |] |]
@@ -158,23 +156,6 @@ let cohortMatrixRenderTests =
         let fail = [| [| false; true |] |]
         let stale = [| [| false; false |] |]
         toCharGrid pass fail stale |> Expect.equal "two calls, same string" (toCharGrid pass fail stale)
-      }
-
-      test "WHY — an unchanged frame's PNG bytes make SnapshotRenderGuard Skip the second tick" {
-        let pass = [| [| true; false |]; [| false; true |] |]
-        let fail = [| [| false; true |]; [| true; false |] |]
-        let stale = [| [| false; false |]; [| false; false |] |]
-        let firstBytes = toPng pass fail stale
-        match SnapshotRenderGuard.decide SnapshotRenderGuard.RenderMemory.initial firstBytes with
-        | SnapshotRenderGuard.Decision.Skip ->
-          failtest "first tick must render — RenderMemory.initial has nothing to compare against"
-        | SnapshotRenderGuard.Decision.Render memoryAfterFirst ->
-          // A second, independently re-encoded call with the SAME source
-          // arrays (the "unchanged frame" case) is Skip: no new PNG bytes
-          // would reach the wire for this tick.
-          let secondBytes = toPng pass fail stale
-          SnapshotRenderGuard.decide memoryAfterFirst secondBytes
-          |> Expect.equal "unchanged matrix is Skip — no re-render, no new bytes" SnapshotRenderGuard.Decision.Skip
       }
     ]
   ]

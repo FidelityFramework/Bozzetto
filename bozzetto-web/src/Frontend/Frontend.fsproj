@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Bozzetto.Web.Frontend</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Shared protocol: the same file the backend codec targets -->
+    <Compile Include="../Shared/Protocol.fs" />
+    <Compile Include="Interop.fs" />
+    <Compile Include="Codec.fs" />
+    <Compile Include="Bridge.fs" />
+    <Compile Include="Model.fs" />
+    <Compile Include="App.fs" />
+    <Compile Include="Main.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Partas.Solid" />
+  </ItemGroup>
+
+</Project>

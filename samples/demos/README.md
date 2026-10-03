@@ -1,6 +1,6 @@
 # Bozzetto Demo Applications
 
-Standalone F# applications demonstrating graphics, game loops and web frameworks.
+Standalone F# applications demonstrating graphics and game loops.
 
 ## Projects
 
@@ -26,18 +26,6 @@ cd Bozzetto.Samples.RaylibGame
 dotnet run
 ```
 
-### 🌐 Webapp Datastar — Reactive Todo List
-
-A real-time web application using Falco (F# web framework) and Datastar
-(SSE-based reactivity). Add, toggle, and delete todos with instant updates.
-
-```bash
-cd Bozzetto.Samples.WebappDatastar
-dotnet run
-```
-
-Then open `http://localhost:5000` in your browser.
-
 These demos are standalone .NET applications: edit them, then rebuild and
 rerun with `dotnet run`. Bozzetto’s embedded production FSI hosting is
 retired, so they run without a Bozzetto session. Composer projects use
@@ -47,4 +35,3 @@ Bozzetto’s explicit compiler sessions and artifact authority.
 
 - .NET 10 SDK
 - For Raylib demos: a display (won't work in headless environments)
-- For the web demo: a web browser

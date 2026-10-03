@@ -3,7 +3,7 @@ namespace Bozzetto.Server
 open System
 open System.Net
 
-/// Origin/CSRF gate for the daemon's HTTP surfaces (MCP :47749, dashboard
+/// Origin/CSRF gate for the daemon's HTTP surfaces (MCP :47749, control
 /// :47750) and — through WorkerHttpTransport — the worker's.
 ///
 /// THREAT MODEL
@@ -34,8 +34,8 @@ open System.Net
 ///     unsafe method is rejected; a safe method (GET/HEAD/OPTIONS) is allowed
 ///     for same-site (the browser's same-origin policy keeps a foreign page
 ///     from reading the response) and rejected for cross-site. Unknown values
-///     are rejected. (The dashboard page POSTing to the MCP port is same-site
-///     AND carries an own Origin, so it passes.)
+///     are rejected. (A page on the control port POSTing to the MCP port is
+///     same-site AND carries an own Origin, so it passes.)
 ///   - An unsafe method that carries a body must be Content-Type:
 ///     application/json. text/plain, form-urlencoded and multipart are the
 ///     CORS "simple" types a page may send cross-origin WITHOUT a preflight;

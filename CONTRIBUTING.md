@@ -65,15 +65,15 @@ Now `boz` on your PATH is your locally-built version.
 # Point Bozzetto at any F# project
 boz
 
-# Use an editor integration, MCP client, or the dashboard
-# Dashboard: http://localhost:47750/dashboard
+# Use an editor integration, MCP client, or the Composer browser page
+# Composer: http://localhost:47749/composer
 ```
 
 ## Project Structure
 
 ```
 Bozzetto.Core/       — Shared engine, session, testing, persistence, and protocol logic (start here!)
-Bozzetto/            — CLI tool, daemon, MCP server, dashboard, plus retained deprecated TUI source
+Bozzetto/            — CLI tool, daemon, MCP server, plus retained deprecated TUI source
 Bozzetto.Gui/        — Deprecated Raylib product frontend retained as legacy source
 Bozzetto.Tests/      — Expecto test project (thousands of tests; the README badge is auto-derived)
 bozzetto-vscode/     — VS Code extension (F# via Fable → JavaScript)
@@ -87,7 +87,7 @@ The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are 
 
 **Good starting points for reading code:**
 - `Bozzetto/DaemonMode.fs` — daemon composition and client routing
-- `Bozzetto/Dashboard.fs` — current browser dashboard
+- `Bozzetto/ComposerRoutes.fs` — the `/composer` browser page and `/api/composer/*` routes
 - `Bozzetto/McpServer.fs` and `Bozzetto/McpTools.fs` — MCP transport and tools
 - `Bozzetto.Tests/` — the test project shows how every module is exercised
 
@@ -216,7 +216,6 @@ Then restart Bozzetto. If you only changed test code, a simpler rebuild is enoug
 ### Viewing Logs
 
 - **Daemon console** — real-time output in the terminal where Bozzetto is running
-- **Dashboard** — `http://localhost:47750/dashboard` shows session state, events, test results
 - **Log files** — `bozzetto-stderr.log`, `bozzetto-trace.log` in the working directory
 - **OpenTelemetry** — start with `start-bozzetto-otel.bat` for structured traces
 
@@ -253,7 +252,7 @@ The full coding standards are in [AGENTS.md](AGENTS.md). Here are the essentials
 ### The Non-Negotiables
 
 - **2 spaces for indentation** — not 4, not tabs. The entire codebase uses 2 spaces.
-- **Conventional Commits** — `feat(core): add session routing`, `fix(dashboard): handle reconnect`, `docs: update contributing guide`
+- **Conventional Commits** — `feat(core): add session routing`, `fix(mcp): handle reconnect`, `docs: update contributing guide`
 - **No `Version` in PackageReference** — all NuGet versions live in `Directory.Packages.props`
 
 ### F# Style
@@ -318,7 +317,7 @@ list |> Expect.hasLength "should have 3 items" 3
 - Does it follow F# idioms? (pattern matching, immutability, composition)
 - Does it have tests?
 - Does it use 2-space indentation?
-- Does it affect multiple current clients? (VS Code, Neovim, web dashboard, MCP)
+- Does it affect multiple current clients? (VS Code, Neovim, MCP)
 - Are commit messages conventional?
 
 ## Good First Contributions
@@ -354,13 +353,13 @@ Bozzetto is **daemon-first** — one long-running server, many clients:
                     │  │  │  │
      ┌───────┐ ┌────┴──┐ ┌┴──────┐  ┌──────────┐
      │VS Code│ │Neovim │ │ Web   │  │MCP Client│
-     └───────┘ └───────┘ │ Dash  │  └──────────┘
+     └───────┘ └───────┘ │ UI    │  └──────────┘
                           └───────┘
 ```
 
 Key architectural concepts:
-- **Thin clients** — editors, dashboard tabs, and MCP clients use the same session-scoped daemon contracts
-- **Web dashboard** — browser operations and state updates use Falco.Datastar and SSE
+- **Thin clients** — editors and MCP clients use the same session-scoped daemon contracts
+- **Browser UI** — the plain-JS `/composer` page on 47749 uses `/api/composer/*` and SSE; a Partas.Solid UI in `bozzetto-web/` is in progress
 - **Worker isolation** — Composer supervises an isolated compiler worker for native build and accepted-artifact execution
 - **SSE for reads** — all state changes push to clients via Server-Sent Events
 - **POST for commands** — write operations are POST-only, return acknowledgment only

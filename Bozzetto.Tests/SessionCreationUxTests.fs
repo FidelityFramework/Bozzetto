@@ -3,7 +3,6 @@ module Bozzetto.Tests.SessionCreationUxTests
 open System
 open Expecto
 open Expecto.Flip
-open Falco.Markup
 open Bozzetto
 open Bozzetto.Tests.SharedGenerators
 
@@ -85,15 +84,6 @@ let sessionsRenderTests = testList "Sessions panel creating indicator" [
     let regions = BozzettoRender.render (BozzettoModel.initial())
     let sessionsRegion = regions |> List.find (fun r -> r.Id = "sessions")
     sessionsRegion.Content.Contains("⏳ Creating session...")
-    |> Expect.isFalse "should not contain creating text"
-
-  testCase "WHY — dashboard sidebar — shows the creating placeholder from the typed creating flag, because it used to text-match the TUI region" <| fun () ->
-    Bozzetto.Server.DashboardFragments.renderSessionsForSession "" [] true
-    |> renderNode
-    |> Expect.stringContains "should contain creating text" "⏳ Creating session..."
-
-  testCase "dashboard sidebar hides the creating placeholder when no session is being created" <| fun () ->
-    (Bozzetto.Server.DashboardFragments.renderSessionsForSession "" [] false |> renderNode).Contains("⏳ Creating session...")
     |> Expect.isFalse "should not contain creating text"
 ]
 

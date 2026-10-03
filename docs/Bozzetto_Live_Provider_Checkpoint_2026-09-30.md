@@ -47,12 +47,15 @@ failed MCP call against the inherited implementation.
 
 The intended local endpoints are:
 
-- Dashboard: `http://127.0.0.1:47750/`
-- Shared Composer page: `http://127.0.0.1:47749/composer` (also linked from the dashboard)
+- Shared Composer page: `http://127.0.0.1:47749/composer`
 - Streamable HTTP MCP: `http://127.0.0.1:47749/`
 - Health: `http://127.0.0.1:47749/health`
 - Daemon identity: `http://127.0.0.1:47750/api/daemon-info`
 - Shared Composer state: `http://127.0.0.1:47749/api/composer/sessions`
+
+October 2 update: the legacy web dashboard formerly listed here was removed from
+the source; port 47750 now carries only the minimal control listener. Releases
+installed before that change may still serve the dashboard.
 
 Use bounded probes, for example:
 

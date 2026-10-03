@@ -50,7 +50,7 @@ let tests =
     testProperty "a Click ends in a button-up, whose preceding motion ends at the rect centre"
     <| fun (rawX: int) (rawY: int) (rawW: int) (rawH: int) ->
       let target = mkRect rawX rawY rawW rawH
-      let requests = Bozzetto.Demos.Input.plan fixtureMapping { X = 0; Y = 0 } (Action.Click(Target.WindowCenter ActorId.Dashboard)) target
+      let requests = Bozzetto.Demos.Input.plan fixtureMapping { X = 0; Y = 0 } (Action.Click(Target.WindowCenter ActorId.VsCode)) target
       let last = List.last requests
       let motions = requests |> List.choose (function | X11Request.FakeMotion(x, y) -> Some { X = x; Y = y } | _ -> None)
       last = X11Request.FakeButton(Button.Left, Pressed.Up)
@@ -58,7 +58,7 @@ let tests =
 
     testCase "a Click's button-down immediately precedes its button-up" <| fun _ ->
       let target = { X = 100; Y = 100; W = 40; H = 20 }
-      let requests = Bozzetto.Demos.Input.plan fixtureMapping { X = 0; Y = 0 } (Action.Click(Target.WindowCenter ActorId.Dashboard)) target
+      let requests = Bozzetto.Demos.Input.plan fixtureMapping { X = 0; Y = 0 } (Action.Click(Target.WindowCenter ActorId.VsCode)) target
       let lastTwo = requests |> List.rev |> List.take 2 |> List.rev
       lastTwo
       |> Expect.equal
@@ -122,7 +122,7 @@ let tests =
 
     testCase "the same Click on the same target plans identically every run (§1, §9)" <| fun _ ->
       let target = { X = 50; Y = 60; W = 30; H = 15 }
-      let a = Bozzetto.Demos.Input.plan fixtureMapping { X = 0; Y = 0 } (Action.Click(Target.WindowCenter ActorId.Dashboard)) target
-      let b = Bozzetto.Demos.Input.plan fixtureMapping { X = 0; Y = 0 } (Action.Click(Target.WindowCenter ActorId.Dashboard)) target
+      let a = Bozzetto.Demos.Input.plan fixtureMapping { X = 0; Y = 0 } (Action.Click(Target.WindowCenter ActorId.VsCode)) target
+      let b = Bozzetto.Demos.Input.plan fixtureMapping { X = 0; Y = 0 } (Action.Click(Target.WindowCenter ActorId.VsCode)) target
       a |> Expect.equal "deterministic plan for the same target" b
   ]

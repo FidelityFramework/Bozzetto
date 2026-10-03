@@ -1,29 +1,20 @@
 /// Roast-6 / multiagent-vision.md §3.4, §7.4, §10 Phase 0 item 1: the
 /// eval-to-pixel latency chain and its budget RED tests.
 ///
-/// The chain itself (AppState eval-requested -> Elm ModelChanged -> the
-/// dashboard's push agent -> the SSE morph write) needs a live daemon and a
-/// real browser stream to exercise end-to-end — that is covered by manual
-/// live measurement against a throwaway daemon (see the task report), not by
-/// the default suite. What CAN run fast and deterministically here, with
-/// real numbers:
-///   - the stamping/percentile math the statusline reads (EvalLatencyTrace);
-///   - the pure burst-coalescing fold the push agent's back-pressure loop
-///     applies before every render (StreamBurst, extended in
-///     DashboardViewingTests.fs);
-///   - the statusline actually rendering p50/p99 when they're present;
-///   - the daemon-wide build semaphore's configured capacity.
+/// The chain itself (AppState eval-requested -> Elm ModelChanged -> a
+/// browser client's push and render) needs a live daemon and a real browser
+/// stream to exercise end-to-end; the legacy dashboard that closed it was
+/// removed with Datastar. What CAN run fast and deterministically here, with
+/// real numbers: the stamping/percentile math a statusline reads
+/// (EvalLatencyTrace).
 module Bozzetto.Tests.EvalLatencyTraceTests
 
 open System
 open System.Diagnostics
 open Expecto
 open Expecto.Flip
-open Falco.Markup
 open Bozzetto
 open Bozzetto.Server
-open Bozzetto.Server.DashboardTypes
-open Bozzetto.Server.DashboardFragments
 
 [<Tests>]
 let evalLatencyTraceTests = testList "EvalLatencyTrace" [
@@ -120,49 +111,6 @@ let evalLatencyTraceTests = testList "EvalLatencyTrace" [
 
   testCase "WHY — percentiles is None over zero completed chains — because a freshly-started daemon has rendered nothing yet, and the statusline must render its absence, not a fabricated zero" <| fun _ ->
     EvalLatencyTrace.percentiles [] |> Expect.equal "no data, no percentiles" (None, None)
-
-  testCase "WHY — the statusline renders p50/p99 when present — the RED test §10 item 1 names explicitly ('the statusline shows p50/p99')" <| fun _ ->
-    let snap =
-      { Version = "0.0.0"
-        ConnectionState = DashboardConnectionState.Connected
-        SessionState = "ready"; SessionId = "test-id"; WorkingDir = "/w"
-        WarmupProgress = ""; WorkflowLabel = "REPL"
-        EvalStats = { Count = 3; AvgMs = 1.0; MinMs = 1.0; MaxMs = 1.0; Sparkline = ""; P50Ms = None; P95Ms = None }
-        AlarmPanel = Elem.div [] []; DaemonHealth = Elem.div [] []
-        FailureNarrativesPanel = Elem.div [] []; DiagnosticsPanel = Elem.div [] []
-        FilmstripPanel = Elem.div [] []; ThemeName = "default"; ConnectionLabel = None
-        LiveTestingPanel = Elem.div [] []
-        SessionContextPanel = Elem.div [] []; OutputPanel = Elem.div [] []
-        SessionsPanel = Elem.div [] []; SessionPicker = Elem.div [] []
-        ThemePicker = Elem.div [] []; ThemeVars = Elem.div [] []
-        BindingsPanel = Elem.div [] []; FrictionPanel = Elem.div [] []; CohortPanel = Elem.div [] []
-        ActiveProject = None; ProjectRoles = []; App = AppRun.AppRunState.NotRunning
-        EvalToPixelP50Ms = Some 3.25
-        EvalToPixelP99Ms = Some 18.75 }
-    let html = renderMainContent snap |> renderNode
-    html |> Expect.stringContains "statusline shows p50" "p50 3.2ms"
-    html |> Expect.stringContains "statusline shows p99" "p99 18.8ms"
-
-  testCase "WHY — the statusline renders nothing latency-shaped before any eval has completed the chain — an absent measurement must not masquerade as a fabricated 0ms" <| fun _ ->
-    let snap =
-      { Version = "0.0.0"
-        ConnectionState = DashboardConnectionState.Connected
-        SessionState = "ready"; SessionId = "test-id"; WorkingDir = "/w"
-        WarmupProgress = ""; WorkflowLabel = "REPL"
-        EvalStats = { Count = 0; AvgMs = 0.0; MinMs = 0.0; MaxMs = 0.0; Sparkline = ""; P50Ms = None; P95Ms = None }
-        AlarmPanel = Elem.div [] []; DaemonHealth = Elem.div [] []
-        FailureNarrativesPanel = Elem.div [] []; DiagnosticsPanel = Elem.div [] []
-        FilmstripPanel = Elem.div [] []; ThemeName = "default"; ConnectionLabel = None
-        LiveTestingPanel = Elem.div [] []
-        SessionContextPanel = Elem.div [] []; OutputPanel = Elem.div [] []
-        SessionsPanel = Elem.div [] []; SessionPicker = Elem.div [] []
-        ThemePicker = Elem.div [] []; ThemeVars = Elem.div [] []
-        BindingsPanel = Elem.div [] []; FrictionPanel = Elem.div [] []; CohortPanel = Elem.div [] []
-        ActiveProject = None; ProjectRoles = []; App = AppRun.AppRunState.NotRunning
-        EvalToPixelP50Ms = None
-        EvalToPixelP99Ms = None }
-    let html = renderMainContent snap |> renderNode
-    (html.Contains "px p50") |> Expect.isFalse "no latency stat rendered when nothing has completed the chain yet"
 
   // ── §10 Phase 0 item 1's other named budgets: `decide`+`project` for ten
   // members/7,000 tests under 1ms p99, and the claim-probe under 10us. Those

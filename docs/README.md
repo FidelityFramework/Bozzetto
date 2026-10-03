@@ -30,7 +30,7 @@ The F# engine described here is retained host code, not a current product surfac
 - **[Hot Reload](hot-reload.md)**: change admission and compiler-owned execution
 - **[Live Testing As You Type](live-testing-as-you-type.md)**: the feedback pipeline
 - **[Multi-Session](multi-session.md)** and **[Session Isolation](session-isolation.md)**: F# workers and session boundaries
-- **[Feature Matrix](FEATURE_MATRIX.md)**: inherited capabilities across VS Code, Neovim, the dashboard and MCP
+- **[Feature Matrix](FEATURE_MATRIX.md)**: inherited capabilities across VS Code, Neovim and MCP
 - **[Ecosystem compatibility](ecosystem-compatibility.md)**: .NET web frameworks, Fable, AOT and related integration limits
 - **[SSE Events](sse-events.md)**: events consumed by editor integrations
 - **[Troubleshooting](TROUBLESHOOTING.md)**: inherited host, runtime and editor issues
@@ -40,7 +40,7 @@ The F# engine described here is retained host code, not a current product surfac
 
 - **[Minimal hosting architecture](Minimal_Hosting_Architecture.md)**: compiler ownership, justified host facilities and the self-hosting boundary
 
-- **[System Architecture](architecture.md)**: daemon, F# workers, dashboard and inherited MCP surface
+- **[System Architecture](architecture.md)**: daemon, F# workers and inherited MCP surface
 - **[Binary Format Spec](binary-format-spec.md)** and **[benchmarks](binary-format-benchmarks.md)**: session/test persistence
 - **[Contributing Guide](../CONTRIBUTING.md)** and **[agent guidelines](../AGENTS.md)**: development workflow, testing and coding standards
 - **[Architecture Decision Records](architecture-decisions.md)**: persistence, typed errors, MCP and prior frontend decisions

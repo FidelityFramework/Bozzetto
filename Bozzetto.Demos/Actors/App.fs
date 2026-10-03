@@ -1,23 +1,17 @@
 /// Observes and places an externally launched demo window; it never starts
 /// the application process.
 ///
-/// Three `AppKind`s, two real capture mechanisms:
-///  - `Web`: the app is a website. This actor opens its OWN second Chromium
-///    (`Actors/Dashboard.fs`'s exact `--app=` kiosk launch shape, reused
-///    verbatim, never rewritten — §1's "reusable, actor-agnostic edges")
-///    pointed at the app's URL, placed at the co-actor's rect. Content
-///    changes are observed via a real Playwright screenshot diff — the
-///    plan's own words, "region diff via ... Playwright for web".
-///  - `Raylib`/`Console`: the app draws its own window directly on the
-///    shared `:99` display (a GUI window for Raylib; a terminal surface for
-///    Console) — this actor never opens a browser for these. It watches the
-///    display's root window for a NEW top-level window to appear (a real,
-///    live `XQueryTree` diff — the exact "attach to a real launched window"
-///    proof the RED tests demand, never a guess at a window id), moves/
-///    resizes it into the co-actor's rect via `XMoveResizeWindow`, and
-///    observes content changes via a real `XGetImage` pixel-fingerprint diff
-///    — the plan's "region diff" mechanism, implemented for the case that
-///    has no DOM to query.
+/// Two `AppKind`s, one real capture mechanism: `Raylib`/`Console` apps draw
+/// their own window directly on the shared `:99` display (a GUI window for
+/// Raylib; a terminal surface for Console). This actor watches the display's
+/// root window for a NEW top-level window to appear (a real, live
+/// `XQueryTree` diff — the exact "attach to a real launched window" proof the
+/// RED tests demand, never a guess at a window id), moves/resizes it into the
+/// co-actor's rect via `XMoveResizeWindow`, and observes content changes via
+/// a real `XGetImage` pixel-fingerprint diff — the plan's "region diff"
+/// mechanism. (A former `Web` kind, which opened a second Chromium on a web
+/// sample's URL and diffed Playwright screenshots, left with the Datastar web
+/// sample.)
 ///
 /// Deliberately its own small, self-contained P/Invoke surface (`Native`
 /// below) rather than growing `XTest.fs`'s contract: `XTest.fs` is the
@@ -28,10 +22,8 @@
 module Bozzetto.Demos.Actors.App
 
 open System
-open System.Net.Http
 open System.Runtime.InteropServices
 open Bozzetto.Demos.Domain
-open Bozzetto.Demos.Actors
 open Bozzetto.Demos.Actors.Actor
 
 /// Xlib's DEFAULT error handler does not just print an `XErrorEvent` — it
@@ -237,51 +229,15 @@ let private pollForNewWindow (display: nativeint) (root: nativeint) (before: Set
         )
   }
 
-let private waitForHttpReady (url: string) (timeoutMs: int) : Async<Result<unit, string>> =
-  async {
-    use client = new HttpClient(Timeout = TimeSpan.FromSeconds 2.0)
-    let sw = Diagnostics.Stopwatch.StartNew()
-    let mutable ok = false
-
-    while not ok && sw.ElapsedMilliseconds < int64 timeoutMs do
-      try
-        let! resp = client.GetAsync(url) |> Async.AwaitTask
-        // Any response at all — even a 4xx/5xx from the app's own router —
-        // proves a real HTTP server is listening; only a connection failure
-        // (server not up yet) should keep polling.
-        ok <- true
-        resp.Dispose()
-      with _ ->
-        ()
-
-      if not ok then
-        do! Async.Sleep 300
-
-    if ok then
-      return Ok()
-    else
-      return Error(sprintf "app URL %s never answered within %dms — did run-app actually start the web sample?" url timeoutMs)
-  }
-
-/// Fully-resolved launch configuration (Runtime.App.fs builds this from the
-/// repo/`Wire.AppConfig` once the seam wires it in — this actor itself never
-/// resolves a path, a port, or an env var, exactly like `Actors/Dashboard.fs`
-/// takes an already-resolved `chromePath`/`userDataDir` rather than finding
-/// them itself).
+/// Fully-resolved launch configuration (the cell-agent builds this — this
+/// actor itself never resolves a path, a port, or an env var).
 type LaunchConfig =
   { /// The Xvfb display every actor in the cell shares (`CellAgent.CellDisplay`,
     /// kept a plain string here so this module never depends on the
     /// cell-agent).
     Display: string
-    /// `Web` only: the already-resolved URL of the running app (the
-    /// daemon's run-app response publishes the port; `Runtime.App.fs`
-    /// resolves the full URL from it). Ignored for `Raylib`/`Console`.
-    AppUrl: string option
-    ChromePath: string
-    UserDataDir: string
     /// How long to wait for the run-app-launched window to appear on the
-    /// shared display (`Raylib`/`Console`) or for the app URL to answer
-    /// (`Web`) before failing loud — never silently hanging forever.
+    /// shared display before failing loud — never silently hanging forever.
     ReadyTimeoutMs: int }
 
 module LaunchConfig =
@@ -290,46 +246,16 @@ module LaunchConfig =
   /// (mirrors `CellAgent.fs`'s own 90s `Observe` ceiling's reasoning).
   let DefaultReadyTimeoutMs = 30_000
 
-/// One live App co-actor: which window it captures, and how — a Chromium
-/// page for `Web`, or a raw X11 window handle for `Raylib`/`Console`. Exactly
-/// one of `Window`/`Chromium` is populated, matching which kind launched it;
-/// never both, never neither (enforced by construction — `launchWeb`/
-/// `launchWindowed` are the only producers).
+/// One live App co-actor: the raw X11 window it captures on its own display
+/// connection (`launchWindowed` is the only producer).
 type Handle =
   { Kind: AppKind
-    /// `IntPtr.Zero` only for `Web` (Chromium's content is captured through
-    /// Playwright, not a raw X11 grab — there is no separate display
-    /// connection to close).
     Display: nativeint
     Window: nativeint option
-    Chromium: Dashboard.Handle option
-    /// The rect this actor was placed at — reported by `resolveRect` for the
-    /// `Web` kind only (a `--app` kiosk window has no chrome to move itself,
-    /// so the placed rect IS the live rect); `Raylib`/`Console` always
-    /// re-query live geometry instead of trusting this.
+    /// The rect this actor was placed at — only a fallback for `observe`'s
+    /// capture rect; `resolveRect` always re-queries live geometry instead
+    /// of trusting this.
     PlacedRect: Rect }
-
-let private launchWeb (config: LaunchConfig) (rect: Rect) : Async<Result<Handle, string>> =
-  async {
-    match config.AppUrl with
-    | None -> return Error "AppConfig.Kind = web but no AppUrl was resolved (Runtime.App.fs must supply the run-app-published URL before launching the App actor)"
-    | Some url ->
-      match! waitForHttpReady url config.ReadyTimeoutMs with
-      | Error message -> return Error(sprintf "App(web): %s" message)
-      | Ok() ->
-        try
-          let! chromiumHandle = Dashboard.launch config.ChromePath config.UserDataDir rect url
-
-          return
-            Ok
-              { Kind = AppKind.Web
-                Display = IntPtr.Zero
-                Window = None
-                Chromium = Some chromiumHandle
-                PlacedRect = rect }
-        with ex ->
-          return Error(sprintf "App(web) failed to launch its own Chromium against %s: %s" url ex.Message)
-  }
 
 let private launchWindowed (kind: AppKind) (config: LaunchConfig) (rect: Rect) : Async<Result<Handle, string>> =
   async {
@@ -354,22 +280,20 @@ let private launchWindowed (kind: AppKind) (config: LaunchConfig) (rect: Rect) :
             { Kind = kind
               Display = display
               Window = Some window
-              Chromium = None
               PlacedRect = rect }
   }
 
 /// Launches the App co-actor for `appKind` at `rect` — waiting for (never
-/// starting) the window/URL the daemon's run-app already produced, per
+/// starting) the window the daemon's run-app already produced, per
 /// §2.3's "finds, places, and observes ... does not start it". Fails loud
 /// (`Result.Error` with an actionable message), never a silent no-op, for
-/// every case the common external-dependency doctrine (§2) requires: no
-/// resolved app URL, the URL never answers, no new window ever appears, or
-/// `AppKind.NoApp` (which has no window to capture at all — a scenario
-/// author error, not something this actor can paper over).
+/// every case the common external-dependency doctrine (§2) requires: no new
+/// window ever appears, or `AppKind.NoApp` (which has no window to capture
+/// at all — a scenario author error, not something this actor can paper
+/// over).
 let launch (config: LaunchConfig) (rect: Rect) (appKind: AppKind) : Async<Result<Handle, string>> =
   async {
     match appKind with
-    | AppKind.Web -> return! launchWeb config rect
     | AppKind.Raylib -> return! launchWindowed AppKind.Raylib config rect
     | AppKind.Console -> return! launchWindowed AppKind.Console config rect
     | AppKind.NoApp ->
@@ -385,15 +309,7 @@ let resolveRect (handle: Handle) (_selector: string) : Async<ScreenRect option> 
   async {
     match handle.Window with
     | Some window when handle.Display <> IntPtr.Zero -> return geometryOf handle.Display window
-    | _ ->
-      match handle.Chromium with
-      | Some _ ->
-        // A `--app` kiosk Chromium window has no browser chrome that could
-        // move or resize it out from under `--window-position`/
-        // `--window-size` (the exact mechanism `Actors/Dashboard.fs` already
-        // relies on) — the placed rect IS the live rect for this kind.
-        return Some handle.PlacedRect
-      | None -> return None
+    | _ -> return None
   }
 
 /// Retries a real pixel capture for up to `graceMs` before giving up — a
@@ -418,16 +334,14 @@ let private captureWithRetry (display: nativeint) (window: nativeint) (graceMs: 
   }
 
 /// Observes `Signal.AppOutputChanged` via a REAL content diff — an XGetImage
-/// pixel fingerprint for `Raylib`/`Console`, a Playwright screenshot for
-/// `Web` (the plan's own "region diff ... Playwright for web") — polling
-/// until the content genuinely differs from its value at the START of this
-/// call, or the timeout elapses. Never a faked "yes" — a capture failure
-/// (window already gone) reports `false`, the honest "did not observe a
-/// change" outcome.
+/// pixel fingerprint of the app's window — polling until the content
+/// genuinely differs from its value at the START of this call, or the
+/// timeout elapses. Never a faked "yes" — a capture failure (window already
+/// gone) reports `false`, the honest "did not observe a change" outcome.
 let observe (handle: Handle) (_selector: string) (timeoutMs: float) : Async<bool> =
   async {
-    match handle.Window, handle.Chromium with
-    | Some window, _ when handle.Display <> IntPtr.Zero ->
+    match handle.Window with
+    | Some window when handle.Display <> IntPtr.Zero ->
       let rect = geometryOf handle.Display window |> Option.defaultValue handle.PlacedRect
       let graceMs = min 3000 (int timeoutMs)
 
@@ -445,36 +359,16 @@ let observe (handle: Handle) (_selector: string) (timeoutMs: float) : Async<bool
           | _ -> ()
 
         return changed
-    | _, Some chromium ->
-      try
-        let! baselineBytes = chromium.Page.ScreenshotAsync() |> Async.AwaitTask
-        let sw = Diagnostics.Stopwatch.StartNew()
-        let mutable changed = false
-
-        while not changed && sw.Elapsed.TotalMilliseconds < timeoutMs do
-          do! Async.Sleep 250
-          let! current = chromium.Page.ScreenshotAsync() |> Async.AwaitTask
-
-          if current <> baselineBytes then
-            changed <- true
-
-        return changed
-      with _ ->
-        return false
     | _ -> return false
   }
 
 let close (handle: Handle) : Async<unit> =
   async {
-    match handle.Chromium with
-    | Some chromium -> do! Dashboard.close chromium
-    | None -> ()
-
     if handle.Display <> IntPtr.Zero then
       Native.XCloseDisplay handle.Display |> ignore
   }
 
-/// A real, live presence poll — "is the app's window/URL discoverable yet"
+/// A real, live presence poll — "is the app's window discoverable yet"
 /// — through the SAME `resolveRect` a caller would use to place/observe it,
 /// never a guess that a daemon run-app call "must have worked" by now. Used
 /// by the wire's `"app-running"` selector (seam-integration threading:
@@ -501,11 +395,11 @@ let private pollRunning (handle: Handle) (timeoutMs: float) : Async<bool> =
 /// Wraps this actor behind the cell-agent's actor-dispatch seam (Island F,
 /// demo-actors-plan.md §1.2). `Command` is a no-op: the App co-actor is
 /// never the target of a `ClientCommand` (it does not open files or run
-/// itself — the primary actor does that), mirroring `Actors/Dashboard.fs`'s
-/// own no-op `Command` today. `Observe` branches on the wire selector: a
-/// presence poll for `"app-running"`, the existing real content-diff for
-/// everything else (`"app-output-changed"` and any future region-diff
-/// selector this actor gains) — never a fabricated pass either way.
+/// itself — the primary actor does that). `Observe` branches on the wire
+/// selector: a presence poll for `"app-running"`, the existing real
+/// content-diff for everything else (`"app-output-changed"` and any future
+/// region-diff selector this actor gains) — never a fabricated pass either
+/// way.
 let toLiveActor (handle: Handle) : LiveActor =
   let observeSelector (selector: string) (timeoutMs: float) : Async<bool> =
     if selector = "app-running" then

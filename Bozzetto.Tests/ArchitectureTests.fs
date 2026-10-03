@@ -819,7 +819,7 @@ module private ActorWaitForExtraction =
     { Node = "ElmLoop"
       File = "Bozzetto/DaemonMode.fs"
       StartContains = Some "let createElmRuntime"
-      EndContains = Some "let dispatchOutputAndWait" }
+      EndContains = Some "type ListenerBindFailure" }
 
     { Node = "CohortOwner"
       File = "Bozzetto.Core/Features/CohortOwner.fs"
@@ -1219,7 +1219,9 @@ let blockingCallBudgets =
     [ "Async.RunSynchronously", 44
       "Thread.Sleep", 42
       ".Wait(", 23
-      "GetAwaiter().GetResult()", 23 ]
+      // 23 -> 14: the legacy dashboard's browser/integration tests were
+      // deleted with Datastar. Exact post-deletion count.
+      "GetAwaiter().GetResult()", 14 ]
   testList "Architecture — blocking-call budgets (ratchet down, never raise)" [
     for (pattern, budget) in budgets ->
       testCase (sprintf "WHY — test bodies keep '%s' at or below %d, so the thread-pool-starving blocking-call debt can only shrink" pattern budget) <| fun _ ->

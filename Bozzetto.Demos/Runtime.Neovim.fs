@@ -140,9 +140,9 @@ let resolvePinnedPlugin (pluginRepoDir: string) (scratchDir: string) (gitRef: st
 let actorBinds (pluginScratchDir: string) : (string * string) list = [ pluginScratchDir, pluginScratchDir ]
 
 /// This island's `actorPrologue` contribution is deliberately empty: exactly
-/// like the Dashboard actor (Island F's own reference — `Actors/Dashboard.fs`
-/// launches Chromium from INSIDE the cell-agent process, not from a shell
-/// line spliced before it), `Actors.Neovim.launch` spawns kitty+nvim itself
+/// like the Agent actor (`Actors/Agent.fs` launches Chromium from INSIDE the
+/// cell-agent process, not from a shell line spliced before it),
+/// `Actors.Neovim.launch` spawns kitty+nvim itself
 /// once the cell-agent's actor-assembly step dispatches to it — there is
 /// nothing this actor needs prepared at the shell level before the daemon
 /// health-check/cell-agent handoff `Runtime.fs`'s `innerScript` already does.

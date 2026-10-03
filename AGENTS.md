@@ -10,7 +10,7 @@ rules below still apply.
 
 ## STOP — Read This Before Anything Else
 
-**The Bozzetto daemon is a long-running process.** It hosts Composer coordination, the MCP server and dashboard on ports 47749/47750. You will be tempted to wait for it. DO NOT.
+**The Bozzetto daemon is a long-running process.** It hosts the MCP server and Composer coordination on port 47749 and a minimal control listener on port 47750. You will be tempted to wait for it. DO NOT.
 
 **The cardinal rule, stated three times because it is the only thing you keep getting wrong:**
 
@@ -86,9 +86,8 @@ The Visual Studio extension (`bozzetto-vs/`) is deprecated and no longer built, 
 - **Primary language**: F# (functional programming)
 - **Target framework**: `net10.0` throughout the hosted delivery; `global.json` selects the stable .NET 10 SDK.
 - **Solution format**: `.slnx` (not `.sln`)
-- **Web framework**: Falco (functional web framework for ASP.NET Core)
-- **HTML rendering**: Falco.Markup
-- **Real-time UI**: Falco.Datastar (SSE-based)
+- **Daemon HTTP**: ASP.NET Core minimal APIs
+- **Browser UI**: Partas.Solid in `bozzetto-web/`, following the WrenHello architecture (in progress)
 - **Testing**: Expecto (behavior-driven, property-based with FsCheck)
 - **Snapshot testing**: Verify
 - **Persistence**: Binary manifest format (.bozzettofm) for session and test state
@@ -177,7 +176,7 @@ Consequences, in order of importance:
 
 ```
 Bozzetto.Core/       — Shared engine, session, testing, persistence, and protocol logic
-Bozzetto/            — CLI tool, daemon, MCP server, dashboard, and retained deprecated TUI source
+Bozzetto/            — CLI tool, daemon, MCP server, and retained deprecated TUI source
 Bozzetto.Gui/        — Deprecated Raylib product frontend retained as legacy source
 Bozzetto.Tests/      — Expecto test project
 bozzetto-vscode/     — VS Code extension (Fable F#→JS)
@@ -210,7 +209,7 @@ outstanding checks; release checks must not block these checkpoint pushes.
 
 ## Multi-agent / worktree sessions
 
-- **Sessions are checkout-aware.** A session's working directory is classified against the filesystem (`Bozzetto.Checkout.classify`, no `git` subprocess): a plain repository, a git **worktree** (its own root and branch — worktrees have a `.git` FILE, not a directory, pointing at the main checkout's `.git/worktrees/<name>` admin dir), or not a git checkout at all. `list_sessions` and the dashboard show a worktree session's branch.
+- **Sessions are checkout-aware.** A session's working directory is classified against the filesystem (`Bozzetto.Checkout.classify`, no `git` subprocess): a plain repository, a git **worktree** (its own root and branch — worktrees have a `.git` FILE, not a directory, pointing at the main checkout's `.git/worktrees/<name>` admin dir), or not a git checkout at all. `list_sessions` shows a worktree session's branch.
 - **A git worktree is a routing boundary.** If you are working inside a worktree (e.g. `.claude/worktrees/agent-x`) and no session exists for it yet, tool calls resolve to `Gone` with a create hint — they never silently fall back to a session rooted at the main checkout, even though your directory is textually nested under it. Create a session for the worktree; do not assume the main checkout's session is yours to use.
 - **For a project the running daemon already serves, create a session in it.** Only spawn a second daemon when you are testing daemon code itself (changes to `Bozzetto.Core`/`Bozzetto`) that the running daemon cannot execute because it predates your change — and then give that daemon an explicit owner/TTL rather than leaving it to leak.
 - **Identity is bound to your MCP connection, not to the `agentName` you pass.** Two different connections that happen to declare the same `agentName` are tracked as two separate members — you cannot see or clear another connection's active session by reusing its name.
@@ -232,8 +231,8 @@ outstanding checks; release checks must not block these checkpoint pushes.
 
 ## Architecture Principles
 
-- **Current clients**: VS Code, Neovim, the web dashboard, and MCP use session-scoped daemon contracts
-- **Web dashboard**: Falco.Datastar and SSE provide browser-based session control and observability
+- **Current clients**: VS Code, Neovim, and MCP use session-scoped daemon contracts
+- **Browser UI**: the plain-JS `/composer` page and `/api/composer/*` on 47749 serve Composer today; a Partas.Solid UI in `bozzetto-web/` (in progress) will replace that page
 - **Binary persistence**: Session/test state via CRC-validated binary manifest (.bozzettofm)
 - **CQRS**: Separate read/write models
 - **Vertical slices**: Features as single files for locality of behavior

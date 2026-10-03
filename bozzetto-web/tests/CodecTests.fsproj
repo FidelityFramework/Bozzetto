@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Headless codec round trip under node: the frontend codec against the
+       backend-side (mock) codec, for every Command and Event case. -->
+  <PropertyGroup>
+    <RootNamespace>Bozzetto.Web.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../src/Shared/Protocol.fs" />
+    <Compile Include="../src/Frontend/Codec.fs" />
+    <Compile Include="../src/Mock/Codec.fs" />
+    <Compile Include="RoundTrip.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fable.Core" />
+  </ItemGroup>
+
+</Project>

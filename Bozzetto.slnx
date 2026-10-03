@@ -20,9 +20,8 @@
     <Project Path="samples/from-jupyter/Bozzetto.Samples.FromJupyter/Bozzetto.Samples.FromJupyter.fsproj" />
     <Project Path="samples/demos/Bozzetto.Samples.RaylibHello/Bozzetto.Samples.RaylibHello.fsproj" />
     <Project Path="samples/demos/Bozzetto.Samples.RaylibGame/Bozzetto.Samples.RaylibGame.fsproj" />
-    <Project Path="samples/demos/Bozzetto.Samples.WebappDatastar/Bozzetto.Samples.WebappDatastar.fsproj" />
-    <!-- The MCP run_app/stop_app outcome gate and the dashboard browser
-         journeys create real sessions on ConsoleTicker, and a session warms up
+    <!-- The MCP run_app/stop_app outcome gate and the HTTP API integration
+         suites create real sessions on ConsoleTicker, and a session warms up
          by loading the project's built assembly. Left out of the solution, it
          was never built by CI's `dotnet build`, so those gates failed on a
          fresh runner with "Not all DLLs are found (1 missing:

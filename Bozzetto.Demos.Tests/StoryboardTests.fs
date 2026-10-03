@@ -1,5 +1,5 @@
-/// Proves `Storyboard.svg` (demo-gif-plan.md §4.8, §5) against the §6.1
-/// worked scenario: it renders well-formed SVG carrying one caption per step
+/// Proves `Storyboard.svg` (demo-gif-plan.md §4.8, §5) against the worked
+/// hot-reload scenario: it renders well-formed SVG carrying one caption per step
 /// and one pane rect per actor in the resolved `Layout.rects` map, for every
 /// `LayoutTemplate`, with no launch and no sandbox.
 module Bozzetto.Demos.Tests.StoryboardTests
@@ -11,41 +11,41 @@ open Bozzetto.Demos.Domain
 
 let private screen = { Width = 1280; Height = 720 }
 
-/// The flagship demo from demo-gif-plan.md §6.1, copied here (rather than
-/// referencing `DomainTests`) so this test file has no dependency on another
-/// test file's private binding.
-let private hrDashboardVscodeWeb : Scenario =
-  { Id = ScenarioId.derive Capability.HotReload Client.VsCode AppKind.Web
+/// The worked hot-reload demo (`DomainTests`'s `hrVsCodeConsole`), copied
+/// here (rather than referencing `DomainTests`) so this test file has no
+/// dependency on another test file's binding.
+let private hrVsCodeConsole : Scenario =
+  { Id = ScenarioId.derive Capability.HotReload Client.VsCode AppKind.Console
     Capability = Capability.HotReload
     Client = Client.VsCode
-    App = AppKind.Web
-    Sample = Sample.WebappDatastar
+    App = AppKind.Console
+    Sample = Sample.ConsoleTicker
     Layout = LayoutTemplate.EditorLeft
-    Cost = CostClass.web
+    Cost = CostClass.console
     Masks = [ Region.clock ]
     Steps =
-      [ { Caption = Caption.mk "Run the web app"
-          Action = Action.Setup (ClientCommand.OpenFile SampleFile.homePage)
-          Expect = Expectation.EditorSaved SampleFile.homePage
+      [ { Caption = Caption.mk "Open the ticker"
+          Action = Action.Setup (ClientCommand.OpenFile SampleFile.ticker)
+          Expect = Expectation.EditorSaved SampleFile.ticker
           Dwell = Dwell.short }
-        { Caption = Caption.mk "1/4 · Press Run on the session card"
-          Action = Action.Click (Target.DashboardElement DashboardId.runApp)
+        { Caption = Caption.mk "1/4 · Run the app from the command palette"
+          Action = Action.Click (Target.PaletteItem VsCodeCommand.BozzettoRunApp)
           Expect = Expectation.AppState AppRunStateCase.Running
           Dwell = Dwell.medium }
-        { Caption = Caption.mk "2/4 · Change the heading"
+        { Caption = Caption.mk "2/4 · Change the message"
           Action =
             Action.Type (
-              Target.EditorPosition (SampleFile.homePage, 12, 20),
+              Target.EditorPosition (SampleFile.ticker, 24, 17),
               Text.mk "Bozzetto is live",
-              CadenceSeed.ofId "hr-dashboard-vscode-web"
+              CadenceSeed.ofId "hr-vscode-console"
             )
-          Expect = Expectation.EditorSaved SampleFile.homePage
+          Expect = Expectation.EditorSaved SampleFile.ticker
           Dwell = Dwell.short }
         { Caption = Caption.mk "3/4 · Save"
           Action = Action.Chord [ Key.Ctrl; Key.S ]
-          Expect = Expectation.EditorSaved SampleFile.homePage
+          Expect = Expectation.EditorSaved SampleFile.ticker
           Dwell = Dwell.short }
-        { Caption = Caption.mk "4/4 · The running site repaints — no reload"
+        { Caption = Caption.mk "4/4 · The running ticker updates — no restart"
           Action = Action.Await Signal.appOutputChanged
           Expect = Expectation.AppOutputChanged Region.appHeading
           Dwell = Dwell.long } ] }
@@ -64,35 +64,35 @@ let private captionTextElements (doc: XDocument) =
 let tests =
   testList "Storyboard" [
 
-    testCase "svg produces well-formed XML for the §6.1 worked scenario" <| fun _ ->
-      let (Svg text) = Bozzetto.Demos.Storyboard.svg hrDashboardVscodeWeb screen Style.kanagawa
+    testCase "svg produces well-formed XML for the worked scenario" <| fun _ ->
+      let (Svg text) = Bozzetto.Demos.Storyboard.svg hrVsCodeConsole screen Style.kanagawa
       let parsed = try Some(XDocument.Parse text) with _ -> None
       parsed.IsSome |> Expect.isTrue "the storyboard SVG should be well-formed XML"
 
     testCase "svg contains exactly one caption per step, in order" <| fun _ ->
-      let doc = Bozzetto.Demos.Storyboard.svg hrDashboardVscodeWeb screen Style.kanagawa |> parse
+      let doc = Bozzetto.Demos.Storyboard.svg hrVsCodeConsole screen Style.kanagawa |> parse
       let captions = captionTextElements doc
       captions.Length
-      |> Expect.equal "one <text> caption per step" hrDashboardVscodeWeb.Steps.Length
+      |> Expect.equal "one <text> caption per step" hrVsCodeConsole.Steps.Length
       let captionTexts = captions |> List.map (fun e -> e.Value)
-      for step in hrDashboardVscodeWeb.Steps do
+      for step in hrVsCodeConsole.Steps do
         let expected = Caption.value step.Caption
         captionTexts
         |> List.exists (fun t -> t.Contains(expected))
         |> Expect.isTrue (sprintf "caption '%s' should appear somewhere in the SVG" expected)
 
     testCase "svg contains one pane rect per actor in the resolved layout, for every LayoutTemplate" <| fun _ ->
-      for template in [ LayoutTemplate.EditorLeft; LayoutTemplate.EditorFull; LayoutTemplate.DashboardOnly ] do
-        let scenario = { hrDashboardVscodeWeb with Layout = template }
+      for template in [ LayoutTemplate.EditorLeft; LayoutTemplate.EditorFull; LayoutTemplate.AgentOnly ] do
+        let scenario = { hrVsCodeConsole with Layout = template }
         let doc = Bozzetto.Demos.Storyboard.svg scenario screen Style.kanagawa |> parse
         let expectedCount = (Bozzetto.Demos.Layout.rects template screen).Count
         paneRectElements doc |> List.length
         |> Expect.equal (sprintf "%A should produce %d pane rects" template expectedCount) expectedCount
 
     testCase "svg pane rects match Layout.rects exactly for the worked scenario" <| fun _ ->
-      let doc = Bozzetto.Demos.Storyboard.svg hrDashboardVscodeWeb screen Style.kanagawa |> parse
+      let doc = Bozzetto.Demos.Storyboard.svg hrVsCodeConsole screen Style.kanagawa |> parse
       let expected =
-        Bozzetto.Demos.Layout.rects hrDashboardVscodeWeb.Layout screen
+        Bozzetto.Demos.Layout.rects hrVsCodeConsole.Layout screen
         |> Map.toList
         |> List.map snd
         |> List.distinct

@@ -270,11 +270,11 @@ let private startupBindFailureCeiling = TimeSpan.FromSeconds 20.0
 let daemonStartupFailsClosedTests =
   Integration.hostList "Daemon startup fails closed" [
 
-    testCase "a taken dashboard port makes the daemon exit non-zero instead of announcing ready" <| fun _ ->
+    testCase "a taken control port makes the daemon exit non-zero instead of announcing ready" <| fun _ ->
       let mcpPort, dashboardPort =
         Bozzetto.Tests.TestInfrastructure.TestPorts.reservePair ()
 
-      // Hold the dashboard's own port for the whole test — exactly what a
+      // Hold the control listener's own port for the whole test — exactly what a
       // losing tier's daemon does to the winner in the real flake.
       use occupyDashboard = new TcpListener(IPAddress.Loopback, dashboardPort)
       occupyDashboard.Start()
@@ -290,8 +290,8 @@ let daemonStartupFailsClosedTests =
       psi.ArgumentList.Add(string (System.Diagnostics.Process.GetCurrentProcess().Id))
       psi.ArgumentList.Add "--no-resume"
       psi.Environment["BOZZETTO_DATA_DIR"] <- isolatedDataDir ()
-      // Redirected to FILES (never undrained pipes — see DashboardBrowserRunner
-      // for why a pipe deadlocks the child before it can even log the failure).
+      // Redirected to FILES, never undrained pipes: a full pipe deadlocks the
+      // child before it can even log the failure.
       let dataDirForLogs = Path.Combine(Path.GetTempPath(), "bozzetto-test", Guid.NewGuid().ToString("N"))
       Directory.CreateDirectory dataDirForLogs |> ignore
       let outLog = Path.Combine(dataDirForLogs, "stdout.log")
@@ -316,7 +316,7 @@ let daemonStartupFailsClosedTests =
             (fun () -> daemonProc.HasExited)
         exited
         |> Expect.isTrue
-             "the daemon must exit on its own once its dashboard bind fails, instead of hanging around claiming to be ready"
+             "the daemon must exit on its own once its control bind fails, instead of hanging around claiming to be ready"
 
         daemonProc.WaitForExit(1000) |> ignore // flush the async readers
         lock logLock (fun () -> logWriter.Flush())

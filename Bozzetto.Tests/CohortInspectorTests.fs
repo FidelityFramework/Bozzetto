@@ -1,23 +1,19 @@
 /// Phase 2 item 16 of bozzetto-multiagent-vision.md (§6.5 "the inspector"):
 /// pure unit tests for `CohortInspector` — no daemon, no FSI, no I/O, the
-/// same "pure core, no IO" discipline `CohortLanesTests.fs`/
-/// `CohortTerritoryPanelTests.fs` use. A separate file from those so this
-/// island's tests never collide with edits another agent makes to the
-/// matrix/member/claim/lanes/territory sections.
+/// same "pure core, no IO" discipline `CohortLanesTests.fs` uses. A separate
+/// file so this island's tests never collide with edits another agent makes
+/// to the matrix/member/claim/lanes/territory sections.
 module Bozzetto.Tests.CohortInspectorTests
 
 open System
 open Expecto
 open Expecto.Flip
-open Falco.Markup
 open Bozzetto
 open Bozzetto.Cohort
 open Bozzetto.Measures
 open Bozzetto.MemberTable
 open Bozzetto.WorkerProtocol
 open Bozzetto.Server.CohortInspector
-
-let private render (node: XmlNode) = renderNode node
 
 let private epoch = DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
 let private atSec (n: int) : DateTime = epoch.AddSeconds(float n)
@@ -275,49 +271,5 @@ let cohortInspectorTests =
       testCase "a non-matching query returns no results" <| fun _ ->
         let ledger = ledgerFrom [ atSec 0, CohortCommand.Join(alice, JoinableRole.Implementer, None) ]
         search "zzz-nothing-matches-zzz" emptyFrame ledger [] |> Expect.equal "no matches" []
-    ]
-
-    testList "rendering" [
-
-      testCase "renderInspector escapes an XSS payload in a claim's purpose, never emits it raw" <| fun _ ->
-        let ledger =
-          ledgerFrom [
-            atSec 0, CohortCommand.Join(alice, JoinableRole.Implementer, None)
-            atSec 1, CohortCommand.AcquireClaim(alice, ClaimScope.File "src/Foo.fs", "<script>alert(1)</script>")
-          ]
-        let (ClaimId cidRaw) = mintedClaimId ledger
-        let model = inspect EntityKind.Claim cidRaw emptyFrame ledger []
-        let html = renderInspector model |> render
-        (html.Contains "<script>alert(1)</script>") |> Expect.isFalse "the raw payload never appears unescaped"
-        html |> Expect.stringContains "the payload is HTML-escaped" "&lt;script&gt;"
-
-      testCase "renderInspector renders a found entity's fields as a definition list" <| fun _ ->
-        let ledger = ledgerFrom [ atSec 0, CohortCommand.Join(alice, JoinableRole.Implementer, None) ]
-        let html = inspect EntityKind.Member "alice" emptyFrame ledger [] |> renderInspector |> render
-        html |> Expect.stringContains "carries a <dl>" "<dl>"
-        html |> Expect.stringContains "carries the member id" "alice"
-        html |> Expect.stringContains "carries the automation hook" "inspector-found"
-
-      testCase "renderInspector renders a clean not-found view for an unknown entity" <| fun _ ->
-        let html = InspectorModel.NotFound(Some EntityKind.Member, "ghost") |> renderInspector |> render
-        html |> Expect.stringContains "carries the automation hook" "inspector-not-found"
-        html |> Expect.stringContains "names the missing id" "ghost"
-
-      testCase "renderSearchResults links each result to its inspect route, URL-escaping the id" <| fun _ ->
-        let results = [ { Kind = EntityKind.Member; Id = "browser:abc def"; Label = "browser:abc def" } ]
-        let html = renderSearchResults "abc" results |> render
-        html |> Expect.stringContains "links to the member inspect route" "/dashboard/inspect/member/"
-        // The space in the id is URL-escaped in the href (the link TEXT still
-        // shows the human-readable "abc def" — only the href needs encoding).
-        html |> Expect.stringContains "the id's space is percent-encoded in the href" "abc%20def"
-
-      testCase "renderInspectorPage wraps the content in a full document with a link back to the dashboard" <| fun _ ->
-        let html = InspectorModel.NotFound(Some EntityKind.Member, "ghost") |> renderInspectorPage |> render
-        html |> Expect.stringContains "a full document" "<html"
-        html |> Expect.stringContains "links back to the dashboard" "/dashboard\""
-
-      testCase "renderSearchPage embeds a GET form posting to the search route" <| fun _ ->
-        let html = renderSearchPage "" [] |> render
-        html |> Expect.stringContains "search form targets the inspect route" "/dashboard/inspect"
     ]
   ]

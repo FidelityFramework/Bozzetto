@@ -1,0 +1,16 @@
+<Project>
+  <!-- bozzetto-web is a Fable subtree: its projects are compiled to JavaScript
+       by the Fable CLI pinned in .config/dotnet-tools.json, never built into
+       Bozzetto's .NET delivery. This file deliberately does NOT import the
+       repository root's Directory.Build.props, whose CheckNulls and version
+       stamping target the hosted .NET build. It keeps the same discipline
+       where Fable honours it: one target framework, warnings as errors, and
+       committed lock files (locked restore in CI). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">true</RestoreLockedMode>
+  </PropertyGroup>
+</Project>
