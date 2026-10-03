@@ -144,16 +144,27 @@ evidence, covers `FnPtr` record fields, ordinary function fields and callable un
 native entries stay distinct. The Fidelity.PSG schema change moves into this phase, and the affected positive tests
 must pass rather than turn into refusals.
 
-Work that can start as soon as Phase 0 confirms it:
+**Hold on code edits.** The adversarial review of the draft repair plan
+(`baseline-repair/repair-review.md`) found 1 blocker, 11 major and 11 minor defects and concluded that the plan cannot
+be executed as written:
 
-- The regression introduced by clef `bba4025`, from `triage-composer.md`.
-- The environment items: clean Bozzetto Debug outputs, the `DOTNET_ROOT` requirement and the five regression-runner
-  timeouts.
-- Compiler defects and confirmed test defects in clef and Composer, in the dependency order and file partition of
-  `REPAIR-PLAN.md`, corrected by its review.
+- The plan's mechanism for the one regression (clef `bba4025`, item RP-FRESH) is refuted, and its fix would change
+  nothing. The review's likelier cause is that the freshness recomputation runs on the graph after the sequence,
+  closure-environment and lazy rewrites. That cause is inferred and unconfirmed.
+- Baker requires a bounded range for every reachable integer, so the plan's empty-range fix for never-called lambdas
+  (RP-UNCALLED, RP-ZEROTRIP) is incomplete.
+- The parallel file partition fails. Several fixes must edit `RangeAnalysis.fs`.
+- Several expected greens contradict executed diagnostics.
 
-Work that waits for the re-sequenced baseline document: the callable-aggregate foundation and every unimplemented
-item that depends on it.
+Make no repository edits for Phase B until `FFI_Correction_Baseline_2026-10-03.md` appears in this folder. That
+document applies the review's corrections and the owner's decision D6(b). Until then, continue Phase 0, and record in
+the audit file your own verification of the review's defects, starting with the blocker.
+
+Work the baseline document is expected to schedule first: the environment items (clean Bozzetto Debug outputs, the
+`DOTNET_ROOT` requirement, the five regression-runner timeouts), then confirmed test defects and compiler defects in a
+partition that the review's findings allow. The callable-aggregate foundation and every unimplemented item that
+depends on it follow. An owner ruling on the range of a never-called lambda's parameter (triage cause R4) is also
+pending.
 
 The phase closes when every suite passes unfiltered and the results are pinned. That pin becomes the baseline for
 Step 0.
