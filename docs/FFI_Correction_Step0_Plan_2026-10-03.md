@@ -106,11 +106,11 @@ Out of scope for Step 0:
 ## Entry criteria
 
 1. **The clean baseline is closed and pinned.** Every suite in the gate command table passes at its
-   documented command, unfiltered, apart from any exact pending ledger the baseline document
-   accepts, and the results are recorded. Until
-   [`FFI_Correction_Baseline_2026-10-03.md`](FFI_Correction_Baseline_2026-10-03.md) exists, the
-   source is `E/baseline-repair/` (`REPAIR-PLAN.md` corrected by `repair-review.md`, and the
-   guide's hold on Phase B edits). That pin replaces the October 3 T0 pin as Step 0's reference.
+   documented command, unfiltered, and the results are recorded. The plan of record for Phase B
+   is the implementer's [Phase 0 audit](FFI_Correction_Phase0_Audit_2026-10-03.md), which
+   superseded the separate baseline document; `E/baseline-repair/` (`REPAIR-PLAN.md` and its
+   `repair-review.md`) remains reference material. That pin replaces the October 3 T0 pin as Step
+   0's reference.
    The T0 numbers (clef 2,260 of 2,354, NativeCallbacks 0 of 29, regression 3 of 53 compiling)
    stay as history [X: `E/baseline-repair/INVENTORY.md`].
 2. **The owner has committed or set aside the Farscape notes.** The three files are

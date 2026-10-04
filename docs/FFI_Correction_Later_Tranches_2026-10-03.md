@@ -131,8 +131,8 @@ if the implementer records it in the tracker [I].
 
 Every step closes on component gates. Each gate is unfiltered and run under Bozzetto leases
 (`acquire_full_build_lease` for builds, `acquire_test_suite_lease` for suites, `release_work_lease` after each).
-The exact command for each suite is the one recorded in the
-[baseline record](FFI_Correction_Baseline_2026-10-03.md). Each gate runs entirely inside a held lease. The baseline
+The exact command for each suite is the one recorded in the T0 baseline records (`E/t0/baseline/`) and in the
+[Phase 0 audit](FFI_Correction_Phase0_Audit_2026-10-03.md). Each gate runs entirely inside a held lease. The baseline
 driver reacquired leases only between suites, and two suites ran past their lease's expiry (Phase 0 audit P0-12,
 `Bozzetto:docs/FFI_Correction_Phase0_Audit_2026-10-03.md`, an in-progress working-tree record [A]).
 
