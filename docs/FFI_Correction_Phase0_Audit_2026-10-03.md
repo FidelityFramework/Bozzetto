@@ -636,3 +636,481 @@ follow its failed test build and remain unbuilt/untested. The
 record exact repository heads, evidence paths, the remaining regressions, and
 the requested return to this implementer. No test expectation was changed to
 obtain these results.
+
+### Auditor-return implementation: recovery and discriminating evidence
+
+E: The owner authorized continued implementation and control tests after the
+bedtime handoff. The requested failing recovery checkpoint is pushed on `main`:
+PSG `8dc8dc5`, clef `8e8cc82`, Alex `c8008a5`, Composer `9681cc2`, and
+Bozzetto `64253ab1`. Each subject labels the Clef 2,323/96 result as failing.
+The other actor's later-tranche and Step 0 document edits and the owner's
+Farscape changes were excluded. The preceding handoff's uncommitted-state
+table describes its capture time.
+
+E/R/A: LAN-generated retrieval queries used fresh generation 35, snapshot
+`6ad6568fc41861572a5793f361ad82fc0a8ce45f37fd7f8a1a558ac9aeb0b3ef`, matching
+the four pushed code heads. Direct gpu-one generated query JSON and gpu-two
+reviewed the carrier excerpts. Lemonade reviewed the native-entry contract
+question. Requests, responses, source spans and rejected model assertions are
+retained in `../auditor-return/lan/README.md` relative to this section's evidence
+directory. Model output remains advisory. Lemonade's temporary model was
+unloaded after its allocation caused Bozzetto to defer a test lease. Available
+RAM increased from 8.5 GiB to 34 GiB. The shared daemon and unrelated processes
+were preserved.
+
+E: W1's temporary probe found a capture-free eta-expanded lambda at the stored
+occurrence. Ingress admitted it. No carrier had its formation identity.
+`Closure.RequiresClosurePair=true` remained on the Baker `FunctionValue`
+expansion, and the carrier census excluded it solely through that marker.
+The second probe confirmed `resolution.Lambdas` selected the same occurrence.
+Evidence: `inner-results/w1-carrier-probe.trx` (three selected failures), then
+`inner-results/w1-w2-discrimination.trx` (seven selected failures). Probe build
+leases were `aed782f3f05344979167c324bfc52b8e` and
+`9e06056957054f6a9c900249c25caa0e`. Test leases were
+`f29bf898f5cf45f79a7910024276e95e` and
+`4a90dc03cb084785aa6bedf77e98ae83`. Each was released.
+
+E/R: W2's scalar probe falsified the auditor's inferred mechanism of dormant
+contracts being published indiscriminately. Baker already selects contracts
+through the live fact closure. Contract 164's implementation 126, body 129 and
+formals 127/128 were live. Missing `Source` participants included nodes 64, 80
+and 152. Numeric claims 156/157/158 were current. The repair must retain the
+non-executable numeric source premises in an immutable fact representation.
+It must preserve the strict body/formal rules and the live execution scope.
+The probe is in `inner-results/w1-w2-discrimination.trx`; temporary print
+instrumentation was removed before the W1 repair build.
+
+R: W1 now admits capture-free physical lambdas through the existing census
+checks for ingress, typed formals and environment incidence. The census still
+excludes materialized implementations with an environment formal. Two controls
+exercise the surviving expression markers and that exclusion. The aggregate
+recipe's occurrence/formation pairing check is unchanged.
+
+E: W1's focused run executed 32 cases: 28 passed, four failed, zero skipped.
+All three added aggregate cases passed, including the declaration mutation
+assertions, as did both marker controls and the withdrawn-authority branch
+test. The remaining branch test reached structural publication and reported
+I5. The other failures are the two old layout expectations and the baseline
+unobserved-callback CCS8011 case. W2 is therefore required to finish W1's
+publication exit condition. Evidence: `inner-results/w1-repair-focused.trx`,
+build lease `73b6218d87ce4944bce6e9149142deb4`, test lease
+`3f9d36b101cb4cc0aa86af1a1aa5b65e`, both released. This focused run is not
+unfiltered acceptance.
+
+R/E: W2 retains non-executable numeric support on each callable contract as
+`SourcePremises`, instead of adding source declarations to the execution scope.
+The body/formal presence rules remain strict. Symbol-only implementations use
+published symbol evidence. The schema-18 model, generated binary/JSON readers,
+and generated Clef mapper compile. PSG's focused aggregate integrity group
+passed 40/40, including five new source-account controls. Generation lease:
+`1e3418527f754d8d937a6c106dd6c23f`; PSG build:
+`cb83237a9275419bb1cf633417f91c91`; final Clef build:
+`d0b345c115f340f0a00211440dc32751`. Earlier Clef builds failed on test-source
+indentation and were corrected; they are retained as `w2-clef-build` and
+`w2-clef-build2`, not counted as passing gates.
+
+E: The first W2 focused run executed 101 Clef cases: 95 passed, six failed,
+zero skipped. Its six prior publication/scope regressions passed, as did both
+32/64-bit ordinary aggregate layout cases. Those layout expectations now quote
+Closure Representation §2.4: “A slot without an environment and with one
+alternative occupies no component storage.” Their fixture supplies actual
+source-declared platform authority before the pipeline settles the layout.
+The standalone native pointer-width test is unchanged. Evidence:
+`inner-results/w2-clef-focused.trx`, `inner-results/w2-psg-focused.trx`, whole-run
+lease `65aa992021ec4d6aa691617797f44aff` (released).
+
+E/R: Three remaining focused failures expose a receiving contract that becomes
+settleable only after aggregate representation placement; a fourth exposes an
+over-broad comparison of unrelated numeric source inventory during local
+callable validation. The proposed correction is an exact changed-occurrence
+set from the representation owner, followed by one source recipe fold over
+only affected callable signatures. It preserves unrelated row identities and
+runs no range/origin/branch pipeline again. Local admission compares the
+contract's own support; full numeric inventory freshness remains at its writer
+and `NumericPublication`. The two other failures are the baseline unobserved
+callback case and the new numeric-support renewal control, which requires
+further diagnosis. This run is not W1/W2 acceptance and not an unfiltered gate.
+
+E: W1/W2 focused exit conditions now hold. `w2-renewal-focused.trx` reports
+101 executed, 100 passed, one failed, zero skipped. The sole failure is the
+trusted baseline `ClosureValueTests.An unobserved callback interior does not
+acquire a register width` (CCS8011), retained for R4. Both branch cases pass
+with unchanged assertions. All original aggregate cases, both corrected Work
+layouts and all six publication/scope cases pass. The new numeric-support
+control passes: equal published numeric results, a changed dependency account,
+withdrawn earlier claims, rejected stale source/public account replay. The
+fixture applies NativeService's commitment scope to residuals; declarations
+outside executable scope do not demand aggregate value formation. The suite
+already disables parallel execution; a proposed concurrency diagnosis was
+rejected before any lock change. Build `w2-renewal-build2`, lease
+`89a0787388c449dd81c0ad89c8a14ab7`; test lease
+`35380cf9d7144eb4ab4c473689dc4062`, both released. The preceding build failed
+on one offside nested-record expression and remains in `w2-renewal-build`.
+Exact source/artifact binding: `w2-renewal-source.sha256`,
+`w2-renewal-artifacts.sha256`, and `w2-renewal.patch`.
+
+R/A: W3's source placement and publication controls can retain the existing
+interior invocation without asserting native execution. The LAN review located
+Alex's unconditional native aggregate and function-pointer refusals. This batch
+preserves those refusals rather than adding ABI work beyond the return's scope.
+See `../auditor-return/lan/W3-design-review.md`. Program-image residence is a
+structural lifetime premise: its test must not invent an SMT lifetime claim.
+A malformed parent/member change stays refused; successful renewal would need
+coherent source incidence. The compiler-owned entry design records the producer
+placement before its pending schema-18 extension.
+
+S/E: The compiler-owned entry amendment is committed and pushed first in
+clef-lang-spec `fb7541d` (`ffi-boundary.md` §3.4). It requires explicit
+conversions and program-image residence for the portable interior convention,
+and separate foreign-contract/ABI authority before a crossing. W3 remains a
+source placement/publication batch; it does not accept Alex native component
+reconstruction, native address emission or indirect execution.
+
+R/E: W3's source and public contracts now carry `CompilerOwnedPortable` and
+`ProgramImageCodeLifetime`. The source reader checks current module/binding/
+implementation incidence and excludes extern-tagged bindings and implementations.
+The complete target premise is checked against the current source platform;
+public PSG integrity checks the pointer/register dimensions available in the
+published platform. It does not reconstruct a target declaration. Source tests
+retain the original native-record program and standalone `PlatformWord` assertion,
+while FFI §3.6.1 and Closure §2.4 govern zero component storage. Added controls
+exercise missing and forged residence, corrupted same-identity membership and
+foreign metadata. PSG controls cover conventions, scalar conversions, target
+widths, environment absence and account replay.
+
+E: W3's complete schema-18 generator run succeeded under whole-build lease
+`829bd5208c804029ba824b4dbc02ffc4`, then released. Evidence:
+`w3-psg-generation*`. Contract fingerprint:
+`6F9021CC426417F8F26F1840BEEB0F5A3D5FAECFA51910AD7D8C513283384E78`.
+The independent binary header oracle now names that digest and schema 18 in
+both its transport prefix and revision payload. Its comment quotes the published
+contract version rule and the governing spec, rather than deriving expected
+bytes from the implementation under test. Compilation and execution acceptance
+of the new native rows are still pending at this entry.
+
+E: W3's focused PSG integrity group passed 60/60, zero skipped, under lease
+`8bd07a9b8201479f9c856d860c4640de` (released). Evidence:
+`inner-results/w3-psg-focused.trx`; source and compiled artifact manifests:
+`w3-psg-focused-source.sha256`, `w3-psg-focused-artifacts.sha256`. The complete
+237-entry CCS mapper was regenerated from the compiled source/public types.
+The Clef test build passed in `w3-build7` under lease
+`e80eb116ccbb4398921d14ea6046ab9d` (released). Earlier `w3-build` through
+`w3-build6` retain failed integration attempts: test record syntax, explicit
+Hyperedge annotations after the new Target label, one generator invoked before
+its updated CCS assembly existed, and a Result.Error/diagnostic Error name
+collision. No failed attempt is counted as acceptance.
+
+E: The first W3 source focused run executed 74 cases: 71 passed, three failed,
+zero skipped. Both native-record source pipelines completed, and their zero-byte
+field and lifetime assertions passed; their final public integrity assertion
+reported I3 on the residence reading. The five new source corruption controls
+passed. The third failure is the unchanged baseline unobserved-callback case.
+Evidence: `inner-results/w3-clef-focused.trx`; lease
+`57242c6d3bd54762bfa1ab906c2d7d00`, released. Source/artifact manifests are
+`w3-clef-focused-source.sha256` and `w3-clef-focused-artifacts.sha256`.
+The structural fixture's passing result does not override these real source
+failures. W3 is not yet accepted; no unfiltered gate has started.
+
+E/R: The discriminating native-residence run confirms that Startup retained the
+module's lexical members while clearing its executable children. Module 123's
+published source premise has `References = [98; 103; 122]`, `Children = []`,
+and `Reachable = false`; binding 103 and lambda 102 retain their exact incidence.
+The lambda's encoded numbers are `[1; 0; 0]`. The I3 reader had incorrectly
+required membership in `Children`. `Closures.structuralIncidence` and
+`Boundaries.premise` encode a module's references as its members followed by
+attached children. The correction reads that existing encoding, verifies the
+children suffix, and checks the member prefix. It neither republishes dormant
+bodies nor treats executable reachability as code residence. Added public-row
+controls distinguish lexical membership from an attached-only child and cover
+both Startup forms. Evidence: `inner-results/w3-residence-reading.trx`, build
+lease `e7071db63127409d80dbd5fc469a5f15`, test lease
+`7390de9983ac469da2e818251259674b`, both released. Temporary assertion output was
+removed after capture; the positive integrity assertion remains strict.
+
+E: W3's focused exit conditions hold after the residence-reader correction.
+PSG passed 61/61; Clef passed 73/74 with only the trusted baseline unobserved
+callback failure. All four revised layout cases, the original aggregate and
+branch cases, and all five native source-corruption controls pass. Evidence:
+`inner-results/w3-residence-psg-focused.trx` and
+`inner-results/w3-residence-clef-focused.trx`; build lease
+`c608e7743c8f489295de046630cb7eb9`, test lease
+`603926c153434ca1a336c9520caa4443`, both released. These focused results permit
+the auditor return's unfiltered gates; they do not substitute for them.
+
+E/R: The unfiltered Clef gate starts from the immutable source/artifact capture
+`aggregate-correction-final-clef*`, with the dependent public contract captured
+as `aggregate-correction-final-psg*`. The gate compares against the retained
+`checkpoint-3795a17.trx`. The baseline has not been rerun. No implementation
+edits occur in the running gate's dependency closure.
+
+E: The final unfiltered Clef run completed: **2,428 total, 2,347 passed,
+81 failed, zero skipped**. Whole-run lease
+`f87c92c674d24a47ae8c2abb89ea3531` was released on completion. Retained command,
+start/end, exit and log share `aggregate-correction-clef-full`; TRX is
+`unfiltered-results/aggregate-correction-clef-full.trx`. Comparison with the
+trusted retained baseline reports **zero missing occurrences, 12 added passing
+occurrences, zero extra failure names and zero failed-to-passed baseline names**.
+All 81 remaining failures are the same baseline names. The original aggregate
+and branch regressions pass. Evidence: `aggregate-correction-clef-comparison.json`.
+All captured Clef and PSG source/artifact hashes still match. This accepts the
+Clef portion of the auditor return; it does not accept the full FFI program.
+
+E/R: The first unfiltered PSG gate executed 369 cases: 368 passed, one failed,
+zero skipped. Lease `13e56bc65c7d483c837263e68694e971` released. Evidence:
+`unfiltered-results/aggregate-correction-psg-full.trx`. The sole failure is
+`BinaryTests.unknown format schema digest and union cases fail closed`:
+its obsolete negative fixture mutates the schema byte to 18 and expects
+`SchemaMismatch(17, 18)`. Schema 18 is now valid. The independent positive
+header oracle and every callable integrity test passed. The correction is to
+exercise the obsolete schema 17 against current schema 18; no production
+codec, integrity rule or Clef source changes follow from this fixture failure.
+
+S/R: The schema-refusal fixture correction quotes the transport contract,
+`Fidelity.PSG/docs/Binary_Images.md`: **“A schema, format or fingerprint mismatch
+is refused.”** The schema field is at byte offset 12. The negative now presents
+obsolete schema 17 and expects `SchemaMismatch(18, 17)`. This preserves the
+refusal requirement; using valid schema 18 could no longer exercise it. Only
+that PSG test changed after the accepted Clef run, so no repeat of Clef is
+required. The LAN/retrieval helper confirmed the owning contract and reader.
+
+E: The PSG, Alex and Composer test-project builds succeeded under whole-build
+lease `d988bb12bd0144cdb2b3b93bc5d5fcd4`, released. Command/script and output:
+`aggregate-correction-consumer-build*`, `build-aggregate-consumers.sh`. The
+Composer build retains the existing Fidelity.Data NU1902/SourceLink warnings
+and XtensaImage.fs FS0025 warning; no new errors. Clef's accepted compiler and
+test artifact hashes remain unchanged after these dependency builds.
+
+E: PSG's corrected unfiltered gate passed **369/369, zero skipped**, lease
+`aeffc38e10724404a0e3a5bb97e4afca`, released. Evidence:
+`unfiltered-results/aggregate-correction-psg-final.trx`. Its final test/source
+pins are `aggregate-correction-psg-final-*`; the only difference from the
+PSG input pinned for Clef acceptance is the schema-negative test correction.
+The independent codec-generation/header controls and every ordinary/native
+callable integrity control passed. LAN/retrieval diagnosis is retained at
+`../auditor-return/lan/psg-schema-negative-diagnosis.md` (snapshot 36, checkpoint
+contract distinguished from current local schema 18).
+
+E: Alex's unfiltered suite passed **287/287, zero skipped** under whole-run
+lease `4098d48450d54141848edc5d76aaae13`, released. Evidence:
+`unfiltered-results/aggregate-correction-alex-final.trx`; pins:
+`aggregate-correction-alex-final-*`. Alex's increment only supplies the new
+contract fields in its independent aggregate fixture. Production native
+aggregate/address/indirect-call refusals remain in place.
+
+E: Composer's first unfiltered W4 run completed **401 total, 282 passed,
+119 failed, zero skipped**. Whole-run lease
+`44530b5b157342399bfbc135f1f6ad83` released. Evidence:
+`unfiltered-results/aggregate-correction-composer-final.trx` and
+`aggregate-correction-composer-comparison.json`. Comparison with the retained
+401/400/1 consumer result has zero missing/added occurrences and 118 additional
+failures. This gate is **not accepted**. Clef/PSG/Alex results above do not erase
+the consumer failures.
+
+R: Two consumer roots are being isolated before further broad testing. The
+Composer `Fixtures.prepareSource` helper replays NumericSettlement after the
+complete source pipeline, retiring the numeric identities retained by settled
+contracts; raw handwritten component fixtures require explicit initial owners
+instead. Its complete caller classification is retained in
+`composer-preparation-callers.md`. Separately, real program-closure examples
+fail PSG named-reference integrity at `Emission.Callable.ProgramInstances.Carrier`;
+the exact nested carrier field remains under investigation. The existing
+Result-branch CCS8414 consumer failure remains outside this increment's claim.
+
+E: The fixture-replay probe establishes the first W4 mechanism. The untouched
+compiler result has numeric anchor 81, callable contract identities 87/88/89,
+current support for all three and successful `WitnessEmission.prepare`. The
+fixture's repeated settlement replaces anchor 81 with 93; contracts then retain
+missing support 81 (and claims 84/86), and publication refuses. All four unit
+comparison controls reproduce the same transition. Evidence:
+`inner-results/composer-fixture-replay-probe.trx`; build lease
+`5c0ba1230d84452eaadb8526f08e35ae`, test lease
+`b5741ac06f1f45198d1b49f9142cb59f`, released. Temporary prints are removed.
+This is an intentionally failing discriminating probe, not acceptance.
+
+R/S: W4's fixture correction separates publication of already settled graphs
+from explicit initial owners for handwritten components. It will not add a
+"try publication, then repair" fallback or replay the whole source pipeline.
+Complete compiler results retain their support. Initial data and callable
+fixtures explicitly invoke only the owners their constructed inputs need;
+retraction controls keep their exact assertions. Production admission remains
+strict and invokes no recipe.
+
+E: The independent moved-factory probe establishes the second W4 mechanism.
+Published program instance 151 has carrier occurrence 151 and contract 244.
+Contract 244 is absent from executable `Nodes`, present in `Callable.Contracts`,
+and the embedded carrier exactly equals canonical `Callable.Carriers[151]`.
+The generic named check nevertheless reports 244 as an absent executable node
+under `Emission.Callable.ProgramInstances.Carrier`. Evidence:
+`inner-results/composer-nested-carrier-probe.trx`; build lease
+`e33a1ae144314ce5bbfe2bf557651b0f`, test lease
+`b2dd457d627a43a084bfe6d0f873feeb`, released. The temporary print is removed.
+The correction belongs in the public reader's typed reference domain; it must
+not add contract identities to executable nodes or exempt arbitrary missing
+references. Missing-contract and stale embedded-carrier controls accompany it.
+
+E/R: Full failure grouping also identifies five `HardwareModuleTests` cases
+sharing one source-admission failure: CCS8414 on the hardware program's final
+aggregate occurrence (node 59, lines 8–9). This is distinct from fixture replay
+and nested named-reference checking and is being traced at the source aggregate
+owner. The retained consumer comparison counts all five as new failures; none
+is relabelled as baseline. Evidence-only grouping script: `TrxFailureGroups.fsx`.
+
+E: W4's first two owning corrections passed the focused Composer exit:
+**111/111, zero skipped**, including pure republication/stale-support refusal,
+all handwritten callable refusal fixtures, lazy operand/transport cases,
+moved-factory borrowing and real program-closure artifact controls. Evidence:
+`inner-results/composer-owner-fixes-focused.trx`. Build lease
+`35c761e94ebd431c9e443fea42b9d963`, test lease
+`eba03286134642ff81e600052c8aefbc`, released. No test source or assertions were
+weakened to obtain this result.
+
+E/R: The accompanying PSG focused run was **168/169**. Its six new negative
+embedded-carrier controls passed. The new positive independently constructed
+fixture omitted its exact initialization claim's grouped-source vector and
+correctly failed that unrelated existing check. The fixture will supply
+`[[2; 2; 2; 2]]` for claim 404, matching its four ordered source participants;
+the production check remains unchanged. Evidence:
+`inner-results/composer-owner-fixes-psg.trx`. This result is not acceptance of
+the new positive fixture until it is rerun.
+
+R: The hardware regression is a value-role error at the origin census.
+`Reachability.hardwareDesignReferences` retains the typed hardware declaration
+shell and its InitialState/Step dependencies while its Design record remains
+metadata. `CallableOrigins` then treats the reachable declaration shell as an
+ordinary aggregate value and reports its absent runtime origin. The source
+publication owner (`WitnessLiveRows.valueFacts`) already distinguishes hardware
+and kernel declaration shells from runtime values because they are consumed by
+typed spatial plans. The correction applies that same distinction at the
+aggregate occurrence census. It must leave ordinary value references and
+projections subject to strict origin checks, and preserve spatial-plan
+validation. Positive and negative source controls precede final acceptance.
+
+E: The complete corrected batch builds successfully under whole-build lease
+`d1eb7a0d9af54443be47c7d046dda99f`, released (`aggregate-final-build*`). Final
+focused exits pass under lease `d14bc7e996814b2ca5ed5e108c6e3430`, released:
+PSG six matching embedded-carrier cases, Clef seven aggregate cases, Composer
+eight hardware cases, all zero skipped. The pending-contract negative had
+already passed in the preceding 169-case PSG run; the final unfiltered gate
+will include all seven added reader cases. Evidence:
+`inner-results/aggregate-hardware-exit-{psg,clef,composer}.trx`.
+The original Composer hardware source and all assertions are unchanged.
+
+R/E: Final inputs are captured as `aggregate-accepted-{clef,psg,alex,composer}`
+head/status/patch/source and compiled artifact manifests. The second unfiltered
+Clef run is justified by the executed hardware regression and its owning census
+correction; it is not a baseline rerun. No source or dependency edits occur
+inside these final gates. Test prefixes describe the intended acceptance gate;
+acceptance is assigned only after its completed result and baseline comparison.
+
+E: Final unfiltered Clef acceptance after W4's source correction is complete:
+**2,430 total, 2,349 passed, 81 failed, zero skipped**. Whole-run lease
+`22af5b0ae5774ee8be51710cc7c78a8b`, released. Exact input/output prefix:
+`aggregate-accepted-clef`; TRX `unfiltered-results/aggregate-accepted-clef.trx`.
+The retained-baseline comparison reports **zero missing occurrences, 14 added
+passing occurrences, zero additional failures, zero failed-to-passed baseline
+names**. Every remaining failure is one of the same 81 baseline names.
+Evidence: `aggregate-accepted-clef-comparison.json`. The baseline was trusted
+and never rerun. This satisfies the auditor return's Clef gate on the final
+source increment; consumer acceptance follows separately.
+
+E/R: The first final consumer sequence stopped at PSG: **375/376 passed,
+zero skipped**, with one old `ArtifactAccountTests` positive failing. Lease
+`0283c54088124802a15989300d194e6b` released; Alex/Composer were not started by
+this sequence. Evidence: `unfiltered-results/aggregate-accepted-psg.trx`.
+Its `admittedResidence` fixture explicitly supplies pending carrier contracts
+and no canonical carrier table. The stricter program-instance reader rejects
+both. The fixture correction will state the exact receiving convention and
+canonical rows already required of real source; its allocation/alias/assertion
+oracles remain unchanged. This is a test-only correction; no production change
+or repeat of the accepted Clef gate is warranted.
+
+E: The completed residence fixture built under lease
+`adf20cbee942453ab5cc900757498881`, released. Its focused family passed **37/37**,
+then the unfiltered PSG suite passed **376/376** and Alex passed **287/287**,
+all zero skipped. These execute sequentially under whole-run lease
+`eef24beae77940d5adb07919e6d49e14`, which also covers the continuing Composer
+suite. Evidence: `inner-results/aggregate-residence-fixture-exit.trx`,
+`unfiltered-results/aggregate-final-psg.trx`, and
+`unfiltered-results/aggregate-accepted-alex.trx`; command/log prefix
+`aggregate-final-consumers`. The final PSG test/source capture is
+`aggregate-final-psg-*`; production source and the schema remain unchanged
+from the final Clef run.
+
+E/R: The same consumer sequence completed with Composer **402 total,
+400 passed, two failed, zero skipped**; lease
+`eef24beae77940d5adb07919e6d49e14` released. Evidence:
+`unfiltered-results/aggregate-accepted-composer.trx` and
+`aggregate-accepted-composer-comparison.json`. The original Result-branch
+failure remains. The sole added failure is the `ProgramSequencePatternTests`
+foreign-graph case: reversing `graph.Edges` changes the ordered finite-cell
+relation premise inventory, so pure preparation correctly refuses it.
+The test needs a different valid published revision for its context/zipper
+mismatch check. It will use an independently checked source graph, preserving
+the refusal and no-emission assertions. It will not weaken freshness or replay
+numeric settlement to hide the deliberately corrupted relation inventory.
+This is a Composer fixture correction only; accepted compiler/PSG/Alex inputs
+remain unchanged.
+
+R: Alex's `SequencePatterns.pProgramInstance` checks reference identity among
+its state graph, context graph and zipper graph before reading facts or emitting
+operations. The corrected negative fixture checks and publishes the same source
+independently once, asserts the revisions are distinct objects, and substitutes
+only `context.Graph`. It also asserts the exact different-graph-occurrence
+refusal, retaining every no-emission assertion. No source proof relation is
+mutated and no owner is replayed. Only `ProgramSequencePatternTests.fs` changes.
+The rebuilt Composer suite uses final pins `aggregate-final-composer-*`; build
+lease `c3ad84000c7643339512805d0cc27d2f`, released. The focused class must pass
+before the same script proceeds to the final unfiltered Composer run.
+
+E: That final sequence completed under whole-run lease
+`0c5f622dd6f44a2e8017fa2d98905765`, released. The six-case foreign-graph family
+passed, then unfiltered Composer executed **402 total, 401 passed, one failed,
+zero skipped**. Evidence: `inner-results/aggregate-foreign-graph-exit.trx`,
+`unfiltered-results/aggregate-final-composer.trx`; command, times, exit, log and
+release records use prefix `aggregate-final-composer`. The failure is the
+retained baseline `IncrementalBuildTests.Result branch authority rebuilds its
+whole scope and rejects another revisions proof receipt`, with CCS8414 for an
+absent callable union payload lacking source inactivity evidence. It remains
+open; the suite's nonzero exit is not represented as a completely green run.
+
+E: The comparison against retained `consumer-results/composer-alex-representation.trx`
+reports **zero missing occurrences, one added passing occurrence, zero additional
+failures and zero failed-to-passed baseline names**. Evidence:
+`aggregate-final-composer-comparison.json`. The comparison reads existing XML;
+it does not execute compiler work or rerun the baseline. Its first invocation
+contained a misspelled input path (`composer-alx-representation.trx`) and refused
+before comparison; the corrected invocation produced this retained result.
+
+E/R: The final source and compiled-artifact manifests verified for Clef
+(`aggregate-accepted-clef`), PSG (`aggregate-final-psg`), Alex
+(`aggregate-accepted-alex`) and Composer (`aggregate-final-composer`). Each
+working status also matched its captured status before staging. No production
+edits followed the accepted Clef run; the later PSG and Composer corrections
+are fixtures only. No additional Clef or Alex run is required by those fixture
+corrections. The accepted results are **Clef 2,349/2,430 with the same 81 baseline
+failures; PSG 376/376; Alex 287/287; Composer 401/402 with its same one baseline
+failure**, all zero skipped. The trusted baselines were never rerun.
+
+R: The current reviewer entry point is
+[`FFI_Correction_Auditor_Handoff_2026-10-04.md`](FFI_Correction_Auditor_Handoff_2026-10-04.md).
+It records the corrected W1/W2 probe findings, W3's structural program-image
+lifetime convention, the consumer fixture and typed-reference repairs, final
+evidence pins, and the architectural areas still requiring deeper review.
+Source settlement and publication integrity are the scope of this checkpoint.
+Alex native aggregate reconstruction, native address realization, foreign ABI,
+foreign lifetimes, R4 and the remaining Phase B baseline failures stay open.
+No shared daemon/compiler switch occurred.
+
+E/R: Accepted correction commits are now on `main` and their exact hashes match
+the remote `refs/heads/main`: PSG
+`3d2fa758294a67ab96bcd102ff83da59dd7fb8f8`, Clef
+`46d31a905ebb216c63e6d769b27acb682fb0a7c5`, Alex
+`9644c1c5aec2dca497a5e9d04d9d2707c1e2be8a`, Composer
+`beb794234fadb3f236c213ccf7eb09702d19c59a`. The spec-first amendment is
+`fb7541db51842f957fc51ceb83b89ef93285f4fb`, also verified against remote main.
+All four code checkouts are clean and their final source/artifact manifests
+still verify after committing. No test-to-commit code differences exist.
+The Bozzetto checkpoint includes only this evidence record, the callable
+aggregate and compiler-owned entry design notes, and the October 4 handoff.
+The two other actors' modified plan documents and the owner's Farscape work
+remain excluded.

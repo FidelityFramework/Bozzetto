@@ -157,6 +157,47 @@ PSG negatives must reject crossed code/environment pairs and stale formation or 
 
 ## Implementation guidance from the representation repair
 
+### W2 correction: contract-owned source premises (schema 18)
+
+The retained `w1-w2-discrimination.trx` falsifies the bounded auditor's
+all-contracts-publication hypothesis. In the scalar control, contract 164's
+implementation, body and formals are live; its absent participants are numeric
+source premises 64, 80 and 152. The associated claims remain current. Baker's
+existing live-fact recipe already selects contracts by their carrier and slot
+references. Copying dormant source bodies into `Revision.Nodes`, or dropping
+these proof participants, would violate that division of responsibility.
+
+Schema 18 therefore adds `CallableContract.SourcePremises`, an immutable map of
+the existing `BoundarySourcePremise` facts. `CallableContractRecipes` copies only
+the actual numeric participants from a current `NumericDomain`, with
+their original identities and complete facts. Its typed owner anchor is copied
+from the exact `NumericDomain` target; numeric premise inventories deliberately
+exclude these owned graph citizens. Current source and platform premises are
+checked at this fold; the existing `NumericPublication.project` still validates
+the complete numeric proof domain before witnessing. The `CallableContracts`
+current-graph ingredient re-observes local support when validating a held
+contract; validation invokes no recipe and allocates no identities. Renewal
+belongs to the owning recipe's scoped forward fold. A held premise cannot
+certify itself. No publication copier computes or repairs this account. This follows
+Baker Saturation Architecture §3: the owner maintains its facts through its
+fold, and downstream consumers receive settled evidence.
+
+PSG presence validation accepts a source premise only in the exact contract
+that owns the participant group. Extra unrelated premise rows are refused.
+Implementation participants may name an explicit published symbol, matching the
+existing carrier rule; body and formal participants still require live source
+occurrences. Proof claims retain their current claim rows. Metadata premises do
+not become executable nodes, demand roots or sibling declarations.
+
+Aggregate dependency accounts retain complete contracts, including these
+premises. Their ordinary source-incidence list excludes identities whose full
+premises are owned by a contract; the evidence is represented once and remains
+part of equality. A changed source premise with unchanged numeric results must
+withdraw the old account before witnessing. Controls cover missing and extra
+premises, a same-identity premise mutation, symbol-only implementations, and
+strict refusal of missing body or formal occurrences. Schema generation and
+consumer validation remain a separate recorded gate.
+
 These are recommendations for the next tranche, not additional implemented
 capabilities. Their grounding is clef `3795a17` and the
 [recorded exact-head unfiltered gate](FFI_Correction_Phase0_Audit_2026-10-03.md#exact-pushed-head-unfiltered-gate-october-3-2110-edt):
