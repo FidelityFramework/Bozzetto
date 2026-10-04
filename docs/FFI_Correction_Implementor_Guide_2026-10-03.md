@@ -149,43 +149,28 @@ evidence, covers `FnPtr` record fields, ordinary function fields and callable un
 native entries stay distinct. The Fidelity.PSG schema change moves into this phase, and the affected positive tests
 must pass rather than turn into refusals.
 
-**Hold on code edits.** The adversarial review of the draft repair plan
-(`baseline-repair/repair-review.md`) found 1 blocker, 11 major and 11 minor defects and concluded that the plan cannot
-be executed as written:
+**Hold lifted (October 3, 2026, 16:40).** Phase B proceeds now, without waiting for a separate baseline document.
+The plan of record is the implementer's [Phase 0 audit](FFI_Correction_Phase0_Audit_2026-10-03.md): its source- and
+spec-checked findings for every root-cause group, its corrections to the draft repair plan, and the executed probe
+that located the `bba4025` regression (generated `FrameRead` sites have no range transfer, so bounded ranges
+recompute as `Unbounded` after the representation rewrite, and fixture 16a also loses finite-cell currency across
+that rewrite). The draft `REPAIR-PLAN.md` and its review remain reference material.
 
-- The plan's mechanism for the one regression (clef `bba4025`, item RP-FRESH) is refuted, and its fix would change
-  nothing. The review's likelier cause is that the freshness recomputation runs on the graph after the sequence,
-  closure-environment and lazy rewrites. That cause is inferred and unconfirmed.
-- Baker requires a bounded range for every reachable integer, so the plan's empty-range fix for never-called lambdas
-  (RP-UNCALLED, RP-ZEROTRIP) is incomplete.
-- The parallel file partition fails. Several fixes must edit `RangeAnalysis.fs`.
-- Several expected greens contradict executed diagnostics.
+Conditions that stay in force:
 
-This section governs, and it supersedes the kickoff message's "begin Phase B with the items the guide lists as ready".
-Until `FFI_Correction_Baseline_2026-10-03.md` appears in this folder, Phase B is limited to the ready set below. That
-document applies the review's corrections, the owner's decision D6(b) and the findings of the
-[Phase 0 audit](FFI_Correction_Phase0_Audit_2026-10-03.md).
-
-Ready now, in this order, each only after any gate run in progress has finished (no source in a running gate's
-dependency closure may change):
-
-1. Environment. Rebuild the stale Bozzetto Debug outputs cleanly and confirm the Release run reaches `Trusted` with
-   `DOTNET_ROOT` and `DOTNET_HOST_PATH` set. Rebuilding changes no repository file.
-2. The two fixture repairs the audit confirmed against source and spec, both in clef
-   `tests/Clef.Compiler.Service.Tests/ClosureValueCases.fs`: R13 (the register-width fallback assertion near line 484)
-   and RC8 (attach the platform to the valid graph and both negative graphs near line 120). Accept them with the
-   unfiltered clef suite under a lease that covers the whole run.
-3. The discriminating probe for the `bba4025` regression (audit P0-10). This is an investigation: keep any
-   instrumentation out of committed source and record the result in the audit file, where the baseline document will
-   use it.
-
-Everything else in Phase B waits for the baseline document.
-
-Work the baseline document is expected to schedule first: the environment items (clean Bozzetto Debug outputs, the
-`DOTNET_ROOT` requirement, the five regression-runner timeouts), then confirmed test defects and compiler defects in a
-partition that the review's findings allow. The callable-aggregate foundation and every unimplemented item that
-depends on it follow. An owner ruling on the range of a never-called lambda's parameter (triage cause R4) is also
-pending.
+- Repair the regression by restoring validated source-to-generated correspondence and renewing the owning premises
+  across representation rewrites. Do not disable freshness checks or accept held annotations as their own proof.
+- No source in a running gate's dependency closure changes during that gate. Serialize work that edits the same
+  file, `RangeAnalysis.fs` in particular.
+- Accept each batch with the unfiltered suites of every touched repository and their consumers, under a lease that
+  covers the whole run, and record it in the audit file. The owner directed that the supplied baseline counts are
+  trusted, so do not rerun the baseline itself.
+- Change no test expectation unless spec text shows the test wrong, and quote the clause.
+- D6(b): write a short design note for the callable-aggregate protocol before the Fidelity.PSG schema change, so the
+  auditor can check it against the rulings.
+- For the parameter range of a never-called lambda (triage cause R4), follow the audit's principle that demand and
+  Baker commitment must agree and that module-level residence does not imply unknown callers. Record the choice for
+  the owner's review rather than waiting on it.
 
 The phase closes when every suite passes unfiltered and the results are pinned. That pin becomes the baseline for
 Step 0.
