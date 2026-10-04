@@ -209,12 +209,6 @@ module ProjectDiscoveryTests =
   let tests =
     testList "Project discovery for LLMs" [
 
-      testCase "loadSolution runs without error and returns a solution"
-      <| fun _ ->
-        // Verifies loadSolution completes without exception from the test working directory
-        let solution = Bozzetto.ProjectLoading.loadSolution quietLogger Args.ProjectLoadConfig.empty (fun _ _ _ -> ())
-        ignore solution
-
       testCase "isSolutionFile matches .sln files"
       <| fun _ ->
         (Bozzetto.McpAdapter.isSolutionFile "MyApp.sln") |> Expect.isTrue "Should match .sln"

@@ -491,7 +491,7 @@ let isTestProject (proj: ProjectMetadata) : bool =
   | Some vals when vals |> Set.exists (fun v -> String.Equals(v, "true", StringComparison.OrdinalIgnoreCase)) -> true
   | _ ->
     proj.PackageReferences
-    |> List.exists (fun (_name, path) -> isTestPackageName (Path.GetFileNameWithoutExtension path))
+    |> List.exists (fun (name, _path) -> isTestPackageName name)
 
 /// Filter a solution's projects to only test projects.
 let discoverTestProjects (projects: ProjectMetadata list) : ProjectMetadata list =
@@ -518,7 +518,7 @@ let classifyProject (proj: ProjectMetadata) : ClassifiedProject =
     | _ ->
       if isTestProject proj then ProjectRole.Test
       else ProjectRole.Library
-  let packageRefs = proj.PackageReferences |> List.map (fun (_name, path) -> Path.GetFileNameWithoutExtension path)
+  let packageRefs = proj.PackageReferences |> List.map fst
   { Path = proj.ProjectFileName
     Role = role
     // Package refs plus active desktop-UI property markers (UseWPF/…), so a

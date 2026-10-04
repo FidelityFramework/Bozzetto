@@ -78,6 +78,26 @@ let private testFsproj =
 let tests =
   testList "LoadedProjectReporting" [
 
+    testCase "test-package identity survives an unrelated assembly filename" (fun () ->
+      let project =
+        { mkProject "/repo/App/App.fsproj" None false with
+            AllProperties = Map.empty
+            PackageReferences = [ "Expecto", "/assemblies/unrelated.dll" ] }
+      isTestProject project |> Expect.isTrue "test discovery must use the supplied package identity"
+      let classified = classifyProject project
+      classified.Role |> Expect.equal "a test package classifies the project as Test" ProjectRole.Test
+      classified.PackageRefs |> Expect.contains "reported package facts keep the supplied identity" "Expecto")
+
+    testCase "a test-like assembly filename does not invent a test-package identity" (fun () ->
+      let project =
+        { mkProject "/repo/App/App.fsproj" None false with
+            AllProperties = Map.empty
+            PackageReferences = [ "Ordinary.Package", "/assemblies/Expecto.dll" ] }
+      isTestProject project |> Expect.isFalse "test-package identity must not be inferred from an assembly filename"
+      let classified = classifyProject project
+      classified.Role |> Expect.equal "ordinary package metadata remains Library" ProjectRole.Library
+      classified.PackageRefs |> Expect.equal "reported facts must not invent an Expecto package" [ "Ordinary.Package" ])
+
     testCase "package identity survives an unrelated assembly filename" (fun () ->
       let project =
         { mkProject "/repo/App/App.fsproj" None false with
