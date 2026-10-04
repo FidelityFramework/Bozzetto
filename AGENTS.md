@@ -1,267 +1,291 @@
-# Bozzetto — Coding Agent Guidelines
+# Bozzetto: agent guidelines
 
-**October 1 source transition:** embedded production FSI hosting is retired in
-this checkout. Bozzetto on 47749/47750 is the only daemon surface and serves
-Composer; no separate F# REPL service is part of any workflow. Older installed
-releases may still contain the inherited host. See the
-[Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md).
-Clefx/ORC execution is not implemented by this removal. The daemon lifecycle
-rules below still apply.
+Bozzetto is a development controller for Clef/Composer work. It runs as one
+daemon on ports 47749 (MCP, HTTP API, browser UI) and 47750 (control listener),
+supervises a Composer worker, and grants leases for builds and test runs. It
+sits outside the compiler pipeline: compiler work is accepted on component
+gates, and Bozzetto adapts on its own track.
 
-## STOP — Read This Before Anything Else
+Embedded F# session hosting is retired in this checkout
+([Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md)).
+No F# REPL service is part of any workflow. LLVM ORC JIT is the intended future
+Clef execution backend and is not implemented.
 
-**The Bozzetto daemon is a long-running process.** It hosts the MCP server and Composer coordination on port 47749 and a minimal control listener on port 47750. You will be tempted to wait for it. DO NOT.
+## Working principles
 
-**The cardinal rule, stated three times because it is the only thing you keep getting wrong:**
+These replace reflexes with judgment. Each one exists because its opposite cost
+this project real time or code.
 
-1. **NEVER narrate a wait to the user.** After starting a daemon, do not write "verifying" or "checking" or "started" and then stop. The next thing you produce must be a tool result — specifically a screenshot, an HTTP probe with a hard timeout, or the next concrete step. A chat message that is not a result or a question is the failure mode.
+1. **Ground before building.** Read the governing document or spec clause
+   first and cite it. Do not invent requirements or build ahead of the plan.
+2. **Extend the owner.** Every fact has one owning component. Fix a problem
+   where it is owned. Do not add a parallel mechanism, a fallback, or a second
+   authority for a fact another component already holds.
+3. **Fix friction at the seam.** No component's current mechanism is fixed,
+   Bozzetto's included. When a boundary causes friction, change the component
+   that causes it; do not route around it. Each component keeps its
+   responsibility and its refusals stay loud.
+4. **Grade evidence.** An executed unfiltered result outranks code read at a
+   pinned revision, which outranks spec text, which outranks an agent's report.
+   State how you know a load-bearing claim. Report failures as failures.
+5. **Justify growth.** Prefer deleting or extending to adding. A new file,
+   dependency, owner or abstraction needs a stated reason. Unneeded code has
+   already been removed from this repository in bulk; do not add it back.
+6. **Spend tokens deliberately.** Locate code through the retrieval service
+   before reading files (see "Finding code"). Delegate bulk reading. Keep
+   handoffs to one page.
+7. **Stop and ask on owner decisions.** Scope, schedule, dependency and policy
+   choices belong to the owner. Surface them early as yes/no questions.
 
-2. **NEVER call a command that blocks on the daemon's lifetime.** `Wait-Process`, `Start-Process -Wait`, waiting for a process to exit, `taskkill /T /F` on the daemon while also awaiting the result — all of these will hang forever because the daemon is not supposed to exit.
+## Daemon lifecycle
 
-3. **NEVER treat `Start-Sleep` as "wait for the daemon to be ready" without a follow-up tool call in the same turn.** `Start-Sleep 3` followed by a chat message is the same hang, just shorter. `Start-Sleep 3` followed by a screenshot is fine. The sleep is not the problem. The text after the sleep is the problem.
+The daemon is long-running and is not supposed to exit.
 
-**Concrete patterns:**
+- **Start:** `scripts/start-shared-daemon`. It launches the reviewed installed
+  `boz` from the dedicated workspace (`$XDG_DATA_HOME/bozzetto/workspace`,
+  default `~/.local/share/bozzetto/workspace`) with bounded readiness checks.
+  Never launch from home or the repositories parent.
+- **Check:** one bounded probe, then act on the result.
 
-- Starting the daemon: one `Start-Process ... -WindowStyle Hidden` (no `-Wait`), one `Start-Sleep -Seconds 3` for warmup, then the next tool call is the screenshot. Nothing in between.
-- Verifying the daemon is up: `Invoke-WebRequest -TimeoutSec 3` with a hard timeout. If it returns, great. If it throws a timeout exception, kill the request and report the state. Do not retry indefinitely.
-- Killing the daemon: `Get-Process -Name "Bozzetto" | Stop-Process -Force` returns immediately. Never combine that with a `Wait-Process`.
-- The "is it up" check is the screenshot. Not a chat message, not a sleep, not a status probe. The screenshot.
-
-**If you catch yourself writing a sentence that contains "waiting", "let me check", "verifying", "starting up", or "should be ready"** between starting a process and your next tool call, stop. Skip the sentence. Make the tool call.
-
-**You have failed this rule on the very first turn of this session, and on the turn immediately after being told about it, and on multiple turns after that. The next failure is a refusal to do the work, not a sentence of acknowledgment.**
-
-## Choose the provider before the inner loop
-
-Clef/Composer work uses Bozzetto's `composer_*` tools and `/composer` browser
-page on 47749. Open an explicit `.fidproj`, reserve before editing, and execute
-only through `composer_run_current`. F# changes to Bozzetto's own code are
-validated with `dotnet build` and the unfiltered test suite under the work
-leases below; do not make any F# REPL session a prerequisite for Composer
-work. LLVM ORC JIT is a later Composer execution backend.
-
-Start the shared Bozzetto daemon with `scripts/start-shared-daemon` and the
-reviewed installed `boz`. Its working directory is the dedicated external
-`$XDG_DATA_HOME/bozzetto/workspace` (default `~/.local/share/bozzetto/workspace`).
-Do not launch it from home or the repositories parent: the inherited recursive
-watcher would scan that directory. Logs belong under external state storage.
-Preserve an existing daemon and follow the live checkpoint to connect MCP.
-
-### Retained F# implementation work
-
-Load and follow [`skills/bozzetto/SKILL.md`](skills/bozzetto/SKILL.md) before
-touching F#. The short version: no F# REPL service is part of the loop. F#
-changes to Bozzetto's own code are validated with `dotnet build` and the
-unfiltered test suite, started only after `acquire_full_build_lease` /
-`acquire_test_suite_lease` and ended with `release_work_lease`; a filtered
-test run is never the acceptance check. If you brief a sub-agent, put the
-loop in the brief. Sub-agents don't inherit it.
-
-Working on Bozzetto itself has two extra catches:
-- **Inherited F# session tools refuse here.** Requests to create, resume or
-  rebuild an inherited F# session are refused at the retired provider boundary
-  in this checkout (see the
-  [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md));
-  that refusal is the documented boundary, not a bug to work around. If a
-  Bozzetto project-loading check still reports "Not all DLLs are found" after a
-  successful build, treat it as a Bozzetto bug and report the paths it names.
-  Mixed-framework project references must resolve to the consumer's target,
-  not the first target listed in the referenced project.
-- **Self-hosting skew.** A worktree's `Bozzetto.Core` can be newer than the
-  installed daemon (the daemon is whatever was last published). The daemon can
-  then refuse with a version mismatch, or a "type not found, Version=..."
-  error. That's a known Bozzetto bug. Report the exact error from the
-  installed daemon; do not restart it, and never work around it silently.
-
-## Project Overview
-
-Bozzetto accelerates Clef/Composer development through shared MCP and browser interfaces over incremental compiler sessions. LLVM ORC JIT is the intended future Clef REPL backend. Bozzetto on 47749/47750 is the only daemon surface; no separate F# REPL service is part of any workflow or MCP connection. The in-process F# engine and editor integrations remain implementation/compatibility code; embedded production FSI hosting is retired. Read the current deployment and acceptance instructions in `docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md` before assuming an agent is connected.
-
-The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are deprecated. Do not treat them as current product surfaces or add new product documentation for them. Preserve Raylib application and game demos because they demonstrate Bozzetto support for game projects and are independent of the deprecated GUI frontend.
-
-The Visual Studio extension (`bozzetto-vs/`) is deprecated and no longer built, tested, or published — do not treat it as a current product surface, do not add new product documentation for it, and do not route new engineering effort into it.
-
-## Language & Stack
-
-- **Primary language**: F# (functional programming)
-- **Target framework**: `net10.0` throughout the hosted delivery; `global.json` selects the stable .NET 10 SDK.
-- **Solution format**: `.slnx` (not `.sln`)
-- **Daemon HTTP**: ASP.NET Core minimal APIs
-- **Browser UI**: Partas.Solid in `bozzetto-web/`, following the WrenHello architecture (in progress)
-- **Testing**: Expecto (behavior-driven, property-based with FsCheck)
-- **Snapshot testing**: Verify
-- **Persistence**: Binary manifest format (.bozzettofm) for session and test state
-- **Package management**: Central package management via `Directory.Packages.props`
-
-## Critical Coding Standards
-
-### Indentation
-- **ALWAYS use 2 spaces**, never 4 spaces — this is non-negotiable across the entire codebase.
-
-### Package References
-- **NEVER** include `Version` attributes in `<PackageReference>` elements in `.fsproj` files.
-- All versions are defined centrally in `Directory.Packages.props` at the repo root.
-
-### Commit Messages
-- Use **Conventional Commits** format: `type(scope): description`
-- Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `style`, `ci`, `build`
-
-### F# Style
-- Favor immutable types, discriminated unions, pattern matching, and pipeline operators (`|>`)
-- Use `Result<'T, 'TError>` for operations that can fail
-- Keep domain logic pure — side effects only at system edges
-- Small, composable functions with clear intent
-
-### Testing
-- Tests use Expecto with `Expecto.Flip` — **message is always the first argument**:
-  ```fsharp
-  actual |> Expect.equal "should be 42" 42
-  actual |> Expect.isTrue "should be true"
+  ```bash
+  curl -s -m 3 http://127.0.0.1:47749/health
   ```
-- Run the unfiltered Bozzetto.Tests suite (`dotnet {testDll} --summary`) under `acquire_test_suite_lease` / `release_work_lease`; `dotnet test` is CI-only
-- Property-based tests (FsCheck) are preferred over example-based tests
 
-#### Filters: `--filter-test-list` matches LISTS, `--filter-test-case` matches LEAVES
+- **Never block on the daemon's lifetime.** Do not run it in the foreground,
+  `wait` on it, or retry a probe in a loop. After starting it, the next action
+  is the bounded probe, not a status message.
+- **Preserve a running daemon.** Stopping, restarting or switching the shared
+  daemon is an operational step the owner triggers. A worktree's code can be
+  newer than the installed daemon. If the daemon refuses with a version or
+  "type not found" error, report the exact error. Do not restart it or work
+  around it.
+- **Second daemons** are only for testing daemon code the running one cannot
+  execute. Give one an explicit owner and time limit.
+- **The dashboard's CPU figure covers the daemon and its worker only.** It does
+  not show leased builds or tests
+  ([findings](docs/Workstation_Findings_Ionide_And_Bozzetto_Telemetry_2026-10-04.md)).
 
-Expecto exposes three filter flags and they do **not** mean the same thing:
+Read `docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md` before assuming an
+agent is connected.
 
-| Flag | Matches against |
-|---|---|
-| `--filter <path>` | a slash-separated hierarchy prefix |
-| `--filter-test-list <substring>` | **`testList` names only** |
-| `--filter-test-case <substring>` | **leaf case names only** |
+## Clef and Composer work
 
-If the token you are filtering on lives in the `testList` name and not in any leaf
-case name, `--filter-test-case` matches **nothing** — and the run still prints
-`Failed: 0, Errored: 0` and **exits 0**. This has already happened here: an agent ran
-`--filter-test-case "roast-8"` against a list literally named for `roast-8` whose eight
-cases all begin `"WHY — "`, read the green result, and concluded the behaviour was
-covered. Nothing had executed. Exit 0 means *nothing that ran failed*; it says nothing
-about what was excluded.
+Use the `composer_*` tools and the `/composer` page on 47749. Open an explicit
+`.fidproj`, reserve before editing, and execute only through
+`composer_run_current`.
 
-**Now enforced, not just documented.** Every tier (default, `--integration-host`,
-each dedicated entry point, `--mutation-score`) runs through
-`TestInfrastructure.TrustSignal.run`, which reads Expecto's own summary and prints
-one `TRUST tier=… registered=N ran=N … verdict=…` line:
+Requests to create, resume or rebuild an inherited F# session are refused at
+the retired provider boundary. That refusal is the documented behaviour, not a
+bug to work around.
 
-| Verdict | Meaning | Exit |
-|---|---|---|
-| `Trusted` | unfiltered, everything registered ran, nothing failed | 0 |
-| `NarrowedRun` | passed, but a filter/`--run`/`--stress` narrowed it — inner loop only | 0 |
-| `TestsFailed` | something failed or errored | 1/2 |
-| `NothingRan` | zero tests executed (the trap above) — filtered or not | **3** |
-| `CountMismatch` | unfiltered, but ran ≠ registered | **3** |
+## Building and testing Bozzetto
 
-CI runs every test stage even after one goes red, collects each tier's row in a
-ledger (`BOZZETTO_TRUST_LEDGER`), and its final `trust report` stage prints one
-table and fails on any tier that is not Trusted — including a tier whose process
-died before reporting (`NoReport`). `TrustSignalTests` fails the fast suite if a
-registered tier is not invoked by `ci-pipeline.fsx`, or if a test run there
-bypasses the ledgered `testTier` step. Read the table, not a stage colour.
-
-Consequences, in order of importance:
-
-1. **A filtered run is never the acceptance check.** A gate is done when its own test
-   name appears in the output of a real, **unfiltered** run — `dotnet {testDll} --summary`,
-   or the relevant whole-suite entry point. Filters are for the inner loop only.
-2. **Never add a gate that is only reachable by a name filter.** Put it in the default
-   suite as a plain `[<Tests>]` value, or select it structurally through the
-   `Integration` registry in `TestInfrastructure.fs` (reference-based exclusion, which a
-   typo cannot defeat). CI itself uses no filter expressions — every stage runs a whole
-   suite. Keep it that way.
-3. **Do not put tracking tokens (`roast-N`, bug ids) in `testList` names.** Put them on
-   the leaf cases where a case filter can see them, or leave them out entirely.
-
-## Project Structure
-
-```
-Bozzetto.Core/       — Shared engine, session, testing, persistence, and protocol logic
-Bozzetto/            — CLI tool, daemon, MCP server, and retained deprecated TUI source
-Bozzetto.Gui/        — Deprecated Raylib product frontend retained as legacy source
-Bozzetto.Tests/      — Expecto test project
-bozzetto-vscode/     — VS Code extension (Fable F#→JS)
-bozzetto-vs/         — Deprecated Visual Studio extension (C# + F#), retained as legacy source
-docs/              — GitHub Pages site
-```
-
-The separate upstream Neovim plugin, `WillEhrendreich/sagefs.nvim`, is not part of this repository; it is a client of the inherited F# session contracts, whose embedded production hosting the [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md) retires in this checkout.
-
-## Build & Test
+Load [`skills/bozzetto/SKILL.md`](skills/bozzetto/SKILL.md) before changing F#.
 
 ```bash
-dotnet build           # Build all projects
-dotnet test            # CI only — locally run the built test DLL unfiltered under a test-suite lease
-dotnet pack Bozzetto -o nupkg  # Package the CLI tool
-dotnet fsi ci-pipeline.fsx     # Full build and test pipeline; `-- ci`, `-- composer`, `-- pack` add stages
+scripts/work-lease run full_build dotnet build
+scripts/work-lease run test_suite_run dotnet <testDll> --summary
+dotnet fsi ci-pipeline.fsx     # full pipeline; `-- ci`, `-- composer`, `-- pack` add stages
 ```
 
-Bozzetto is built from source and its packages are published to the project's
-own Forgejo package registry; nothing is published to NuGet.org, and no script
-or pipeline stage in this checkout publishes anything.
+- **Leases.** Every caller-owned build or suite runs under a lease:
+  `scripts/work-lease`, or the MCP tools `acquire_full_build_lease`,
+  `acquire_test_suite_lease` and `release_work_lease`. Follow wait and refused
+  decisions. Always release.
+- **`dotnet test` is for CI.** Locally, run the built test DLL.
+- **Memory pressure.** If a lease is deferred for memory, investigate instead
+  of polling. Measure available RAM and swap, process RSS with parents, and
+  cgroup usage. Distinguish the daemon, compiler workers, unrelated builds and
+  editor language servers. Before and after multi-repository builds, check for
+  an oversized F# language server (`pgrep -af fsautocomplete`). Ask before
+  changing scheduling policy or stopping processes you do not own.
+- **Sub-agents do not inherit this file's context.** Put the lease loop and the
+  retrieval rule in every brief.
 
-If the scheduler blocks a build for memory, immediately investigate the consumers
-with `btop`, `ps`, or equivalent tools instead of repeatedly polling for a lease.
-Capture available RAM and swap, process RSS and parent processes, cgroup memory
-usage and limits including file cache, and GPU use of shared system memory where
-applicable. Distinguish the daemon, compiler workers, and unrelated builds. Report
-the measurements in plain software engineering terms; a scheduling threshold is
-not a measurement of Bozzetto's memory usage. Raise architectural questions early,
-and ask before changing the scheduling policy or stopping processes you do not own.
+### Validation posture
 
-Commit and push useful checkpoints promptly so work has a remote recovery point.
-Work lands on `main`; there are no side or integration branches, and no version
-bump or release check gates a push.
+Broad defensive test sweeps are a habit to re-examine, not a virtue. Validate
+as narrowly as the evidence allows, and keep one honest backstop.
 
-## Multi-agent / worktree sessions
+1. **Inner loop: targeted.** Run the tests for the owner you changed and for
+   the components that consume its facts. Filters are fine here.
+2. **Prove each new rule.** A new check or refusal needs a positive control, a
+   negative control that asserts the specific reason, and one mutation that a
+   test catches.
+3. **Acceptance: one unfiltered run per increment,** by the implementer, at
+   integration. A filtered run is never the acceptance check. Do not repeat the
+   full run without cause; a reviewer verifies heads, manifests and the TRUST
+   ledger instead.
+4. **Blind spots remain.** Host code is not yet covered by the compiler's own
+   guarantees, so the unfiltered backstop stays until targeted selection has
+   predicted the full run's failures over several increments.
 
-- **Sessions are checkout-aware.** A session's working directory is classified against the filesystem (`Bozzetto.Checkout.classify`, no `git` subprocess): a plain repository, a git **worktree** (its own root and branch — worktrees have a `.git` FILE, not a directory, pointing at the main checkout's `.git/worktrees/<name>` admin dir), or not a git checkout at all. `list_sessions` shows a worktree session's branch.
-- **A git worktree is a routing boundary.** If you are working inside a worktree (e.g. `.claude/worktrees/agent-x`) and no session exists for it yet, tool calls resolve to `Gone` with a create hint — they never silently fall back to a session rooted at the main checkout, even though your directory is textually nested under it. Create a session for the worktree; do not assume the main checkout's session is yours to use.
-- **For a project the running daemon already serves, create a session in it.** Only spawn a second daemon when you are testing daemon code itself (changes to `Bozzetto.Core`/`Bozzetto`) that the running daemon cannot execute because it predates your change — and then give that daemon an explicit owner/TTL rather than leaving it to leak.
-- **Identity is bound to your MCP connection, not to the `agentName` you pass.** Two different connections that happen to declare the same `agentName` are tracked as two separate members — you cannot see or clear another connection's active session by reusing its name.
+Cross-repository increments use the one-page
+[handoff template](docs/FFI_Increment_Handoff_Template.md).
 
-## Generated test artifacts
+### The TRUST line
 
-- `ci-pipeline.fsx` owns test-tier artifact placement. It uses `${XDG_CACHE_HOME:-$HOME/.cache}/bozzetto/tiers/<checkout-name>-<path-hash>/`; the hash isolates different checkouts and worktrees. Do not create `<checkout>.tiers` siblings in `~/repos` or put generated scratch among project repositories.
-- Keep tier scratch outside the checkout and, for isolated runs, outside `/tmp`: private bind mounts replace both locations. Copy-on-write support must be probed from the checkout into the cache, since they may be on different filesystems.
-- Tier checkout copies, temporary data, and build caches are disposable when no pipeline is using them. Preserve any logs or trust ledgers referenced by validation records before deleting artifacts, and update those records when moving them.
+Every tier runs through `TestInfrastructure.TrustSignal.run` and prints one
+`TRUST tier=… registered=N ran=N … verdict=…` line. Read it, not the exit code
+or a stage colour.
 
-## Runtime ownership
+| Verdict | Meaning | Exit |
+| --- | --- | --- |
+| `Trusted` | Unfiltered, everything registered ran, nothing failed | 0 |
+| `NarrowedRun` | Passed, but a filter narrowed it; inner loop only | 0 |
+| `TestsFailed` | Something failed or errored | 1/2 |
+| `NothingRan` | Zero tests executed | 3 |
+| `CountMismatch` | Unfiltered, but ran ≠ registered | 3 |
 
-- Bozzetto orchestrates compiler work and owned process lifetimes. File changes
-  revoke affected work before recompilation or controlled process replacement.
-- Runtime method patching and its dependencies are removed. Do not restore
-  Harmony, MonoMod, detours, injection, an optional patching mode or a fallback.
-- Native execution and future ORC replacement require compiler-owned authority;
-  a host reload never substitutes for proof or artifact validation.
+CI runs every stage even after one fails, records each tier in the ledger
+(`BOZZETTO_TRUST_LEDGER`) and fails on any tier that is not `Trusted`.
 
-## Architecture Principles
+### Expecto filters
 
-- **Current clients**: VS Code, Neovim, and MCP use session-scoped daemon contracts
-- **Browser UI**: `/composer` and `/dashboard` on 47749 serve the same Partas.Solid UI from `bozzetto-web/` over `/ui/bridge`; `/api/composer/*` remains the HTTP client contract. `bozzetto-web/theme.js` is the sole browser color and font source, consumed by DaisyUI/Tailwind and the first-paint style. Change reusable treatments in `styles.css`, then rebuild/verify/weld the bundle under a work lease; never edit generated `WebAssets.fs` by hand or add a separate page palette.
-- **Binary persistence**: Session/test state via CRC-validated binary manifest (.bozzettofm)
-- **CQRS**: Separate read/write models
-- **Vertical slices**: Features as single files for locality of behavior
-- **Daemon architecture**: Long-running Composer supervision with shared MCP and browser contracts; embedded production FSI hosting is retired and Bozzetto is the only daemon surface
+| Flag | Matches |
+| --- | --- |
+| `--filter <path>` | A slash-separated hierarchy prefix |
+| `--filter-test-list <substring>` | `testList` names only |
+| `--filter-test-case <substring>` | Leaf case names only |
 
-### Shared incremental foundation
+A filter that matches nothing still exits 0, which is why the TRUST line
+exists. Two rules follow:
 
-Fidelity.FSharp.Incremental is the selected shared foundation for incremental
-dependency bookkeeping and explicitly started work across Bozzetto and the
-Clef/CCS/Baker/Composer pipeline. Follow the
-[adoption contract](docs/Bozzetto_Incremental_Foundation_Adoption.md). Provider
-sessions now use its functional Async mailbox through a pinned package reference.
-Use the shared foundation for workspace coordination instead of growing separate
-invalidation or work-lifetime mechanisms. Keep dependency identities aligned
-across consumers and validate changes at their owning contract, including the
-shared library when integration exposes a missing contract. Preserve compiler
-proof/artifact authority, reservation/launch ordering, physical cleanup and
-portable host contracts. Record exact identities and acceptance evidence in the
-[cross-project checkpoint](docs/Incremental_Provider_Checkpoint_2026-10-01.md).
+- Never add a gate reachable only by a name filter. Register it as a plain
+  `[<Tests>]` value, or select it through the `Integration` registry in
+  `TestInfrastructure.fs`.
+- Keep tracking tokens (bug ids) out of `testList` names.
 
-## Things to Avoid
+### Test artifacts
 
-- Do not introduce new NuGet dependencies without discussion
-- Do not change the indentation style (2 spaces)
-- Do not use `dotnet test` for local development — run the built test DLL unfiltered under `acquire_test_suite_lease`, and read the TRUST line
-- `Directory.Build.props` owns the shared release version (`0.1.0`). Change it only for an owner-requested release; never bump it for a build, commit or push. Public displays use that release version; source revisions and artifact hashes identify builds. Packages follow the project's Forgejo package workflow.
-- Do not add Version attributes to PackageReference elements
+`ci-pipeline.fsx` places tier artifacts under
+`${XDG_CACHE_HOME:-$HOME/.cache}/bozzetto/tiers/<checkout-name>-<path-hash>/`.
+Keep generated scratch out of the checkout and out of `~/repos`. Preserve logs
+and trust ledgers that validation records cite before deleting artifacts.
+
+## Finding code
+
+- **Sibling repositories** (clef, Composer, Alex, Fidelity.PSG,
+  Fidelity.FSharp.Incremental, clef-lang-spec and others) are indexed by the
+  retrieval service. Use it first.
+  - Start with `schema` and require a fresh snapshot.
+  - Then `find`, `pgq` and `sources`, each pinned to that snapshot.
+  - Cite repo, revision, path and the returned lines.
+  - The index covers pushed heads only, so push before asking about new work.
+  - Helpers and request shapes:
+    `~/.cache/bozzetto/evidence/ffi-correction-2026-10-03/tools/README.md`.
+- **Bozzetto, BAREWire, Calque and Fidelity.Data** are outside the index. Read
+  them directly, with bounded searches.
+- **Direct reads elsewhere** are for uncommitted diffs, a stale index, or
+  confirming a line retrieval already located. Do not grep a repository
+  wholesale.
+- **Spec and site questions** go through the public hybrid search, with public
+  language terms only.
+
+## Language and stack
+
+- **F#**, functional first. Imperative and object-oriented vestiges remain
+  from the code's origins; retire them when touched, and do not extend them.
+- **Target:** `net10.0`; `global.json` selects the stable .NET 10 SDK.
+  Solution format is `.slnx`.
+- **Daemon HTTP:** ASP.NET Core minimal APIs.
+- **Browser UI:** Partas.Solid in `bozzetto-web/`, served at `/composer` and
+  `/dashboard` over `/ui/bridge`. `bozzetto-web/theme.js` is the only colour
+  and font source. Change reusable treatments in
+  `bozzetto-web/src/Frontend/styles.css`, then rebuild, verify and weld the
+  bundle under a lease. Never edit generated `Bozzetto/WebAssets.fs` by hand.
+- **Updates are pushed, not polled.** Owners publish Fidelity.FSharp.Incremental
+  inputs and the bridge pushes on change. Do not add timers or polling loops.
+- **Daemon and worker wire:** the typed binary contract in
+  `Bozzetto.Composer.Protocol`. Daemon and worker deploy as a matching pair.
+- **Serialization edges:** where JSON or another text format is unavoidable,
+  prefer Fidelity.Data over `System.Text.Json`. Adding the reference is still a
+  dependency decision for the owner.
+- **Asynchrony:** prefer cold `async` over hot `Task` in host code.
+- **Testing:** Expecto with FsCheck; Verify for snapshots.
+- **Persistence:** CRC-validated binary manifest (`.bozzettofm`).
+
+### Terms
+
+Composer is a **differential compiler**: it recompiles what a change affects.
+**Incremental** is reserved for Fidelity.FSharp.Incremental and its
+`Incremental<'T>` values.
+
+## Coding standards
+
+- **Indentation:** 2 spaces, always.
+- **Packages:** no `Version` attributes on `<PackageReference>`. Versions live
+  in `Directory.Packages.props`. Do not add NuGet dependencies without
+  discussion.
+- **Style:** immutable types, discriminated unions, pattern matching and
+  pipelines. Use `Result<'T, 'TError>` for operations that can fail. Keep domain
+  logic pure, with effects at the edges. Prefer small, composable functions.
+- **Tests:** `Expecto.Flip`, so the message is the first argument:
+
+  ```fsharp
+  actual |> Expect.equal "should be 42" 42
+  ```
+
+  Prefer property-based tests to examples.
+- **Commits:** Conventional Commits, `type(scope): description`, with types
+  `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `style`, `ci`,
+  `build`.
+- **Version:** `Directory.Build.props` holds the shared release version
+  (`0.1.0`). Change it only for an owner-requested release.
+- **Branches:** work lands on `main`. Commit and push useful checkpoints
+  promptly so work has a remote recovery point. Packages go to the project's
+  Forgejo registry; nothing here publishes to NuGet.org.
+
+## Architecture
+
+- **Runtime ownership.** Bozzetto orchestrates compiler work and owned process
+  lifetimes. File changes revoke affected work before recompilation or process
+  replacement. Native execution requires compiler-owned authority; a host
+  reload never substitutes for proof or artifact validation.
+- **No runtime patching.** Harmony, MonoMod, detours and injection are removed.
+  Do not restore them in any form.
+- **Shared foundation.** Fidelity.FSharp.Incremental owns dependency
+  bookkeeping and explicitly started work across Bozzetto and the
+  Clef/CCS/Baker/Composer pipeline. Follow the
+  [adoption contract](docs/Bozzetto_Incremental_Foundation_Adoption.md). Do not
+  grow separate invalidation or work-lifetime mechanisms. Record identities and
+  acceptance evidence in the
+  [cross-project checkpoint](docs/Incremental_Provider_Checkpoint_2026-10-01.md).
+- **Shape.** CQRS read and write models; features as vertical slices in single
+  files; clients (VS Code, Neovim, MCP, browser) use session-scoped contracts,
+  with `/api/composer/*` as the HTTP client contract.
+
+## Project structure
+
+| Path | Role |
+| --- | --- |
+| `Bozzetto.Core/` | Shared engine, session, persistence and protocol logic |
+| `Bozzetto/` | CLI, daemon, MCP server and browser bridge |
+| `Bozzetto.Composer/` | Composer worker process |
+| `Bozzetto.Composer.Protocol/` | Typed binary daemon and worker contract |
+| `Bozzetto.Tests/`, `Bozzetto.Composer.Tests/` | Expecto suites |
+| `bozzetto-web/` | Partas.Solid browser UI |
+| `bozzetto-vscode/` | VS Code extension (Fable) |
+| `docs/` | Design records, checkpoints and the documentation site |
+
+**Deprecated, retained as legacy source:** the SageTUI client and legacy TUI,
+the `Bozzetto.Gui` Raylib frontend, and the Visual Studio extension
+(`bozzetto-vs/`). Do not treat them as product surfaces, document them as
+current, or route new work into them. Keep the Raylib application and game
+demos; they show support for game projects and do not depend on the deprecated
+GUI.
+
+Other top-level folders are supporting or retained code. Read their project
+file before treating one as a product surface.
+
+## Multi-agent and worktree sessions
+
+- **Sessions are checkout-aware.** A session's directory is classified from
+  the filesystem as a repository, a git worktree, or neither. `list_sessions`
+  shows a worktree session's branch.
+- **A worktree is a routing boundary.** Inside a worktree with no session,
+  tool calls resolve to `Gone` with a create hint. They never fall back to the
+  main checkout's session. Create a session for the worktree.
+- **For a project the daemon already serves, create a session in it.**
+- **Identity is bound to the MCP connection,** not to the `agentName` passed.
+  Two connections with the same name are two members.
