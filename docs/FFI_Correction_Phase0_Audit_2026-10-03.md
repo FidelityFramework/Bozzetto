@@ -1114,3 +1114,79 @@ The Bozzetto checkpoint includes only this evidence record, the callable
 aggregate and compiler-owned entry design notes, and the October 4 handoff.
 The two other actors' modified plan documents and the owner's Farscape work
 remain excluded.
+
+### October 4 continuation: B1, R4 and captured finite cells — acceptance open
+
+**E (executed):** the trusted comparison is the auditor's retained Clef
+2441/2360 passing/81 failing, PSG395/395, Alex305/305 and Composer406/405/1.
+Those baselines were not rerun. This increment extends existing owners for
+tuple/inherited-copy correspondence, returned-call range arguments, captured
+finite-cell proofs and complete-census inactivity. R4 proof support is carried
+in the aggregate dependency account, including the same-result/changed-support
+control. Native aggregate reconstruction remains refused; this is not completion
+of the native ABI or foreign resource obligations in receiving contracts.
+
+**E:** source checkpoints are pushed to main: Clef
+`a1e1768f8cd782571419a3203079521ab1b49db3`, PSG
+`d76b5a3c18fb46ba4e84cededd124d32029c5410`, Alex
+`99409b57046b` (full identity in the bound manifest), and spec
+`4d5c445331b34e68228a44e04a5e074430bc68fa`. They are **not accepted**.
+The first integration attempt found a redundant published participant set and
+four incomplete Alex fixture records. Schema21 removes that duplicate field:
+the role-bearing `Uses` map already contains precisely the same keys. The
+source census and existing generated integrity guard remain intact.
+
+**E:** the second integration run, `callable-range-schema21-a1e1768`, completed
+on unchanged clean heads under eight whole-run build/test leases, all released:
+
+```text
+psg total=398 passed=398 failed=0 skipped=0 | vs trusted: missing=0 added=3 new-failures=0 resolved=0
+alex total=305 passed=305 failed=0 skipped=0 | vs trusted: missing=0 added=0 new-failures=0 resolved=0
+composer total=406 passed=405 failed=1 skipped=0 | vs trusted: missing=0 added=0 new-failures=0 resolved=0
+clef total=2474 passed=2399 failed=75 skipped=0 | vs trusted: missing=0 added=33 new-failures=22 resolved=28
+```
+
+**E:** all33 added Clef cases pass;53 trusted failures and22 regressions remain.
+The retained name/outcome comparison is authoritative, not the total alone.
+Fourteen prepared semantic mutations were killed, with exact restoration and
+released leases; three earlier B1 reader mutations are separate retained evidence.
+The source shape matrix has10 cases across8 categories and no unexpected result.
+These controls did not cover the22 integration failures and do not imply acceptance.
+
+**R/S/E (repair in progress):** sixteen failures assert input-graph identity on
+a rejected range pass. Error Handling's CCS8415 clause415–421 requires that
+"The exclusion SHALL be withdrawn when its supporting activation, use, capture
+or ownership facts change; any commitments still required follow their existing
+diagnostics." Their replacement checks preserve source fields/incidence and
+require range-output withdrawal; diagnostic and downstream semantic assertions
+stay. Six opacity cases store/ignore their helper functions: their remaining
+execution commitments need discrimination under the approved R4 ruling.
+One executed compiler defect is established: filtered-empty call suppliers
+were interpreted as an empty aggregate alternative, changing an opaque join to
+point7. The range owner now removes those empty entries; focused execution
+restores the unknown aggregate range. Scalar `Empty` still needs its separate
+inactivity proof. Fixture corrections and final acceptance remain pending.
+
+Evidence root `N` is
+`~/.cache/bozzetto/evidence/ffi-correction-2026-10-03/notch-2026-10-04/`:
+`range-owner-notes.md`, `mutation-ledger.json`, `b1-shape-matrix-4.log`,
+`major-acceptance-results/callable-range-schema21-a1e1768/`, and
+`final-post-test-binding-callable-range-schema21-a1e1768.json` (post-test hashes,
+explicitly NOT ACCEPTED,439 output artifacts and31 changed source paths).
+All earlier failed attempts and corrected probe-oracle interpretations remain
+recorded. No daemon deployment or owner Farscape changes are included.
+
+**R (context/growth):** retrieval was used with pinned schema/find/pgq/sources;
+fresh generation5 snapshot `2b015a2f8d3c2f85e6fcd4454dbab8629805fad06ff5e9af00cb72ef61ca722d`
+and later generation6 receipts are retained. Subsequent indexing-pending windows
+used the explicit stale-index exception for bounded known owners, including this
+append point. Other direct reads were uncommitted diffs, bounded confirmation,
+or Bozzetto before its enrollment. LAN first-pass/query receipts and exact owner
+locations are in `N/lan/`. There are no new production files or semantic owners;
+final growth and the one-page handoff will be bound after repairs pass.
+
+### Owner-requested recovery stop
+
+**E:** Clef recovery head `7ad1daf233645b242633620b51c7901f14bbe3ed` is pushed. Final focused check:122 total,116pass,6fail; all16 failed-run graph comparator cases now pass. Build/test leases released. No unfiltered gate on this final head is claimed. The real library-context probe did not establish public helper roots in any of its six cases; it cannot justify oracle changes.
+
+The owner requested convergence for token budget. Work stops at the explicitly nonaccepted [recovery checkpoint](FFI_Correction_Recovery_Checkpoint_2026-10-04.md), which binds sources/artifacts and lists the exact next steps. No further breadth or baseline rerun is authorized by this stop.
