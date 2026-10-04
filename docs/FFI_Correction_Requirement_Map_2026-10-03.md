@@ -126,7 +126,7 @@ Ruling R2 retires `fromSymbol`. R13 and R14 therefore describe a retired surface
 | R16 | `invoke` calls through the entry with marshalling (ffi L142-163) | REFUSED | `FunctionPointerPatterns.fs:13-14` [C\*]. The unfiltered runner reproduces it for NativeCallbacks (`EV/baseline-repair/nc/structural.txt`) [X]. No test asserts the refusal [C] | Scalar invocation: Step 1, T1-A. `Option` operands: Steps 3 and 4 | Bk, Ax |
 | R17 | `ofFunction` takes a module-level binding only (ffi L171-177) | IMPLEMENTED+TESTED | `FunctionPointers.fs:55-59` [C\*]. `FunctionPointerCases.fs:68-84`, xUnit class `FunctionPointerTests`, 6 of 6 pass [X] | None | Bk |
 | R18 | Complete native representation for the entry (ffi L178-180) | REFUSED at Alex. ABSENT in Baker | `FunctionPointerPatterns.fs:10-11` [C\*]. `FnPtr` settles as a pointer word (`clef:src/Compiler/PSGSaturation/SemanticGraph/Placement.fs:147`, `clef:src/Compiler/Baker/Ingredients/ValueRepresentations.fs:66`) [C\*], which Alex spells `index` (`Alex:src/Alex/Dialects/Core/Types.fs:65`) [C\*] | `FnPtr` as a function value with a Baker-settled contract (ruling R1): Step 1, T1-A, on the Phase B foundation | Bk, PSG, Ax |
-| R19 | `Option<FnPtr>` represents absence (ffi L197-207) | ABSENT. Callback parameters: REFUSED (CCS8207) | As R7 [C\*] | Boundary conversion: T4-D, then Step 4. Interior `Option<FnPtr>`: the Phase B protocol covers callable union payloads (D6(b)). Whether it admits an `FnPtr` payload before Step 4 is open (see [Unresolved items](#unresolved-items)) | Bk |
+| R19 | `Option<FnPtr>` represents absence (ffi L197-207) | ABSENT. Callback parameters: REFUSED (CCS8207) | As R7 [C\*] | Boundary conversion: T4-D, then Step 4. Owner-forwarded D6(b) review settles the interior case: Phase B uses the common union-payload protocol, with no callable payload under `None`. C-boundary absence conversion is independent. | Bk |
 | R20 | Provenance through aliases, records and transport (ffi L178, L287) | Records, aliases, repeated addresses: IMPLEMENTED+TESTED at graph level. Unannotated `FnPtr` parameters: ABSENT. Target sets: computed, unpublished | "Declared callback ABI follows another address and its indirect scalar results" and "Native address retains its named declaration and full invocation" pass [X]. `Composer:tests/NativeCallbacks/README.md:237-243` records the transport gap [C\*]. `NativeCalls` target sets at `CallableOrigins.fs:47-49` [C] | Published target sets, and contracts preserved through aliases, branches and records (§3.6 item 2): Step 1, T1-A, on the Phase B foundation | Bk, PSG |
 
 ### C. Closed entries and `CallbackDescriptor`
@@ -228,7 +228,7 @@ Ruling R2 retires `fromSymbol`. R13 and R14 therefore describe a retired surface
 | R7 | CCS8207 cited at `CallbackDeclarations.fs:122, 138` | Same lines, with the code assignment at `PlatformDeclaration.fs:146` | Those lines carry the finding text only [C\*] |
 | R13, R14 | Open design gap (Q2) | Superseded by ruling R2 | Rulings record |
 | R15, R76 | Interior closures IMPLEMENTED+TESTED natively, citing `ResultCases` | IMPLEMENTED-UNTESTED at the pin | Runner 0 of 29 at compile, `ResultCases` included [X]. The earlier native passes are README history |
-| R19 | Interior `Option<FnPtr>` refused until T4 | Open under D6(b) | The Phase B protocol covers callable union payloads |
+| R19 | Interior `Option<FnPtr>` refused until T4 | Interior protocol belongs to Phase B; C-boundary absence conversion stays T4 | Owner-forwarded callable-aggregate design review |
 | R20 | "PARTIAL", README only | Graph-level tests named | Two passing clef tests [X] |
 | R21 | Fixture fix in T0 | Phase B | Triage RC8 places it in the baseline repair [A] |
 | R23, R17 | Class names `ClosedCallbackCases`, `FunctionPointerCases` | xUnit classes `ClosedCallbackTests`, `FunctionPointerTests` | The file and class names differ in the TRX [X] |
@@ -362,23 +362,30 @@ The labels AU-1 to AU-13 are those the research-session Step 1 plan assigned (`E
 ### Scheduled amendments
 
 "Drafted" means paste-ready text exists in `EV/t1/T1-PLAN.md` or the designs it cites (`EV/t1/records.md`,
-`EV/t1/obligations.md`). No amendment has been written into clef-lang-spec.
+`EV/t1/obligations.md`). The owner-forwarded D6(b) review moves the interior
+callable-component prelude into Phase B before its schema batch. Rows below
+distinguish that normative text from implementation and from remaining drafts.
+This supersedes historical T1-S placement of the interior-record, callable
+payload, NTU function-value and interior/native optional-entry distinction in
+the review tables above; native table and NULL-carrier implementation schedules
+are unchanged.
 
 | Amendment | Spec location | Basis | Carried by | Text |
 |---|---|---|---|---|
-| `NTUfnptr` is a portable function value, not `index` | `ntu-types.md` §8 L229; `native-type-universe.md` §3.2 | Ruling R4; S26; C11 | Step 0, or T1-S | Drafted (§2.2(f)) |
+| `NTUfnptr` is a portable function value, not `index` | `ntu-types.md` §2.3 and §8; `native-type-universe.md` §3.2 | Ruling R4; S26; C11 | Phase B spec prelude | Written in the spec; compiler realization still requires the foundation and Step 1 |
 | Code allocation: `FnPtr` misuse, `fromSymbol` retirement, §5.6 commitment refusals; tabling CCS8402-8405 and CCS8500; CCS8096 and CCS8010 overloading | `error-handling.md` | S3, S4; critique minor 8 | Step 0. Step 1 slots in T1-S (§2.10) | Slots listed, numbers unallocated |
+| Callable aggregate and ordinary-demand commitment codes CCS8410–CCS8415 | `error-handling.md`, callable aggregate diagnostic subsection | Owner-forwarded D6(b) review | Phase B spec prelude | Allocated; compiler producers and paired tests belong to the schema batch |
 | Compiler-owned entry contracts | ffi §3.4 after L180 | Ruling R1; M10; AU-8 | Step 0, or T1-S | Drafted (§2.3) |
 | `FnPtr.ofExtern`; `fromSymbol` retired | ffi §3.2 (L117-140), §3.3, §5.3 L287, §6.1-6.2 examples (L349-394), §7 item 3, L16 | Ruling R2; M11; AU-9 | Step 1, T1-B | Drafted (§2.9) |
 | Contracts carry more than the ABI | ffi §5.6 | Ruling R3 | T1-S, through §3.6 item 2 | Drafted (§2.2) |
 | `Transfer.Undeclared`; no ownership default | `platform-bindings.md:285-291` (ffi L327 is already normative) | Ruling R5 | Step 0, or T1-S | Not drafted |
 | No comment-narrowing; evidence with provenance | ffi §5.2, §5.4, §5.5 | Ruling R6; legacy-C principle | Step 0, or T1-S | Not drafted |
-| Interior logical records holding `FnPtr`; callable components | ffi new §3.6; `closure-representation.md` §2.4, requirements 6, 13, 14; `discriminated-union-representation.md` §9.1 L570 and requirement 12 L788; bla L112, §2.2, §3.2, §7 | M12; AU-4; AU-13 | T1-S text; implementation in the Phase B foundation | Drafted (§2.2) |
+| Interior logical records holding `FnPtr`; callable components | ffi §3.6; `closure-representation.md` §2.4, requirements 6, 13, 14; `discriminated-union-representation.md` §9.1 and requirement 12; backend §3.2, §4.2, §7 | M12; AU-4; AU-13; owner-forwarded D6(b) review | Phase B text first, then common schema foundation | Written in the spec with full row dependency accounting; positive/negative matrix in the design; implementation pending |
 | Native tables | ffi new §5.7, L281, §7 items 10-11; `platform-bindings.md` adoption of `CallbackDescriptor`, `ClosedCallbackDescriptor`, `StructDescriptor`; `memory-regions.md` after L191 | AU-4; S1 in part | T1-S text; implementation in Step 6 | Drafted (§2.2) |
 | Entry and invocation mapping; unit erasure | ffi §3.4, with a §4.3 cross-reference | M9; AU-5 | T1-S | Drafted (§2.4) |
 | Code lifetime from the loading contract | ffi §2.1 L77; new §3.7 | M5; AU-11 | T1-S. Host contracts (L3 escapes, L4): Step 7 | Drafted (§2.5) |
 | External execution hypotheses and their definition | ffi §5.6 after L337; `terms-and-definitions.md` | M4; S14 terminology | T1-S | Drafted (§2.6) |
-| `Option<FnPtr>` note; marshalling at `invoke` | ffi §4.2 after L232; §3.3 L153-154 | M3; AU-7; minor 13 | T1-S | Drafted (§2.7) |
+| `Option<FnPtr>` interior/native distinction; marshalling at `invoke` | ffi §3.5, §3.6, §4.2; §3.3 | M3; AU-7; minor 13; D6(b) review | Phase B distinction; remaining invocation mapping in T1-S | Interior union protocol and function-value/null distinction written; native carrier still T4-D and Step 4 |
 | `Option<FnPtr>` boundary conversion as a pathway commitment | ffi §4; bla §2.1.1 | M3; AU-7 | T4-D, before Step 4 | Design questions open (§4.5) |
 | Pathway realization recheck | bla §2.1.1 after L65 | M6; AU-6 | T1-S | Drafted (§2.8) |
 | Carried-property index rows | `program-semantic-graph.md` §14.3.7 (L630-642) | S12 | T1-S | Drafted (§2.8) |
@@ -427,10 +434,13 @@ These come from two Rust references the owner raised on October 3: the "Beyond t
 
 ## Unresolved items
 
+Interior `Option<FnPtr>` is resolved by the owner-forwarded D6(b) review: it
+belongs to Phase B's union-payload protocol. Only the C-boundary absence carrier remains
+in Step 4; it is not a prerequisite for interior construction or matching.
+
 | Item | State | How it resolves |
 |---|---|---|
 | The extern declaration form (S2) | No plan carries it | Owner or spec agent assigns a step; T1-B depends on it |
-| Interior `Option<FnPtr>` after D6(b) | The research plan refused it until Step 4. The Phase B protocol covers callable union payloads | The Baseline and Step 1 documents state whether the foundation admits an `FnPtr` payload |
 | A second Fidelity.PSG schema change in Step 1 | Owner direction: none unless the foundation's schema cannot carry the native rows | The Phase B schema design shows whether it can |
 | Whether any path admits `FnPtr` equality today (U2) | UNKNOWN | A probe or code read, which decides whether `[NATIVE-ENTRY-EQUALITY]` has a producer |
 | `fromSymbol<'F>` and CCS8092 | UNKNOWN; moot once T1-B retires `fromSymbol` | None needed after T1-B |

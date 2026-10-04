@@ -2,6 +2,34 @@
 
 October 3, 2026. Implement [D6(b)](FFI_Correction_Rulings_2026-10-03.md#owner-decisions-on-the-step-1-plan-october-3-2026) through one aggregate protocol for `FnPtr` record fields, ordinary function fields and callable union payloads. Retain the affected original positive tests. Native ABI settlement in Step 1 will extend this foundation.
 
+## Required order before the schema batch
+
+The owner-forwarded auditor review approves the direction, placement and R4
+activation-proof choice, subject to the following work preceding schema changes:
+
+1. Land the normative interior-record text in FFI §3.6, callable components in
+   Closure Representation §2.4, and DU callable payloads in §9.1 and requirement
+   12. These portions of the Step 1 spec prelude move into Phase B. Include the
+   corresponding backend and NTU consistency edits; native table realization
+   remains Step 6.
+2. Fix the integrity and test obligations enumerated below before adding rows.
+3. Allocate the batch's diagnostics in `spec/error-handling.md` before producing
+   them. CCS8410–CCS8415 are allocated for this batch; lifetime failures retain
+   CCS8100–CCS8102. Allocation alone is not implementation evidence.
+4. Admit interior `Option<FnPtr<'F>>` through this batch's union-payload protocol:
+   `Some` holds a callable component and `None` has no payload. C-boundary absence
+   conversion between Clef `None` and C's single-word NULL carrier stays in Step 4.
+   This never introduces a null value or null comparison into Clef. The
+   interior case does not depend on that conversion's implementation.
+5. Include every callable aggregate row and its actual participants in the
+   published dependency account, as specified below. The schema implementation
+   and its tests follow these landed contracts.
+
+The normative prelude and code allocations landed first in clef-lang-spec
+[`82f0077`](https://forge.spkez.dev/FidelityFramework/clef-lang-spec/commit/82f0077f614167e3523bc6380ee470e1180f5fb0).
+The following schema rows, diagnostic producers and paired tests remain
+implementation work; this spec commit does not claim their acceptance.
+
 ## Contract extension
 
 Fidelity.PSG at `f153c75` declares schema 16 in [Revision.fs](../../Fidelity.PSG/src/Fidelity.PSG/Revision.fs). Extend the existing [CallableCarrier and CallableEmissionProjection](../../Fidelity.PSG/src/Fidelity.PSG/Codata.fs), with these proposed records:
@@ -15,6 +43,47 @@ Fidelity.PSG at `f153c75` declares schema 16 in [Revision.fs](../../Fidelity.PSG
 Add these aggregate rows to `CallableEmissionProjection`. Reuse `CallableFlow`, `CallableJoin` and the mutable-callable construction/selection machinery. Extend `ValueRepresentation` to describe data placement and callable components separately for records and unions. A callable payload receives the same component representation as a callable field.
 
 Bump the contract once for this foundation, to 17 if schema 16 is still current. Regenerate binary, JSON and integrity files with the clef mirrors and consumer matches in the same checkpoint. Keep subsequent Step 1 schema numbers dependent on that accepted checkpoint.
+
+## PSG integrity and paired tests
+
+Each rule is enforced by source-owned settlement and by public PSG integrity
+validation. An integrity refusal is not an opportunity for publication or Alex
+to repair the graph. Source-facing commitment diagnostics use the allocated
+codes; a standalone malformed-image check must not fabricate a source location.
+The positive and negative cases below are required tests for the schema batch,
+not tests claimed to exist already.
+
+| Rule | Positive case | Negative case | Source diagnostic |
+| --- | --- | --- | --- |
+| I1: No code value in a data slot. Layout contains only data, environment views and admitted selectors; code remains a function value. | Record field and union payload reconstruct a portable callable from settled components. | Put a code value in a data field, byte extent, integer/index carrier or environment slot. Reject before witnessing. | CCS8410 |
+| I2: Exact selector domain. For `n > 0` settled alternatives, the logical selector range is exactly `[0, n)` with one alternative per value. A singleton may elide storage; a missing payload has no selector. | Singleton and multi-alternative families cover every selectable member exactly once. | Extra or missing selector values, duplicate alternatives/ordinals, or treating `None` as a callable alternative. Wider physical storage does not authorize extra logical values. | CCS8411 |
+| I3: Code and environment belong to the same formation. Closed environment absence is explicit. | Two formations of one implementation keep distinct environments; a copied shared capture retains its cell identity. | Cross the environments, reuse the wrong formation, or drop a required environment while keeping the implementation unchanged. | CCS8412 |
+| I4: One receiving contract identity per callable slot. Every alternative conforms or passes through an explicitly settled adapter. | Alternatives carry the same receiving contract while retaining their own formation and lifetime participants. | Join distinct contracts with identical source types or ABI shapes, or omit the required contract identity. | CCS8413 |
+| I5: Formation, selection and union tag evidence is current and complete. | Construction and elimination carry exact live formation and constructor/tag participants. | Keep cached annotations but remove, duplicate or change a required formation/tag row or its operand incidence. | CCS8414 |
+| I6: Every aggregate row participates in dependency accounting. | Change support with the same selected implementation and output; publication records a different dependency account and downstream proof is renewed. | Replay the previous selection/proof receipt after changing formation, environment, tag, assignment or slot rows. Reject before witnessing. | CCS8414 |
+
+Exercise each rule through both record and union transport where it applies,
+including interior `Option<FnPtr>`. R4 and RC1 add positive inactive/unused
+ordinary cases and negative controls that invalidate a *consumed* exclusion;
+those controls use CCS8415. Absence of a valid exclusion normally retains demand
+and the ordinary commitment diagnostics; it does not itself establish an error.
+
+## Dependency account
+
+The published account SHALL include every `CallableAggregateSlot` and
+`CallableAggregateValue` row, their referred `CallableCarrier`, flow/join and
+   selection rows, and all actual formation, environment, contract, lifetime,
+construction, write/read-frontier and constructor/tag participants. Include the
+typed relation identities, roles, ordinals and operand order/multiplicity;
+hashing only selected code or a deduplicated set of node IDs is insufficient.
+
+The producing recipe and owning fold establish and maintain this incidence.
+Publication copies it, and public integrity validates that the account covers
+the rows it claims. A changed, removed or duplicated row invalidates the
+published selection and every dependent proof before Alex witnesses it, even
+when the implementation, numeric result or observable output is unchanged.
+Scope invalidation to the recorded dependents through the existing incremental
+mechanism; no pipeline replay or separate premise snapshot is introduced.
 
 ## Formation and lifetime
 

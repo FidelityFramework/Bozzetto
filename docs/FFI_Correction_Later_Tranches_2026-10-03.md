@@ -71,10 +71,10 @@ at entry. None of them holds today.
   writing output unless explicit evidence narrows it (rulings R6). Explicit `Borrowed`, `CallerOwns` and `CalleeOwns`
   literals in other repositories stay as they are (`evidence:t0/T0-BRIEF.md`, "Fixed vocabulary").
 - **Step 1 and Step 1-B.** The spec prelude has landed (`evidence:t1/T1-PLAN.md` §2):
-  - ffi §3.6, records holding `FnPtr`;
+  - ffi §3.6, interior records and callable components, already moved into Phase B's spec-first foundation with Closure Representation §2.4 and DU §9.1;
   - ffi §3.7, code lifetime by loading contract;
   - the ffi §5.6 paragraph on external execution hypotheses;
-  - the corrected ffi §4.2 note on `Option<FnPtr>`;
+  - the corrected ffi §4.2 distinction between interior `Option<FnPtr>` and C-boundary absence conversion, already moved into Phase B;
   - the entry and invocation mapping with unit erasure, and compiler-owned contracts in ffi §3.4;
   - ffi §5.7, native tables, as refusal text only.
 
@@ -332,7 +332,8 @@ constraints and questions are those of `evidence:t1/T1-PLAN.md` §4.5:
 - no integer conversion, and no substituted nonnull or no-op entry, may realize absence;
 - the open choice is the interior carrier of a foreign-origin optional entry: a tag with a function value valid only
   under `Some`, or a dedicated row carrier the pathway realizes as one word (decision LT-5). A Clef-origin optional
-  entry can reuse the callable-component selector with an absence state.
+  entry uses the Phase B union-payload protocol: the union tag carries absence,
+  and the `Some` payload's selector covers only its callable alternatives.
 
 **Depends on.** Step 3 (the one-word carrier and its conversions) and Step 4-D.
 
@@ -340,8 +341,8 @@ constraints and questions are those of `evidence:t1/T1-PLAN.md` §4.5:
 
 | Repository | Work |
 |---|---|
-| clef-lang-spec | The 4-D ruling text in ffi §4.1 and §4.2, replacing Step 1's deferral note. |
-| clef | Remove the callback refusals that reject any parameter or result other than a scalar or handle (`src/Compiler/PSGSaturation/SemanticGraph/CallbackDeclarations.fs:122, 138` [C\*], raised as CCS8207 through `PlatformDeclaration.fs:146` [C\*]). Admit `Option<FnPtr>` at extern parameters and results, callback parameters and results, and `FnPtr.invoke` operands and results. Admit interior `Option<FnPtr>`, refused with `[REC-STORAGE]` in Step 1, through the callable-component protocol. Step 1 deferred it to this step as an interior limit separate from the boundary conversion (`evidence:t1/T1-PLAN.md` §2.7(c)). |
+| clef-lang-spec | The 4-D native conversion ruling in ffi §4.1 and §4.2, preserving the interior/native distinction landed with Phase B. |
+| clef | Remove the callback refusals that reject any parameter or result other than a scalar or handle (`src/Compiler/PSGSaturation/SemanticGraph/CallbackDeclarations.fs:122, 138` [C\*], raised as CCS8207 through `PlatformDeclaration.fs:146` [C\*]). Admit native `Option<FnPtr>` conversion at extern parameters and results, callback parameters and results, and `FnPtr.invoke` operands and results. Interior construction and matching use Phase B's common union-payload protocol; the owner-forwarded D6(b) review supersedes the research plan's interior deferral. |
 | Fidelity.PSG | Rows for the optional entry carrier chosen by 4-D. Schema change. |
 | Alex | Witness the optional entry from rows only. |
 | Composer | Realize the committed conversion, outgoing and incoming. The realization check extends to null comparisons and null address uses. Negative cases: an integer cast, and a substituted nonnull entry. |

@@ -425,3 +425,49 @@ graph-local indexing and scoped integration gates. The advice is grounded in
 the recorded repair and Baker Saturation Architecture §3; proposed aggregate
 tests remain proposals. No source, schema, expectation or owner ruling changes
 with these notes.
+
+### D6(b) spec-first prerequisites
+
+S: The owner-forwarded auditor review requires the interior callable-component
+spec text, integrity rules, diagnostic allocations, interior optional-entry
+distinction and complete dependency coverage before the schema batch. The
+normative prelude is committed and pushed on clef-lang-spec `main` at
+[`82f0077f614167e3523bc6380ee470e1180f5fb0`](https://forge.spkez.dev/FidelityFramework/clef-lang-spec/commit/82f0077f614167e3523bc6380ee470e1180f5fb0).
+It adopts FFI §3.6, Closure Representation §2.4 and requirement 14, and DU §9.1
+and requirement 12 from the Step 1 draft, extended to the approved common
+record/union protocol. Backend and NTU clauses now agree that code remains a
+portable function value and interior layout is a Clef layout. The rationale
+records the impact and compiler implementation sequence.
+
+S/R: `error-handling.md` allocates CCS8410–CCS8415 for code/data placement,
+selector/family, formation/environment pairing, slot contract identity,
+aggregate evidence and consumed ordinary-demand exclusion failures.
+CCS8100–CCS8102 retain residence/lifetime failures. Missing inactivity evidence
+normally retains demand; it is not itself an error or a reason to force an
+ordinary initializer. Standalone PSG integrity refusal identifies participants
+without manufacturing a source span.
+
+R: The design now enumerates I1–I6 with a positive and negative case for each,
+including changed dependency support with unchanged output and rejection of
+the earlier downstream receipt. Every callable aggregate row and its typed
+incidence must enter the published account. These are requirements for the
+forthcoming implementation and tests, not executed test results. The requirement
+map and later-tranche plan remove the obsolete deferral of interior
+`Option<FnPtr>` to Step 4.
+
+S: At the owner's terminology query, FFI §4 explicitly calls the separate work
+**C-boundary absence conversion**: Clef `None` corresponds to C `NULL`, with
+`Option` on the Clef side throughout. It introduces no null value, null literal
+or raw pointer comparison into Clef. Interior `Some`/`None` construction and
+matching use the common union protocol in this batch. The foreign single-word
+carrier and its conversion remain Step 4; native tables remain Step 6.
+
+E/A: `git diff --check` passed for the spec and design changes. A bounded peer
+source review confirmed the diagnostic anchors and found the remaining
+unconditional `NTUfnptr` pointer-width entry in NTU §2.3; that entry was corrected
+before committing. Retrieval schema capture was fresh, but the first request
+exceeded its source-character limit (HTTP 400) and the corrected natural-language
+request returned `no_seed_candidates` (HTTP 422). Neither supplied source
+evidence; the named local chapters and retained Step 1 drafts were read directly.
+No compiler source or PSG schema changed, no test expectations changed, and no
+compiler/baseline suite was rerun for this normative prelude.
