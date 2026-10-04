@@ -356,3 +356,63 @@ baseline. The Bozzetto documentation commit includes the owner's hold-lift
 instructions, this evidence record and the proposed callable-aggregate design.
 The existing separate Farscape edits remain with their owner. No compiler worker
 or shared daemon was replaced.
+
+### Exact pushed-head unfiltered gate, October 3, 21:10 EDT
+
+E: At the owner's direction, the next action after the recovery checkpoint was
+the unfiltered clef suite on exact pushed head
+`3795a179f7ac9c6eee2febc72c0344638ecc8259`, before further implementation.
+The working tree was clean throughout. Existing source and compiler/test DLL
+hashes matched `shared-guard-input-3-*` before execution; no rebuild was needed.
+The complete command was:
+
+```sh
+dotnet test tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj \
+  --no-build --no-restore --disable-build-servers -m:1 \
+  --logger 'trx;LogFileName=checkpoint-3795a17.trx' \
+  --results-directory /home/hhh/.cache/bozzetto/evidence/ffi-correction-2026-10-03/phase-b-regression/unfiltered-results
+```
+
+E: Bozzetto granted test-suite lease `757e2fc31efa42359ef791064c66f698`,
+expiring at 21:18:38 EDT. The gate ran **21:03:42–21:10:18 EDT**, bounded to
+840 seconds, and the driver released the lease on completion. It exited 1 with
+**2,416 executed, 2,335 passed, 81 failed, zero skipped**, with no aborted or
+timed-out cases. All eight newly added shared-cell/guard cases passed in this
+unfiltered run. Relative to the trusted preceding increment, there are **zero
+new failures, zero resolved failures and zero missing cases**. The same 81
+failures remain. This closes the final increment's missing unfiltered regression
+evidence; it does not close Phase B.
+
+E: `BatchTestInventory.fsx` compares the preceding retained TRX with this run;
+`CompareTrxOccurrences.fsx` additionally compares display-name outcome multisets
+and checks result counts against TRX totals. The four pre-existing duplicated
+display-name groups retain their full passing multiplicities. No previous suite
+or trusted baseline was rerun. The eight passing additions, under
+`Clef.Compiler.Service.Tests`, are:
+
+| Class | Test name and parameters |
+| --- | --- |
+| `SharedMutableRepresentationRangeCases` | `Shared cell reads include stores from a second sequence owner that never reads the cell` |
+| `SharedMutableRepresentationRangeCases` | `Shared cell range authority withdraws when a write only owner loses its checked storage identity(defect: "missing-capture")` |
+| `SharedMutableRepresentationRangeCases` | `Shared cell range authority withdraws when a write only owner loses its checked storage identity(defect: "wrong-capture-source")` |
+| `SharedMutableRepresentationRangeCases` | `Unsupported writable cell exposures withdraw shared read authority without changing the known stores(defect: "cell-address")` |
+| `SharedMutableRepresentationRangeCases` | `Unsupported writable cell exposures withdraw shared read authority without changing the known stores(defect: "unknown-lazy-store")` |
+| `ContinuationGuardRangeCases` | `Generated guarded reads derive finite counted and take bounds without cached ranges(prefix: "__for_counter", upper: 10)` |
+| `ContinuationGuardRangeCases` | `Generated guarded reads derive finite counted and take bounds without cached ranges(prefix: "__seq_remaining", upper: 2)` |
+| `ContinuationGuardRangeCases` | `Swapping a generated counted branch retracts guard authority despite unchanged cached bounds` |
+
+E: Source, runtime DLL, dependency and runtime-configuration hashes still match
+after execution. The broad artifact inventory also included
+`unused/05_psg2.json`, a generated final-PSG dump whose timestamp and content were
+rewritten by the suite; that output is not a runtime-input hash. Both the broad
+inventory and the explicit runtime-input inventory are retained. No source,
+test expectation, schema, compiler worker or daemon changed during this gate.
+
+E: Evidence under `phase-b-regression/`: `checkpoint-3795a17-{head,status-before,status-after,lease,command,start,end,exit,release,inputs-verified}.txt`,
+`checkpoint-3795a17.log`, `checkpoint-3795a17-{artifacts,runtime-inputs}.sha256`,
+`checkpoint-3795a17-{inventory,occurrences}.json`, and
+`unfiltered-results/checkpoint-3795a17.trx` (SHA-256
+`1e036b7ac9e0558cf52710d621b23cd52be041596d76c48869d553d6d8559bb2`).
+The owning clef checkpoint note is updated with this result. The D6(b) design
+remains available for the separate auditor's review; this gate introduced no
+new implementation breadth.
