@@ -416,3 +416,12 @@ E: Evidence under `phase-b-regression/`: `checkpoint-3795a17-{head,status-before
 The owning clef checkpoint note is updated with this result. The D6(b) design
 remains available for the separate auditor's review; this gate introduced no
 new implementation breadth.
+
+R: At the owner's request, the callable-aggregate design now includes
+[implementation guidance from the representation repair](FFI_Correction_Callable_Aggregates_Design_2026-10-03.md#implementation-guidance-from-the-representation-repair).
+It carries forward pass-owned support maintenance, complete writer/escape
+accounting, unchanged-result proof invalidation, paired callable snapshots,
+graph-local indexing and scoped integration gates. The advice is grounded in
+the recorded repair and Baker Saturation Architecture §3; proposed aggregate
+tests remain proposals. No source, schema, expectation or owner ruling changes
+with these notes.

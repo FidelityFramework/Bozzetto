@@ -64,3 +64,74 @@ This extends the already planned D6(b) demand contract once, alongside inactive 
 Preserve the original Composer union-payload test and `FunctionFields`, `FunctionSnapshots` and `CapturedRecords`. Add source cases for two environments sharing one implementation, copy-and-update and alias transport. Cover mutable read snapshots followed by reassignment, nested callable payloads and a proved inactive ordinary body whose value is retained.
 
 PSG negatives must reject crossed code/environment pairs and stale formation or tag evidence. Include missing residence premises and contract loss at a join. Alex fixtures assert the published selection and environment operands. Source-through-native cases distinguish captured values after storage and selection. Run the touched repositories' unfiltered suites and consumers under leases, preserving the no-raw-pointer and portable-dialect oracles. Compiler acceptance and the independent Bozzetto deployment track retain separate records.
+
+## Implementation guidance from the representation repair
+
+These are recommendations for the next tranche, not additional implemented
+capabilities. Their grounding is clef `3795a17` and the
+[recorded exact-head unfiltered gate](FFI_Correction_Phase0_Audit_2026-10-03.md#exact-pushed-head-unfiltered-gate-october-3-2110-edt):
+2,416 executed, 2,335 passed, the same 81 failures, all eight final additions
+passing and no missing cases. The zero-mismatch 16a probe establishes range
+correspondence; it establishes neither aggregate lifetime safety nor native ABI
+coverage.
+
+1. **Assign maintenance of each new relation to its rewriting pass.** Before
+   adding a schema row, name its producer recipe, owning fold, current-graph
+   reader, dependency account and retirement path. Aggregate construction,
+   projection and assignment must maintain the relations they change. Follow
+   [Baker Saturation Architecture §3](../../clef/docs/fidelity/Baker_Saturation_Architecture.md#3-fan-out-and-fold-in)
+   and the existing
+   [representation fold](../../clef/src/Compiler/Nanopass/RepresentationRanges.fs):
+   preserve or recompute disturbed support at that boundary and use
+   `ObligationElaboration.retireAnchors` when retiring its anchors. Stable
+   obligation identity does not authorize reuse after its premises change.
+   Keep renewal reconstructible from the graph; no pipeline snapshot is needed.
+
+2. **Preserve formation, environment instance and shared-cell identity separately.**
+   The shared-cell repair needed stores from owners that never read the cell.
+   For callable aggregates, test two formations of the same implementation with
+   different environments, then copies that retain the same mutable capture.
+   Require a complete writer/use account before claiming closed mutable storage.
+   Missing writers, wrong capture sources or unaccounted writable escapes must
+   withdraw that claim. Reuse the existing checked capture/borrow ingredients
+   where their contracts match; scalar `SharedCell` admission does not by itself
+   admit a callable or native entry.
+
+3. **Test support changes with unchanged output.** Replace an environment,
+   formation, tag or residence participant while retaining identical values and
+   observable output. Assert a changed published dependency account and explicit
+   rejection of the previous downstream proof. Withdraw the replacement premise
+   and require a located refusal. Preserve the positive original fixtures. This
+   extends the representation repair's proof-withdrawal tests to the new rows;
+   a successful result alone cannot detect stale evidence.
+
+4. **Distinguish a retained snapshot from the current contents of a field.** Read
+   a callable field, reassign it, then invoke both the retained value and a new
+   read. Each must select its own paired code/environment instance. Reassignment
+   does not retroactively change the earlier snapshot. Separately corrupt the
+   actual selector/tag correspondence while retaining cached annotations and
+   require proof withdrawal. The guard repair had to distinguish operand
+   observation, comparison availability and branch truth; a tag or branch label
+   alone is likewise insufficient authority for an aggregate selection. R4's
+   inactivity proof needs the same treatment when an invocation or opaque use is
+   added to the current graph.
+
+5. **Make graph-local indexing preserve all evidence.** The first final 16a probe
+   was stopped after 231 seconds without a result; after indexing provenance and
+   checked branch evidence it completed in 102 seconds. These are recorded runs,
+   not a controlled benchmark. Build complete relation indexes once per immutable
+   graph reading; retain duplicates so validation can reject them. A cache keyed
+   only by implementation, field text or numeric result cannot justify reuse
+   across revisions. Feed actual participant changes into the existing dependency
+   mechanism instead of replaying the compiler pipeline.
+
+6. **Integrate one common protocol through its consumers before widening it.**
+   Start with one original failing aggregate fixture and carry its formation,
+   selection, residence and proof dependencies through Baker, publication and
+   passive Alex consumption. Extend that same protocol to records and union
+   payloads. Keep ordinary flat closures and native entries distinct throughout;
+   an unresolved native contract must stay explicit. Use focused checks while
+   assembling this batch, then unfiltered touched-repository and consumer gates
+   at the substantial checkpoint. Compare against the retained results; the
+   remaining 81 failures have several owners and are not evidence that D6(b)
+   alone will resolve them.
