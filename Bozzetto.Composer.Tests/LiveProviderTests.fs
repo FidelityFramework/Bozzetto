@@ -24,6 +24,12 @@ let private parse (value: string) =
 let private success response =
   (field "success" response).GetBoolean() |> Expect.isTrue (response.GetRawText())
   field "result" response
+let private statusObservation response =
+  // The supervisor fences reads overtaken by session activity or a newer
+  // observation. Only that refusal asks this bounded wait for a fresh read.
+  if not ((field "success" response).GetBoolean())
+     && text "code" (field "error" response) = "superseded" then None
+  else Some(success response)
 let private authority response = field "authority" response
 let private arguments identity = [ "host", box (text "host" identity); "session", box (text "session" identity); "epoch", box (text "epoch" identity) ]
 let private required name =
@@ -131,6 +137,21 @@ let private nextSse (reader: StreamReader) = task {
 [<Tests>]
 let tests =
   testSequenced <| testList "Live Composer shared interfaces" [
+    testCase "status observation preserves a successful snapshot" (fun () ->
+      let response = parse """{"success":true,"result":{"busy":true,"current":null}}"""
+      statusObservation response |> Option.map (fun value -> value.GetRawText())
+      |> Expect.equal "the wait inspects the exact successful snapshot" (Some((field "result" response).GetRawText())))
+    testCase "status observation requires a fresh read after superseded" (fun () ->
+      let response = parse """{"success":false,"result":{"busy":true},"error":{"code":"superseded","message":"Session activity or a newer observation superseded this read."}}"""
+      statusObservation response |> Expect.isNone "a refused snapshot cannot satisfy the wait")
+    testCase "status observation keeps unrelated refusals fatal" (fun () ->
+      for code in [ "wrong_authority"; "closed"; "canceled"; "provider_unavailable" ] do
+        let response = parse (sprintf """{"success":false,"result":{},"error":{"code":"%s","message":"This refusal requires attention."}}""" code)
+        let failure =
+          try statusObservation response |> ignore; None
+          with :? AssertException as error -> Some error.Message
+        failure |> Option.exists (fun message -> message.Contains(code, StringComparison.Ordinal))
+        |> Expect.isTrue ("the exact " + code + " refusal remains an assertion failure"))
     testTask "MCP agents and human HTTP share Clef authority" {
       return! task {
         let cache = Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache", "bozzetto", "live-provider-tests", Guid.NewGuid().ToString("N"))
@@ -317,7 +338,7 @@ let tests =
           let pending = mcp.SendRequestAsync(buildRequest, buildTransport.Token)
           do! waitUntil 30. "real MCP build enters supervised work before cancellation" (fun () -> task {
             let! status = providerHttp http evidence "status" first []
-            return (status |> success |> field "busy").GetBoolean()
+            return statusObservation status |> Option.exists (fun value -> (field "busy" value).GetBoolean())
           })
           let canceled = JsonRpcNotification(
             Method = NotificationMethods.CancelledNotification,
@@ -327,8 +348,8 @@ let tests =
           do! mcp.SendMessageAsync(canceled, notificationDeadline.Token)
           do! waitUntil 30. "MCP cancellation notification withdraws shared artifact authority" (fun () -> task {
             let! status = providerHttp http evidence "status" first []
-            let value = success status
-            return not ((field "busy" value).GetBoolean()) && (field "current" value).ValueKind = JsonValueKind.Null
+            return statusObservation status |> Option.exists (fun value ->
+              not ((field "busy" value).GetBoolean()) && (field "current" value).ValueKind = JsonValueKind.Null)
           })
           // Close the abandoned HTTP response only AFTER server-side authority
           // is withdrawn, so disconnect alone cannot make this assertion pass.
