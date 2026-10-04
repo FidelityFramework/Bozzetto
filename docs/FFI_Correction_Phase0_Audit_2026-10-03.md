@@ -471,3 +471,168 @@ request returned `no_seed_candidates` (HTTP 422). Neither supplied source
 evidence; the named local chapters and retained Step 1 drafts were read directly.
 No compiler source or PSG schema changed, no test expectations changed, and no
 compiler/baseline suite was rerun for this normative prelude.
+
+### D6(b) contract integration, first gate
+
+E: Fidelity.PSG's unfiltered suite passed **335/335**, zero skipped, on the
+schema-17 working tree based on `f153c751ff35ef0b54f6cc042fb38c5756f95740`.
+The trusted preceding result is 308/308. All 27 additional cases passed.
+The run occupied 22:19:48–22:19:56 EDT on October 3 under test-suite lease
+`020b022e66bc42f4a31bdc3eb5b25e1b`, released at completion. No baseline was rerun.
+
+The exact command, timestamps and release are in `phase-b-regression/d6-psg-suite-*`
+under the evidence root. The unfiltered TRX is
+`phase-b-regression/unfiltered-results/d6-psg.trx`, SHA-256
+`2b19de5993c8da86c37f58f21da770c667f34b87f5fe29a9865ba13678acbc79`.
+`d6-psg-inputs.sha256` inventories the contract, generated codecs, test and tool
+sources. Its entries were verified unchanged after the run. This is working-tree
+evidence pending the coordinated repository checkpoint.
+
+E/R: The model bootstrap and complete binary, JSON and integrity generators ran
+under build leases. The generated schema fingerprint is
+`5CB8CC3E341BC4252B41A4659944E97AF04516B2835C4B64861CD71589A894B0`.
+The independent binary header oracle changed for schema 17 under the repository's
+contract-version rule and Closure Representation §2.4. It still checks exact
+bytes. Initial compilation exposed an effect-guard false positive on a record
+field, missing type annotations and fixture syntax errors. Those were corrected
+without weakening the effect guard, compiler flags or test expectations.
+
+E: The new tests exercise I1–I6 through structural PSG readings, including changed
+claim support with unchanged numeric output and rejection of the earlier account.
+They distinguish actual environment instances sharing code, physical convention
+differences despite equal source signatures, and absent callable slots with no
+invented contract. These results do not establish source-to-native execution or
+Composer receipt rejection. Clef and Alex integration is still undergoing its
+first compilation and consumer validation.
+
+R: Ordinary contracts now preserve omitted parameter ordinals and the actual
+parameter/result representations. Native contracts remain pending. An all-absent
+union slot can retain a pending receiving contract, while every present callable
+requires an established identity. Inactive callable slots retain the actual tag
+and any scalar payload of the other case, including `Result.Error false`.
+
+R: The draft source fold settles component data placement after scalar selection
+and before memory/spatial/boundary consumers. Its numeric owner checks the current
+numeric account before updating aggregate representations, retaining scalar and
+finite-range evidence unchanged. It performs no range pass or pipeline replay.
+This placement follows the owning-fold requirement in
+[Baker Saturation Architecture §3](../../clef/docs/fidelity/Baker_Saturation_Architecture.md#3-fan-out-and-fold-in).
+The implementation remains unaccepted until the compiler and consumer gates run.
+
+### D6(b) declaration and alias integration
+
+R: Nominal declarations remain outside executable witness scopes. Canonical
+callable slots now carry immutable declaration facts with exact type identities
+and field or case definitions. The source account reader reconstructs those
+facts from the current instantiated path. Public integrity checks their ordered
+slot incidence and rejects conflicting facts for the same declaration identity
+across slots. Account snapshots include the canonical slots. This corrects the
+earlier attempt to require an executable node for a declaration participant.
+
+R: The declaration definition uses a dedicated immutable DU on both sides of
+publication. Reusing CCS's `TypeDefKind` would have retained mutable type-checker
+cells. The structural mapper copies the settled type identities. Metadata facts
+authorize only their declaration role and never authorize executable values.
+
+R: Review found that occurrence-local formation identities would reject valid
+ordinary callable aliases in Alex. The producer now uses the existing checked
+value-identity reader in `CallableIngress`. Transparent aliases preserve the
+formation and its environment. Distinct factory-call and read frontiers retain
+distinct identities. The existing callable-emission tests gained assertions for
+both cases. Alex's paired identity checks remain in place.
+
+R: Program storage inventory now follows callable component placement, before
+memory settlement. Its owning recipe therefore reads the final aggregate extent.
+Numeric account renewal checks scalar and range support without rerunning range
+analysis. Failed or incomplete aggregate-account renewal invalidates witness
+state and returns a residual rather than retaining a publication receipt.
+
+E: The updated PSG model and all three generators completed under build lease
+`2abe0db0477f4ea9b01c253153c73ed1`. The declaration extension changes the pending
+schema-17 fingerprint to
+`E7DD6A92B7F79FF75CD39D384C16CCEB3E2B931878F94441649581DA797ADA3C`.
+The CCS structural mapper generator completed under build lease
+`19885ebf5f3544e599a7af751d42de31`, emitting 233 structural mappings.
+Both leases were released. The earlier 335/335 gate predates this extension.
+
+R: The source recipe currently implements direct singleton closed callable
+components and absent union slots. End-to-end source admission remains pending.
+Captured aggregate environments, multiple
+formations, nested paths and mutable snapshots remain explicit residuals.
+Ordinary inactivity and unused-binding demand still need their planned source
+proofs. Native ABI settlement and C-boundary absence conversion remain later
+tranches. Synthetic PSG and Alex fixtures describe more cases than the current
+source producer admits. This checkpoint must retain that distinction.
+
+E: The first integrated clef gate executed 2,419 cases: 1,760 passed and 659
+failed, with no skipped cases. Against the trusted `3795a17` result, the
+display-name occurrence comparison found 578 additional failures, three added
+cases, no resolved failures and no missing occurrences. Test-suite lease
+`0d39e862d9274a39ada5402081cf0f4c` covered the run and was released.
+The command and release records use prefix `d6-clef-checkpoint-suite`.
+Results are in `unfiltered-results/d6-clef-checkpoint.trx`, with the comparison
+in `d6-clef-checkpoint-comparison.json`. This is a failed integration gate.
+
+R/E: Repeated failures report `Common witness input WitnessEmission: Region has
+source dependency … outside its admitted interface`. The common witness encoder
+enumerated only graph-node identities, while the new source-owned contract and
+slot rows have separate relation identities. Their complete rows need explicit
+identity admission in that encoder. Scalar regions also need the exact contract
+interface in their fingerprints. Unknown identities must continue to fail, and
+full published proof accounts must remain current. The repair and its subsequent
+checks are recorded separately from this failing run.
+
+E/R: After typed relation-identity admission, the focused integration check ran
+68 cases: 54 passed and 14 failed. The three added source cases fail with
+CCS8414, `The actual callable input has no settled carrier formation`. The
+remaining failures are in proof-mutation fixtures whose manual settlement
+sequence replaced numeric proof identities but retained the preceding callable
+contract participants. Their setup now invokes the callable owner after numeric
+settlement, matching `NativeService`. Original assertions are unchanged.
+The run used lease `4541f584fcb4499584c166d2ab692df6`, released at completion.
+Its TRX is `inner-results/d6-clef-smoke.trx`. This focused result establishes
+neither unfiltered acceptance nor source aggregate publication.
+
+E: The final contract/consumer gate passed **343/343 Fidelity.PSG** and
+**287/287 Alex**, unfiltered with no skipped cases. Lease
+`82e751b630b0430dabc3ab73522384a8` covered both runs and was released.
+The exact commands are in `checkpoint-contract-tests.sh`, with the outer gate
+record `d6-contract-final-suites`. TRX files are
+`unfiltered-results/d6-psg-final.trx` and `unfiltered-results/d6-alex-final.trx`.
+Source manifests `d6-psg-final-source.sha256` and `d6-alex-final-source.sha256`
+were verified unchanged after execution. Counts include all 35 added PSG cases
+and all nine added Alex cases against the trusted 308 and 278 results.
+
+E: An intermediate PSG run was 342/343. The new shared-declaration fixture
+included two canonical slots but accounted for only the first slot's
+participants. The I6 validator rejected it. The fixture now includes both
+ordered participant lists, with the validator and substantive assertions intact.
+
+### D6(b) bedtime handoff: final executed result
+
+E: The already-running final unfiltered Clef gate completed with **2,419 total,
+2,323 passed, 96 failed, zero skipped**. It was not restarted after the owner
+requested no more big gates. `unfiltered-results/d6-clef-final.trx` and
+`d6-clef-final-suite.log` retain the result. The retained-TRX comparison
+`d6-clef-final-comparison.json` reports zero missing occurrences, three added
+cases, 15 additional failures (12 existing-case regressions and three failing
+added cases), and zero failure-to-pass transitions against trusted `3795a17`.
+The comparison preserves display-name outcome multiplicities; it does not
+establish identity within duplicate display-name groups.
+
+E: The test finished within lease `38404b93fdea433e849979ed8f663e8c`.
+The interrupted tool parent lost the shell exit record and automatic cleanup;
+the child completed, produced its final TRX, and no owned test process remained.
+The lease was explicitly released afterward, with `released` retained in
+`d6-clef-final-suite-release.txt`. The final source manifest checked unchanged;
+see `d6-clef-final-source-verified.txt`. No new build/test gate or daemon switch
+was started for the handoff.
+
+E/R: The current aggregate implementation remains uncommitted on `main` and is
+not accepted as a completed D6(b) batch. PSG 343/343 and Alex 287/287 establish
+their structural/passive gates only. Composer's eight fixture field additions
+follow its failed test build and remain unbuilt/untested. The
+[auditor handoff and return instructions](FFI_Correction_Checkpoint_2026-10-03.md)
+record exact repository heads, evidence paths, the remaining regressions, and
+the requested return to this implementer. No test expectation was changed to
+obtain these results.

@@ -81,11 +81,16 @@ the only file of that name in the checkouts above. `ffi Lnn` is `clef-lang-spec/
 Owners: Fs Farscape, BW BAREWire, Bk CCS and Baker (clef), PSG Fidelity.PSG, Ax Alex, Cp Composer and its target
 pathway, Pl Fidelity.Platform, Cq Calque, Bz Bozzetto, In Fidelity.FSharp.Incremental, Sp the spec owner.
 
+Compiler scope and segment rebuilding is **differential recompilation**, under
+the [owner's terminology ruling](FFI_Correction_Rulings_2026-10-03.md#compiler-terminology-owner-ruling-october-3-2026).
+This term distinguishes Composer's compiler work from `Incremental<'T>` and
+`Observable`; existing project and API names remain unchanged.
+
 ### Steps
 
 | Name | Content | Document |
 |---|---|---|
-| Phase B | Clean baseline, including the callable-aggregate foundation (owner decision D6(b)) and the Fidelity.PSG schema change it carries | `FFI_Correction_Baseline_2026-10-03.md` |
+| Phase B | Clean baseline, including the callable-aggregate foundation (owner decision D6(b)) and the Fidelity.PSG schema change it carries | [`FFI_Correction_Phase0_Audit_2026-10-03.md`](FFI_Correction_Phase0_Audit_2026-10-03.md) (plan of record for Phase B) |
 | Step 0 (T0) | Codes, located refusals, the rulings written into the spec, `Transfer.Undeclared`, callback-slot refusal | `FFI_Correction_Step0_Plan_2026-10-03.md` |
 | Step 1: T1-S, T1-A, T1-B | Spec prelude, native ABI settlement on the foundation, `FnPtr.ofExtern` | `FFI_Correction_Step1_Plan_2026-10-03.md` |
 | Bozzetto track (T1-D) | Worker replacement without a daemon restart, independent of the compiler phases | Same Step 1 document |

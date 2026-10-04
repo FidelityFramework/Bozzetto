@@ -2,6 +2,14 @@
 
 October 3, 2026. Implement [D6(b)](FFI_Correction_Rulings_2026-10-03.md#owner-decisions-on-the-step-1-plan-october-3-2026) through one aggregate protocol for `FnPtr` record fields, ordinary function fields and callable union payloads. Retain the affected original positive tests. Native ABI settlement in Step 1 will extend this foundation.
 
+Composer is a **differential compiler**. In this design, **differential
+recompilation** means rebuilding affected compiler scopes and segments from
+changed dependency accounts while retaining unaffected, still-valid results.
+This follows the [owner's terminology ruling](FFI_Correction_Rulings_2026-10-03.md#compiler-terminology-owner-ruling-october-3-2026)
+and distinguishes compiler rebuilding from the Clef `Incremental<'T>` and
+`Observable` language surfaces. It does not rename their APIs or the shared
+`Fidelity.FSharp.Incremental` foundation.
+
 ## Required order before the schema batch
 
 The owner-forwarded auditor review approves the direction, placement and R4
@@ -82,10 +90,23 @@ Publication copies it, and public integrity validates that the account covers
 the rows it claims. A changed, removed or duplicated row invalidates the
 published selection and every dependent proof before Alex witnesses it, even
 when the implementation, numeric result or observable output is unchanged.
-Scope invalidation to the recorded dependents through the existing incremental
-mechanism; no pipeline replay or separate premise snapshot is introduced.
+Scope differential recompilation to the recorded dependents through the existing
+dependency mechanism; no pipeline replay or separate premise snapshot is introduced.
 
 ## Formation and lifetime
+
+### Declaration evidence
+
+Each nominal callable slot carries typed declaration facts: the declaration
+identity, its declared type and its record or union definition. The slot's
+aggregate type remains the instantiated type. Baker reads these facts from the
+current declarations and checks them again when constructing the dependency
+account. A definition change at the same node identity invalidates that account.
+
+PSG validates each `AggregateDeclaration` participant against the facts in its
+own canonical slot. The account includes those facts through its slot rows.
+Declaration members and private graph metadata stay with CCS. The existing
+exclusion of `TypeDef` from executable witness scopes remains in force.
 
 An ordinary component retains its implementation together with the exact environment instance formed for it. Two closures with one implementation and different captured values retain distinct carrier occurrences. A native component retains its entry contract and code-lifetime premises. Environment absence is explicit for a closed component. An entry requiring an unresolved contract remains pending until its commitment boundary.
 

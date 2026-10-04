@@ -167,6 +167,19 @@ prose; small-model output. Spend verification where impact times uncertainty is 
 claim does not become a fact by repetition. Owner rulings carry the highest authority on intent and
 remain revisable by evidence.
 
+## Compiler terminology (owner ruling, October 3, 2026)
+
+The owner names Composer a **differential compiler** and its scoped or segmented
+rebuilding **differential recompilation**. Use these terms in active design and
+requirement prose to distinguish compiler work from the Clef `Incremental<'T>`
+and `Observable` language surfaces. Changed dependency accounts identify the
+affected compiler work; retained results still require current proof and
+publication authority.
+
+This is a terminology ruling. It does not rename existing APIs, projects such
+as `Fidelity.FSharp.Incremental`, or historical records, and it does not change
+the responsibilities of Baker, PSG, Alex or the target pathway.
+
 ## Standing repository rules that bear on this work
 
 - Work lands on `main` in every repository; no side branches or worktrees. The owner reviews
