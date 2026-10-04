@@ -141,6 +141,7 @@ environment-carrying components.
 | N17 | Alias carriers with a non-closure formation would be refused once environments are admitted | R | PSG `:228-234`; clef `CallableCarriers.fs:248-254` | Ruling before environment-carrying components |
 
 **Terminology (S/R).**
+
 - The handoff separates a "foreign resource contract" from the "callable
   receiving contract". FFI §3.6 item 2 (`ffi-boundary.md:250-255`) places
   code-lifetime premises and resource obligations inside the native-entry
@@ -153,6 +154,7 @@ environment-carrying components.
 **Executed checks requested but not run** (exact mutation text is in the three
 reviewer reports, retained in `R/` as `reviewer-mutations.md`). Run each in the
 existing mutation harness as an exit:
+
 - Alex X1 (remove Assign binding; predicted survives), X2 (environment offset),
   X4 (record oracle);
 - clef E4 (logical/physical branch resolution), E5 (native exclusion),
@@ -182,6 +184,7 @@ but ten of them now have their named prerequisite in place.**
 | Library export input | 1 | Independent: R10 | R/S |
 
 **Corrections to the earlier triage.**
+
 - Ranges are already joined over indirect invocations through
   `CallableOrigins.Calls` (`RangeAnalysis.fs:1382-1406`). An auditor probe with
   a stored, invoked `int -> int` compiles clean (E). The failing cases have zero
@@ -192,6 +195,7 @@ but ten of them now have their named prerequisite in place.**
 
 **Guidance for R4 drawn from this batch.** The proven-inactive relation must
 meet each of these:
+
 - Built from a complete use census read from the same `CallableOrigins`
   aggregate reading that Baker's aggregate recipe consumes, not a second
   reachability algorithm.
@@ -202,13 +206,16 @@ meet each of these:
 - Stable across numeric re-minting.
 - Leaves receiving contracts and residence unchanged.
 
-**Owner decision needed before R4 lands.**
-- After R4, proven-inactive joins publish `Empty`.
+**Already settled by the approved R4 design (correction to an earlier draft of
+this return, which asked for an owner decision).**
+
+- The [callable aggregate design](FFI_Correction_Callable_Aggregates_Design_2026-10-03.md#r4-demand-and-commitment)
+  publishes `Empty` "only for the proved inactive parameter join". That proof
+  requires a complete, current use census.
 - `ClosureValueTests.An unobserved callback interior does not acquire a register
   width` asserts `Unbounded`, and the five "opaque input" oracles assert open
-  ranges.
-- Width inference §6 forbids substituting distinct states. Either those oracles
-  change with a cited clause, or R4 leaves callable-typed formals unknown.
+  ranges. The implementer will check these six fixtures against that rule and
+  cite the governing clause for any expectation change.
 
 **Masking.** CCS8011 is reported once per enclosing binding, and aggregate
 residuals surface later. Fixing one error may expose the next, so per-group
@@ -226,5 +233,5 @@ acceptance should be read from each test's full diagnostic list.
    spec.
 6. Refresh the FFI requirement map. It predates Phase B, and this batch moves
    several `FnPtr` and callback-environment rows.
-7. Then R4, starting from the ten unblocked baseline failures, after the
-   owner's oracle decision.
+7. Then R4, starting from the ten unblocked baseline failures, with the six
+   oracle checks above.
