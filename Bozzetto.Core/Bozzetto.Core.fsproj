@@ -338,8 +338,6 @@
         <PackageReference Include="TreeSitter.DotNet" />
 
         <PackageReference Include="FuzzySharp" />
-        <PackageReference Include="Ionide.ProjInfo" />
-        <PackageReference Include="Ionide.ProjInfo.FCS" />
         <PackageReference Include="System.Configuration.ConfigurationManager" />
         <PackageReference Include="Fantomas.Core" />
         <PackageReference Include="FSharp.SystemTextJson" />

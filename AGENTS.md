@@ -165,17 +165,18 @@ and trust ledgers that validation records cite before deleting artifacts.
 
 ## Finding code
 
-- **Sibling repositories** (clef, Composer, Alex, Fidelity.PSG,
-  Fidelity.FSharp.Incremental, clef-lang-spec and others) are indexed by the
-  retrieval service. Use it first.
+- **Repositories listed by the fresh retrieval schema** use retrieval first.
+  Check `tracked_sources` for coverage, including Bozzetto when its enrollment
+  is active; do not infer coverage from an older repository list.
   - Start with `schema` and require a fresh snapshot.
   - Then `find`, `pgq` and `sources`, each pinned to that snapshot.
   - Cite repo, revision, path and the returned lines.
   - The index covers pushed heads only, so push before asking about new work.
   - Helpers and request shapes:
     `~/.cache/bozzetto/evidence/ffi-correction-2026-10-03/tools/README.md`.
-- **Bozzetto, BAREWire, Calque and Fidelity.Data** are outside the index. Read
-  them directly, with bounded searches.
+- **Repositories absent from the fresh schema** may be read directly, with
+  bounded searches. Record that outside-index exception for the current
+  snapshot.
 - **Direct reads elsewhere** are for uncommitted diffs, a stale index, or
   confirming a line retrieval already located. Do not grep a repository
   wholesale.
@@ -268,12 +269,13 @@ Composer is a **differential compiler**: it recompiles what a change affects.
 | `bozzetto-vscode/` | VS Code extension (Fable) |
 | `docs/` | Design records, checkpoints and the documentation site |
 
-**Deprecated, retained as legacy source:** the SageTUI client and legacy TUI,
-the `Bozzetto.Gui` Raylib frontend, and the Visual Studio extension
-(`bozzetto-vs/`). Do not treat them as product surfaces, document them as
-current, or route new work into them. Keep the Raylib application and game
-demos; they show support for game projects and do not depend on the deprecated
-GUI.
+The disconnected `Bozzetto.Gui` Raylib frontend, Visual Studio extension
+(`bozzetto-vs/`) and SageTUI proof of concept (`samples/sagetui-poc/`) have been
+removed. Do not restore these retired clients. Deprecated terminal rendering
+support remains compiled into `Bozzetto/`; prune it at its owning dependency
+boundary and do not treat it as a current product surface. Keep the Raylib
+application and game demos; they show support for game projects and do not
+depend on the removed GUI.
 
 Other top-level folders are supporting or retained code. Read their project
 file before treating one as a product surface.

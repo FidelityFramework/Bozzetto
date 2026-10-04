@@ -5,43 +5,16 @@ open System.IO
 open Expecto
 open Expecto.Flip
 open Bozzetto.ProjectLoading
-open Ionide.ProjInfo.Types
 
-/// Helper to create a minimal ProjectOptions with only TargetPath set.
-let mkProjectOptions (targetPath: string) : ProjectOptions =
-  { ProjectId = None
-    ProjectFileName = "Test.fsproj"
+/// Helper to create a minimal ProjectMetadata with only TargetPath set.
+let mkProjectOptions (targetPath: string) : ProjectMetadata =
+  { ProjectFileName = "Test.fsproj"
     TargetFramework = "net10.0"
-    SourceFiles = []
     OtherOptions = []
     ReferencedProjects = []
     PackageReferences = []
-    LoadTime = DateTime.UtcNow
     TargetPath = targetPath
-    TargetRefPath = None
-    ProjectOutputType = ProjectOutputType.Library
-    ProjectSdkInfo =
-      { IsTestProject = false
-        Configuration = "Debug"
-        IsPackable = false
-        TargetFramework = "net10.0"
-        TargetFrameworkIdentifier = ".NETCoreApp"
-        TargetFrameworkVersion = "v10.0"
-        MSBuildAllProjects = []
-        MSBuildToolsVersion = ""
-        ProjectAssetsFile = ""
-        RestoreSuccess = true
-        Configurations = []
-        TargetFrameworks = []
-        RunArguments = None
-        RunCommand = None
-        IsPublishable = None }
-    Items = []
-    Properties = []
-    CustomProperties = []
-    AllProperties = Map.empty
-    AllItems = Map.empty
-    Analyzers = [] }
+    AllProperties = Map.empty }
 
 /// Creates a unique temp directory for test isolation.
 let createTestDir () =

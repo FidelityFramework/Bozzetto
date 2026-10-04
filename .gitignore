@@ -35,19 +35,10 @@ BenchmarkDotNet.Artifacts/
 # explicit `bozzetto-demos publish` step (Part II). artifacts/ is throwaway
 # local build output, same as bin/obj/.
 /artifacts/
-viz-output/*
-!viz-output/code-city/
-viz-output/code-city/*
-!viz-output/code-city/Program.fs
-!viz-output/code-city/CodeCity.fsproj
-viz-output/code-city/bin/
-viz-output/code-city/obj/
-!viz-output/code-city-tests/
-viz-output/code-city-tests/*
-!viz-output/code-city-tests/CodeCity.Tests.fsproj
-!viz-output/code-city-tests/DomainTests.fs
-viz-output/code-city-tests/bin/
-viz-output/code-city-tests/obj/
+# Experiments and agent scratch belong outside the checkout.
+/viz-output/
+/.roastscratch/
+/$COMMANDCODE_SCRATCHPAD/
 
 test-output.txt
 .bozzetto/

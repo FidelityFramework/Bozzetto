@@ -180,7 +180,7 @@ let hasAspireReferences (projects: ProjectLoading.Solution) =
     projects.Projects
     |> List.exists (fun proj -> 
       proj.PackageReferences
-      |> Seq.exists (fun pkgRef -> pkgRef.Name.Contains("Aspire.Hosting", StringComparison.OrdinalIgnoreCase)))
+      |> Seq.exists (fun (name, _path) -> name.Contains("Aspire.Hosting", StringComparison.OrdinalIgnoreCase)))
   
   hasInCommandLineRefs || hasInProjectRefs
 

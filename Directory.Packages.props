@@ -35,8 +35,6 @@
     <PackageVersion Include="FSharp.SystemTextJson" Version="1.4.36" />
     <PackageVersion Include="FsToolkit.ErrorHandling" Version="5.2.0" />
     <PackageVersion Include="FuzzySharp" Version="2.0.2" />
-    <PackageVersion Include="Ionide.ProjInfo" Version="0.74.1" />
-    <PackageVersion Include="Ionide.ProjInfo.FCS" Version="0.74.1" />
     <PackageVersion Include="Microsoft.Bcl.Memory" Version="10.0.5" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.1" />
@@ -81,7 +79,6 @@
          Bozzetto.Core.fsproj). -->
     <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
     <PackageVersion Include="Raylib-cs" Version="7.0.2" />
-    <PackageVersion Include="SageTUI" Version="0.9.4" />
     <PackageVersion Include="Fable.Core" Version="4.5.0" />
     <PackageVersion Include="Fable.Promise" Version="3.2.0" />
     <PackageVersion Include="Fable.Node" Version="1.2.0" />
@@ -89,12 +86,5 @@
     <!-- Paired with the compiler-service API above. FSharp.Core supplies
          netstandard assets; its package major is not a CLR target. -->
     <PackageVersion Include="FSharp.Core" Version="11.0.101-preview7.26359.118" />
-    <PackageVersion Include="Microsoft.VisualStudio.Extensibility.Sdk" Version="17.14.40608" />
-    <PackageVersion Include="Microsoft.VisualStudio.Extensibility.Build" Version="17.14.40608" />
-    <!-- VS Extension Tests -->
-    <PackageVersion Include="xunit" Version="2.4.2" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="2.4.5" />
-    <PackageVersion Include="FsUnit.xUnit" Version="5.1.0" />
-    <PackageVersion Include="FsCheck.Xunit" Version="3.3.2" />
   </ItemGroup>
 </Project>

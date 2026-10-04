@@ -11,7 +11,6 @@ open Bozzetto.WorkflowTypes
 open Bozzetto.Server.DaemonMode
 open Bozzetto.WorkerProtocol
 open Bozzetto.Tests.SharedGenerators
-open Ionide.ProjInfo.Types
 
 [<Tests>]
 let tests =
@@ -153,7 +152,7 @@ let tests =
     ]
 
     testList "resolveSiblingConfigOutput" [
-      // Ionide evaluates projects with MSBuild's default Configuration (Debug),
+      // historically, the loader evaluated projects with MSBuild's default Configuration (Debug),
       // so a Release-only build leaves TargetPath pointing at a missing
       // bin/Debug DLL and warmup faults with "Missing DLL". The resolver must
       // fall back to the sibling config output that actually exists.
@@ -210,7 +209,7 @@ let tests =
       }
     ]
 
-    // F6 regression: Ionide reports a Debug TargetPath, but if a STALE Debug
+    // F6 regression: historically, the loader reported a Debug TargetPath, but if a STALE Debug
     // output exists while the fresh build is Release, existence-only resolution
     // loads the stale assembly. chooseFreshestConfigOutputWith must pick the
     // newest across configs. Pure — existence + write time injected.
@@ -228,7 +227,7 @@ let tests =
 
       test "reported Release is stale, Debug is newer -> Debug" {
         chooseFreshestConfigOutputWith both (mt rel dbg) rel
-        |> Expect.equal "the newest build wins regardless of which config Ionide named" (Some dbg)
+        |> Expect.equal "the newest build wins regardless of which config the retired loader named" (Some dbg)
       }
 
       test "only the reported config exists -> that config" {
@@ -247,67 +246,6 @@ let tests =
       }
     ]
 
-    // Symptom-3 (the third GitHub-issue-adjacent bug): a project whose ambient/pinned SDK is newer than
-    // Bozzetto's own runtime never reached Ready — Init.init's process-wide AssemblyLoadContext.Resolving
-    // handler for the wrong SDK is installed and never unhooked on failure. shouldSkipInProcessLoad is the
-    // pure decision that keeps loadSolution from ever calling Init.init for that case.
-    testList "sdkMajorOf" [
-      test "reads the leading major from a stable version" {
-        sdkMajorOf "10.0.401" |> Expect.equal "major 10" (Some 10)
-      }
-
-      test "reads the leading major from a prerelease version" {
-        sdkMajorOf "9.0.100-rc.1" |> Expect.equal "prerelease major 9" (Some 9)
-      }
-
-      test "None for unparseable input" {
-        sdkMajorOf "" |> Expect.isNone "empty string has no major"
-        sdkMajorOf "not-a-version" |> Expect.isNone "non-numeric leading segment"
-      }
-    ]
-
-    testList "shouldSkipInProcessLoad (WHY — see the doc comment: Init.init's resolving handler is never unhooked on failure)" [
-      test "WHY — a newer ambient SDK than this process's own runtime must skip the in-process loader, because loading its MSBuild in-process poisons assembly resolution for the rest of the process's life" {
-        shouldSkipInProcessLoad 10 11 |> Expect.isTrue "SDK 11 into a net10 process is unsafe"
-      }
-
-      test "an equal ambient SDK major is safe" {
-        shouldSkipInProcessLoad 10 10 |> Expect.isFalse "same major is exactly what Init.init is for"
-      }
-
-      test "an older ambient SDK major is safe (newer SDKs build older TFMs routinely)" {
-        shouldSkipInProcessLoad 10 9 |> Expect.isFalse "older SDK major is safe"
-      }
-    ]
-
-    testList "classifyProjectLoaderFailure" [
-      test "WHY — recognises the exact in-process bind failure a newer-major SDK produces, because it reads as a generic tooling failure otherwise" {
-        let message = "Could not load file or assembly 'System.Runtime, Version=11.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'. The system cannot find the file specified."
-        classifyProjectLoaderFailure 10 message
-        |> Expect.isSome "recognised as an SDK-major mismatch"
-
-      }
-
-      test "the explanation names both majors" {
-        let message = "Could not load file or assembly 'System.Runtime, Version=11.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'. The system cannot find the file specified."
-        match classifyProjectLoaderFailure 10 message with
-        | None -> failtest "expected a classification"
-        | Some explanation ->
-          explanation |> Expect.stringContains "names the project's SDK major" "11"
-          explanation |> Expect.stringContains "names this process's runtime major" ".NET 10"
-
-      }
-
-      test "does not classify a System.Runtime failure at or below the host's own major (not this bug)" {
-        let message = "Could not load file or assembly 'System.Runtime, Version=9.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'."
-        classifyProjectLoaderFailure 10 message |> Expect.isNone "9 <= 10 is not the mismatch this detects"
-      }
-
-      test "does not classify an unrelated exception message" {
-        classifyProjectLoaderFailure 10 "some other MSBuild evaluation error" |> Expect.isNone "unrelated failures stay generic"
-      }
-    ]
-
     testList "resolveFreshestConfigOutput (real filesystem)" [
       test "WHY — a fresh Release build wins over a stale Debug output, because the REPL must run the code you built, not an old artifact" {
         let root = Path.Combine(Path.GetTempPath(), "bozzetto-fresh-" + Guid.NewGuid().ToString("N"))
@@ -321,7 +259,7 @@ let tests =
         File.SetLastWriteTimeUtc(debugDll, DateTime(2026, 1, 1))
         File.SetLastWriteTimeUtc(releaseDll, DateTime(2026, 6, 1))
         try
-          // Ionide would report the Debug path; the freshest across configs is Release.
+          // the retired loader would report the Debug path; the freshest across configs is Release.
           resolveFreshestConfigOutput debugDll
           |> Expect.equal "the newer Release build must be selected" (Some releaseDll)
         finally
@@ -330,7 +268,7 @@ let tests =
     ]
   ]
 
-/// A Release-only build: Ionide reports Debug paths, only Release outputs exist.
+/// A Release-only build: the retired loader reported Debug paths, only Release outputs exist.
 let private releaseOnlyLayout () =
   let root = Directory.CreateTempSubdirectory("bozzetto-releaseonly-").FullName
   let write (parts: string list) =
@@ -396,7 +334,7 @@ let releaseOnlyReferenceTests =
 /// orders every project AFTER all of its own project references before
 /// their assemblies become FSI `-r:` flags.
 ///
-/// WHY this matters: Ionide's WorkspaceLoader returns the explicitly-
+/// WHY this matters: the retired loader returns the explicitly-
 /// requested project FIRST, then its transitive references in DISCOVERY
 /// order — not dependency order. Verified live: with `Bozzetto.Tests.dll`
 /// (declaring namespace `Bozzetto.Tests`) referenced before `Bozzetto.dll`
@@ -409,20 +347,17 @@ let releaseOnlyReferenceTests =
 /// The genuine FCS name-resolution fact — that the WRONG order makes FCS
 /// prefer the union case — is only observable in a real FSI session, and
 /// stays proven live by `DogfoodReplTests.fs`. What belongs here, fast, is
-/// the ordering DECISION itself: whatever order Ionide hands the daemon,
+/// the ordering DECISION itself: whatever order the retired loader hands the daemon,
 /// every project ends up after its own dependencies in the `-r:` list.
-let private mkProjectRef (projectFileName: string) : ProjectReference =
-  { RelativePath = projectFileName
-    ProjectFileName = projectFileName
-    TargetFramework = "net10.0" }
+let private mkProjectRef (projectFileName: string) = projectFileName
 
-let private mkNamedProject (projectFileName: string) (targetPath: string) (referencedProjects: ProjectReference list) : ProjectOptions =
+let private mkNamedProject (projectFileName: string) (targetPath: string) (referencedProjects: string list) : ProjectMetadata =
   { Bozzetto.Tests.ShadowCopyTests.mkProjectOptions targetPath with
       ProjectFileName = projectFileName
       ReferencedProjects = referencedProjects }
 
 /// All orderings of `[0 .. n-1]` — exhaustive rather than a probabilistic
-/// FsCheck sample, because the whole input space (which order Ionide could
+/// FsCheck sample, because the whole input space (which order the retired loader could
 /// have reported a handful of projects in) is small and fully enumerable;
 /// exhaustive coverage is strictly stronger than a random sample of it.
 let rec private permutationsOfIndices (indices: int list) : int list seq =
@@ -450,19 +385,19 @@ let projectReferenceOrderingTests =
         let bozzettoTestsDll = write (Path.Combine("Bozzetto.Tests", "bin", "Debug", "net10.0", "Bozzetto.Tests.dll"))
         let bozzettoProj = mkNamedProject "Bozzetto.fsproj" bozzettoDll []
         let bozzettoTestsProj = mkNamedProject "Bozzetto.Tests.fsproj" bozzettoTestsDll [ mkProjectRef "Bozzetto.fsproj" ]
-        // Ionide reports the explicitly-requested project (Bozzetto.Tests)
+        // the retired loader reported the explicitly-requested project (Bozzetto.Tests)
         // FIRST, then its transitive reference (Bozzetto) — the exact wrong
         // order that broke resolution live.
         let sln = { emptySolution with Projects = [ bozzettoTestsProj; bozzettoProj ] }
         let args = solutionToFsiArgs Bozzetto.Tests.TestInfrastructure.quietLogger false sln
         let indexOf dll = args |> Array.findIndex (fun a -> a = "-r:" + dll)
         (indexOf bozzettoDll, indexOf bozzettoTestsDll)
-        |> Expect.isLessThan "Bozzetto.dll (the dependency) is referenced before Bozzetto.Tests.dll (the dependent), regardless of Ionide's discovery order"
+        |> Expect.isLessThan "Bozzetto.dll (the dependency) is referenced before Bozzetto.Tests.dll (the dependent), regardless of the retired loader's discovery order"
       finally
         Directory.Delete(root, true)
     }
 
-    test "WHY — solutionToFsiArgs — every project in a reference chain is ordered after all of its transitive references, for EVERY discovery order Ionide could report" {
+    test "WHY — solutionToFsiArgs — every project in a reference chain is ordered after all of its transitive references, for EVERY discovery order the retired loader could report" {
       let root = Directory.CreateTempSubdirectory("bozzetto-toposort-chain-").FullName
       try
         let chainLength = 5

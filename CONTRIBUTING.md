@@ -73,16 +73,18 @@ boz
 ```
 Bozzetto.Core/       — Shared engine, session, testing, persistence, and protocol logic (start here!)
 Bozzetto/            — CLI tool, daemon, MCP server, plus retained deprecated TUI source
-Bozzetto.Gui/        — Deprecated Raylib product frontend retained as legacy source
 Bozzetto.Tests/      — Expecto test project (thousands of tests; the README badge is auto-derived)
 bozzetto-vscode/     — VS Code extension (F# via Fable → JavaScript)
-bozzetto-vs/         — Deprecated Visual Studio extension (C# + F#), retained as legacy source; not built or published
 docs/              — GitHub Pages documentation site
 ```
 
 The separate upstream Neovim plugin, [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim), is not part of this repository; it is a client of the inherited F# session contracts, whose embedded production hosting the [Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md) retires in this checkout.
 
-The built-in SageTUI client, legacy TUI, and `Bozzetto.Gui` Raylib frontend are deprecated. Do not extend them as current product surfaces. Raylib application and game demos remain valuable examples of Bozzetto game-project support and should be preserved.
+The disconnected Raylib product frontend, Visual Studio extension and SageTUI
+proof of concept have been removed. Deprecated terminal rendering support is
+still compiled into the host and requires a separate dependency refactor.
+Raylib application and game demos remain valuable examples of Bozzetto
+game-project support and should be preserved.
 
 **Good starting points for reading code:**
 - `Bozzetto/DaemonMode.fs` — daemon composition and client routing

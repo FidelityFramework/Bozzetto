@@ -1,22 +1,14 @@
-/// "project 34 of 61" — the piece of warmup progress that didn't exist
-/// before this: get_fsi_status could say a session was stuck, and for how
-/// long, but never where. `ProjectLoading.ProjectLoadProgress` is the pure
-/// fold that turns Ionide's own per-project notification stream into that
-/// number; `loadSolution` below is where it actually gets fed live.
+/// Retained pure progress fold over injected component-test events.
 module Bozzetto.Tests.ProjectLoadProgressTests
 
-open System.IO
 open Expecto
 open Expecto.Flip
 open FsCheck
-open Bozzetto.ProjectLoading
 open Bozzetto.ProjectLoading.ProjectLoadProgress
-
-let private quietLogger = Bozzetto.Tests.TestInfrastructure.quietLogger
 
 [<Tests>]
 let pureProgressFoldTests =
-  testList "ProjectLoadProgress — pure fold over Ionide's notification stream" [
+  testList "ProjectLoadProgress — pure fold over injected events" [
     testCase "Loading reports nothing yet — there is no honest step to give"
     <| fun _ ->
       let _, reported = step initial (Loading "/repo/Foo.fsproj")
@@ -88,27 +80,4 @@ let pureProgressFoldTests =
         [ 1 .. count ]
         |> List.fold (fun s i -> step s (Loaded(sprintf "/repo/P%d.fsproj" i, i)) |> fst) initial
       final.Completed |> Expect.equal "every Loaded update completes exactly one project" count
-  ]
-
-/// Fed through the REAL Ionide loader (the smallest fixture project in the
-/// repo), not a fake notification stream — this is the proof `loadSolution`
-/// actually wires `ProjectLoadProgress` to its `onProgress` callback, not
-/// merely that the fold itself is correct.
-[<Tests>]
-let loadSolutionProgressTests =
-  testList "loadSolution reports real progress through onProgress" [
-    testCase "loading the TestWorkspace fixture reports at least one valid, in-range step"
-    <| fun _ ->
-      let repoRoot = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, ".."))
-      let fixture = Path.Combine(repoRoot, "Bozzetto.Tests", "fixtures", "TestWorkspace", "TestWorkspace.fsproj")
-      let reported = ResizeArray<int * int * string>()
-      let config = { Bozzetto.Args.ProjectLoadConfig.empty with Targets = [ Bozzetto.SessionProjectTarget.Project fixture ]; WorkingDir = Path.GetDirectoryName fixture }
-      let solution = loadSolution quietLogger config (fun step total message -> reported.Add(step, total, message))
-      solution.Projects |> Expect.isNonEmpty "the fixture project should actually load"
-      reported |> Expect.isNonEmpty "loading a real project should report at least one step"
-      for (step, total, _) in reported do
-        Expect.isTrue "every reported step must be positive" (step > 0)
-        Expect.isTrue "every reported step must fit inside its own total" (step <= total)
-      let lastStep, lastTotal, _ = reported.[reported.Count - 1]
-      lastStep |> Expect.equal "the one fixture project is the last one reported" lastTotal
   ]

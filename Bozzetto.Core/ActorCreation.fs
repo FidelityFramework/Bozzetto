@@ -27,12 +27,7 @@ let commonInitFunctions : (Solution -> string * obj) list = []
 open System
 open System.IO
 
-/// Project directories for the file watcher. Derives from BOTH the Ionide
-/// ProjectOptions list AND the manual-parse FSharpProjectOptions fallback
-/// (FsProjects): when Ionide's WorkspaceLoader returns 0 projects (e.g. an
-/// MSBuild eval failure in-process), loadSolution falls back to a manual
-/// fsproj parse that fills only FsProjects. Without this, ProjectDirectories
-/// is empty, the file watcher cannot observe source saves.
+/// Project directories from injected component-test metadata and FCS options.
 let projectDirectories (sln: Solution) : string list =
   let dirOf (projectFile: string) =
     let dir = Path.GetDirectoryName(projectFile)
@@ -81,6 +76,13 @@ type ActorResult = {
   ProjectRoles: Bozzetto.ProjectLoading.ClassifiedProject list
 }
 
+/// Only bare F# actors remain available for retained component tests.
+/// Refuse named targets before filesystem discovery, shadowing or evaluation.
+let internal componentTestSolution targets =
+  match targets with
+  | [ SessionProjectTarget.Bare ] -> ProjectLoading.emptySolution
+  | _ -> invalidOp ExternalFSharpService.message
+
 /// Phase 1: Create the actor and return callbacks immediately.
 /// The FSI session init runs in the background — callers can start
 /// serving MCP (get_fsi_status etc.) right away while warm-up proceeds.
@@ -95,16 +97,8 @@ let createActorImmediate a =
   // motion the whole way through, not just once FSI itself starts.
   let emitWarmupProgress step total message =
     a.OnEvent(Features.Events.BozzettoEvent.SessionWarmUpProgress {| Step = step; Total = total; Message = message |})
-  let originalSln =
-    match a.LoadConfig.Targets with
-    | [ SessionProjectTarget.Bare ] ->
-      a.Logger.LogInfo "Bare session — skipping project loading"
-      ProjectLoading.emptySolution
-    | targets ->
-      a.Logger.LogInfo (sprintf "Loading explicit session target: %s" (SessionProjectTarget.describe targets))
-      let sln = loadSolution a.Logger a.LoadConfig emitWarmupProgress
-      a.Logger.LogInfo "Project loading complete."
-      sln
+  let originalSln = componentTestSolution a.LoadConfig.Targets
+  a.Logger.LogInfo "Bare component-test session — no project loading"
 
   let shadowDir, sln, instrumentationMaps =
     match List.isEmpty originalSln.Projects && List.isEmpty originalSln.References with

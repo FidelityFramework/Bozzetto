@@ -4,8 +4,8 @@
 //   dotnet fsi build.fsx            # restore pinned packages + build
 //   dotnet fsi build.fsx -- test    # build + run tests
 //   dotnet fsi build.fsx -- install # build + pack + install as global tool
-//   dotnet fsi build.fsx -- ext     # build + package + install editor extensions
-//   dotnet fsi build.fsx -- all     # build + test + pack + install + extensions
+//   dotnet fsi build.fsx -- ext     # build + package + install the VS Code extension
+//   dotnet fsi build.fsx -- all     # build + test + pack + install + VS Code extension
 
 open System
 open System.Diagnostics
@@ -14,7 +14,6 @@ open System.Runtime.InteropServices
 
 let rootDir = __SOURCE_DIRECTORY__
 let vscodeDir = Path.Combine(rootDir, "bozzetto-vscode")
-let vsProjDir = Path.Combine(rootDir, "bozzetto-vs", "Bozzetto.VisualStudio")
 
 /// Run a command. On Windows, .cmd/.bat scripts (npm, npx, code, etc.)
 /// need to go through cmd.exe since FSI can't launch them directly.
@@ -59,36 +58,6 @@ let target =
   | Some t -> t.ToLowerInvariant()
   | None -> "build"
 
-/// Find VS installation via vswhere (Windows only)
-let findVsInstallPath () =
-  if not (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) then None
-  else
-    let vswhere =
-      Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-        "Microsoft Visual Studio", "Installer", "vswhere.exe")
-    if not (File.Exists vswhere) then None
-    else
-      let psi =
-        ProcessStartInfo(
-          FileName = vswhere,
-          Arguments = "-latest -prerelease -property installationPath",
-          UseShellExecute = false,
-          RedirectStandardOutput = true,
-          CreateNoWindow = true)
-      let p = Process.Start(psi)
-      let output = p.StandardOutput.ReadToEnd().Trim()
-      p.WaitForExit()
-      if p.ExitCode = 0 && output.Length > 0 then Some output
-      else None
-
-/// Find VSIXInstaller.exe from VS installation
-let findVsixInstaller () =
-  findVsInstallPath ()
-  |> Option.map (fun vsPath ->
-    Path.Combine(vsPath, "Common7", "IDE", "VSIXInstaller.exe"))
-  |> Option.filter File.Exists
-
 // --- Step 1: Build ---
 printfn "=== Build ==="
 run "dotnet" "build" rootDir
@@ -116,7 +85,7 @@ if target = "install" || target = "all" then
     run "dotnet" (sprintf "tool install --global Bozzetto --add-source \"%s\" --no-cache" nupkgDir) rootDir
     printfn "  Installed global Bozzetto tool."
 
-// --- Step 4 (optional): Build + Install Extensions ---
+// --- Step 4 (optional): Build + Install the VS Code Extension ---
 if target = "ext" || target = "extensions" || target = "all" then
   // -- VS Code extension --
   printfn "=== VS Code Extension ==="
@@ -140,34 +109,5 @@ if target = "ext" || target = "extensions" || target = "all" then
     printfn "  Installed VS Code extension."
   with ex ->
     printfn "  ⚠ VS Code install skipped: %s" ex.Message
-
-  // -- Visual Studio extension (Windows only) --
-  if RuntimeInformation.IsOSPlatform(OSPlatform.Windows) then
-    printfn "=== Visual Studio Extension ==="
-    let vsCsproj = Path.Combine(vsProjDir, "Bozzetto.VisualStudio.csproj")
-    try
-      run "dotnet" (sprintf "build \"%s\" -c Release" vsCsproj) rootDir
-      printfn "  Built VS extension."
-
-      let vsixDir = Path.Combine(vsProjDir, "bin", "Release")
-      let vsix =
-        if Directory.Exists vsixDir then
-          Directory.GetFiles(vsixDir, "*.vsix")
-          |> Array.sortByDescending File.GetLastWriteTimeUtc
-          |> Array.tryHead
-        else None
-
-      match vsix, findVsixInstaller () with
-      | Some vsixFile, Some installer ->
-        run installer (sprintf "\"%s\" /quiet" vsixFile) rootDir
-        printfn "  Installed VS extension: %s" (Path.GetFileName vsixFile)
-      | Some _, None ->
-        printfn "  ⚠ VSIXInstaller not found (no VS installation detected via vswhere)."
-      | None, _ ->
-        printfn "  ⚠ No .vsix found in build output."
-    with ex ->
-      printfn "  ⚠ VS extension build failed: %s" ex.Message
-  else
-    printfn "  Skipping Visual Studio extension (Windows only)."
 
 printfn "=== Done ==="

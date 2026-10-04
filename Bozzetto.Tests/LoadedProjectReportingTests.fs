@@ -1,14 +1,7 @@
 module Bozzetto.Tests.LoadedProjectReportingTests
 
-// Regression coverage for a confirmed root cause: a session that loaded
-// successfully via the manual-parse fallback (ProjectLoading.fs:348-372,
-// used when Ionide's workspace loader silently returns zero projects)
-// reported `loadedProjects: []` on every surface — /api/sessions, the VS
-// Code tree, and the dashboard's project picker/Run button — because
-// `ProjectRoles`/`ProjectTargets` (ActorCreation.fs) read `sln.Projects`
-// only, and the fallback path fills `sln.FsProjects` instead. See the
-// precedent `projectDirectories` (ActorCreation.fs), which already merges
-// both sources for the file watcher for exactly this reason.
+// Retained regression coverage: injected project metadata and FCS fixture
+// options must both contribute to project roles and targets.
 
 open System
 open System.IO
@@ -16,7 +9,6 @@ open Expecto
 open Expecto.Flip
 open Bozzetto
 open Bozzetto.ProjectLoading
-open Ionide.ProjInfo.Types
 open FSharp.Compiler.CodeAnalysis
 
 let private quietLogger =
@@ -26,49 +18,23 @@ let private quietLogger =
       member _.LogWarning _ = ()
       member _.LogError _ = () }
 
-/// A normal (Ionide-loaded) ProjectOptions fixture. Mirrors
+/// An injected ProjectMetadata fixture. Mirrors
 /// ActorCreationTests.mkProject — kept local so this file has no
 /// cross-file test dependency.
-let private mkProject (fileName: string) (outputType: string option) (isTestProject: bool) : ProjectOptions =
+let private mkProject (fileName: string) (outputType: string option) (isTestProject: bool) : ProjectMetadata =
   let allProps =
     [ match outputType with
       | Some v -> yield "OutputType", Set.singleton v
       | None -> ()
       yield "IsTestProject", Set.singleton (string isTestProject) ]
     |> Map.ofList
-  { ProjectId = None
-    ProjectFileName = fileName
+  { ProjectFileName = fileName
     TargetFramework = "net10.0"
-    SourceFiles = []
     OtherOptions = []
     ReferencedProjects = []
     PackageReferences = []
-    LoadTime = DateTime.UtcNow
     TargetPath = fileName + ".dll"
-    TargetRefPath = None
-    ProjectOutputType = ProjectOutputType.Library
-    ProjectSdkInfo =
-      { IsTestProject = isTestProject
-        Configuration = "Debug"
-        IsPackable = false
-        TargetFramework = "net10.0"
-        TargetFrameworkIdentifier = ".NETCoreApp"
-        TargetFrameworkVersion = "v10.0"
-        MSBuildAllProjects = []
-        MSBuildToolsVersion = ""
-        ProjectAssetsFile = ""
-        RestoreSuccess = true
-        Configurations = []
-        TargetFrameworks = []
-        RunArguments = None
-        RunCommand = None
-        IsPublishable = None }
-    Items = []
-    Properties = []
-    CustomProperties = []
-    AllProperties = allProps
-    AllItems = Map.empty
-    Analyzers = [] }
+    AllProperties = allProps }
 
 let private tempDir () =
   let dir = Path.Combine(Path.GetTempPath(), "bozzetto-loaded-project-reporting-" + Guid.NewGuid().ToString("N"))
@@ -77,7 +43,7 @@ let private tempDir () =
 
 /// Writes a minimal buildable-looking fsproj + one source file, then parses
 /// it the same way the manual-parse fallback does, producing a real
-/// FSharpProjectOptions with no Ionide ProjectOptions counterpart — exactly
+/// FSharpProjectOptions with no injected ProjectMetadata counterpart — exactly
 /// the shape `sln.FsProjects` has on the fallback path.
 let private manualParseFallback (dir: string) (fsprojXml: string) : FSharpProjectOptions =
   let projPath = Path.Combine(dir, "App.fsproj")
@@ -112,10 +78,28 @@ let private testFsproj =
 let tests =
   testList "LoadedProjectReporting" [
 
+    testCase "package identity survives an unrelated assembly filename" (fun () ->
+      let project =
+        { mkProject "/repo/App/App.fsproj" None false with
+            PackageReferences = [ "Aspire.Hosting", "/assemblies/unrelated.dll" ] }
+      let solution = { emptySolution with Projects = [ project ] }
+      AspireSetup.hasAspireReferences solution
+      |> Expect.isTrue "Aspire detection must use the supplied package identity"
+      (SessionAgent.agentInitOf solution).ResolveFrom
+      |> Expect.equal "assembly resolution must use the separate supplied path"
+           [ "/assemblies/unrelated.dll" ])
+
+    testCase "an Aspire-like assembly filename does not invent a package identity" (fun () ->
+      let project =
+        { mkProject "/repo/App/App.fsproj" None false with
+            PackageReferences = [ "Ordinary.Package", "/assemblies/Aspire.Hosting.dll" ] }
+      AspireSetup.hasAspireReferences { emptySolution with Projects = [ project ] }
+      |> Expect.isFalse "package identity must not be inferred from an assembly filename")
+
     testCase "empty solution classifies to nothing" (fun () ->
       classifiedProjectsOf emptySolution |> Expect.isEmpty "no projects at all")
 
-    testCase "normal (Ionide) path is unchanged by classifiedProjectsOf" (fun () ->
+    testCase "injected metadata is preserved by classifiedProjectsOf" (fun () ->
       let exeProj = mkProject "/repo/App/App.fsproj" (Some "Exe") false
       let libProj = mkProject "/repo/Lib/Lib.fsproj" None false
       let sln = { emptySolution with Projects = [ exeProj; libProj ] }

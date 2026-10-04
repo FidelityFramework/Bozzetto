@@ -26,8 +26,7 @@ executed, **R** source read, **S** spec, **I** inference.
    - **Keep the index current:** it covers pushed heads only. Push checkpoints
      before asking questions about them.
    - **Direct reads are allowed only for:**
-     - repositories outside the index (Bozzetto, BAREWire, Calque,
-       Fidelity.Data);
+     - repositories confirmed absent from the fresh schema's tracked sources;
      - uncommitted changes, read through `git diff`;
      - an index reported stale;
      - a bounded confirmation of a line retrieval already located.

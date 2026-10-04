@@ -6,46 +6,64 @@ open Expecto
 open Expecto.Flip
 open Bozzetto.ProjectLoading
 open Bozzetto.ActorCreation
-open Ionide.ProjInfo.Types
 
-let mkProject (fileName: string) : ProjectOptions =
-  { ProjectId = None
-    ProjectFileName = fileName
+let mkProject (fileName: string) : ProjectMetadata =
+  { ProjectFileName = fileName
     TargetFramework = "net10.0"
-    SourceFiles = []
     OtherOptions = []
     ReferencedProjects = []
     PackageReferences = []
-    LoadTime = DateTime.UtcNow
     TargetPath = ""
-    TargetRefPath = None
-    ProjectOutputType = ProjectOutputType.Library
-    ProjectSdkInfo =
-      { IsTestProject = false
-        Configuration = "Debug"
-        IsPackable = false
-        TargetFramework = "net10.0"
-        TargetFrameworkIdentifier = ".NETCoreApp"
-        TargetFrameworkVersion = "v10.0"
-        MSBuildAllProjects = []
-        MSBuildToolsVersion = ""
-        ProjectAssetsFile = ""
-        RestoreSuccess = true
-        Configurations = []
-        TargetFrameworks = []
-        RunArguments = None
-        RunCommand = None
-        IsPublishable = None }
-    Items = []
-    Properties = []
-    CustomProperties = []
-    AllProperties = Map.empty
-    AllItems = Map.empty
-    Analyzers = [] }
+    AllProperties = Map.empty }
+
+let private refusalMessage action =
+  try
+    action () |> ignore
+    None
+  with :? InvalidOperationException as error -> Some error.Message
+
+let private expectRetiredBoundary action =
+  refusalMessage action
+  |> Expect.equal "the retired provider's specific reason is required"
+       (Some Bozzetto.ExternalFSharpService.message)
+
+let private assertTargetRefused target =
+  let mutable initialized = false
+  let mutable emitted = false
+  let args =
+    { mkCommonActorArgs TestInfrastructure.quietLogger false
+        (fun _ -> emitted <- true)
+        { Bozzetto.Args.ProjectLoadConfig.empty with Targets = [ target ] } with
+        InitFunctions = [ fun _ -> initialized <- true; "sentinel", box true ] }
+  expectRetiredBoundary (fun () -> createActorImmediate args)
+  initialized |> Expect.isFalse "refusal must precede injected initialization"
+  emitted |> Expect.isFalse "refusal must precede warmup events"
 
 [<Tests>]
 let tests =
   testList "ActorCreation" [
+    testList "retained component target boundary" [
+      test "explicit Bare preserves empty component-test metadata" {
+        componentTestSolution [ Bozzetto.SessionProjectTarget.Bare ]
+        |> Expect.equal "the bare evaluator needs no project loader" emptySolution
+      }
+
+      test "named project refuses before actor setup" {
+        assertTargetRefused (Bozzetto.SessionProjectTarget.Project "never-read.fsproj")
+      }
+
+      test "named solution refuses before actor setup" {
+        assertTargetRefused (Bozzetto.SessionProjectTarget.Solution "never-read.slnx")
+      }
+
+      test "refusal control catches a bypass returning empty metadata" {
+        let mutable killed = false
+        try expectRetiredBoundary (fun () -> emptySolution)
+        with :? Expecto.AssertException -> killed <- true
+        killed |> Expect.isTrue "returning empty metadata must fail the same refusal control"
+      }
+    ]
+
     testList "projectDirectories" [
       test "empty solution returns empty list" {
         let result = projectDirectories emptySolution

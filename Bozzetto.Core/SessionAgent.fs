@@ -13,7 +13,7 @@ let agentInitOf (solution: Solution) : HostAgent.AgentInit =
     ResolveFrom =
       solution.Projects
       |> List.collect (fun project ->
-        (project.PackageReferences |> List.map _.FullPath) @ referenced project.OtherOptions) }
+        (project.PackageReferences |> List.map snd) @ referenced project.OtherOptions) }
 
 type SessionAgent =
   { DiscoverLoaded: unit -> HostAgent.AgentReply<HostAgent.Discovery>
