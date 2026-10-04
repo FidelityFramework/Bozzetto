@@ -16,7 +16,7 @@ The owner authorized replacement of the standing daemon. The old daemon
 route. Their disposable `dashboard-work-20261003-lTyXpZ` snapshot was archived
 and removed. The installed `~/.local/bin/boz` now selects the durable deployment
 `~/.local/share/bozzetto/releases/2026-10-04-68a37dee00a5-no-ionide/` and the
-existing .NET SDK/runtime `10.0.401`, with the external workspace preserved.
+existing SDK `10.0.401` installation, with the external workspace preserved.
 Daemon `3243022` and worker `3247142` are healthy and load this deployment.
 
 The daemon and worker were freshly published from `68a37dee` into clean output
