@@ -9,6 +9,46 @@ contracts remain in the linked sibling documents. This records source integratio
 and separately identified gate results. Deployment identities are recorded
 explicitly; earlier source anchors do not establish installed runtime behavior.
 
+## Installed Ionide-free provider — October 4, 2026, 10:20 EDT (14:20 UTC)
+
+The owner authorized replacement of the standing daemon. The old daemon
+`548253` and worker `549122` exited through the control listener's shutdown
+route. Their disposable `dashboard-work-20261003-lTyXpZ` snapshot was archived
+and removed. The installed `~/.local/bin/boz` now selects the durable deployment
+`~/.local/share/bozzetto/releases/2026-10-04-68a37dee00a5-no-ionide/` and the
+existing .NET SDK/runtime `10.0.401`, with the external workspace preserved.
+Daemon `3243022` and worker `3247142` are healthy and load this deployment.
+
+The daemon and worker were freshly published from `68a37dee` into clean output
+directories. Their dependency graphs, payload filenames and live mapped module
+names contain no Ionide packages. Composer's approved compiler and Calque
+formatter bytes were preserved; both processes share the selected PSG/BAREWire
+closure and protocol SHA-256
+`72e6f0fed1ebfd5c741b063afa4e88c55d9136eb6883aa876415f624d6c25894`.
+Fidelity.Data remains process-specific: the daemon uses the pinned source
+`7cc19d6b` build, while the worker retains the approved compiler's Data bytes.
+The native gate exercises that boundary rather than asserting identical files.
+
+Validation is frozen under
+`~/.cache/bozzetto/evidence/retrieval-bozzetto-2026-10-04/`: source build passed;
+source default tier ran 8,401 with 8,398 passed and three retained performance
+ignores. The selected deployment default tier passed with one additional missing
+Raylib fixture ignore; the accepted fixture was then supplied and that focused
+case passed. The final whole native provider tier passed **58/58, Trusted**, with
+no failures, errors or ignores. Its first 55-case run retained one live status
+observation error. The test-only `e9aecd49` correction recognizes only the
+supervisor's explicit `superseded` refusal within the existing bounded waits;
+three envelope controls and an actual broad-refusal mutant discriminate it.
+The published runtime pair was unchanged by that test correction.
+
+An actual MCP project open and close on the replacement daemon confirmed the
+new worker epoch and preserved compiler SHA-256 `85db68ca…e4a498a`; physical
+session cleanup completed. Per-process RSS samples were 165,224 KiB for the
+daemon and 83,604 KiB for its worker. These are observations, not a diagnosis of
+the earlier memory profile. Inherited terminal rendering and bare FCS component
+testing remain explicit separate cleanup items; production named F# hosting
+continues to refuse before setup.
+
 The current [binary PSG transport handback](PSG_Transport_Integration_Auditor_Checkpoint_2026-10-01.md)
 records the still-unintegrated service boundary and the coordinated repair gates.
 
