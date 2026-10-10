@@ -14,6 +14,7 @@ Bozzetto coordinates Fidelity development across compilers, editors, application
 
 ## Start here
 
+- **[Agent visibility notch and FFI restart](Bozzetto_Agent_Visibility_Notch_2026-10-10.md)**: current uncommitted/deployed state, exact acceptance receipts, remaining agent-project visibility gaps, and the verified FFI recovery anchor
 - **[Get Started](../Readme.md#get-started)**: use the reviewed installation, connect to the shared daemon, then open, reserve, build and run a Clef project
 - **[Using Bozzetto with AI agents](agents.md)**: connect MCP and follow the Composer session workflow
 - **[MCP Tools](mcp-tools.md)**: Composer operations and the retained tool catalog

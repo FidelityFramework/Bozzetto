@@ -37,6 +37,23 @@
     @apply bg-base-200 border border-base-content/10 rounded-xl shadow-sm;
   }
 
+  /* Native closed dialogs must stay hidden despite the modal component's grid. */
+  dialog.modal:not([open]) {
+    display: none;
+  }
+
+  /* Secondary information stays out of the work surface until requested. */
+  .information-button {
+    @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-base opacity-50;
+  }
+  .information-button:hover,
+  .information-button:focus-visible {
+    @apply opacity-100;
+  }
+  .information-button:focus-visible {
+    @apply outline-none ring-2 ring-info ring-offset-1 ring-offset-base-100;
+  }
+
   /* Inline code, as the Braidpoint site sets it: orange on a raised chip. */
   .chip-code {
     @apply bg-base-300 text-accent font-mono px-1.5 py-0.5 rounded;

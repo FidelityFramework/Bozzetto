@@ -3210,6 +3210,12 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
         composer.Changed.Subscribe(fun () ->
           serverTracker.NotifyResourceUpdatedAsync(Bozzetto.Server.ComposerTools.ResourceUri) |> ignore)
 
+      use agentWorkSubscription =
+        cfg.CohortOwner
+        |> Option.map (fun owner ->
+          owner.WorkChanged.Subscribe(fun () -> serverTracker.NotifyResourceUpdatedAsync(Bozzetto.Server.McpResources.AgentWorkUri) |> ignore))
+        |> Option.defaultValue null
+
       let app = builder.Build()
       wireCoreLogs app
       app.UseResponseCompression() |> ignore
@@ -3268,7 +3274,7 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       mapLiveTestingRoutes app rctx
       mapAnalysisRoutes app rctx
       Bozzetto.Server.ComposerRoutes.mapRoutes app composer
-      Bozzetto.Server.UiBridge.create composer cfg.Port cfg.GetDaemonHealth app.Lifetime.ApplicationStopping
+      Bozzetto.Server.UiBridge.createWithAgentWork composer cfg.Port cfg.GetDaemonHealth app.Lifetime.ApplicationStopping cfg.CohortOwner
       |> Bozzetto.Server.UiBridge.mapRoutes app
 
       let _stateSub =

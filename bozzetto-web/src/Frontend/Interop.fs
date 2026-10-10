@@ -71,6 +71,16 @@ let inputValue (event: obj) : string = jsNative
 [<Emit("$0.key")>]
 let keyOf (event: obj) : string = jsNative
 
+/// Native dialogs provide modal focus, Escape dismissal and focus restoration.
+[<Emit("$0.currentTarget.nextElementSibling.showModal()")>]
+let openInformation (event: obj) : unit = jsNative
+
+[<Emit("$0.currentTarget.closest('dialog').close()")>]
+let closeInformation (event: obj) : unit = jsNative
+
+[<Emit("$0.target === $0.currentTarget")>]
+let isCurrentTarget (event: obj) : bool = jsNative
+
 /// Bridge hop tracing, visible in the browser console.
 [<Emit("console.log($0)")>]
 let consoleLog (line: string) : unit = jsNative

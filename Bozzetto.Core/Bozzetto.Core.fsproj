@@ -42,6 +42,7 @@
         <Compile Include="Checkout.fs" />
         <Compile Include="MemberTable.fs" />
         <Compile Include="CohortJson.fs" />
+        <Compile Include="AgentWork.fs" />
         <Compile Include="Tutorial.fs" />
         <Compile Include="BozzettoConfig.fs" />
         <Compile Include="Timeouts.fs" />

@@ -39,6 +39,16 @@ the same identity or capabilities.
 
 ## First horizon local development
 
+**October 10 resource-observation requirement:** whole-host, UMA-aware resource
+visibility is first-horizon operational infrastructure, not deferred heterogeneous
+target research. The [resource observation and UMA design](Bozzetto_Resource_Observation_And_UMA.md)
+separates service health, utilization, actual pressure and admission headroom;
+defines Linux-first collection with Windows and Apple-silicon portability; and
+requires measured compilation/inference coexistence evidence before recommending
+Lemonade configuration changes. Its portable contracts must survive native Clef
+hosting without a .NET monitoring dependency. Implementation status and acceptance
+are recorded separately from these requirements.
+
 The initial product should let a developer open a real project, attach an editor
 and an agent to its compiler workspace, edit it, inspect current diagnostics and
 artifacts, and execute the accepted revision. CPU interactive execution extends

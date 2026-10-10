@@ -1,4 +1,4 @@
-/// Bozzetto's browser UI, first screen: the Composer dashboard, in
+/// Bozzetto's browser UI: separate dashboard and Composer views, in
 /// Partas.Solid (SolidJS via Fable). Every action is a Command sent over the
 /// bridge; the backend is the update function; Events fold into the stores
 /// (Model.fs) and Solid updates only the DOM that reads what changed.
@@ -10,6 +10,11 @@ open Bozzetto.Web.Frontend
 open Bozzetto.Web.Frontend.Model
 
 // ── Display helpers (pure; full class names so Tailwind keeps them) ────────
+
+// Both routes share a bundle and bridge, not a layout. The route is fixed for
+// this page lifetime; ordinary links open a fresh, independent page.
+let private isComposerPage () =
+  Browser.Dom.window.location.pathname.TrimEnd('/') = "/composer"
 
 let private linkDot (link: Bridge.Link) =
   match link with
@@ -72,6 +77,24 @@ let private diagnosticTokenClass (severity: string) =
 // the edges of a literal, and keep double quotes out of literal attributes.
 
 [<SolidComponent>]
+let Information (label: string) (paragraphs: unit -> string array) =
+  div (class' = "inline-flex") {
+    (button(class' = "information-button", title = label + " information", onClick = Interop.openInformation).attr("aria-label", label + " information")) { "ⓘ" }
+    (dialog(class' = "modal", onClick = fun event ->
+      if Interop.isCurrentTarget event then Interop.closeInformation event).attr("aria-label", label)) {
+      div (class' = "modal-box") {
+        h3 (class' = "text-base font-semibold") { label }
+        div (class' = "space-y-3 text-sm py-4") {
+          For (each = paragraphs ()) { yield fun text _ -> p () { text } }
+        }
+        div (class' = "modal-action") {
+          button (class' = "btn btn-sm btn-ghost", onClick = Interop.closeInformation) { "Close" }
+        }
+      }
+    }
+  }
+
+[<SolidComponent>]
 let TraceText (text: unit -> string) =
   For (each = DiagnosticText.segments (text ())) {
     yield fun token _ -> span (class' = diagnosticTokenClass token.severity) { token.text }
@@ -112,18 +135,29 @@ let CommandOutcome (outcome: unit -> OutcomeView option) =
   }
 
 [<SolidComponent>]
-let TopBar (link: unit -> Bridge.Link) (dark: unit -> bool) (toggleTheme: unit -> unit) (refresh: unit -> unit) =
-  div (class' = "navbar min-h-0 h-12 px-4 gap-3 bg-base-100 shadow-sm border-b border-base-content/10") {
+let TopBar (link: unit -> Bridge.Link) (dark: unit -> bool) (toggleTheme: unit -> unit) =
+  let composerPage = isComposerPage ()
+  div (class' = "navbar flex-wrap shrink-0 min-h-12 px-4 py-2 gap-2 bg-base-100 shadow-sm border-b border-base-content/10") {
     div (class' = "flex-1 flex items-center gap-3 min-w-0") {
       span (class' = "font-heading font-extrabold text-lg tracking-tight") { "Bozzetto" }
-      span (class' = "text-xs font-semibold uppercase tracking-widest text-accent") { "Composer" }
+      div (class' = "flex items-center gap-1") {
+        a (
+          href = "/dashboard",
+          class' = (if composerPage then "btn btn-ghost btn-sm" else "btn btn-ghost btn-sm btn-active text-accent"),
+          title = "Daemon resources, health and work leases"
+        ) { "Dashboard" }
+        a (
+          href = "/composer",
+          class' = (if composerPage then "btn btn-ghost btn-sm btn-active text-accent" else "btn btn-ghost btn-sm"),
+          title = "Compiler worker, project sessions and run output"
+        ) { "Composer" }
+      }
       span (class' = "flex items-center gap-1.5 text-xs") {
         span (class' = linkDot (link ()))
         span (class' = "opacity-70") { linkText (link ()) }
       }
     }
     div (class' = "flex-none flex items-center gap-2") {
-      button (class' = "btn btn-outline btn-accent btn-sm font-medium", title = "Request a fresh snapshot", onClick = fun _ -> refresh ()) { "↻ Refresh" }
       button (class' = "btn btn-ghost btn-sm btn-circle text-base", title = "Toggle theme", onClick = fun _ -> toggleTheme ()) {
         if dark () then "☀" else "☾"
       }
@@ -137,7 +171,7 @@ let private uptimeText (uptime: float) (startedAt: float) =
 
 [<SolidComponent>]
 let HealthStrip (model: ModelView) (uptime: unit -> float) =
-  div (class' = "flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 text-xs bg-base-200 border-b border-base-content/10") {
+  div (class' = "daemon-health flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 text-xs bg-base-200 border-b border-base-content/10") {
     Show (when' = model.healthSeen, fallback = (span (class' = "opacity-50") { "waiting for daemon health…" })) {
       span (class' = overallBadge model.health.overall) { model.health.overall }
       span (class' = "font-mono") { "v" + model.health.version }
@@ -146,15 +180,15 @@ let HealthStrip (model: ModelView) (uptime: unit -> float) =
         uptimeText (uptime ()) model.startedAt
       }
       span () {
-        span (class' = "opacity-50 mr-1") { "rss" }
+        span (class' = "opacity-50 mr-1") { "boz rss" }
         span (class' = "font-mono") { bytes model.health.rss }
       }
       span () {
         span (class' = "opacity-50 mr-1") { "machine" }
-        span (class' = "font-mono") { bytes model.health.available + " free / " + bytes model.health.total }
+        span (class' = "font-mono") { bytes model.health.available + " available / " + bytes model.health.total }
       }
       span () {
-        span (class' = "opacity-50 mr-1") { "cpu" }
+        span (class' = "opacity-50 mr-1") { "owned cpu" }
         span (class' = "font-mono") { fixedPoint model.health.cpu 1 + "%" }
       }
       span (class' = pressureBadge model.health.pressure) { "memory " + model.health.pressure }
@@ -166,8 +200,122 @@ let HealthStrip (model: ModelView) (uptime: unit -> float) =
         yield fun a _ -> span (class' = "badge badge-sm badge-warning", title = a.message) { "⚠ " + a.signal + " " + a.state }
       }
     }
-    span (class' = "flex-1")
-    span (class' = workerBadge model.worker.state) { workerText model.worker }
+  }
+
+let private metricText (m: ResourceMetricView) =
+  if not m.known then "unavailable / warming up"
+  elif m.unit = "bytes" then bytes m.value
+  elif m.unit = "bytes/s" then bytes m.value + "/s"
+  elif m.unit = "percent" then fixedPoint m.value 1 + "%"
+  else fixedPoint m.value 0
+
+[<SolidComponent>]
+let HostPanel (model: ModelView) (local: LocalView) (uptime: unit -> float) (connected: unit -> bool) (dispatch: Command -> unit) =
+  let status () =
+    if not (connected ()) then "disconnected — last reading only"
+    elif model.resources.status = "observing" && model.startedAt + uptime () - model.resources.sampledAt > 6000. then "stale — no recent observation"
+    else model.resources.status
+  div (class' = "card card-compact panel") {
+    div (class' = "card-body gap-3") {
+      div (class' = "flex flex-wrap items-center gap-2") {
+        h2 (class' = "text-lg font-bold flex-1") { "Whole-machine resources" }
+        span (class' = "badge badge-outline") { status () }
+        Information "Resource readings" (fun () -> [|
+          "Linux counters are sampled every two seconds during the selected observation window. Collection stops when the window ends."
+          "Process CPU uses 100% for one logical CPU. RSS includes shared pages. Thread count shows the number of process threads."
+          model.resources.note
+          "Sequence " + model.resources.sequence + " · interval " + fixedPoint (model.resources.interval / 1000.) 1 + "s · collection " + fixedPoint model.resources.cost 1 + "ms"
+        |])
+        button (class' = "btn btn-sm btn-accent", disabled = not (connected ()), onClick = fun _ -> dispatch (ObserveResources 120)) { "Observe for 2 minutes" }
+        button (class' = "btn btn-sm btn-ghost", disabled = not (connected ()), onClick = fun _ -> dispatch (ObserveResources 0)) { "Stop" }
+      }
+      CommandOutcome (fun () -> Interop.dictTryGet local.outcomes "resources")
+      Show (when' = (model.resources.sampledAt > 0.)) {
+        p (class' = "text-xs font-mono opacity-70") {
+          "Updated " + clockTime model.resources.sampledAt
+        }
+      }
+      div (class' = "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2") {
+        For (each = (model.resourceMetrics |> Array.filter (fun m -> m.id = "Host CPU busy" || m.id = "RAM occupied" || m.id = "RAM available" || m.id = "RAM total (OS managed)" || m.id = "Swap used" || m.id.Contains "GPU busy"))) {
+          yield fun m _ ->
+            div (class' = "panel p-3") {
+              div (class' = "text-xs opacity-70") { m.id }
+              div (class' = "text-xl font-mono font-semibold") { metricText m }
+            }
+        }
+      }
+      details () {
+        summary (class' = "cursor-pointer text-sm font-semibold") { "More metrics" }
+        table (class' = "table table-xs") {
+          tbody () {
+            For (each = model.resourceMetrics) {
+              yield fun m _ -> tr () { td () { m.id }; td (class' = "font-mono") { metricText m } }
+            }
+          }
+        }
+      }
+      h3 (class' = "text-sm font-semibold") { "Processes" }
+      p (class' = "text-xs opacity-50") {
+        string model.resources.count + " processes · " + string model.resources.unreadable + " unreadable · " + string model.resources.omitted + " omitted"
+      }
+      div (class' = "overflow-x-auto") {
+        table (class' = "table table-xs") {
+          thead () { tr () { th () { "process" }; th () { "PID / parent" }; th () { "CPU" }; th () { "RSS" }; th () { "threads" } } }
+          tbody () {
+            For (each = model.resourceProcesses) {
+              yield fun p _ ->
+                tr () {
+                  td (class' = "font-mono", title = p.context + " · identity " + p.id) { p.name }
+                  td (class' = "font-mono") { string p.pid + " / " + string p.parent }
+                  td (class' = "font-mono") { if p.cpuKnown then fixedPoint p.cpu 1 + "%" else "—" }
+                  td (class' = "font-mono") { bytes p.rss }
+                  td (class' = "font-mono") { string p.threads }
+                }
+            }
+          }
+        }
+      }
+    }
+  }
+
+/// This roster is daemon-owned processes only, not a whole-host inventory.
+[<SolidComponent>]
+let ResourcesPanel (model: ModelView) =
+  div (class' = "card card-compact panel") {
+    div (class' = "card-body gap-2") {
+      div (class' = "flex items-center gap-2") {
+        h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80 flex-1") { "Daemon resources" }
+        Information "Daemon snapshot" (fun () -> [|
+          "These readings capture the daemon and its compiler worker at connection time."
+          "CPU is normalized by processor count. Summed RSS can count shared pages more than once."
+        |])
+      }
+      Show (when' = model.healthSeen, fallback = (p (class' = "text-xs opacity-50") { "Waiting for daemon health…" })) {
+        div (class' = "overflow-x-auto") {
+          table (class' = "table table-xs") {
+            thead () {
+              tr () {
+                th () { "role" }
+                th () { "pid" }
+                th () { "resident" }
+                th () { "normalized CPU" }
+              }
+            }
+            tbody () {
+              For (each = model.health.processes) {
+                yield fun p _ ->
+                  tr () {
+                    td (class' = "font-mono") { p.role }
+                    td (class' = "font-mono") { string p.pid }
+                    td (class' = "font-mono") { bytes p.rss }
+                    td (class' = "font-mono") { fixedPoint p.cpu 1 + "%" }
+                  }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
 [<SolidComponent>]
@@ -304,13 +452,13 @@ let SessionCard (s: SessionView) (local: LocalView) (connected: unit -> bool) (d
 let SessionsPanel (model: ModelView) (local: LocalView) (connected: unit -> bool) (dispatch: Command -> unit) =
   div (class' = "flex flex-col gap-2") {
     div (class' = "flex items-baseline gap-2") {
-      h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80") { "Sessions" }
+      h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80") { "Composer sessions" }
       span (class' = "text-xs opacity-50") { string model.sessions.Length }
     }
     Show (
       when' = (model.sessions.Length > 0),
       fallback = (div (class' = "text-sm opacity-60 border border-dashed border-base-content/20 rounded-xl p-6 text-center") {
-        "No Composer sessions are open. Open a .fidproj to begin; reserve before editing, build the reservation, then run."
+        "No open projects."
       })
     ) {
       div (class' = (if model.sessions.Length = 1 then "grid grid-cols-1 gap-2" else "grid grid-cols-1 xl:grid-cols-2 gap-2")) {
@@ -337,15 +485,12 @@ let WorkerPanel (model: ModelView) (local: LocalView) (connected: unit -> bool) 
       div (class' = "flex items-center gap-2") {
         h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80 flex-1") { "Compiler worker" }
         span (class' = workerBadge model.worker.state) { model.worker.state }
+        Information "Compiler worker" (fun () -> [|
+          "Opening a Clef project starts the worker. BOZZETTO_COMPOSER_WORKER selects the installed worker."
+          "Retire the worker before replacing compiler binaries. Retirement closes its sessions."
+        |])
       }
-      Show (
-        when' = (model.worker.state = "running"),
-        fallback = (div (class' = "text-xs opacity-60") {
-          if model.worker.state = "unconfigured" then
-            "Set BOZZETTO_COMPOSER_WORKER before starting the daemon."
-          else "No live worker; opening a project starts one."
-        })
-      ) {
+      Show (when' = (model.worker.state = "running")) {
         div (class' = "text-xs font-mono opacity-70 break-all") {
           "compiler " + model.worker.compilerVersion + " · pid " + (if model.worker.pid = "" then "?" else model.worker.pid)
         }
@@ -359,9 +504,48 @@ let WorkerPanel (model: ModelView) (local: LocalView) (connected: unit -> bool) 
           onMouseLeave = (fun _ -> setConfirming false),
           onBlur = (fun _ -> setConfirming false)
         ) { if confirming () then "Confirm: retire every session" else "Retire worker" }
-        span (class' = "text-xs opacity-50") { "before replacing compiler binaries" }
       }
       CommandOutcome (fun () -> Interop.dictTryGet local.outcomes WorkerKey)
+    }
+  }
+
+[<SolidComponent>]
+let AgentsPanel (model: ModelView) =
+  div (class' = "card card-compact panel") {
+    div (class' = "card-body gap-2") {
+      div (class' = "flex items-center gap-2") {
+        h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80 flex-1") { "Agent work" }
+        Information "Agent accounting" (fun () -> [|
+          "Each participant reports its model, endpoint, project, focus and invocation progress. Token counters and cost estimates summarize reported usage."
+          "Execution host: " + model.executionHost + " · publication " + model.agentSequence
+          "This board retains up to 64 reporting participants and 256 runs during the current daemon lifetime. Earlier activity is summarized with omission counts; capacity decisions are returned to the reporter."
+        |])
+      }
+      Show (when' = (model.agents.Length > 0), fallback = (p (class' = "text-xs opacity-50") { "No agent activity." })) {
+        For (each = model.agents) {
+          yield fun agent _ ->
+            div (class' = "border-t border-base-content/10 pt-2 text-xs break-words") {
+              div (class' = "font-semibold") {
+                agent.name + " · " + agent.role + " · reported " + agent.status
+              }
+              div (class' = "opacity-60") { "Updated " + clockTime agent.updatedAt }
+              div (class' = "flex items-center gap-2") {
+                span () { agent.model }
+                Information "Invocation" (fun () -> [|
+                  "Member: " + agent.memberId
+                  "Session: " + agent.session + " · run: " + agent.id
+                  "Report sequence: " + agent.reportSequence + " · updated " + dateTime agent.updatedAt
+                  "Reported inference endpoint: " + agent.endpoint
+                |])
+              }
+              div () { agent.project + " · " + agent.focus + " · " + agent.operation }
+              div () { agent.usage + " · " + agent.cost }
+              div (class' = "opacity-60") {
+                agent.activity + (if agent.omitted = "0" then "" else " · " + agent.omitted + " earlier omitted")
+              }
+            }
+        }
+      }
     }
   }
 
@@ -377,7 +561,7 @@ let LeasesPanel (model: ModelView) =
       }
       Show (
         when' = (model.leases.Length + model.queue.Length > 0),
-        fallback = (div (class' = "text-xs opacity-60") { "No leases held or queued." })
+        fallback = (div (class' = "text-xs opacity-60") { "No queued or active work." })
       ) {
         table (class' = "table table-xs") {
           thead () {
@@ -392,7 +576,7 @@ let LeasesPanel (model: ModelView) =
               yield fun l _ ->
                 tr () {
                   td (class' = "font-mono") { l.kind }
-                  td (class' = "font-mono truncate max-w-[10rem]", title = l.holder + " · " + l.id) { l.holder }
+                  td (class' = "font-mono break-all max-w-[24rem]", title = l.holder + " · " + l.id) { l.holder }
                   td () {
                     span (class' = "badge badge-xs badge-info mr-1") { "held" }
                     span (class' = "opacity-70", title = "granted " + dateTime l.grantedAt) { "until " + clockTime l.expiresAt }
@@ -403,7 +587,7 @@ let LeasesPanel (model: ModelView) =
               yield fun w _ ->
                 tr () {
                   td (class' = "font-mono") { w.kind }
-                  td (class' = "font-mono truncate max-w-[10rem]", title = w.holder) { w.holder }
+                  td (class' = "font-mono break-all max-w-[24rem]", title = w.holder) { w.holder }
                   td () {
                     span (class' = "badge badge-xs badge-warning mr-1") { "queued" }
                     span (class' = "opacity-70") { "since " + clockTime w.requestedAt }
@@ -447,7 +631,7 @@ let OutputPane (model: ModelView) =
       }
     }
     div (class' = (if tab () = "runs" then "flex-1 min-h-0 overflow-auto px-4 py-3" else "hidden")) {
-      Show (when' = (run ()).IsSome, fallback = (div (class' = "text-xs opacity-50") { "Runs appear here: stdout, stderr and exit code of each Run." })) {
+      Show (when' = (run ()).IsSome, fallback = (div (class' = "text-xs opacity-50") { "No runs yet." })) {
         div (class' = "flex items-center gap-2 text-xs mb-2") {
           span (class' = exitBadge (run () |> Option.map (fun r -> r.exitCode) |> Option.defaultValue 0)) {
             "exit " + string (run () |> Option.map (fun r -> r.exitCode) |> Option.defaultValue 0)
@@ -465,7 +649,7 @@ let OutputPane (model: ModelView) =
       }
     }
     div (class' = (if tab () = "activity" then "flex-1 min-h-0 overflow-auto px-4 py-1" else "hidden")) {
-      Show (when' = (model.activity.Length > 0), fallback = (div (class' = "text-xs opacity-50 py-2") { "Command outcomes appear here." })) {
+      Show (when' = (model.activity.Length > 0), fallback = (div (class' = "text-xs opacity-50 py-2") { "No activity yet." })) {
         For (each = model.activity) {
           yield fun a _ ->
             div (class' = "flex gap-2 text-xs py-2 border-b border-base-content/5") {
@@ -481,6 +665,9 @@ let OutputPane (model: ModelView) =
 
 [<SolidComponent>]
 let App () =
+  let composerPage = isComposerPage ()
+  Browser.Dom.document.title <- (if composerPage then "Composer · Bozzetto" else "Dashboard · Bozzetto")
+
   // ── Model ────────────────────────────────────────────────────────────────
   // Stores hold what the backend reported; the backend is the update.
   let stores = Model.create ()
@@ -521,7 +708,7 @@ let App () =
     match Codec.decodeEvent payload with
     | Ok event ->
       match event with
-      | Health _ | Leases _ | Uptime _ -> ()
+      | Health _ | Leases _ | Uptime _ | Resources _ | AgentWork _ -> ()
       | _ -> Interop.consoleLog ("← " + payload)
       Model.apply stores commands event
     | Error message -> Interop.consoleLog ("← undecodable (" + message + "): " + payload)
@@ -534,31 +721,44 @@ let App () =
 
   // ── View ─────────────────────────────────────────────────────────────────
   div (class' = "flex flex-col h-screen bg-base-100 text-base-content text-sm") {
-    TopBar link dark toggleTheme (fun () -> dispatch RequestSnapshot)
-    HealthStrip model stores.Uptime
+    TopBar link dark toggleTheme
     Show (when' = not (connected ())) {
       div (class' = "px-4 py-1 text-xs bg-warning text-warning-content") {
-        "Bridge disconnected: commands are disabled and the state below is the last received; "
-        + linkText (link ())
-        + "."
+        "Disconnected · last received state · commands unavailable"
       }
     }
     Show (when' = model.protocolMismatch) {
       div (class' = "px-4 py-1 text-xs bg-error text-error-content") {
-        "The daemon speaks a different UI protocol version; reload after updating Bozzetto."
+        "UI version changed. Reload this page."
       }
     }
     div (class' = (if connected () then "flex-1 min-h-0 overflow-auto" else "flex-1 min-h-0 overflow-auto opacity-70")) {
-      div (class' = "grid grid-cols-1 lg:grid-cols-3 gap-4 p-4") {
-        div (class' = "lg:col-span-2 flex flex-col gap-3 min-w-0") {
-          OpenBar local connected dispatch
-          SessionsPanel model local connected dispatch
-        }
-        div (class' = "flex flex-col gap-3 min-w-0") {
-          WorkerPanel model local connected dispatch
+      Show (
+        when' = composerPage,
+        fallback = (div (class' = "flex flex-col gap-4 p-4") {
+          HealthStrip model stores.Uptime
+          HostPanel model local stores.Uptime connected dispatch
+          AgentsPanel model
           LeasesPanel model
+          details () {
+            summary (class' = "cursor-pointer text-xs opacity-60") { "Daemon snapshot" }
+            ResourcesPanel model
+          }
+        })
+      ) {
+        div (class' = "grid grid-cols-1 xl:grid-cols-3 gap-4 p-4") {
+          div (class' = "xl:col-span-2 flex flex-col gap-3 min-w-0") {
+            SessionsPanel model local connected dispatch
+            details () {
+              summary (class' = "cursor-pointer text-xs opacity-60") { "Open project" }
+              OpenBar local connected dispatch
+            }
+          }
+          div (class' = "flex flex-col gap-3 min-w-0") {
+            WorkerPanel model local connected dispatch
+          }
         }
       }
     }
-    OutputPane model
+    Show (when' = composerPage) { OutputPane model }
   }

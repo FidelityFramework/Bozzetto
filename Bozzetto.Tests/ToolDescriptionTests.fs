@@ -67,6 +67,10 @@ let requiredParamsByTool =
     "switch_session", set ["session_id"]
     "switch_workflow", set ["target"]
     "targeted_verify", set ["behavior"]
+    // All 17 snapshot fields are intentional schema requirements. Unknown
+    // usage uses explicit placeholders; omitted counters must not mean zero.
+    "report_agent_work", set ["run"; "session"; "sequence"; "name"; "model"; "endpoint"; "project"; "focus"; "operation"; "status"; "usageAvailable"; "input"; "output"; "cacheRead"; "cacheWrite"; "total"; "estimateUsd"]
+    "get_agent_work", Set.empty
     "report_friction", set ["tool_name"; "feedback_kind"; "short_reason"]
     "explain_test_failure", set ["test_name"]
     "decompose_pipeline", set ["code"]
@@ -255,8 +259,9 @@ let descriptionPropertyTests =
 
     testCase "reduced MCP surface keeps the tool count surgical"
     <| fun _ ->
-      // Exact current surface: retired patching and managed app tools are absent.
-      registeredToolDescriptions.Length |> Expect.equal "tool count should stay intentionally small" 53
+      // Only report_agent_work/get_agent_work expand this exact surface.
+      // The owner's deferred tool-bloat review remains outstanding.
+      registeredToolDescriptions.Length |> Expect.equal "tool count should stay intentionally small" 55
 
     testCase "every tool-shaped member is registered — no write-only MCP surface"
     <| fun _ ->

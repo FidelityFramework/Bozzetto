@@ -87,10 +87,11 @@ open System
 /// earlier bug here: `ClearFactor`'s only job was to compute a slightly
 /// lower re-arm bar, but with no separate breach-entry bar, three ordinary
 /// noisy samples that happened to nudge the CUSUM above that low bar were
-/// enough to read as `Drifting` on a perfectly flat signal. A `Drifting` or
-/// `Broken` verdict must mean the CUSUM cleared the real, higher
-/// `DriftThreshold` for `MinSustainSamples` in a row — not merely that it
-/// drifted above the RESET bar.
+/// enough to read as `Drifting` on a perfectly flat signal. A `Drifting`
+/// verdict requires drift-level breach evidence, held through the dead
+/// zone — not merely samples above the RESET bar. `Broken` also requires
+/// its own consecutive break-level evidence; observations only at drift
+/// level never count towards break sustain.
 ///
 /// A slow drift produces a small unclipped z each sample (the EWMA mean is
 /// chasing it too), so its CUSUM grows slowly and it reads as `Drifting`
@@ -101,13 +102,16 @@ open System
 /// eventually cross any fixed CUSUM threshold — that is inherent to CUSUM,
 /// not a bug, and it is arguably correct (a metric that never stops
 /// climbing is a real, escalating problem). The actual guarantee is
-/// ORDERING: a drift is read as `Drifting` before it is ever read as
-/// `Broken`, so severity escalates gradually instead of snapping straight
-/// to the page-someone case the way a sudden step does.
+/// ORDERING at defaults: the threshold gap (5) exceeds the maximum clipped
+/// CUSUM rise per sample (3), and each severity has its own sustain gate.
+/// Thus Drifting precedes the first Broken, even for sudden steps (which
+/// reach Broken a few samples later). This is not a transition latch:
+/// custom parameters with a smaller gap and one-sample sustain can read
+/// Broken directly. No ordering is promised for arbitrary custom Params.
 ///
 /// The `MinSustainSamples` streak gate exists to keep a single spike from
-/// firing at all — without it, one giant sample's CUSUM contribution alone
-/// can already exceed `BreakThreshold`. Requiring the breach to persist
+/// firing at all — with custom thresholds, one giant sample's CUSUM
+/// contribution can exceed `BreakThreshold`. Requiring each breach to persist
 /// across several consecutive samples is what turns "instantaneous
 /// magnitude" into "sustained for a while", which is the actual claim a
 /// `Broken`/`Drifting` verdict makes.
@@ -182,10 +186,11 @@ module HealthAnomaly =
     /// baseline — the honest number for a human-facing message, even though
     /// the detector's own internals use a clipped version of it.
     DeviationInSigmas: float
-    /// How long the current breach has been continuously in progress.
+    /// Time since this severity's evidence began. Drift evidence holds
+    /// through the hysteresis dead zone; break evidence is consecutive.
     SustainedFor: TimeSpan
-    /// How many consecutive observations have been in breach, including
-    /// this one.
+    /// Drift-level breach count (held in the dead zone) for Drifting;
+    /// consecutive break-level observation count for Broken.
     SamplesSustained: int
   }
 
@@ -199,9 +204,8 @@ module HealthAnomaly =
     /// that does not exist yet.
     | InsufficientHistory
     | Normal
-    /// Sustained deviation below the break threshold: worth watching, not
-    /// (yet, or perhaps ever, if it's a slow drift into a stable new normal)
-    /// worth paging anyone.
+    /// Sustained drift-level deviation: worth watching. Magnitude may
+    /// already exceed the break threshold while break sustain is pending.
     | Drifting of SignalEvidence
     /// Sustained deviation at or above the break threshold: this is the
     /// "say so in your own status" case.
@@ -281,6 +285,9 @@ module HealthAnomaly =
     CusumNeg: float
     BreachStreak: int
     BreachSince: DateTimeOffset option
+    /// Consecutive break-level samples only; no hysteresis hold below break.
+    BreakStreak: int
+    BreakSince: DateTimeOffset option
   }
 
   /// The detector's state before it has seen anything.
@@ -292,6 +299,8 @@ module HealthAnomaly =
     CusumNeg = 0.0
     BreachStreak = 0
     BreachSince = None
+    BreakStreak = 0
+    BreakSince = None
   }
 
   let private clamp lo hi v = max lo (min hi v)
@@ -316,7 +325,7 @@ module HealthAnomaly =
       let mean' = s.Mean + delta / float count
       let delta2 = obs.Value - mean'
       let m2' = s.Variance + delta * delta2
-      { s with Count = count; Mean = mean'; Variance = m2' }, Verdict.InsufficientHistory
+      { s with Count = count; Mean = mean'; Variance = m2'; BreakStreak = 0; BreakSince = None }, Verdict.InsufficientHistory
     else
       // The sample right after warmup converts Welford's M2 into the
       // unbiased sample variance once; every sample after that is already
@@ -366,6 +375,14 @@ module HealthAnomaly =
           // hold the streak where it is and let CUSUM keep evolving.
           s.BreachStreak, s.BreachSince, cusumPos, cusumNeg
 
+      let breakStreak', breakSince' =
+        if magnitude <= clearThreshold || magnitude < p.BreakThreshold then
+          0, None
+        else
+          let since = s.BreakSince |> Option.orElse (Some obs.At)
+          let streak = if s.BreakStreak = Int32.MaxValue then s.BreakStreak else s.BreakStreak + 1
+          streak, since
+
       let s' = {
         Count = count
         Mean = mean'
@@ -374,6 +391,8 @@ module HealthAnomaly =
         CusumNeg = cusumNeg'
         BreachStreak = breachStreak'
         BreachSince = breachSince'
+        BreakStreak = breakStreak'
+        BreakSince = breakSince'
       }
 
       let verdict =
@@ -382,8 +401,11 @@ module HealthAnomaly =
         else
           let direction =
             if rawZ >= 0.0 then SignalDirection.Increased else SignalDirection.Decreased
+          let broken = breakStreak' >= p.MinSustainSamples
+          let evidenceStreak, evidenceSince =
+            if broken then breakStreak', breakSince' else breachStreak', breachSince'
           let sustainedFor =
-            match breachSince' with
+            match evidenceSince with
             | Some since -> obs.At - since
             | None -> TimeSpan.Zero
           let evidence = {
@@ -395,9 +417,9 @@ module HealthAnomaly =
             Direction = direction
             DeviationInSigmas = rawZ
             SustainedFor = sustainedFor
-            SamplesSustained = breachStreak'
+            SamplesSustained = evidenceStreak
           }
-          if magnitude >= p.BreakThreshold then Verdict.Broken evidence else Verdict.Drifting evidence
+          if broken then Verdict.Broken evidence else Verdict.Drifting evidence
 
       s', verdict
 

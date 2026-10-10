@@ -163,3 +163,19 @@ let neverExpiresTwinTests =
       | Decision.Granted _ -> ()
       | other -> failtestf "the real request must reclaim the expired lease and grant agent-b, got %A" other
   ]
+
+[<Tests>]
+let observationDeadlineTests =
+  testList "Lease observation deadlines" [
+    test "the owner arms only the earliest future expiry" {
+      let grant expires : GrantView =
+        { Holder = "agent"; Kind = "full_build"; GrantedAt = epoch; ExpiresAt = expires }
+      let first, last = epoch.AddSeconds 2., epoch.AddMinutes 1.
+      let active = [ grant last; grant epoch; grant first; grant (epoch.AddSeconds -1.) ]
+      Features.LeaseWatch.nextExpiry epoch active |> Expect.equal "earliest future, not the last grant" (Some first)
+      Features.LeaseWatch.nextExpiry last active |> Expect.equal "expired grants never rearm a timer" None
+      Features.LeaseWatch.nextExpiry epoch [] |> Expect.equal "empty pool owns no deadline" None
+      let latestInstead = active |> List.map _.ExpiresAt |> List.max
+      latestInstead |> Expect.notEqual "latest-expiry mutant would miss the first removal" first
+    }
+  ]

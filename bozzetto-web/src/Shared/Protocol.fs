@@ -82,10 +82,10 @@
 /// "refused" carrying its correlation ("run" sends "run_output" first). A
 /// frame the backend cannot decode is refused with correlation 0 and an empty
 /// target. "welcome" opens every connection, once. "snapshot", "health" and
-/// "leases" are pushed on connect and in answer to "request_snapshot" (the
-/// explicit pull); after that, only when their owner reports a discrete
-/// change, never on a timer: a continuous figure (RSS, machine memory, CPU)
-/// rides along in a "health" sent for another reason or pulled. The start
+/// "leases" are sent on connect and for the compatibility "request_snapshot"
+/// command. Snapshot and lease owner changes push; lease expiry has a one-shot
+/// owner deadline. Legacy Health remains a labelled snapshot, not a live feed.
+/// Explicit bounded counter observation uses Resources separately. The start
 /// time travels once, in "welcome". "uptime" is the one clock-owned push: the
 /// backend's clock ticks once a second while at least one page is connected
 /// and each tick is pushed as it is, so the page shows a live uptime without
@@ -124,6 +124,8 @@ type RunCurrent = { Target: SessionTarget; Arguments: string array }
 type Command =
   /// Push Snapshot, Health and Leases now.
   | RequestSnapshot
+  /// Explicit counter-only acquisition: 1–120 seconds, 0 to unsubscribe.
+  | ObserveResources of int32
   /// Open an absolute Clef .fidproj (composer_open_project).
   | OpenProject of string
   | Reserve of ReserveEdit
@@ -309,6 +311,49 @@ type UptimeTick = {
   UptimeMs: int64
 }
 
+/// A kernel reading. Missing/unsupported readings are null, never zero.
+/// Units are percent (host capacity), bytes, count, or load (runnable tasks).
+type ResourceMetric = { Name: string; Value: float option; Unit: string }
+
+/// PID plus start ticks identifies a process incarnation. CPU is percent of
+/// one logical CPU (100% = one busy CPU); RSS includes shared pages.
+type ResourceProcess = {
+  ProcessId: int32
+  ParentId: int32
+  StartTicks: string
+  Name: string
+  Context: string
+  CpuPercent: float option
+  ResidentBytes: float
+  Threads: int32
+}
+
+/// One host acquisition in an explicitly requested bounded window. Metrics do not
+/// affect lease policy. Processes are the union of top CPU and top RSS rows.
+type HostResources = {
+  Sequence: int64
+  Status: string
+  SampledAtMs: int64
+  IntervalMs: float
+  SampleCostMs: float
+  Metrics: ResourceMetric array
+  Processes: ResourceProcess array
+  ProcessCount: int32
+  UnreadableCount: int32
+  OmittedCount: int32
+  Note: string
+}
+
+/// Client-reported agent accounting, separate from leases/compiler evidence.
+type AgentUsage = { Input: int64; Output: int64; CacheRead: int64; CacheWrite: int64; Total: int64; EstimateUsd: float option }
+type AgentRun = {
+  Id: string; Member: string; Role: string; Name: string; Session: string
+  ReportSequence: int64; Model: string; Endpoint: string; Project: string
+  Focus: string; Operation: string; Status: string; UpdatedAtMs: int64
+  Activity: string array; OmittedActivity: int64; Usage: AgentUsage option
+}
+type AgentWorkBoard = { Incarnation: string; Sequence: int64; ExecutionHost: string; Capacity: int32; Runs: AgentRun array }
+
 /// What the backend pushes to the UI. Events fold into the UI's model.
 type Event =
   | Welcome of BridgeWelcome
@@ -319,3 +364,5 @@ type Event =
   | Health of DaemonHealth
   | Leases of LeaseBoard
   | Uptime of UptimeTick
+  | Resources of HostResources
+  | AgentWork of AgentWorkBoard

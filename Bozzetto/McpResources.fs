@@ -24,6 +24,9 @@ open Bozzetto.McpTools
 [<Literal>]
 let CohortStatusUri = "cohort://status"
 
+[<Literal>]
+let AgentWorkUri = "agents://work"
+
 /// The daemon's current session list — a direct resource.
 [<Literal>]
 let SessionsListUri = "sessions://list"
@@ -41,6 +44,13 @@ let private emptyCohortFrame () : Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTab
   Bozzetto.Cohort.project head [||]
 
 type BozzettoResources(ctx: McpContext) =
+
+  [<McpServerResource(UriTemplate = AgentWorkUri, Name = "agent_work", MimeType = "application/json")>]
+  [<Description("Bound, client-reported agent runs and cumulative usage; subscribed owner changes, no polling. Model labels and USD estimates are not attestation or billing.")>]
+  member _.AgentWork() : string =
+    match ctx.CohortOwner with
+    | Some owner -> Bozzetto.AgentWork.json (owner.ReadWork())
+    | None -> Bozzetto.AgentWork.json Bozzetto.AgentWork.empty
 
   [<McpServerResource(UriTemplate = CohortStatusUri, Name = "cohort_status", MimeType = "application/json")>]
   [<Description("The daemon's current cohort state (members, claims, test matrix) as JSON — the same read model get_cohort_status reports. Subscribe (resources/subscribe) to be pushed notifications/resources/updated whenever the cohort changes, instead of polling.")>]

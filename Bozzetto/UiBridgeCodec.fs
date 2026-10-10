@@ -75,6 +75,10 @@ let private command (o: JsonValue) : Result<Command, string> =
   |> Result.bind (fun tag ->
     match tag with
     | "request_snapshot" -> Ok RequestSnapshot
+    | "observe_resources" ->
+      match field "seconds" o |> Option.bind int32Of with
+      | Some seconds when seconds >= 0 && seconds <= 120 -> Ok(ObserveResources seconds)
+      | _ -> Error "seconds: expected an integer from 0 to 120"
     | "open_project" -> text "project" o |> Result.map OpenProject
     | "reserve" ->
       decode {
@@ -346,6 +350,45 @@ let private eventJson (event: Event) =
       JsonValue.Array [
         for wait in board.Queued ->
           JsonValue.Object [ "kind", str wait.Kind; "holder", str wait.Holder; "requestedAtMs", wide wait.RequestedAtMs ]
+      ]
+    ]
+  | Resources r ->
+    let optional value = value |> Option.map real |> Option.defaultValue JsonValue.Null
+    JsonValue.Object [
+      tag "resources"
+      "sequence", wide r.Sequence; "status", str r.Status
+      "sampledAtMs", wide r.SampledAtMs; "intervalMs", real r.IntervalMs; "sampleCostMs", real r.SampleCostMs
+      "processCount", whole r.ProcessCount; "unreadableCount", whole r.UnreadableCount; "omittedCount", whole r.OmittedCount
+      "note", str r.Note
+      "metrics", JsonValue.Array [ for m in r.Metrics -> JsonValue.Object [ "name", str m.Name; "value", optional m.Value; "unit", str m.Unit ] ]
+      "processes", JsonValue.Array [
+        for p in r.Processes ->
+          JsonValue.Object [
+            "processId", whole p.ProcessId; "parentId", whole p.ParentId; "startTicks", str p.StartTicks
+            "name", str p.Name; "context", str p.Context; "cpuPercent", optional p.CpuPercent
+            "residentBytes", real p.ResidentBytes; "threads", whole p.Threads ] ]
+    ]
+  | AgentWork board ->
+    JsonValue.Object [
+      tag "agent_work"; "incarnation", str board.Incarnation; "sequence", wide board.Sequence
+      "executionHost", str board.ExecutionHost; "capacity", whole board.Capacity
+      "runs", JsonValue.Array [
+        for r in board.Runs -> JsonValue.Object [
+          "id", str r.Id; "member", str r.Member; "role", str r.Role; "name", str r.Name; "session", str r.Session
+          "reportSequence", wide r.ReportSequence; "model", str r.Model; "endpoint", str r.Endpoint
+          "project", str r.Project; "focus", str r.Focus; "operation", str r.Operation; "status", str r.Status
+          "updatedAtMs", wide r.UpdatedAtMs; "omittedActivity", wide r.OmittedActivity
+          "activity", JsonValue.Array (r.Activity |> Array.toList |> List.map str)
+          "usage",
+            (match r.Usage with
+             | None -> JsonValue.Null
+             | Some u ->
+               JsonValue.Object [
+                 "input", wide u.Input; "output", wide u.Output; "cacheRead", wide u.CacheRead
+                 "cacheWrite", wide u.CacheWrite; "total", wide u.Total
+                 "estimateUsd", (u.EstimateUsd |> Option.map real |> Option.defaultValue JsonValue.Null)
+               ])
+        ]
       ]
     ]
   | Uptime tick -> JsonValue.Object [ tag "uptime"; "uptimeMs", wide tick.UptimeMs ]

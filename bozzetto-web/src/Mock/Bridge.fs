@@ -100,6 +100,27 @@ let private healthValue () : DaemonHealth =
 
 let private health () = Health(healthValue ())
 
+/// Explicitly synthetic reports cover populated rows, unknown usage and known
+/// zero. They are never model-worker, compiler or installed-delivery evidence.
+let private agentWork () =
+  let run id memberId name role usage status : AgentRun = {
+    Id = id; Member = memberId; Role = role; Name = name; Session = "mock-session"
+    ReportSequence = 1L; Model = "mock-model"; Endpoint = "mock inference"
+    Project = "/mock/Visibility.fidproj"; Focus = "mock visibility check"; Operation = "read"
+    Status = status; UpdatedAtMs = int64 startedAt; Activity = [| "read" |]
+    OmittedActivity = 0L; Usage = usage
+  }
+  AgentWork {
+    Incarnation = "mock-incarnation"; Sequence = 3L; ExecutionHost = "mock-host"; Capacity = 256
+    Runs = [|
+      run "mock-implementation" "mock:impl" "Mock implementer" "Implementer"
+        (Some { Input = 100L; Output = 50L; CacheRead = 100L; CacheWrite = 0L; Total = 250L; EstimateUsd = Some 0.125 }) "running"
+      run "mock-audit" "mock:verifier" "Mock verifier" "Verifier" None "completed"
+      run "mock-zero" "mock:observer" "Mock observer" "Observer"
+        (Some { Input = 0L; Output = 0L; CacheRead = 0L; CacheWrite = 0L; Total = 0L; EstimateUsd = None }) "disconnected"
+    |]
+  }
+
 /// The discrete facts a Health push is for. The byte and CPU readings are
 /// not among them: they ride along when Health is sent for one of these.
 let private healthFacts (h: DaemonHealth) =
@@ -222,6 +243,8 @@ let private artifactFor (session: MockSession) =
 let private handle (send: string -> unit) (frame: CommandFrame) =
   let correlation = frame.Correlation
   match frame.Command with
+  | ObserveResources _ ->
+    refuse send correlation noTarget "unsupported" "Host resource acquisition is available only on the Linux daemon, not the mock."
   | RequestSnapshot ->
     reply send (snapshot ())
     reply send (health ())
@@ -339,6 +362,7 @@ let connect (send: string -> unit) : obj =
   reply send (snapshot ())
   reply send (health ())
   reply send (leases ())
+  reply send (agentWork ())
   // Pushes (snapshots, leases, health, uptime) follow the prologue.
   clients[id] <- send
   attachClock ()

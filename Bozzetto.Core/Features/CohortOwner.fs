@@ -40,6 +40,8 @@ module CohortOwner =
 
   type internal Command =
     | Apply of CohortCommand<MemberId> * reply: (Result<CohortEvent<MemberId> list * CohortEffect<MemberId> list, CohortError<MemberId>> -> unit)
+    | ReportWork of MemberId * AgentWork.Report * (Result<int64, AgentWork.Refusal> -> unit)
+    | ReconcileWork of (Result<int64, AgentWork.Refusal> -> unit)
     | Flush of AsyncReplyChannel<unit>
 
   /// The injectable seam for actually PERFORMING a landing effect (item 14b
@@ -117,6 +119,8 @@ module CohortOwner =
   type internal OwnerState = {
     Cohort: CohortState<MemberId>
     NextSeq: int64<ledgerSeq>
+    Work: AgentWork.State
+    WorkPublicationPending: bool
   }
 
   /// One session's Pass/Fail/Stale `Cohort.TestId` lists plus its generation
@@ -286,6 +290,16 @@ module CohortOwner =
         try performer.Notify who event
         with ex -> logger.LogWarning(sprintf "[cohort-owner] Notify performer threw: %s" ex.Message)
 
+  /// Publication is downstream of committed owner state. Failure stays loud,
+  /// but must never roll back the ledger sequence or strand a committed reply.
+  let private publishWork (logger: Utils.ILogger) (publication: AgentWork.Publication) work =
+    try
+      publication.Publish work
+      Ok work.Sequence
+    with error ->
+      logger.LogError(sprintf "[cohort-owner] agent publication failed; reconciliation required via get_agent_work: %s" error.Message)
+      Error AgentWork.PublicationFailed
+
   let internal handle
     (logger: Utils.ILogger)
     (ledger: LedgerPort<MemberId>)
@@ -297,11 +311,30 @@ module CohortOwner =
     (publishEvents: CohortEvent<MemberId> list -> unit)
     (performer: LandingPerformer<MemberId>)
     (post: Command -> unit)
+    (workPublication: AgentWork.Publication)
     (owner: OwnerState)
     (command: Command)
     : Async<OwnerState> =
     async {
       match command with
+      | Command.ReportWork(who, report, reply) ->
+        match Map.tryFind who owner.Cohort.Members with
+        | Some memberRecord when memberRecord.Presence = MemberPresence.Present ->
+          match AgentWork.report (clock ()) who memberRecord.Role report owner.Work with
+          | Error error -> reply (Error error); return owner
+          | Ok work ->
+            let result =
+              if owner.WorkPublicationPending || work <> owner.Work then publishWork logger workPublication work
+              else Ok work.Sequence
+            reply result
+            return { owner with Work = work; WorkPublicationPending = Result.isError result }
+        | _ -> reply (Error AgentWork.NotPresent); return owner
+      | Command.ReconcileWork reply ->
+        let result =
+          if owner.WorkPublicationPending then publishWork logger workPublication owner.Work
+          else Ok owner.Work.Sequence
+        reply result
+        return { owner with WorkPublicationPending = Result.isError result }
       | Command.Apply(cmd, reply) ->
         let now = clock ()
         let bytes = entropy ()
@@ -327,9 +360,17 @@ module CohortOwner =
           match events with
           | [] -> ()
           | _ -> publishEvents events
+          let work =
+            (owner.Work, events) ||> List.fold (fun state event ->
+              match event with
+              | CohortEvent.MemberDeparted(who, _) -> AgentWork.disconnect now who state
+              | _ -> state)
+          let publicationResult =
+            if owner.WorkPublicationPending || work <> owner.Work then publishWork logger workPublication work
+            else Ok work.Sequence
           notify logger reply (Ok(events, effects))
           dispatchLandingEffects logger performer post effects
-          return { Cohort = newState; NextSeq = seq + 1L<ledgerSeq> }
+          return { Cohort = newState; NextSeq = seq + 1L<ledgerSeq>; Work = work; WorkPublicationPending = Result.isError publicationResult }
         | Error err ->
           notify logger reply (Error err)
           return owner
@@ -345,8 +386,24 @@ module CohortOwner =
       mailbox: MailboxProcessor<Command>,
       readFrame: unit -> CohortFrame<MemberId>,
       readCohortState: unit -> CohortState<MemberId>,
-      events: IEvent<CohortEvent<MemberId> list>
+      events: IEvent<CohortEvent<MemberId> list>,
+      workPublication: AgentWork.Publication
     ) =
+    let workAdmission = new SemaphoreSlim(32)
+    let admit command : Async<Result<int64, AgentWork.Refusal>> =
+      Async.FromContinuations(fun (complete, _, _) ->
+        if not (workAdmission.Wait(0)) then complete (Error AgentWork.ReportingBusy)
+        else
+          // The owner, not cancellation of an observing caller, releases the
+          // admission slot once the queued command actually settles.
+          mailbox.Post(command (fun result ->
+            workAdmission.Release() |> ignore
+            complete result)))
+    member _.ReportWork(who, report) = admit (fun reply -> Command.ReportWork(who, report, reply))
+    /// Explicit bounded retry of the owner's retained committed snapshot.
+    member _.ReconcileWork() = admit Command.ReconcileWork
+    member _.ReadWork() = workPublication.Read()
+    member _.WorkChanged = workPublication.Changed
     /// Apply a command; completes once it is on the ledger (or refused).
     member _.Commit(cmd: CohortCommand<MemberId>) : Task<Result<CohortEvent<MemberId> list * CohortEffect<MemberId> list, CohortError<MemberId>>> =
       mailbox.PostAndAsyncReply(fun ch -> Command.Apply(cmd, ch.Reply)) |> Async.StartAsTask
@@ -420,6 +477,7 @@ module CohortOwner =
     (entropy: unit -> byte[])
     (getSessionTestOutcomes: string -> SessionTestOutcomes)
     (performer: LandingPerformer<MemberId>)
+    (workPublication: AgentWork.Publication)
     : Handle =
     let entries = ledger.ReadAll ()
     let head = replayHead entries
@@ -443,14 +501,14 @@ module CohortOwner =
       MailboxProcessor.Start(fun inbox ->
         let step =
           ResilientActor.wrapLoop logger "cohort-owner"
-            (handle logger ledger clock entropy getSessionTestOutcomes publish publishState cohortEvents.Trigger performer inbox.Post)
+            (handle logger ledger clock entropy getSessionTestOutcomes publish publishState cohortEvents.Trigger performer inbox.Post workPublication)
         let rec loop owner = async {
           let! command = inbox.Receive()
           let! next = step owner command
           return! loop next
         }
-        loop { Cohort = head.State; NextSeq = initialNextSeq })
-    new Handle(mailbox, (fun () -> frameRef.Value), (fun () -> stateRef.Value), cohortEvents.Publish)
+        loop { Cohort = head.State; NextSeq = initialNextSeq; Work = workPublication.Read(); WorkPublicationPending = false })
+    new Handle(mailbox, (fun () -> frameRef.Value), (fun () -> stateRef.Value), cohortEvents.Publish, workPublication)
 
   /// Start the owner for one cohort's ledger. `clock`/`entropy` are injected
   /// (production defaults: `DateTime.UtcNow` and `productionEntropy`) so
@@ -477,7 +535,7 @@ module CohortOwner =
     (entropy: unit -> byte[])
     (getSessionTestOutcomes: string -> SessionTestOutcomes)
     : Handle =
-    startCore logger ledger clock entropy getSessionTestOutcomes LandingPerformer.stub
+    startCore logger ledger clock entropy getSessionTestOutcomes LandingPerformer.stub (AgentWork.inMemoryPublication())
 
   /// Same as `start`, plus an injected `LandingPerformer` that actually runs
   /// landing effects — this is the keystone item 14b adds: without a real
@@ -493,7 +551,10 @@ module CohortOwner =
     (getSessionTestOutcomes: string -> SessionTestOutcomes)
     (performer: LandingPerformer<MemberId>)
     : Handle =
-    startCore logger ledger clock entropy getSessionTestOutcomes performer
+    startCore logger ledger clock entropy getSessionTestOutcomes performer (AgentWork.inMemoryPublication())
+
+  let startWithWorkPublication logger ledger clock entropy getSessionTestOutcomes performer publication =
+    startCore logger ledger clock entropy getSessionTestOutcomes performer publication
 
   /// Roast-6 #7a: the daemon-held content-addressed test-result cache for
   /// landing verification (§5.4) used to be a bare `ref`, read-modify-written

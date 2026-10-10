@@ -90,6 +90,8 @@ let private bareSession = {
 }
 
 let private commands = [
+  ObserveResources 120
+  ObserveResources 0
   RequestSnapshot
   OpenProject "/abs/Ünï 🎼.fidproj"
   OpenProject ""
@@ -114,6 +116,22 @@ let private completions = [
 ]
 
 let private events = [
+  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Capacity = 256; Runs = [||] }
+  AgentWork { Incarnation = "daemon-b"; Sequence = 9007199254740993L; ExecutionHost = "local"; Capacity = 256
+              Runs = [| { Id = "run"; Member = "mcp:one"; Role = "Observer"; Name = "same"; Session = "pi"
+                          ReportSequence = 2L; Model = "reported"; Endpoint = "LAN"; Project = "/repo"; Focus = "review"
+                          Operation = "read"; Status = "disconnected"; UpdatedAtMs = 123L; Activity = [|"read"|]; OmittedActivity = 4L; Usage = None }
+                        { Id = "run2"; Member = "mcp:two"; Role = "Verifier"; Name = "same"; Session = "pi2"
+                          ReportSequence = 3L; Model = "reported2"; Endpoint = "paid"; Project = "/repo"; Focus = "audit"
+                          Operation = "settled"; Status = "completed"; UpdatedAtMs = 124L; Activity = [|"settled"|]; OmittedActivity = 0L
+                          Usage = Some { Input = 0L; Output = 0L; CacheRead = 0L; CacheWrite = 0L; Total = 0L; EstimateUsd = Some 0. } } |] }
+  Resources {
+    Sequence = 9007199254740993L; Status = "observing"; SampledAtMs = 1759420800123L; IntervalMs = 2000.; SampleCostMs = 12.5
+    Metrics = [| { Name = "GPU unavailable"; Value = None; Unit = "percent" }; { Name = "RAM used"; Value = Some 4294967296.; Unit = "bytes" } |]
+    Processes = [| {
+      ProcessId = 42; ParentId = 1; StartTicks = "9007199254740993"; Name = "worker 日本"; Context = "external"
+      CpuPercent = None; ResidentBytes = 10000000.; Threads = 8 } |]
+    ProcessCount = 400; UnreadableCount = 2; OmittedCount = 397; Note = "Overlapping views; no summation." }
   Welcome { BridgeWelcome.ProtocolVersion = ProtocolVersion; DaemonVersion = "0.6.834"; StartedAtMs = 1759420800123L }
   Welcome { BridgeWelcome.ProtocolVersion = System.Int32.MaxValue; DaemonVersion = ""; StartedAtMs = System.Int64.MinValue }
   Snapshot { ComposerSnapshot.Revision = 0L; Worker = Unconfigured; Sessions = [||] }
@@ -185,6 +203,7 @@ let private events = [
 // ── Malformed frames ───────────────────────────────────────────────────────
 
 let private badEvents = [
+  """{"event":"agent_work","incarnation":"d","sequence":1,"executionHost":"local","capacity":256,"runs":[]}"""
   "not json"
   "[]"
   "null"

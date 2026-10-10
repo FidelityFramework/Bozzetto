@@ -1086,7 +1086,9 @@ let fileSizeBudgets =
       // is what let the state/lifecycle/loadedProjects agreement become one
       // testable rule instead of an inline record. The remaining growth is the
       // call site; the rule itself now lives where the DST can fold it.
-      "Bozzetto/Mcp.fs", 4388
+      // 4388 -> 4387: strict reporting/read reconciliation moved into the
+      // existing McpCohortIntegration tool feature; no new file or authority.
+      "Bozzetto/Mcp.fs", 4387
       // 850 -> 830: ratcheted DOWN (never up) after moving the
       // session-path-containment validator (resolveRealSessionPath/
       // isUncPath/validateSessionCreateRequest) out into its own

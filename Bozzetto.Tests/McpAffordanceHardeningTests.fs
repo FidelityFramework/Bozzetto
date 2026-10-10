@@ -217,7 +217,7 @@ let toolRegistrationTests =
         |> Expect.isTrue
           (sprintf "%A (%d) should have <= Ready (%d)" state count readyCount))
 
-    testCase "McpServerTool-attributed methods total exactly 53 (reflection)"
+    testCase "McpServerTool-attributed methods total exactly 55 (reflection)"
     <| fun _ ->
       match tryGetMcpToolMethods () with
       | None ->
@@ -225,9 +225,10 @@ let toolRegistrationTests =
           "BozzettoTools type not found in loaded assemblies; \
            reflection test skipped"
       | Some methods ->
-        // Retired patching and managed app tools are absent from the current surface.
+        // Exactly the approved report_agent_work/get_agent_work additions;
+        // retained tool-bloat review is not waived.
         methods.Length
-          |> Expect.equal "MCP tool method count" 53
+          |> Expect.equal "MCP tool method count" 55
 
     testCase
       "every McpServerTool method has a non-empty Description (reflection)"
@@ -402,7 +403,7 @@ let stateTransitionSafetyTests =
         // Every retained tool is checked in each state.
         tested
         |> Expect.equal
-          "should test 5 states × 53 tools = 265" 265
+          "should test 5 states × 55 tools = 275" 275
   ]
 
 // ── Group 5: Affordance Superset/Subset Relationships ──

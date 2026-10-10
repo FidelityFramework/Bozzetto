@@ -104,16 +104,37 @@ let healthAnomalySimDstTests =
             | _ -> false))
         |> Expect.isTrue "at least one seed's step is severe enough to read as Broken"
 
-      testCase "some seeds' drift reads Drifting" <| fun _ ->
+      testCase "some seeds' drift reaches Broken after Drifting, not vacuously never Broken" <| fun _ ->
         traces
         |> List.exists (fun (scenario, states) ->
           HealthAnomalySimInvariants.segments states scenario.Events
           |> List.exists (fun (_, ev, samples) ->
             match ev with
-            | ShapeEvent.Drift(_, _) -> samples |> List.exists (fun (_, v) -> match v with Verdict.Drifting _ -> true | _ -> false)
+            | ShapeEvent.Drift(_, _) ->
+              let verdicts = samples |> List.map snd
+              match verdicts |> List.tryFindIndex (function Verdict.Broken _ -> true | _ -> false) with
+              | Some brokenAt -> verdicts |> List.truncate brokenAt |> List.exists (function Verdict.Drifting _ -> true | _ -> false)
+              | None -> false
             | _ -> false))
-        |> Expect.isTrue "at least one seed's drift is picked up as Drifting"
+        |> Expect.isTrue "at least one seed's drift genuinely escalates from Drifting to Broken"
     ]
+
+    testCase "SEVERITY TWIN: promoting Drifting to Broken preserves fires but violates drift ordering" <| fun _ ->
+      let promote = function Verdict.Drifting e -> Verdict.Broken e | other -> other
+      let fires = function Verdict.Drifting _ | Verdict.Broken _ -> true | _ -> false
+      let caught = seeds |> List.choose (fun seed ->
+        let scenario = scenarioOf seed
+        let real = trace DetectorBehavior.Real scenario
+        let twin = real |> List.map (fun st -> { st with History = st.History |> List.map (fun (obs, v) -> obs, promote v) })
+        (List.last twin).History |> List.map (snd >> fires)
+        |> Expect.equal "severity twin retains every firing decision" ((List.last real).History |> List.map (snd >> fires))
+        HealthAnomalySimInvariants.driftNeverJumpsStraightToBroken real scenario.Events
+        |> List.isEmpty |> Expect.isTrue "real control satisfies the same severity invariant"
+        let violations = HealthAnomalySimInvariants.driftNeverJumpsStraightToBroken twin scenario.Events
+        if List.isEmpty violations then None else Some violations)
+      caught |> List.isEmpty |> Expect.isFalse "same-fires severity corruption must be detected, unlike the all-Normal twin"
+      caught |> List.concat |> List.forall (fun v -> v.Why = "the drift segment reached Broken without ever reading Drifting first")
+      |> Expect.isTrue "caught for the specific skipped-warning severity reason"
 
     testCase "TWIN: a detector that always says fine is caught by every invariant that claims the real one fires" <| fun _ ->
       // AlwaysFineTwin never fires, period — so any invariant that requires

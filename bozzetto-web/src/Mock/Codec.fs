@@ -76,6 +76,10 @@ let decodeCommand (payload: string) : Result<CommandFrame, string> =
           |> Result.bind (fun tag ->
             match tag with
             | "request_snapshot" -> Ok RequestSnapshot
+            | "observe_resources" ->
+              let n = field o "seconds"
+              if isInt32 n && unbox<int32> n >= 0 && unbox<int32> n <= 120 then Ok(ObserveResources(unbox<int32> n))
+              else Error "seconds: expected an integer from 0 to 120"
             | "open_project" -> text o "project" |> Result.map OpenProject
             | "reserve" ->
               match target o, text o "label" with
@@ -251,5 +255,34 @@ let encodeEvent (event: Event) : string =
         "queued" ==> (board.Queued |> Array.map (fun q ->
           createObj [ "kind" ==> q.Kind; "holder" ==> q.Holder; "requestedAtMs" ==> wide q.RequestedAtMs ]))
       ]
+    | Resources r ->
+      let opt (v: float option) : obj = match v with Some n -> box n | None -> null
+      createObj [
+        "event" ==> "resources"; "sequence" ==> wide r.Sequence; "status" ==> r.Status
+        "sampledAtMs" ==> wide r.SampledAtMs; "intervalMs" ==> r.IntervalMs; "sampleCostMs" ==> r.SampleCostMs
+        "processCount" ==> r.ProcessCount; "unreadableCount" ==> r.UnreadableCount; "omittedCount" ==> r.OmittedCount; "note" ==> r.Note
+        "metrics" ==> (r.Metrics |> Array.map (fun m -> createObj [ "name" ==> m.Name; "value" ==> opt m.Value; "unit" ==> m.Unit ]))
+        "processes" ==> (r.Processes |> Array.map (fun p -> createObj [
+          "processId" ==> p.ProcessId; "parentId" ==> p.ParentId; "startTicks" ==> p.StartTicks; "name" ==> p.Name
+          "context" ==> p.Context; "cpuPercent" ==> opt p.CpuPercent; "residentBytes" ==> p.ResidentBytes; "threads" ==> p.Threads ]))
+      ]
+    | AgentWork board ->
+      let usage = function
+        | None -> null
+        | Some (u: AgentUsage) ->
+          createObj [
+            "input" ==> wide u.Input; "output" ==> wide u.Output; "cacheRead" ==> wide u.CacheRead
+            "cacheWrite" ==> wide u.CacheWrite; "total" ==> wide u.Total
+            "estimateUsd" ==> (match u.EstimateUsd with Some cost -> box cost | None -> null)
+          ]
+      createObj [
+        "event" ==> "agent_work"; "incarnation" ==> board.Incarnation; "sequence" ==> wide board.Sequence
+        "executionHost" ==> board.ExecutionHost; "capacity" ==> board.Capacity
+        "runs" ==> (board.Runs |> Array.map (fun r -> createObj [
+          "id" ==> r.Id; "member" ==> r.Member; "role" ==> r.Role; "name" ==> r.Name; "session" ==> r.Session
+          "reportSequence" ==> wide r.ReportSequence; "model" ==> r.Model; "endpoint" ==> r.Endpoint
+          "project" ==> r.Project; "focus" ==> r.Focus; "operation" ==> r.Operation; "status" ==> r.Status
+          "updatedAtMs" ==> wide r.UpdatedAtMs; "omittedActivity" ==> wide r.OmittedActivity; "activity" ==> r.Activity
+          "usage" ==> usage r.Usage ])) ]
     | Uptime tick -> createObj [ "event" ==> "uptime"; "uptimeMs" ==> wide tick.UptimeMs ]
   JS.JSON.stringify frame

@@ -1,50 +1,83 @@
 namespace Bozzetto.Features
 
 open System
+open System.Threading
 open Bozzetto
 
-/// The one live `ExpensiveWorkLease.PoolState` for this daemon run — same
-/// split as `HealthWatch`/`GcDumpWatch`/`MemoryPressureWatch`: the pure
-/// pool logic lives in `ExpensiveWorkLease`, this is the stateful shell a
-/// caller (the HTTP lease endpoints, and the daemon's own internal
-/// expensive-work call sites) reads and writes through.
-///
-/// `MemoryPressureWatch.currentLevel()` — the SAME persisted pressure
-/// `MemorySupervisor`'s session shedding reads — is what every `request`
-/// call here is admitted against, so the pool and the shedding policy can
-/// never disagree about how bad things are right now.
+/// The daemon's one live lease pool. Admission still belongs to the pure
+/// ExpensiveWorkLease rules and MemoryPressureWatch; observers gain no authority.
 module LeaseWatch =
 
   let mutable private pool = ExpensiveWorkLease.empty
   let private gate = obj ()
+  let private changedEvent = Event<unit>()
+  let mutable private deadline: Timer option = None
+  let mutable private generation = 0L
 
-  /// Ask for a lease. `holder` should identify the AGENT/COHORT MEMBER
-  /// (not a fresh id per call — see `ExpensiveWorkLease.request`'s own doc
-  /// comment for why).
+  /// Owner changes only: request, release, reset, or the next known expiry.
+  /// No periodic scan or subscriber-local clock is involved.
+  let changed = changedEvent.Publish
+
+  let private notify () =
+    try changedEvent.Trigger()
+    with _ -> () // An observer cannot fail the admission or release operation.
+
+  let internal nextExpiry now active =
+    active
+    |> List.map (fun (grant: ExpensiveWorkLease.GrantView) -> grant.ExpiresAt)
+    |> List.filter (fun expires -> expires > now)
+    |> List.sort
+    |> List.tryHead
+
+  /// A single one-shot deadline belongs to the pool, not to any browser. Each
+  /// mutation replaces it; an already-queued callback is fenced by generation.
+  let rec private schedule () =
+    generation <- generation + 1L
+    let run = generation
+    deadline |> Option.iter _.Dispose()
+    deadline <- None
+    let now = DateTimeOffset.UtcNow
+    let live = ExpensiveWorkLease.snapshot now pool
+    match nextExpiry now live.Active with
+    | None -> ()
+    | Some expires ->
+      let callback _ =
+        let current = lock gate (fun () ->
+          if generation <> run then false
+          else
+            schedule ()
+            true)
+        if current then notify ()
+      deadline <- Some(new Timer(TimerCallback callback, null, expires - now + TimeSpan.FromMilliseconds 1., Timeout.InfiniteTimeSpan))
+
+  let private update transition =
+    let result, didChange = lock gate (fun () ->
+      let now = DateTimeOffset.UtcNow
+      let before = ExpensiveWorkLease.snapshot now pool
+      let next, result = transition pool
+      pool <- next
+      let didChange = before <> ExpensiveWorkLease.snapshot now pool
+      if didChange then schedule ()
+      result, didChange)
+    if didChange then notify ()
+    result
+
+  /// `holder` identifies the caller. Queueing and admission rules are unchanged.
   let request (holder: string) (kind: ExpensiveWorkLease.Kind) : ExpensiveWorkLease.Decision =
-    lock gate (fun () ->
-      let pressure = MemoryPressureWatch.currentLevel ()
-      let pool', decision = ExpensiveWorkLease.request DateTimeOffset.UtcNow pressure pool holder kind
-      pool <- pool'
-      decision)
+    update (fun state ->
+      ExpensiveWorkLease.request DateTimeOffset.UtcNow (MemoryPressureWatch.currentLevel ()) state holder kind)
 
-  /// Release a held lease. Returns whether it was actually still live —
-  /// see `ExpensiveWorkLease.ReleaseOutcome`'s own doc comment for why a
-  /// caller should pay attention to `AlreadyGone`.
   let release (leaseId: ExpensiveWorkLease.LeaseId) : ExpensiveWorkLease.ReleaseOutcome =
-    lock gate (fun () ->
-      let pool', outcome = ExpensiveWorkLease.release leaseId pool
-      pool <- pool'
-      outcome)
+    update (ExpensiveWorkLease.release leaseId)
 
   let releaseOwned (holder: string) (leaseId: ExpensiveWorkLease.LeaseId) : ExpensiveWorkLease.ReleaseOutcome =
-    lock gate (fun () ->
-      let pool', outcome = ExpensiveWorkLease.releaseOwned holder leaseId pool
-      pool <- pool'
-      outcome)
+    update (ExpensiveWorkLease.releaseOwned holder leaseId)
 
-  /// For observability — `get_fsi_status`/a health payload's own view.
+  /// Safe observation: the release capability never appears in this snapshot.
   let snapshot () = lock gate (fun () -> ExpensiveWorkLease.snapshot DateTimeOffset.UtcNow pool)
 
-  /// For tests, and for a daemon that wants to start clean.
-  let reset () : unit = lock gate (fun () -> pool <- ExpensiveWorkLease.empty)
+  let reset () : unit =
+    lock gate (fun () ->
+      pool <- ExpensiveWorkLease.empty
+      schedule ())
+    notify ()

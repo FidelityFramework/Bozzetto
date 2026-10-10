@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Bounded HTTP control and command ownership for leased build and test work.
 # work-lease acquire <kind> <holder> | release <id> | run <kind> <command>...
+# Optional display labels: BOZZETTO_AGENT and BOZZETTO_PROJECT (default: cwd).
+# Labels are caller-reported context, not authenticated identity or test proof.
 set -euo pipefail
 endpoint="http://127.0.0.1:${BOZZETTO_MCP_PORT:-47749}/api/lease"
 
@@ -34,7 +36,8 @@ case "${1:-}" in
     [ "$#" -ge 3 ] || exit 64
     kind=$2
     shift 2
-    reply=$(acquire "$kind" "gate-command-$$") || exit "$?"
+    holder="${BOZZETTO_AGENT:-caller} · ${BOZZETTO_PROJECT:-$PWD} · gate-$$"
+    reply=$(acquire "$kind" "$holder") || exit "$?"
     lease_id=$(jq -er '.leaseId' <<<"$reply")
     child=""
     cleanup() {

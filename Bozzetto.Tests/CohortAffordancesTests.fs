@@ -108,11 +108,11 @@ let cohortAffordancesTests =
         tools |> Set.contains Affordances.CohortTool.ReassignClaim |> Expect.isFalse "reassign is conductor-only"
       }
 
-      test "Observer and Verifier are status-read-only from cohortTools itself" {
+      test "Observer and Verifier can leave without claim or landing authority" {
         [ JoinableRole.Observer; JoinableRole.Verifier ]
         |> List.iter (fun role ->
           Affordances.cohortTools (Authority.Member(alice, role))
-          |> Expect.equal (sprintf "%A sees only get_cohort_status from cohortTools" role) (set [ Affordances.CohortTool.GetStatus ]))
+          |> Expect.equal (sprintf "%A can read status and end its own membership" role) (set [ Affordances.CohortTool.GetStatus; Affordances.CohortTool.Leave ]))
       }
 
       test "join_cohort and get_cohort_status are reachable to every authority via checkCohortToolAllowed" {

@@ -184,6 +184,42 @@ let withDaemon (body: int -> Task<unit>) : Task<unit> = task {
 let cohortMcpToolsTests =
   Integration.hostList "Cohort MCP tools" [
 
+    testTask "agent work is bound, idempotent and Observer self-leave remains claim-free" {
+      do! withDaemon (fun port -> task {
+        use! a = connect port
+        use! b = connect port
+        let args key seq = [
+          "run", box key; "session", box "pi-session"; "sequence", box seq
+          "name", box "same-name"; "model", box "reported"; "endpoint", box "LAN"
+          "project", box "/repo"; "focus", box "visibility"; "operation", box "reading"; "status", box "running"
+          "usageAvailable", box true; "input", box 10L; "output", box 0L
+          "cacheRead", box 0L; "cacheWrite", box 0L; "total", box 10L; "estimateUsd", box -1. ]
+        let invoke (client: McpClient) arguments = client.CallToolAsync("report_agent_work", readOnlyDict arguments, null, null, CancellationToken.None)
+        let! absent = invoke a (args "run-a" 1L)
+        absent.IsError.GetValueOrDefault() |> Expect.isTrue "unjoined reporting is a real MCP error"
+        textOf absent |> Expect.stringContains "specific membership refusal" "member_not_present"
+        let! _ = joinCohort a "same-name" "Implementer"
+        let! _ = joinCohort b "same-name" "Observer"
+        let! first = invoke a (args "run-a" 1L)
+        first.IsError.GetValueOrDefault() |> Expect.isFalse "bound enrolled reporter accepted"
+        let! duplicate = invoke a (args "run-a" 1L)
+        textOf duplicate |> Expect.equal "same report is idempotent over actual MCP" (textOf first)
+        let! forged = invoke b (args "run-a" 2L)
+        forged.IsError.GetValueOrDefault() |> Expect.isTrue "same name cannot take over another connection's run"
+        textOf forged |> Expect.stringContains "specific ownership refusal" "wrong_member"
+        let! second = invoke b (args "run-b" 1L)
+        second.IsError.GetValueOrDefault() |> Expect.isFalse "Observer can report its own work"
+        let! denied = b.CallToolAsync("acquire_claim", readOnlyDict ["agentName", box "same-name"; "scope", box "file:Forbidden.fs"; "purpose", box "control"], null, null, CancellationToken.None)
+        denied.IsError.GetValueOrDefault() |> Expect.isTrue "Observer gains no claim authority"
+        let! departed = b.CallToolAsync("leave_cohort", readOnlyDict ["agentName", box "same-name"], null, null, CancellationToken.None)
+        departed.IsError.GetValueOrDefault() |> Expect.isFalse "non-conductor Observer can self-leave"
+        let! board = callTool a "get_agent_work" []
+        board |> Expect.stringContains "departure projects as disconnected, never completed" "disconnected"
+        board |> Expect.stringContains "independent Observer meter remains retained" "Observer"
+        board |> Expect.stringContains "independent Implementer meter remains retained" "Implementer"
+      })
+    }
+
     testTask "join from one identity shows that member as conductor in get_cohort_status" {
       do! withDaemon (fun port -> task {
         use! alice = connect port

@@ -5,6 +5,7 @@ open System.Runtime.InteropServices
 open System.Threading.Tasks
 open ModelContextProtocol.Server
 open Microsoft.Extensions.Logging
+open Bozzetto
 open Bozzetto.AppState
 open Bozzetto.McpTools
 open Bozzetto.Utils
@@ -1667,6 +1668,45 @@ OUTPUT: Confirmation text, noting whether you became the conductor and which ses
             | Error err -> sprintf "Error: %s" (Bozzetto.BozzettoError.describeForAgent err), Some err
         }
         |> withEchoOutcome ctx "join_cohort"
+
+    [<McpServerTool>]
+    [<Description("Report one cumulative invocation snapshot on THIS enrolled MCP connection. Client-reported labels only; no prompts, thinking or tool payloads. Stable globally unique run/session keys; sequence starts at 1 and increases, exact duplicates are idempotent. Terminal status is final. Usage is cumulative FINALIZED-message accounting; unknown is not zero. Cost is a Pi USD estimate, not billing. Completion never establishes test acceptance.")>]
+    member _.report_agent_work(
+        run: string, session: string, sequence: int64, name: string, model: string,
+        endpoint: string, project: string, focus: string, operation: string, status: string,
+        usageAvailable: bool, input: int64, output: int64, cacheRead: int64, cacheWrite: int64,
+        total: int64, estimateUsd: float
+    ) : Task<string> =
+        let report: AgentWork.Report = {
+          Run = run; Session = session; Sequence = sequence; Name = name; Model = model
+          Endpoint = endpoint; Project = project; Focus = focus; Operation = operation; Status = status
+          Usage =
+            if usageAvailable then
+              Some {
+                Input = input; Output = output; CacheRead = cacheRead; CacheWrite = cacheWrite; Total = total
+                EstimateUsd = if estimateUsd = -1. then None else Some estimateUsd
+              }
+            else None
+        }
+        task {
+          let! result =
+            if not usageAvailable && (input <> 0L || output <> 0L || cacheRead <> 0L || cacheWrite <> 0L || total <> 0L || estimateUsd <> -1.) then
+              Task.FromResult(Error(BozzettoError.CohortActionFailed("invalid_usage", "Unavailable usage requires zero placeholder counters and estimateUsd=-1; they are not recorded as known zero.")))
+            else Bozzetto.McpCohortIntegration.reportAgentWork ctx report |> Async.StartAsTask
+          return match result with
+                 | Ok text -> text, None
+                 | Error error -> BozzettoError.describeForAgent error, Some error
+        } |> withEchoOutcome ctx "report_agent_work"
+
+    [<McpServerTool>]
+    [<Description("Read the compact agent-work publication as JSON and reconcile a pending owner publication once. Refuses loudly if publication still fails; no polling. Subscribe to agents://work for change notifications; no Composer session is required. Models and cost are reported labels/estimates, not attestation or billing.")>]
+    member _.get_agent_work() : Task<string> =
+        task {
+          let! result = Bozzetto.McpCohortIntegration.getAgentWork ctx
+          return match result with
+                 | Ok text -> text, None
+                 | Error error -> BozzettoError.describeForAgent error, Some error
+        } |> withEchoOutcome ctx "get_agent_work"
 
     [<McpServerTool>]
     [<Description("""Leave this daemon's cohort. Every claim you still hold is orphaned (not released to anyone — the conductor must reassign it or it stays orphaned).

@@ -71,6 +71,9 @@ let private real (o: obj) (name: string) : Result<float, string> =
   let v = field o name
   if isNumber v then Ok(unbox<float> v) else Error(name + ": expected a number")
 
+let private optionalReal (o: obj) (name: string) =
+  if isAbsent (field o name) then Ok None else real o name |> Result.map Some
+
 let private int32Value (name: string) (v: obj) : Result<int32, string> =
   if isNumber v && isInt32 v then Ok(unbox<int32> v) else Error(name + ": expected an int32")
 
@@ -280,6 +283,80 @@ let private leaseWait (o: obj) = decode {
   return { LeaseWait.Kind = kind; Holder = holder; RequestedAtMs = requestedAtMs }
 }
 
+let private resourceMetric o = decode {
+  let! name = text o "name"
+  let! value = optionalReal o "value"
+  let! unit = text o "unit"
+  return { ResourceMetric.Name = name; Value = value; Unit = unit }
+}
+
+let private resourceProcess o = decode {
+  let! pid = whole o "processId"
+  let! parent = whole o "parentId"
+  let! start = text o "startTicks"
+  let! name = text o "name"
+  let! context = text o "context"
+  let! cpu = optionalReal o "cpuPercent"
+  let! rss = real o "residentBytes"
+  let! threads = whole o "threads"
+  return { ResourceProcess.ProcessId = pid; ParentId = parent; StartTicks = start; Name = name; Context = context; CpuPercent = cpu; ResidentBytes = rss; Threads = threads }
+}
+
+let private resources o = decode {
+  let! sequence = wide o "sequence"
+  let! status = text o "status"
+  let! at = wide o "sampledAtMs"
+  let! interval = real o "intervalMs"
+  let! cost = real o "sampleCostMs"
+  let! metrics = items o "metrics" resourceMetric
+  let! processes = items o "processes" resourceProcess
+  let! count = whole o "processCount"
+  let! unreadable = whole o "unreadableCount"
+  let! omitted = whole o "omittedCount"
+  let! note = text o "note"
+  return { HostResources.Sequence = sequence; Status = status; SampledAtMs = at; IntervalMs = interval; SampleCostMs = cost
+           Metrics = metrics; Processes = processes; ProcessCount = count; UnreadableCount = unreadable; OmittedCount = omitted; Note = note }
+}
+
+let private agentUsage o = decode {
+  let! input = wide o "input"
+  let! output = wide o "output"
+  let! cacheRead = wide o "cacheRead"
+  let! cacheWrite = wide o "cacheWrite"
+  let! total = wide o "total"
+  let! estimate = optionalReal o "estimateUsd"
+  return { AgentUsage.Input = input; Output = output; CacheRead = cacheRead; CacheWrite = cacheWrite; Total = total; EstimateUsd = estimate }
+}
+let private agentRun o = decode {
+  let! id = text o "id"
+  let! memberId = text o "member"
+  let! role = text o "role"
+  let! name = text o "name"
+  let! session = text o "session"
+  let! sequence = wide o "reportSequence"
+  let! model = text o "model"
+  let! endpoint = text o "endpoint"
+  let! project = text o "project"
+  let! focus = text o "focus"
+  let! operation = text o "operation"
+  let! status = text o "status"
+  let! at = wide o "updatedAtMs"
+  let! omitted = wide o "omittedActivity"
+  let! activity = items o "activity" (fun v -> if isString v then Ok(unbox<string> v) else Error "expected string")
+  let! usage = optionalChild o "usage" agentUsage
+  return { AgentRun.Id = id; Member = memberId; Role = role; Name = name; Session = session; ReportSequence = sequence
+           Model = model; Endpoint = endpoint; Project = project; Focus = focus; Operation = operation; Status = status
+           UpdatedAtMs = at; OmittedActivity = omitted; Activity = activity; Usage = usage }
+}
+let private agentWork o = decode {
+  let! incarnation = text o "incarnation"
+  let! sequence = wide o "sequence"
+  let! host = text o "executionHost"
+  let! capacity = whole o "capacity"
+  let! runs = items o "runs" agentRun
+  return { AgentWorkBoard.Incarnation = incarnation; Sequence = sequence; ExecutionHost = host; Capacity = capacity; Runs = runs }
+}
+
 let private eventOf (o: obj) : Result<Event, string> =
   text o "event"
   |> Result.bind (fun tag ->
@@ -332,6 +409,8 @@ let private eventOf (o: obj) : Result<Event, string> =
           StandardError = standardError
         }
       }
+    | "agent_work" -> agentWork o |> Result.map AgentWork
+    | "resources" -> resources o |> Result.map Resources
     | "health" -> health o |> Result.map Health
     | "leases" ->
       decode {
@@ -360,6 +439,7 @@ let encodeCommand (frame: CommandFrame) : string =
   let fields =
     match frame.Command with
     | RequestSnapshot -> [ "command" ==> "request_snapshot" ]
+    | ObserveResources seconds -> [ "command" ==> "observe_resources"; "seconds" ==> seconds ]
     | OpenProject project -> [ "command" ==> "open_project"; "project" ==> project ]
     | Reserve edit ->
       [ "command" ==> "reserve"; "target" ==> sessionTargetJson edit.Target; "label" ==> edit.Label ]

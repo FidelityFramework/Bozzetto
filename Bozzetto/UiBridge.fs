@@ -8,14 +8,11 @@
 /// RunOutput first).
 ///
 /// Snapshot is sent on connect, in answer to RequestSnapshot, and when the
-/// supervisor's Changed signal fires (coalesced). Health and Leases are sent
-/// on connect and in answer to RequestSnapshot, the explicit pull, never on a
-/// timer. Their change pushes are to come from the owners' state as
-/// Fidelity.FSharp.Incremental inputs, observed with AsyncMailbox.watch; that
-/// waits on the library publishing input stamps in its snapshot, and until
-/// then the page sees new health or leases only when it pulls. The one clock
-/// here is the hub's uptime clock (UptimeClock below), which runs only while a
-/// page is connected and is the owner and only source of Uptime pushes.
+/// supervisor's Changed signal fires (coalesced). Lease owner changes push
+/// Leases, including the pool's one-shot expiry deadline. Health remains a
+/// connection/request snapshot, explicitly labelled by the page. The hub's
+/// uptime clock runs only while a page is connected and owns Uptime pushes.
+/// None of these subscriptions scans the host or admits compiler work.
 ///
 /// The vocabulary is bozzetto-web/src/Shared/Protocol.fs, compiled into this
 /// assembly from that same file. The wire is UiBridgeCodec's alone.
@@ -55,6 +52,17 @@ type HealthSources = {
 /// Pure projections from Composer's typed replies and the daemon's own
 /// observations onto the bridge vocabulary.
 module Project =
+
+  let agentWork (state: Bozzetto.AgentWork.State) : AgentWorkBoard =
+    { Incarnation = state.Incarnation; Sequence = state.Sequence; ExecutionHost = Environment.MachineName; Capacity = 256
+      Runs = state.Runs |> Map.toArray |> Array.map (fun (key, run) ->
+        let r = run.Report
+        { Id = key; Member = Bozzetto.MemberTable.MemberId.display run.Member; Role = string run.Role
+          Name = r.Name; Session = r.Session; ReportSequence = r.Sequence; Model = r.Model; Endpoint = r.Endpoint
+          Project = r.Project; Focus = r.Focus; Operation = r.Operation; Status = r.Status
+          UpdatedAtMs = DateTimeOffset(run.UpdatedAt).ToUnixTimeMilliseconds()
+          Activity = List.toArray run.Activity; OmittedActivity = run.OmittedActivity
+          Usage = r.Usage |> Option.map (fun u -> { Input = u.Input; Output = u.Output; CacheRead = u.CacheRead; CacheWrite = u.CacheWrite; Total = u.Total; EstimateUsd = u.EstimateUsd }) }) }
 
   let targetOf (authority: Authority) : SessionTarget =
     { SessionTarget.Worker = { WorkerTarget.Host = authority.Host; Epoch = authority.Epoch }; Session = authority.Session }
@@ -139,7 +147,7 @@ module Project =
   /// which the bridge answers itself.
   let toRequest (command: Command) : RequestBody option =
     match command with
-    | RequestSnapshot -> None
+    | RequestSnapshot | ObserveResources _ -> None
     // The supervisor chooses the worker for an open; the address is empty,
     // as composer_open_project sends it.
     | OpenProject project -> Some(RequestBody.Open(workerAddress { WorkerTarget.Host = ""; Epoch = "" }, project))
@@ -370,6 +378,8 @@ type Push =
   | Health
   | Leases
   | Uptime
+  | Resources
+  | AgentWork
 
 [<RequireQualifiedAccess>]
 type Inbound =
@@ -399,7 +409,7 @@ type private Write =
 /// still runs.
 type internal Outbox(socket: IBridgeSocket, sendTimeout: TimeSpan, closeTimeout: TimeSpan) =
   let gate = obj ()
-  let pushes: Outbound option array = Array.create 4 None
+  let pushes: Outbound option array = Array.create 6 None
   let mutable closed = false
   let mutable wakePending = false
   // Owned by the writer agent.
@@ -413,6 +423,8 @@ type internal Outbox(socket: IBridgeSocket, sendTimeout: TimeSpan, closeTimeout:
     | Push.Health -> 1
     | Push.Leases -> 2
     | Push.Uptime -> 3
+    | Push.Resources -> 4
+    | Push.AgentWork -> 5
 
   let send (frame: Outbound) = async {
     return!
@@ -637,8 +649,11 @@ type BridgeSources = {
   Changed: IObservable<unit>
   /// Read on connect and for RequestSnapshot only, never on a schedule.
   Health: unit -> DaemonHealth
-  /// Read on connect and for RequestSnapshot only, never on a schedule.
+  /// Read on connect, explicit resync and lease-owner changes only.
   Leases: unit -> LeaseBoard
+  LeaseChanged: IObservable<unit> option
+  AgentWork: (unit -> AgentWorkBoard) option
+  AgentWorkChanged: IObservable<unit> option
 }
 
 type BridgeOptions = {
@@ -700,6 +715,7 @@ let private admit (inflight: SemaphoreSlim) (cancellation: CancellationToken) : 
 /// coalescing deterministically. `uptime` is the uptime clock's tick (see
 /// UptimeClock): UptimeClock.system in the daemon, held by the tests.
 type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationToken, pause: TimeSpan -> Async<unit>, uptime: Async<int64>) =
+  let resources = ResourceMonitor.create ()
   let connections = ConcurrentDictionary<int64, Outbox>()
   let changes = Channel.CreateBounded<unit>(BoundedChannelOptions(1, FullMode = BoundedChannelFullMode.DropOldest))
   let mutable nextConnection = 0L
@@ -709,7 +725,8 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
   let stateEvents (directory: unit -> ComposerDirectory) =
     [ attempt "snapshot" (fun () -> snapshotEvent (directory ()))
       attempt "health" sources.Health |> Option.map Health
-      attempt "leases" sources.Leases |> Option.map Leases ]
+      attempt "leases" sources.Leases |> Option.map Leases
+      sources.AgentWork |> Option.bind (attempt "agent work") |> Option.map AgentWork ]
     |> List.choose id
 
   let broadcast (kind: Push) (event: Event) =
@@ -750,7 +767,9 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
       return! snapshotPushes ()
   }
 
-  do stopping.Register(fun () -> clock.Halt()) |> ignore
+  do stopping.Register(fun () ->
+    clock.Halt()
+    Async.Start(resources.Close())) |> ignore
 
   new(sources, options, stopping) =
     Hub(
@@ -763,12 +782,24 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
 
   member _.Options = options
   member _.ConnectionCount = connections.Count
+  member _.Resources = resources.Current
 
   /// Begin the snapshot pushes. Status reads never raise Changed, so a push
   /// cannot feed back into another one.
   member _.Start() =
     let subscription = sources.Changed.Subscribe(fun () -> changes.Writer.TryWrite(()) |> ignore)
-    stopping.Register(fun () -> subscription.Dispose()) |> ignore
+    let leaseSubscription = sources.LeaseChanged |> Option.map (fun changed ->
+      changed.Subscribe(fun () ->
+        if not connections.IsEmpty then
+          attempt "leases" sources.Leases |> Option.iter (fun board -> broadcast Push.Leases (Leases board))))
+    let workSubscription = sources.AgentWorkChanged |> Option.map (fun changed ->
+      changed.Subscribe(fun () ->
+        if not connections.IsEmpty then
+          sources.AgentWork |> Option.bind (attempt "agent work") |> Option.iter (fun board -> broadcast Push.AgentWork (AgentWork board))))
+    stopping.Register(fun () ->
+      subscription.Dispose()
+      leaseSubscription |> Option.iter _.Dispose()
+      workSubscription |> Option.iter _.Dispose()) |> ignore
     Async.Start(snapshotPushes (), stopping)
 
   /// Serve one connection until the page or the daemon closes it.
@@ -806,8 +837,17 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
               let! admitted = admit inflight lifetime.Token
               if admitted then
                 let work = async {
-                  let! frames = execute frame lifetime.Token
-                  outbox.Answer(frames, release)
+                  match frame.Command with
+                  | ObserveResources _ when not (OperatingSystem.IsLinux()) ->
+                    outbox.Answer([ Outbound.ofEvent(Refused(UiBridgeCodec.frameRefusal frame.Correlation "unsupported" "Host resource acquisition is Linux-only in this build.")) ], release)
+                  | ObserveResources seconds ->
+                    if seconds = 0 then do! resources.Remove id
+                    else
+                      do! resources.Observe(id, int seconds, fun value -> outbox.Push(Push.Resources, Outbound.ofEvent(Resources value)))
+                    outbox.Answer([ Outbound.ofEvent(Accepted { Correlation = frame.Correlation; Target = UiBridgeCodec.noTarget; Completion = SnapshotSent }) ], release)
+                  | _ ->
+                    let! frames = execute frame lifetime.Token
+                    outbox.Answer(frames, release)
                 }
                 Async.Start(work, CancellationToken.None)
               else reading <- false
@@ -818,6 +858,7 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
       // Ends any RequestSnapshot read still running for this page; Composer
       // operations hold the daemon's token, not this one.
       lifetime.Cancel()
+    do! resources.Remove id |> Async.StartAsTask
     do! outbox.CloseAsync()
   }
 
@@ -833,7 +874,10 @@ module BridgeSources =
       WorkerPid = fun () -> supervisor.WorkerPid
       Changed = supervisor.Changed :> IObservable<unit>
       Health = health
-      Leases = leases }
+      Leases = leases
+      LeaseChanged = None
+      AgentWork = None
+      AgentWorkChanged = None }
 
 let readHealth (mcpPort: int) (getHealth: unit -> Bozzetto.Features.HealthSnapshot option) () : DaemonHealth =
   Project.health {
@@ -857,7 +901,19 @@ let private processStartedAtMs () : int64 =
 /// The bridge of one daemon, pushing until `stopping`.
 let create (supervisor: ComposerSupervisor) (mcpPort: int) (getHealth: unit -> Bozzetto.Features.HealthSnapshot option) (stopping: CancellationToken) =
   let sources =
-    BridgeSources.ofSupervisor supervisor DaemonInfo.version (processStartedAtMs ()) (readHealth mcpPort getHealth) readLeases
+    { BridgeSources.ofSupervisor supervisor DaemonInfo.version (processStartedAtMs ()) (readHealth mcpPort getHealth) readLeases with
+        LeaseChanged = Some(Bozzetto.Features.LeaseWatch.changed :> IObservable<unit>) }
+  let hub = Hub(sources, BridgeOptions.defaults, stopping)
+  hub.Start()
+  hub
+
+/// Production cohort-backed bridge; retained create remains for compatibility callers.
+let createWithAgentWork supervisor mcpPort getHealth stopping (owner: Bozzetto.Features.CohortOwner.Handle option) =
+  let sources =
+    { BridgeSources.ofSupervisor supervisor DaemonInfo.version (processStartedAtMs()) (readHealth mcpPort getHealth) readLeases with
+        LeaseChanged = Some(Bozzetto.Features.LeaseWatch.changed :> IObservable<unit>)
+        AgentWork = owner |> Option.map (fun o -> fun () -> Project.agentWork (o.ReadWork()))
+        AgentWorkChanged = owner |> Option.map _.WorkChanged }
   let hub = Hub(sources, BridgeOptions.defaults, stopping)
   hub.Start()
   hub
@@ -911,7 +967,8 @@ let private header (ctx: HttpContext) (name: string) =
   | true, values when not (String.IsNullOrWhiteSpace(string values)) -> Some(string values)
   | _ -> None
 
-/// GET /dashboard and /composer serve the same welded page, GET /favicon.*
+/// GET /dashboard and /composer serve one welded bundle with route-selected
+/// layouts (resources/leases and compiler operations), GET /favicon.*
 /// its tab icons, and GET /ui/bridge upgrades to the bridge. All sit behind
 /// the daemon's origin guard.
 let mapRoutes (app: WebApplication) (hub: Hub) =
@@ -928,10 +985,17 @@ let mapRoutes (app: WebApplication) (hub: Hub) =
     ctx.Response.Headers["Referrer-Policy"] <- StringValues "no-referrer"
     do! ctx.Response.WriteAsync(page, ctx.RequestAborted)
   })
-  // Both browser entry points share the live view, theme and security policy.
-  // There is no separate presentation of the Composer session directory.
+  // Both browser entry points share a bundle, theme and security policy.
+  // The frontend selects its layout from the route; no second bridge owner.
   for route in [ "/dashboard"; "/composer" ] do
     app.MapGet(route, servePage) |> ignore
+
+  // Passive latest-observation API; reading it never starts acquisition.
+  app.MapGet("/api/resources", RequestDelegate(fun ctx -> task {
+    ctx.Response.ContentType <- "application/json"
+    ctx.Response.Headers.CacheControl <- StringValues "no-store"
+    do! ctx.Response.WriteAsync(UiBridgeCodec.encodeEvent(Resources hub.Resources), ctx.RequestAborted)
+  })) |> ignore
 
   app.MapGet("/ui/bridge", RequestDelegate(fun (ctx: HttpContext) -> task {
     if not ctx.WebSockets.IsWebSocketRequest then

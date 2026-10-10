@@ -2115,13 +2115,14 @@ let run
     Features.CohortLedgerSqlite.Sqlite.create ledgerPath
 
   use cohortOwner =
-    Features.CohortOwner.startWithPerformer
+    Features.CohortOwner.startWithWorkPublication
       (Log.asILogger ())
       cohortLedgerPort
       (fun () -> System.DateTime.UtcNow)
       Features.CohortOwner.productionEntropy
       getCohortSessionTestOutcomes
       cohortLandingPerformer
+      (ResourceGraph.AgentPublication.create())
 
   // Create a diagnostics-changed event (aggregated from workers)
   let diagnosticsChanged = Event<Features.DiagnosticsStore.T>()

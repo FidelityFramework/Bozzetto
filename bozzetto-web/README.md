@@ -1,14 +1,33 @@
 # bozzetto-web
 
-Bozzetto's new browser UI, first slice: the Composer dashboard. It is an
+Bozzetto's browser UI: separate operations dashboard and Composer pages. It is an
 F# (Partas.Solid) single-page app compiled by Fable, bundled by Vite into one
 self-contained HTML page, and welded into the daemon, which serves it and
 talks to it over one WebSocket.
 
-Both `/composer` and `/dashboard` on the MCP listener (normally port 47749)
-serve this same live page, with the same theme, session directory and security
-policy. Bookmarks for either path on the control listener (normally port
-47750) redirect to that view. Composer's `/api/composer/*` HTTP contracts
+The MCP listener (normally port 47749) serves two route-selected views from
+one bundle, with shared styling, navigation, bridge protocol and security:
+
+- `/dashboard`: explicitly requested, bounded Linux whole-host observations
+  (CPU, RAM/swap, pressure, available GPU counters and external processes), live
+  global agent work and work leases, and a labelled connection-time daemon
+  snapshot. `boz rss` is the daemon reading, not total host memory.
+- `/composer`: Clef project sessions, compiler worker and run output. Global
+  agents and leases belong to Dashboard and are not duplicated here. Every
+  `composer_open_project` call uses the same supervisor. The opener is under
+  **Open project**. Build/run controls remain available.
+
+Each view has its own browser title and connection, so both can remain open
+side by side without repeating global panels. Navigation uses ordinary links,
+which can also open in another tab. Reservations and command outcomes remain page-local: use the same
+Composer tab to reserve and build; the split does not fix the reservation
+reporting gap documented below. There is no Refresh button: reconnect restores
+current shared state, Composer changes push automatically, and leases push on
+pool mutations or their next known expiry. Legacy health remains explicitly
+labelled as a connection-time snapshot; live host observation is separate.
+
+Bookmarks for either path on the control listener (normally port 47750)
+redirect to the corresponding view. Composer's `/api/composer/*` HTTP contracts
 remain available to local clients; there is no separate JSON display page.
 
 It follows the destination architecture of
@@ -90,7 +109,16 @@ The page shell, sessions, worker, leases, output and diagnostics all use
 that shared theme. [`styles.css`](src/Frontend/styles.css) owns reusable
 treatments and [`App.fs`](src/Frontend/App.fs) owns layout and components;
 neither defines a palette. The saved light/dark choice and reduced-motion
-behavior remain local presentation settings.
+behavior remain local presentation settings. Keep the workplace surface quiet:
+state, work, data and actions first; no architectural/editorial banners. Useful
+measurement and accounting qualifications belong behind a small ⓘ control.
+The native information dialog owns modal focus, Escape/Close dismissal and
+focus restoration; it uses the same theme and no additional dependency.
+Closed dialogs explicitly use `display: none`: the modal component's grid must
+not expose hidden text or Close buttons to the accessibility tree. Agent rows
+show **reported** status and the last update instant, not observed process
+liveness. Dashboard health/pressure/alarms remain visible outside the detailed
+connection-time snapshot.
 
 Diagnostics keep their exact source text, newlines and tab indentation in
 readable trace panels. Headings describe the existing status field; bodies
@@ -181,9 +209,11 @@ picks the correlation: positive, and unique for the page's lifetime.
 | `Accepted` | correlation, target authority, `Completion` | exactly one per command, or a `Refused` |
 | `Refused` | correlation, target, Composer refusal code, message | as above; correlation 0 = undecodable frame |
 | `RunOutput` | transcript: generation, exit code, stdout, stderr | before the `Accepted` of a `Run` |
-| `Health` | version, pid, verdict, memory pressure, processes, alarms; RSS, machine memory and CPU as read when sent | on connect, on request, on a change of its discrete facts (see below) |
+| `Health` | version, pid, verdict, memory pressure, processes, alarms; RSS, machine memory and CPU as read when sent | connection/request snapshot; not live service health |
 | `Leases` | active grants and queued requests | on connect, on request, on a pool change (see below) |
 | `Uptime` | `UptimeTick`: the daemon's uptime in ms | once a second from the daemon's clock, while at least one page is connected |
+| `Resources` | sequenced Linux host metrics, process incarnations and acquisition coverage | only within an explicit 1–120 second observation window |
+| `AgentWork` | daemon incarnation, publication sequence, bounded per-run reports, activity and optional usage/price | on connect/resync and common cohort-owned publication changes; client reports are not tool/test/audit acceptance |
 
 **Interim wire format:** one JSON object per WebSocket text frame. The full
 grammar is in the header of `Protocol.fs`. int64 values travel as decimal
@@ -192,7 +222,9 @@ strings and int32/float as numbers. An option is `null` or the value. A
 like `{"correlation":7,"command":"reserve","target":{…},"label":"…"}` and
 events like `{"event":"accepted","correlation":7,"target":{…},"completion":{"kind":"edit_reserved","reservation":"…"}}`.
 
-No state is pushed on a timer. The start time travels once, in `Welcome`, as
+Project and lease updates are owner-driven, not scan-and-diff. Counter-only
+host metrics use the explicit bounded window described below. The start time
+travels once, in `Welcome`, as
 `startedAtMs`, because it is fixed for the daemon's lifetime like its version,
 and a restart drops the socket so the reconnect's `Welcome` carries the new
 one. `Uptime` (protocol version 3) is the one clock-owned push: the bridge's
@@ -205,12 +237,18 @@ it is not a poll. The mock bridge does the same.
 keeps the token it was given in a page-local store, so a reload or another tab
 cannot build that reservation.
 
-**Known gap:** the daemon does not yet push `Health` or `Leases` on change; it
-sends them on connect and for `RequestSnapshot` (the ↻ refresh button). Their
-change source is to be the owners' state (lease pool, memory pressure level,
-alarm set, Composer worker process set) as inputs of one
-Fidelity.FSharp.Incremental scope, observed with `AsyncMailbox.watch`. That
-needs the library's snapshot to expose input stamps, which preview.6 does not.
+LeaseWatch now publishes pool changes; the bridge relays only that changed
+slice through its existing coalesced slot. One pool-owned, one-shot deadline
+publishes expiry without a periodic scan. This relay introduces no second
+admission or invalidation engine. Broader shared-foundation adoption remains
+separate work; this does not claim a completed monitoring graph.
+
+`work-lease run` labels its lease with `BOZZETTO_AGENT` (default `caller`) and
+`BOZZETTO_PROJECT` (default current directory). These are caller-reported
+context, not authenticated identity, evidence of test success, or a persistent
+project registry. Composer's MCP authority remains connection/session-bound.
+External component builds are visible while admitted, but do not become Clef
+Composer sessions. Their result/evidence ingestion is still outstanding.
 
 ## Develop
 
@@ -224,7 +262,9 @@ npm install
 
 In this repository, run every Fable or Vite build under a work lease, for
 example `../scripts/work-lease run full_build npm run build`. Exit 75 means
-deferred: wait and retry, never bypass.
+deferred: stop and inspect the admission reason and owned queued request. Do
+not poll, bypass FIFO or leave repeated fresh-holder requests behind. The
+current native API has no queued-request withdrawal operation.
 
 | Command | What it does |
 |---|---|
@@ -234,8 +274,17 @@ deferred: wait and retry, never bypass.
 | `npm run dev` | Vite, proxying `/ui/bridge` to `$BOZZETTO_DAEMON` (default `http://127.0.0.1:47759`) |
 | `npm run preview:mock` | Serves the **built** `dist/index.html` with the mock bridge |
 | `npm test` | Codec round trip under node, for every Command and Event case plus malformed frames |
+| `npm run test:pages` | Chromium mock checks: populated agent rows and usage distinctions, route separation, visible health, information-dialog visibility/accessibility/focus, caught stylesheet mutation, navigation/shared-owner command/reload and 900/480 px layouts |
 | `npm run build` | Fable → `vite build` → verify → weld |
 | `npm run build:daemon` | The same verified build, welded into `../Bozzetto/WebAssets.fs` for the daemon |
+
+The page checks need `npm run build` and `npm run fable:mock` first (under a
+`full_build` lease), then `../scripts/work-lease run test_suite_run npm run
+test:pages`. They use the installed `chromium` (`CHROMIUM` can override the
+executable), own a preview server and browser for at most 45 seconds, and
+leave screenshots/logs under `${XDG_CACHE_HOME:-$HOME/.cache}/bozzetto/page-checks/`.
+They never start or replace a Bozzetto daemon. This is a browser check, not an
+Expecto TRUST verdict.
 
 **Against the mock.** Run `npm run fable && npm run dev:mock` and open the
 printed URL. Any absolute `*.fidproj` path opens. A path containing `broken`
@@ -258,7 +307,7 @@ through the proxy.
 ## Build and weld
 
 `npm run build` writes `dist/index.html`: one self-contained page with all
-scripts, styles and assets inlined, about 121 KiB (30 KiB gzipped).
+scripts, styles and assets inlined, about 143 KiB (36 KiB gzipped).
 [`scripts/verify-bundle.js`](scripts/verify-bundle.js) fails the build if
 `dist/` holds anything else or if the page contains any `http(s)://` URL. It
 rejects even XML namespace strings, which is why the UI uses a CSS spinner

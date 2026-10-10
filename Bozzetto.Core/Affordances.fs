@@ -208,6 +208,8 @@ let private gatingDomain : Map<string, ToolGate> =
     "reassign_claim", ToolGate.AlwaysAvailable
     "request_landing", ToolGate.AlwaysAvailable
     "get_cohort_status", ToolGate.AlwaysAvailable
+    "report_agent_work", ToolGate.AlwaysAvailable
+    "get_agent_work", ToolGate.AlwaysAvailable
     // Item 14c: configuring the integration ref/worktree is conductor-only
     // (enforced by `cohortTools` below) but, like every other cohort tool,
     // has no per-SESSION-state dependence — it is meaningful before any FSI
@@ -396,9 +398,9 @@ let cohortTools (authority: Cohort.Authority<'m>) : Set<CohortTool> =
   | Cohort.Authority.Anonymous ->
     set [ CohortTool.GetStatus ]
   | Cohort.Authority.Member(_, Cohort.JoinableRole.Observer) ->
-    set [ CohortTool.GetStatus ]
+    set [ CohortTool.GetStatus; CohortTool.Leave ]
   | Cohort.Authority.Member(_, Cohort.JoinableRole.Verifier) ->
-    set [ CohortTool.GetStatus ]
+    set [ CohortTool.GetStatus; CohortTool.Leave ]
   | Cohort.Authority.Member(_, Cohort.JoinableRole.Implementer) ->
     set [ CohortTool.GetStatus
           CohortTool.Join

@@ -55,6 +55,18 @@ type WorkerView = {| state: string; host: string; epoch: string; compilerVersion
 
 type ProcessView = {| id: string; pid: int; role: string; rss: float; cpu: float |}
 
+type ResourceMetricView = {| id: string; known: bool; value: float; unit: string |}
+type ResourceProcessView = {| id: string; pid: int; parent: int; name: string; context: string; cpuKnown: bool; cpu: float; rss: float; threads: int |}
+type ResourcesView = {| sequence: string; status: string; sampledAt: float; interval: float; cost: float; count: int; unreadable: int; omitted: int; note: string |}
+
+let private noResources () : ResourcesView =
+  {| sequence = ""; status = "stopped"; sampledAt = 0.; interval = 0.; cost = 0.; count = 0; unreadable = 0; omitted = 0
+     note = "No measurements yet. Start an explicit two-minute observation window." |}
+
+type AgentView = {| id: string; memberId: string; name: string; role: string; model: string; endpoint: string; session: string
+                    project: string; focus: string; operation: string; status: string; updatedAt: float; reportSequence: string
+                    usage: string; cost: string; activity: string; omitted: string |}
+
 type AlarmView = {| id: string; signal: string; state: string; message: string |}
 
 type HealthView =
@@ -103,6 +115,13 @@ type ModelView =
     revision: string
     worker: WorkerView
     sessions: SessionView array
+    agents: AgentView array
+    agentIncarnation: string
+    agentSequence: string
+    executionHost: string
+    resources: ResourcesView
+    resourceMetrics: ResourceMetricView array
+    resourceProcesses: ResourceProcessView array
     healthSeen: bool
     /// Meaningful only when healthSeen.
     health: HealthView
@@ -176,6 +195,13 @@ let create () : Stores =
         revision = ""
         worker = noWorker ()
         sessions = Array.empty<SessionView>
+        agents = Array.empty<AgentView>
+        agentIncarnation = ""
+        agentSequence = ""
+        executionHost = ""
+        resources = noResources ()
+        resourceMetrics = Array.empty<ResourceMetricView>
+        resourceProcesses = Array.empty<ResourceProcessView>
         healthSeen = false
         health = noHealth ()
         leases = Array.empty<LeaseView>
@@ -204,6 +230,7 @@ let targetOf (session: SessionView) : SessionTarget =
 /// Which UI element a command's pending state and outcome belong to.
 let commandKey (command: Command) =
   match command with
+  | ObserveResources _ -> "resources"
   | RequestSnapshot -> "snapshot"
   | OpenProject _ -> OpenKey
   | Reserve edit -> sessionKey edit.Target
@@ -215,6 +242,7 @@ let commandKey (command: Command) =
 
 let commandLabel (command: Command) =
   match command with
+  | ObserveResources _ -> "observe resources"
   | RequestSnapshot -> "refresh"
   | OpenProject _ -> "open"
   | Reserve _ -> "reserve"
@@ -446,6 +474,13 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       // A new connection, perhaps to a restarted daemon: until its clock
       // ticks, the page shows only the start time.
       stores.SetUptime(-1.0)
+      reconcileSlice stores "agents" (box Array.empty<AgentView>)
+      setSlice stores "agentIncarnation" (box "")
+      setSlice stores "agentSequence" (box "")
+      setSlice stores "executionHost" (box "")
+      setSlice stores "resources" (box (noResources ()))
+      reconcileSlice stores "resourceMetrics" (box Array.empty<ResourceMetricView>)
+      reconcileSlice stores "resourceProcesses" (box Array.empty<ResourceProcessView>)
       setSlice stores "welcomed" (box true)
       setSlice stores "daemonVersion" (box w.DaemonVersion)
       setSlice stores "startedAt" (box (float w.StartedAtMs))
@@ -494,6 +529,28 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
           stderr = run.StandardError
         |}
       setSlice stores "runs" (box (Array.append [| view |] (Array.truncate 19 stores.Model.runs)))
+    | AgentWork board ->
+      if stores.Model.agentIncarnation <> board.Incarnation || stores.Model.agentSequence = "" || board.Sequence >= int64 stores.Model.agentSequence then
+        setSlice stores "agentIncarnation" (box board.Incarnation)
+        setSlice stores "agentSequence" (box (string board.Sequence))
+        setSlice stores "executionHost" (box board.ExecutionHost)
+        reconcileSlice stores "agents" (box (board.Runs |> Array.map (fun r ->
+          {| id = r.Id; memberId = r.Member; name = r.Name; role = r.Role; model = r.Model; endpoint = r.Endpoint; session = r.Session
+             project = r.Project; focus = r.Focus; operation = r.Operation; status = r.Status
+             updatedAt = float r.UpdatedAtMs; reportSequence = string r.ReportSequence
+             usage = r.Usage |> Option.map (fun u -> string u.Total + " tokens (cumulative)") |> Option.defaultValue "usage unavailable"
+             cost = r.Usage |> Option.bind _.EstimateUsd |> Option.map (fun c -> "$" + string c + " Pi estimate") |> Option.defaultValue "price unavailable"
+             activity = String.concat " · " r.Activity; omitted = string r.OmittedActivity |})))
+    | Resources r ->
+      if stores.Model.resources.sequence = "" || r.Sequence >= int64 stores.Model.resources.sequence then
+        reconcileSlice stores "resources" (box {|
+          sequence = string r.Sequence; status = r.Status; sampledAt = float r.SampledAtMs; interval = r.IntervalMs; cost = r.SampleCostMs
+          count = r.ProcessCount; unreadable = r.UnreadableCount; omitted = r.OmittedCount; note = r.Note |})
+        reconcileSlice stores "resourceMetrics" (box (r.Metrics |> Array.map (fun m ->
+          {| id = m.Name; known = m.Value.IsSome; value = Option.defaultValue 0. m.Value; unit = m.Unit |})))
+        reconcileSlice stores "resourceProcesses" (box (r.Processes |> Array.map (fun p ->
+          {| id = string p.ProcessId + ":" + p.StartTicks; pid = p.ProcessId; parent = p.ParentId; name = p.Name; context = p.Context
+             cpuKnown = p.CpuPercent.IsSome; cpu = Option.defaultValue 0. p.CpuPercent; rss = p.ResidentBytes; threads = p.Threads |})))
     | Health health ->
       setSlice stores "healthSeen" (box true)
       reconcileSlice stores "health" (box (healthView health))

@@ -46,6 +46,7 @@ module private Ui =
   let encodeCommand (frame: CommandFrame) : string =
     let fields =
       match frame.Command with
+      | ObserveResources seconds -> [ "command", JsonValue.String "observe_resources"; "seconds", JsonValue.ofInt64 (int64 seconds) ]
       | RequestSnapshot -> [ "command", JsonValue.String "request_snapshot" ]
       | OpenProject project -> [ "command", JsonValue.String "open_project"; "project", JsonValue.String project ]
       | Reserve edit ->
@@ -272,6 +273,87 @@ module private Ui =
     return { LeaseBoard.Active = active; Queued = queued }
   }
 
+  let private optionalReal name o =
+    match field name o with
+    | Some JsonValue.Null -> Ok None
+    | _ -> real name o |> Result.map Some
+
+  let private resources o = decode {
+    let! sequence = wide "sequence" o
+    let! status = text "status" o
+    let! at = wide "sampledAtMs" o
+    let! interval = real "intervalMs" o
+    let! cost = real "sampleCostMs" o
+    let! count = whole "processCount" o
+    let! unreadable = whole "unreadableCount" o
+    let! omitted = whole "omittedCount" o
+    let! note = text "note" o
+    let! metrics =
+      items "metrics" (fun m -> decode {
+        let! name = text "name" m
+        let! value = optionalReal "value" m
+        let! unit = text "unit" m
+        return { ResourceMetric.Name = name; Value = value; Unit = unit }
+      }) o
+    let! processes =
+      items "processes" (fun p -> decode {
+        let! pid = whole "processId" p
+        let! parent = whole "parentId" p
+        let! start = text "startTicks" p
+        let! name = text "name" p
+        let! context = text "context" p
+        let! cpu = optionalReal "cpuPercent" p
+        let! rss = real "residentBytes" p
+        let! threads = whole "threads" p
+        return { ResourceProcess.ProcessId = pid; ParentId = parent; StartTicks = start; Name = name; Context = context; CpuPercent = cpu; ResidentBytes = rss; Threads = threads }
+      }) o
+    return { HostResources.Sequence = sequence; Status = status; SampledAtMs = at; IntervalMs = interval; SampleCostMs = cost
+             ProcessCount = count; UnreadableCount = unreadable; OmittedCount = omitted; Note = note; Metrics = metrics; Processes = processes }
+  }
+
+  let private agentWork o = decode {
+    let! incarnation = text "incarnation" o
+    let! sequence = wide "sequence" o
+    let! host = text "executionHost" o
+    let! capacity = whole "capacity" o
+    let! runs =
+      items "runs" (fun r -> decode {
+        let! id = text "id" r
+        let! memberId = text "member" r
+        let! role = text "role" r
+        let! name = text "name" r
+        let! session = text "session" r
+        let! seq = wide "reportSequence" r
+        let! model = text "model" r
+        let! endpoint = text "endpoint" r
+        let! project = text "project" r
+        let! focus = text "focus" r
+        let! operation = text "operation" r
+        let! status = text "status" r
+        let! at = wide "updatedAtMs" r
+        let! omitted = wide "omittedActivity" r
+        let! activity = items "activity" (function JsonValue.String s -> Ok s | _ -> Error "expected string") r
+        let! usage =
+          match field "usage" r with
+          | Some JsonValue.Null -> Ok None
+          | Some u ->
+            decode {
+              let! input = wide "input" u
+              let! output = wide "output" u
+              let! cr = wide "cacheRead" u
+              let! cw = wide "cacheWrite" u
+              let! total = wide "total" u
+              let! estimate = optionalReal "estimateUsd" u
+              return Some { AgentUsage.Input = input; Output = output; CacheRead = cr; CacheWrite = cw; Total = total; EstimateUsd = estimate }
+            }
+          | None -> Error "usage missing"
+        return { AgentRun.Id = id; Member = memberId; Role = role; Name = name; Session = session; ReportSequence = seq
+                 Model = model; Endpoint = endpoint; Project = project; Focus = focus; Operation = operation; Status = status
+                 UpdatedAtMs = at; Activity = activity; OmittedActivity = omitted; Usage = usage }
+      }) o
+    return { AgentWorkBoard.Incarnation = incarnation; Sequence = sequence; ExecutionHost = host; Capacity = capacity; Runs = runs }
+  }
+
   let decodeEvent (payload: string) : Result<Event, string> =
     match Json.parse payload with
     | Error reason -> Error reason
@@ -326,6 +408,8 @@ module private Ui =
               StandardError = stderr
             }
           }
+        | "agent_work" -> agentWork o |> Result.map AgentWork
+        | "resources" -> resources o |> Result.map Resources
         | "health" -> health o |> Result.map Health
         | "leases" -> leases o |> Result.map Leases
         | "uptime" -> wide "uptimeMs" o |> Result.map (fun uptimeMs -> Uptime { UptimeTick.UptimeMs = uptimeMs })
@@ -396,6 +480,8 @@ let private commands = [
   Cancel target
   CloseSession target
   RetireWorker worker
+  ObserveResources 120
+  ObserveResources 0
 ]
 
 let private completions = [
@@ -476,6 +562,10 @@ let private events = [
   Uptime { UptimeTick.UptimeMs = 0L }
   Uptime { UptimeTick.UptimeMs = 93784005L }
   Uptime { UptimeTick.UptimeMs = Int64.MaxValue }
+  Resources {
+    Sequence = 1L; Status = "complete"; SampledAtMs = 123L; IntervalMs = 2000.; SampleCostMs = 12.5
+    Metrics = [||]; Processes = [||]; ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = "test" }
+  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Capacity = 256; Runs = [||] }
 ]
 
 /// The frames bozzetto-web's Fable codecs produce for the samples above:
@@ -492,6 +582,8 @@ let private commandWires = [
   """{"correlation":8,"command":"cancel","target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"}}"""
   """{"correlation":9,"command":"close_session","target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"}}"""
   """{"correlation":10,"command":"retire_worker","worker":{"host":"host-α","epoch":"epoch-0001"}}"""
+  """{"correlation":11,"command":"observe_resources","seconds":120}"""
+  """{"correlation":12,"command":"observe_resources","seconds":0}"""
 ]
 
 let private eventWires = [
@@ -519,6 +611,8 @@ let private eventWires = [
   """{"event":"uptime","uptimeMs":"0"}"""
   """{"event":"uptime","uptimeMs":"93784005"}"""
   """{"event":"uptime","uptimeMs":"9223372036854775807"}"""
+  """{"event":"resources","sequence":"1","status":"complete","sampledAtMs":"123","intervalMs":2000,"sampleCostMs":12.5,"processCount":0,"unreadableCount":0,"omittedCount":0,"note":"test","metrics":[],"processes":[]}"""
+  """{"event":"agent_work","incarnation":"daemon-a","sequence":"1","executionHost":"local","capacity":256,"runs":[]}"""
 ]
 
 let private caseName (value: obj) (unionType: Type) =
@@ -666,6 +760,7 @@ type private FakeSocket() =
 /// or a RequestSnapshot.
 type private FakeComposer() =
   let changed = Microsoft.FSharp.Control.Event<unit>()
+  let leaseChanged = Microsoft.FSharp.Control.Event<unit>()
   let buildEntered = TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously)
   let buildReleased = TaskCompletionSource<ComposerResponse>(TaskCreationOptions.RunContinuationsAsynchronously)
   let mutable revision = 1L
@@ -680,6 +775,8 @@ type private FakeComposer() =
   member _.BuildEntered = buildEntered.Task
   member _.ReleaseBuild() = buildReleased.TrySetResult(response (Result.Ok(Built accepted))) |> ignore
   member _.Change() = changed.Trigger()
+  member _.ChangeLeases() = leaseChanged.Trigger()
+  member val Board = { LeaseBoard.Active = [||]; Queued = [||] } with get, set
   member this.Directory() : ComposerDirectory =
     { Configured = true; Revision = this.Revision; Worker = Some hello
       Sessions = [| response (Result.Ok(Observed observed)) |] }
@@ -710,7 +807,10 @@ type private FakeComposer() =
     Leases =
       fun () ->
         Interlocked.Increment &leaseReads |> ignore
-        { LeaseBoard.Active = [||]; Queued = [||] }
+        this.Board
+    LeaseChanged = Some(leaseChanged.Publish :> IObservable<unit>)
+    AgentWork = None
+    AgentWorkChanged = None
   }
 
 /// The snapshot spacing, held by the test. Each pause the hub enters is
@@ -878,7 +978,12 @@ let tests =
         fun (seed: int32) (command: Command) ->
           let correlation = if seed = Int32.MinValue then 1 else max 1 (abs seed)
           let frame = { CommandFrame.Correlation = correlation; Command = command }
-          Codec.decodeCommand (Ui.encodeCommand frame) = Ok frame
+          match command with
+          | ObserveResources seconds when seconds < 0 || seconds > 120 ->
+            match Codec.decodeCommand (Ui.encodeCommand frame) with
+            | Error refusal -> refusal.Message = "seconds: expected an integer from 0 to 120"
+            | Ok _ -> false
+          | _ -> Codec.decodeCommand (Ui.encodeCommand frame) = Ok frame
 
       testPropertyWithConfig wireConfig "every event the backend can send reaches the page unchanged" <|
         fun (event: Event) -> Ui.decodeEvent (Codec.encodeEvent event) = Ok event
@@ -974,6 +1079,8 @@ let tests =
           Some(RequestBody.Cancel address)
           Some(RequestBody.Close address)
           Some(RequestBody.PrepareCompilerChange address.Worker)
+          None // Resource observations never reach the compiler worker.
+          None
         ]
       }
 
@@ -1292,6 +1399,43 @@ let tests =
         socket.Hangup()
         do! settle running
         stopping.Cancel()
+      }
+
+      testTask "lease owner changes reach every page without refresh and detach on shutdown" {
+        let stopping = new CancellationTokenSource()
+        let composer = FakeComposer()
+        let hub = hubOf composer stopping.Token unpaused (ClockGate())
+        hub.Start()
+        composer.ChangeLeases()
+        composer.LeaseReads |> Expect.equal "no readers before any page subscribes" 0
+        let first, second = FakeSocket(), FakeSocket()
+        let firstRun = hub.RunAsync(first, CancellationToken.None)
+        let secondRun = hub.RunAsync(second, CancellationToken.None)
+        let! _ = readPrologue first
+        let! _ = readPrologue second
+        let grant = { LeaseGrant.Id = "display-only"; Kind = "full_build"; Holder = "pi · /repo/clef"
+                      GrantedAtMs = 1L; ExpiresAtMs = 2L }
+        composer.Board <- { LeaseBoard.Active = [| grant |]; Queued = [||] }
+        composer.ChangeLeases()
+        let! one = first.Next()
+        let! two = second.Next()
+        one |> Expect.equal "push, not a RequestSnapshot response" (Leases composer.Board)
+        two |> Expect.equal "the same board reaches the second page" one
+        composer.HealthReads |> Expect.equal "lease updates never resample health" 2
+        first.Hangup()
+        do! settle firstRun
+        composer.Board <- { LeaseBoard.Active = [||]; Queued = [||] }
+        composer.ChangeLeases()
+        let! released = second.Next()
+        released |> Expect.equal "release clears the live board" (Leases composer.Board)
+        first.LateWrites |> Expect.equal "closed page receives nothing" 0
+        second.Hangup()
+        do! settle secondRun
+        stopping.Cancel()
+        let reads = composer.LeaseReads
+        composer.ChangeLeases()
+        composer.LeaseReads |> Expect.equal "subscription is disposed" reads
+        stopping.Dispose()
       }
 
       testTask "without an owner change, health and leases are read only for the connect and the pull" {

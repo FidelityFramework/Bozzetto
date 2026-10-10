@@ -47,6 +47,25 @@ The [Composer workbench](../../Composer/docs/Interactive_Compiler_Workbench.md),
 existing ownership basis. Their design requirements and reference packages must
 not be reported as implemented Bozzetto integrations.
 
+## Host observation and UMA coordination
+
+The [resource observation and UMA contract](Bozzetto_Resource_Observation_And_UMA.md)
+is first-horizon infrastructure for FFI, Farscape and compiler-component work.
+Bozzetto owns whole-host observation and correlation with admitted operations;
+its existing lease owner retains admission. Fidelity.Platform and Farscape/native
+binding owners supply platform capability and ABI boundaries, not a second
+scheduler. Lemonade remains an independent workload with explicitly observed
+configuration and performance.
+
+Physical memory domains, device budgets, shared backing, process attribution and
+actual pressure must remain distinct. Neither managed-process RSS nor a GPU
+allocation counter is a universal physical-usage total. Portable, versioned
+observations carry scope, provenance, interval, coverage and freshness; Linux,
+Windows and Apple-silicon adapters establish their own evidence. Native Clef
+collection replaces the acquisition edge, not the accounting contract. The design
+specifies staged delivery and coexistence experiments; no unimplemented collector
+or sibling-project handoff is claimed complete.
+
 ## Identity and evidence
 
 Each operation must identify its owning context. The following are conceptual
