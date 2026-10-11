@@ -1,16 +1,13 @@
-**/*.ts
 **/*.fs
 **/*.fsproj
 **/*.fs.js
 **/*.fs.js.map
 src/**
 fable-out/**
-out/**
 node_modules/**
 .config/**
 docs/**
 *.vsix
-tsconfig.json
 esbuild.mjs
 .vscode/**
 .gitignore
