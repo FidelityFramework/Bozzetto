@@ -117,11 +117,15 @@ async function check() {
   const agentPanel = "[...document.querySelectorAll('h2')].find(h => h.textContent === 'Agent work').closest('.card-body')";
   const historyDetails = `${agentPanel}.querySelector(':scope > details')`;
   const historyNames = () => evaluate(dashboard, `[...${historyDetails}.querySelectorAll(':scope > details > summary')].map(s => s.textContent.split(' · ')[0])`);
-  const currentNames = () => evaluate(dashboard, `[...${agentPanel}.querySelectorAll(':scope > div.border-t > .font-semibold')].map(s => s.textContent.split(' · ')[0])`);
+  const currentNames = () => evaluate(dashboard, `[...${agentPanel}.querySelectorAll(':scope > div.border-t:not(.presence) > .font-semibold')].map(s => s.textContent.split(' · ')[0])`);
+  const presenceRows = () => evaluate(dashboard, `[...${agentPanel}.querySelectorAll(':scope > div.presence > .font-semibold')].map(s => s.textContent)`);
   const trafficBeforeExpansion = {fetches: pageRequests.length, commands: pageFrames.length};
   for (const text of ['Mock implementer', 'Implementer · reported running', 'Mock uncertain', 'Observer · reported unknown', 'Updated ', 'Earlier passes (2)']) assert.ok(d.text.includes(text), `current work: ${text}`);
   for (const text of ['Mock verifier', 'Mock observer', '250 tokens (cumulative)', '$0.125 Pi estimate']) assert.ok(!d.text.includes(text), `details start hidden: ${text}`);
   assert.deepEqual(await currentNames(), ['Mock uncertain', 'Mock implementer'], 'current and uncertain work stay visible, newest first');
+  // Presence is derived from leases and membership the daemon owns: shown without a report, newest first.
+  assert.deepEqual(await presenceRows(), ['Mock builder · holds full_build', 'mcp:quiet · Observer member · no report yet'], 'derived presence rows follow the reported work, newest first');
+  for (const text of ['lease since', 'member renewed']) assert.ok(d.text.includes(text), `presence source: ${text}`);
   assert.deepEqual(await historyNames(), ['Mock observer', 'Mock verifier'], 'earlier passes are newest first, not input/id order');
   assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'earlier passes start collapsed');
   assert.equal(await evaluate(dashboard, `${agentPanel}.querySelectorAll('details[open]').length`), 0, 'per-pass details start collapsed too');

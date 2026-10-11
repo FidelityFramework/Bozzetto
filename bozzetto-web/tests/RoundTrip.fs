@@ -117,8 +117,10 @@ let private completions = [
 ]
 
 let private events = [
-  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Capacity = 256; Runs = [||] }
+  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Capacity = 256; Runs = [||]; Presence = [||] }
   AgentWork { Incarnation = "daemon-b"; Sequence = 9007199254740993L; ExecutionHost = "local"; Capacity = 256
+              Presence = [| { Name = "pi ü"; Source = "lease"; Member = "pi ü · /repo/clef"; Project = "/repo/clef"; Detail = "holds full_build"; SinceMs = 9007199254740993L }
+                            { Name = "mcp:two"; Source = "member"; Member = "mcp:two"; Project = ""; Detail = "Verifier member · no report yet"; SinceMs = -1L } |]
               Runs = [| { Id = "run"; Member = "mcp:one"; Role = "Observer"; Name = "same"; Session = "pi"
                           ReportSequence = 2L; Model = "reported"; Endpoint = "LAN"; Project = "/repo"; Focus = "review"
                           Operation = "read"; Status = "disconnected"; UpdatedAtMs = 123L; Activity = [|"read"|]; OmittedActivity = 4L; Usage = None }
@@ -161,7 +163,8 @@ let private events = [
     StandardError = ""
   }
   Health {
-    DaemonHealth.Version = "0.6.834"
+    DaemonHealth.Revision = 1L
+    Version = "0.6.834"
     ProcessId = 4242
     McpPort = 47749
     Overall = "Healthy"
@@ -171,11 +174,14 @@ let private events = [
     MachineAvailableBytes = System.Int64.MaxValue
     MachineTotalBytes = 66571993088L
     CpuPercent = 1e-7
+    SampledAtMs = 1759420800000L
+    RecordAtMs = 0L
     Processes = [||]
     Alarms = [||]
   }
   Health {
-    DaemonHealth.Version = "v"
+    DaemonHealth.Revision = 9007199254740993L
+    Version = "v"
     ProcessId = 1
     McpPort = 47759
     Overall = "Degraded"
@@ -185,15 +191,18 @@ let private events = [
     MachineAvailableBytes = 1L
     MachineTotalBytes = 2L
     CpuPercent = 99.5
+    SampledAtMs = System.Int64.MaxValue
+    RecordAtMs = -1L
     Processes = [|
       { ProcessSample.ProcessId = 1; Role = "daemon"; ResidentBytes = 1L; CpuPercent = 0.0 }
       { ProcessSample.ProcessId = 2; Role = "composer-worker"; ResidentBytes = System.Int64.MaxValue; CpuPercent = 12.5 }
     |]
     Alarms = [| { HealthAlarm.Signal = "WorkerRss"; State = "Broken"; Message = "RSS ↑" } |]
   }
-  Leases { LeaseBoard.Active = [||]; Queued = [||] }
+  Leases { LeaseBoard.Revision = 0L; Active = [||]; Queued = [||] }
   Leases {
-    LeaseBoard.Active = [|
+    LeaseBoard.Revision = 9007199254740993L
+    Active = [|
       { LeaseGrant.Id = "lease-1"; Kind = "full_build"; Holder = "gate-command-1"; GrantedAtMs = 1759420800000L; ExpiresAtMs = System.Int64.MaxValue }
     |]
     Queued = [| { LeaseWait.Kind = "test_suite_run"; Holder = "agent-ü"; RequestedAtMs = -1L } |]

@@ -249,6 +249,9 @@ let private alarm (o: obj) = decode {
 }
 
 let private health (o: obj) = decode {
+  let! revision = wide o "revision"
+  let! sampledAtMs = wide o "sampledAtMs"
+  let! recordAtMs = wide o "recordAtMs"
   let! version = text o "version"
   let! processId = whole o "processId"
   let! mcpPort = whole o "mcpPort"
@@ -262,7 +265,8 @@ let private health (o: obj) = decode {
   let! processes = items o "processes" processSample
   let! alarms = items o "alarms" alarm
   return {
-    DaemonHealth.Version = version
+    DaemonHealth.Revision = revision
+    Version = version
     ProcessId = processId
     McpPort = mcpPort
     Overall = overall
@@ -274,6 +278,8 @@ let private health (o: obj) = decode {
     CpuPercent = cpuPercent
     Processes = processes
     Alarms = alarms
+    SampledAtMs = sampledAtMs
+    RecordAtMs = recordAtMs
   }
 }
 
@@ -358,13 +364,23 @@ let private agentRun o = decode {
            Model = model; Endpoint = endpoint; Project = project; Focus = focus; Operation = operation; Status = status
            UpdatedAtMs = at; OmittedActivity = omitted; Activity = activity; Usage = usage }
 }
+let private agentPresence o = decode {
+  let! name = text o "name"
+  let! source = text o "source"
+  let! project = text o "project"
+  let! member' = text o "member"
+  let! detail = text o "detail"
+  let! since = wide o "sinceMs"
+  return { AgentPresence.Name = name; Source = source; Member = member'; Project = project; Detail = detail; SinceMs = since }
+}
 let private agentWork o = decode {
   let! incarnation = text o "incarnation"
   let! sequence = wide o "sequence"
   let! host = text o "executionHost"
   let! capacity = whole o "capacity"
   let! runs = items o "runs" agentRun
-  return { AgentWorkBoard.Incarnation = incarnation; Sequence = sequence; ExecutionHost = host; Capacity = capacity; Runs = runs }
+  let! presence = items o "presence" agentPresence
+  return { AgentWorkBoard.Incarnation = incarnation; Sequence = sequence; ExecutionHost = host; Capacity = capacity; Runs = runs; Presence = presence }
 }
 
 let private eventOf (o: obj) : Result<Event, string> =
@@ -424,9 +440,10 @@ let private eventOf (o: obj) : Result<Event, string> =
     | "health" -> health o |> Result.map Health
     | "leases" ->
       decode {
+        let! revision = wide o "revision"
         let! active = items o "active" leaseGrant
         let! queued = items o "queued" leaseWait
-        return Leases { LeaseBoard.Active = active; Queued = queued }
+        return Leases { LeaseBoard.Revision = revision; Active = active; Queued = queued }
       }
     | "uptime" -> wide o "uptimeMs" |> Result.map (fun uptimeMs -> Uptime { UptimeTick.UptimeMs = uptimeMs })
     | other -> Error("event: unknown tag " + other))

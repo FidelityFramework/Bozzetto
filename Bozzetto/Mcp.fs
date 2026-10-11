@@ -1227,7 +1227,7 @@ module McpTools =
 
   let acquireWorkLease (agent: string) (kind: Bozzetto.ExpensiveWorkLease.Kind) : string =
     let holder = resolvedKey agent
-    let decision = Bozzetto.Features.LeaseWatch.request holder kind
+    let decision = (Bozzetto.Server.HealthTick.sample () |> ignore; Bozzetto.Features.LeaseWatch.request holder kind)
     leaseDecisionJson kind decision
 
   let releaseWorkLease (agent: string) (leaseId: string) : Result<string, BozzettoError> =

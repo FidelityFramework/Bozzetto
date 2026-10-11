@@ -8,18 +8,28 @@ open Bozzetto
 /// ExpensiveWorkLease rules and MemoryPressureWatch; observers gain no authority.
 module LeaseWatch =
 
+  /// The pool as observers see it, with the serial of the change that produced
+  /// it: one per published change, increasing. Published whole, under the
+  /// pool's own gate, so a value and its serial never come apart.
+  type Pool = { Serial: int64; Active: ExpensiveWorkLease.GrantView list; Queue: ExpensiveWorkLease.QueueView list }
+
   let mutable private pool = ExpensiveWorkLease.empty
   let private gate = obj ()
-  let private changedEvent = Event<unit>()
+  let private changedEvent = Event<Pool>()
   let mutable private deadline: Timer option = None
   let mutable private generation = 0L
+  let mutable private latest = { Serial = 0L; Active = []; Queue = [] }
 
-  /// Owner changes only: request, release, reset, or the next known expiry.
-  /// No periodic scan or subscriber-local clock is involved.
-  let changed = changedEvent.Publish
+  /// Owner changes only: request, release, withdraw, reset, or the next known
+  /// expiry. Each carries the pool it produced, captured with its serial under
+  /// the gate. The announcement itself is made outside the gate, so two may be
+  /// heard out of order; the serial orders them, and a subscriber that admits
+  /// by serial (the bridge's fact plane) drops the older. No periodic scan or
+  /// subscriber-local clock is involved.
+  let changed : IObservable<Pool> = changedEvent.Publish
 
-  let private notify () =
-    try changedEvent.Trigger()
+  let private notify (change: Pool) =
+    try changedEvent.Trigger change
     with _ -> () // An observer cannot fail the admission or release operation.
 
   let internal nextExpiry now active =
@@ -28,6 +38,12 @@ module LeaseWatch =
     |> List.filter (fun expires -> expires > now)
     |> List.sort
     |> List.tryHead
+
+  /// Under the gate: the next published pool, one serial on from the last.
+  let private advance () =
+    let live = ExpensiveWorkLease.snapshot DateTimeOffset.UtcNow pool
+    latest <- { Serial = latest.Serial + 1L; Active = live.Active; Queue = live.Queue }
+    latest
 
   /// A single one-shot deadline belongs to the pool, not to any browser. Each
   /// mutation replaces it; an already-queued callback is fenced by generation.
@@ -42,24 +58,25 @@ module LeaseWatch =
     | None -> ()
     | Some expires ->
       let callback _ =
-        let current = lock gate (fun () ->
-          if generation <> run then false
+        let change = lock gate (fun () ->
+          if generation <> run then None
           else
             schedule ()
-            true)
-        if current then notify ()
+            Some(advance ()))
+        change |> Option.iter notify
       deadline <- Some(new Timer(TimerCallback callback, null, expires - now + TimeSpan.FromMilliseconds 1., Timeout.InfiniteTimeSpan))
 
   let private update transition =
-    let result, didChange = lock gate (fun () ->
+    let result, change = lock gate (fun () ->
       let now = DateTimeOffset.UtcNow
       let before = ExpensiveWorkLease.snapshot now pool
       let next, result = transition pool
       pool <- next
-      let didChange = before <> ExpensiveWorkLease.snapshot now pool
-      if didChange then schedule ()
-      result, didChange)
-    if didChange then notify ()
+      if before <> ExpensiveWorkLease.snapshot now pool then
+        schedule ()
+        result, Some(advance ())
+      else result, None)
+    change |> Option.iter notify
     result
 
   /// `holder` identifies the caller. Queueing and admission rules are unchanged.
@@ -84,8 +101,13 @@ module LeaseWatch =
   /// Safe observation: the release capability never appears in this snapshot.
   let snapshot () = lock gate (fun () -> ExpensiveWorkLease.snapshot DateTimeOffset.UtcNow pool)
 
+  /// The pool as last published, with its serial: what a subscriber takes as
+  /// its first value, so a change announced meanwhile is ordered after it.
+  let current () : Pool = lock gate (fun () -> latest)
+
   let reset () : unit =
-    lock gate (fun () ->
+    let change = lock gate (fun () ->
       pool <- ExpensiveWorkLease.empty
-      schedule ())
-    notify ()
+      schedule ()
+      advance ())
+    notify change

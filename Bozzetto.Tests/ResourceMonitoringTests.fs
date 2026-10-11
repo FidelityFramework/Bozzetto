@@ -82,7 +82,7 @@ let tests = testList "Resource monitoring" [
   testCaseAsync "acquisition is cold, shared, and stops after final subscriber leaves" <| async {
     let mutable reads = 0
     let acquire () = Interlocked.Increment(&reads) |> ignore; raw()
-    let monitor = new ResourceMonitor.Monitor(acquire, TimeSpan.FromMilliseconds 25.)
+    let monitor = new ResourceMonitor.Monitor(acquire, TimeSpan.FromMilliseconds 25., ignore)
     do! Async.Sleep 40
     reads |> Expect.equal "zero default scans" 0
     let first = System.Threading.Tasks.TaskCompletionSource<unit>()
@@ -102,7 +102,7 @@ let tests = testList "Resource monitoring" [
 
   testCaseAsync "explicit window expiry ends acquisition without a browser timer" <| async {
     let mutable reads = 0
-    let monitor = new ResourceMonitor.Monitor((fun () -> Interlocked.Increment(&reads) |> ignore; raw()), TimeSpan.FromMilliseconds 25.)
+    let monitor = new ResourceMonitor.Monitor((fun () -> Interlocked.Increment(&reads) |> ignore; raw()), TimeSpan.FromMilliseconds 25., ignore)
     let finished = System.Threading.Tasks.TaskCompletionSource<unit>()
     do! monitor.Observe(1L, 1, fun r -> if r.Status = "complete" then finished.TrySetResult() |> ignore)
     do! finished.Task.WaitAsync(TimeSpan.FromSeconds 3.) |> Async.AwaitTask

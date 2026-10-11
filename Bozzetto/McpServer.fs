@@ -2226,7 +2226,16 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
         |> System.Threading.Tasks.Task.WhenAll
       let sessionSummaries = sessionPairs |> Array.map fst |> Array.toList
       let sessionStates = sessionPairs |> Array.map snd
+      // The daemon's own record, asked for once through its one sequencer, so
+      // this response and the pages report the same record and the same level;
+      // the per-session detail above is this route's own. Before the record
+      // reader is installed the response is built here, from the same reading.
+      let tick = Bozzetto.Server.HealthTick.refresh ()
+      let machineMemory = tick.Machine
       let healthSnapshot : Bozzetto.Features.HealthSnapshot =
+        match tick.Record with
+        | Some record -> { record with SessionSummaries = sessionSummaries; MemoryPressure = tick.Level }
+        | None ->
         { DaemonPid = Environment.ProcessId
           DaemonPort = 0
           Uptime = DateTime.UtcNow - daemonProcess.StartTime.ToUniversalTime()
@@ -2241,9 +2250,10 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
           // sampling+capture path.
           GcDumpOutcome = Bozzetto.Features.GcDumpWatch.lastCaptureOutcome ()
           // Same authoritative, hysteresis-tracked level DaemonMode's own
-          // health tick reads — see the field's doc comment on why shape
-          // alone (`Anomalies`) missed both real incidents.
-          MemoryPressure = Bozzetto.Features.MemoryPressureWatch.currentLevel () }
+          // health record reads — see the field's doc comment on why shape
+          // alone (`Anomalies`) missed both real incidents. The reading above
+          // folded in first, so the level is current at the time of asking.
+          MemoryPressure = tick.Level }
       let sessionStatus =
         Bozzetto.Features.DaemonHealth.primarySessionStatusLabel healthSnapshot.SessionSummaries
       let healthy = healthyForSessions healthSnapshot.SessionSummaries
@@ -2317,7 +2327,10 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
                 "samplesSustained", HttpJson.integer a.samplesSustained ]) |> Array.toList |> JsonValue.Array
               "memoryMB", HttpJson.integer healthSnapshot.MemoryMB
               "memoryPressure", JsonValue.String (Bozzetto.MemoryPressure.describe healthSnapshot.MemoryPressure)
-              "memoryPressureNote", JsonValue.String (Bozzetto.MemoryPressure.explain healthSnapshot.MemoryPressure)
+              "memoryPressureNote",
+                (let availableFrac = if machineMemory.TotalBytes > 0L then float machineMemory.AvailableBytes / float machineMemory.TotalBytes else 0.0
+                 let thresholds = Bozzetto.MemorySupervisor.pressureThresholds Bozzetto.MemorySupervisor.defaultThresholds
+                 JsonValue.String (Bozzetto.MemoryPressure.explainAt thresholds availableFrac healthSnapshot.MemoryPressure))
               "error", sessionError
               "version", JsonValue.String version
               "apiVersion", HttpJson.integer Bozzetto.EndpointContracts.apiVersion
@@ -2755,6 +2768,9 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
         let validKinds = Bozzetto.ExpensiveWorkLease.Kind.all |> List.map Bozzetto.ExpensiveWorkLease.Kind.toToken
         do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (sprintf "missing or unrecognized 'kind' — must be one of: %s" (String.concat ", " validKinds)) ])
       | Some holder, Some kind ->
+        // A decision point reads the machine first: the level it decides on
+        // is current, not the one a sweep left behind.
+        Bozzetto.Server.HealthTick.sample () |> ignore
         match Bozzetto.Features.LeaseWatch.request holder kind with
         | Bozzetto.ExpensiveWorkLease.Decision.Granted(leaseId, expiresAt) ->
           do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "decision", JsonValue.String ("granted"); "leaseId", JsonValue.String (Bozzetto.ExpensiveWorkLease.LeaseId.value leaseId); "expiresAt", McpJson.timestamp (expiresAt) ])
@@ -2779,6 +2795,8 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
         do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("missing 'leaseId'") ])
       | Some holder, Some leaseIdStr ->
         let leaseId = Bozzetto.ExpensiveWorkLease.LeaseId.ofWire leaseIdStr
+        // Running work heartbeats here; each beat keeps the level live while it runs.
+        Bozzetto.Server.HealthTick.sample () |> ignore
         match Bozzetto.Features.LeaseWatch.renew holder leaseId with
         | Bozzetto.ExpensiveWorkLease.RenewOutcome.Renewed expiresAt ->
           do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "outcome", JsonValue.String ("renewed"); "expiresAt", McpJson.timestamp (expiresAt) ])
@@ -3315,7 +3333,7 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       mapLiveTestingRoutes app rctx
       mapAnalysisRoutes app rctx
       Bozzetto.Server.ComposerRoutes.mapRoutes app composer
-      Bozzetto.Server.UiBridge.createWithAgentWork composer cfg.Port cfg.GetDaemonHealth app.Lifetime.ApplicationStopping cfg.CohortOwner
+      Bozzetto.Server.UiBridge.create composer cfg.Port cfg.GetDaemonHealth app.Lifetime.ApplicationStopping cfg.CohortOwner
       |> Bozzetto.Server.UiBridge.mapRoutes app
 
       let _stateSub =

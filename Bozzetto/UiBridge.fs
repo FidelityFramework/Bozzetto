@@ -8,11 +8,11 @@
 /// RunOutput first).
 ///
 /// Snapshot is sent on connect, in answer to RequestSnapshot, and when the
-/// supervisor's Changed signal fires (coalesced). Lease owner changes push
-/// Leases, including the pool's one-shot expiry deadline. Health remains a
-/// connection/request snapshot, explicitly labelled by the page. The hub's
-/// uptime clock runs only while a page is connected and owns Uptime pushes.
-/// None of these subscriptions scans the host or admits compiler work.
+/// supervisor's Changed signal fires (coalesced). Health, Leases and the agent
+/// board are the daemon's own facts: their owners publish them and the fact
+/// plane below pushes each as it settles, with the current values on connect.
+/// The hub's uptime clock runs only while a page is connected and owns Uptime
+/// pushes. None of these subscriptions scans the host or admits compiler work.
 ///
 /// The vocabulary is bozzetto-web/src/Shared/Protocol.fs, compiled into this
 /// assembly from that same file. The wire is UiBridgeCodec's alone.
@@ -47,22 +47,82 @@ type HealthSources = {
   Health: Bozzetto.Features.HealthSnapshot option
   Telemetry: DaemonTelemetry.Snapshot option
   Machine: Bozzetto.Features.MachineMemory.Stats
+  /// The memory level that reading implies, as the level's owner settled it.
+  Level: Bozzetto.MemoryPressure
+  /// When the machine was read and when the record was taken (Unix epoch ms).
+  SampledAtMs: int64
+  RecordAtMs: int64
 }
 
 /// Pure projections from Composer's typed replies and the daemon's own
 /// observations onto the bridge vocabulary.
 module Project =
 
+  /// Who is here, from facts the daemon owns: every lease held or awaited, and
+  /// every present cohort member as the cohort's frame lists them (identity,
+  /// role, seat, last renewal). A lease holder is spelled `agent · project` by
+  /// the lease script; a member's name and project come from its latest report
+  /// when it has made one, else the member's connection identity.
+  let presence
+      (active: Bozzetto.ExpensiveWorkLease.GrantView list)
+      (queue: Bozzetto.ExpensiveWorkLease.QueueView list)
+      (members: (Bozzetto.MemberTable.MemberId * Bozzetto.Cohort.JoinableRole * Bozzetto.Cohort.SeatState * DateTime) list)
+      (runs: Map<string, Bozzetto.AgentWork.Run>) : AgentPresence array =
+    let split (holder: string) =
+      match holder.IndexOf(" · ", StringComparison.Ordinal) with
+      | -1 -> holder, ""
+      | at -> holder.Substring(0, at), holder.Substring(at + 3)
+    let ms (at: DateTimeOffset) = at.ToUnixTimeMilliseconds()
+    let leases =
+      [| for lease in active do
+           let name, project = split lease.Holder
+           { AgentPresence.Name = name; Source = "lease"; Member = lease.Holder; Project = project; Detail = "holds " + lease.Kind; SinceMs = ms lease.GrantedAt }
+         for ask in queue do
+           let name, project = split ask.Holder
+           { AgentPresence.Name = name; Source = "lease"; Member = ask.Holder; Project = project; Detail = "queued for " + ask.Kind; SinceMs = ms ask.RequestedAt } |]
+    let latestRun (id: Bozzetto.MemberTable.MemberId) =
+      runs |> Map.toSeq |> Seq.map snd |> Seq.filter (fun run -> run.Member = id)
+      |> Seq.sortByDescending (fun run -> run.UpdatedAt, run.Report.Sequence) |> Seq.tryHead
+    let membersHere =
+      [| for id, role, seat, renewal in members do
+           match seat with
+           | Bozzetto.Cohort.SeatState.Departed _ -> ()
+           | Bozzetto.Cohort.SeatState.Present ->
+             let run = latestRun id
+             { AgentPresence.Name = run |> Option.map (fun r -> r.Report.Name) |> Option.defaultValue (Bozzetto.MemberTable.MemberId.display id)
+               Source = "member"
+               Member = Bozzetto.MemberTable.MemberId.display id
+               Project = run |> Option.map (fun r -> r.Report.Project) |> Option.defaultValue ""
+               Detail =
+                 string role + " member"
+                 + (run |> Option.map (fun r -> " · last report " + r.Report.Status) |> Option.defaultValue " · no report yet")
+               SinceMs = DateTimeOffset(DateTime.SpecifyKind(renewal, DateTimeKind.Utc)).ToUnixTimeMilliseconds() } |]
+    Array.append leases membersHere
+
+  let private agentWorkRuns (state: Bozzetto.AgentWork.State) : AgentRun array =
+    state.Runs |> Map.toArray |> Array.map (fun (key, run) ->
+      let r = run.Report
+      { Id = key; Member = Bozzetto.MemberTable.MemberId.display run.Member; Role = string run.Role
+        Name = r.Name; Session = r.Session; ReportSequence = r.Sequence; Model = r.Model; Endpoint = r.Endpoint
+        Project = r.Project; Focus = r.Focus; Operation = r.Operation; Status = r.Status
+        UpdatedAtMs = DateTimeOffset(run.UpdatedAt).ToUnixTimeMilliseconds()
+        Activity = List.toArray run.Activity; OmittedActivity = run.OmittedActivity
+        Usage = r.Usage |> Option.map (fun u -> { Input = u.Input; Output = u.Output; CacheRead = u.CacheRead; CacheWrite = u.CacheWrite; Total = u.Total; EstimateUsd = u.EstimateUsd }) })
+
+  /// The board a page receives: the reports with their presence, sequenced by
+  /// the publication that produced it, not by the owner's report count,
+  /// because presence moves without a report.
+  let agentBoard (revision: int64) (state: Bozzetto.AgentWork.State) (presence: AgentPresence array) : AgentWorkBoard =
+    { Incarnation = state.Incarnation; Sequence = revision; ExecutionHost = Environment.MachineName; Capacity = 256
+      Presence = presence
+      Runs = agentWorkRuns state }
+
+  /// The reports alone, sequenced by the owner's own count: for a reader that
+  /// has no presence facts to add.
   let agentWork (state: Bozzetto.AgentWork.State) : AgentWorkBoard =
     { Incarnation = state.Incarnation; Sequence = state.Sequence; ExecutionHost = Environment.MachineName; Capacity = 256
-      Runs = state.Runs |> Map.toArray |> Array.map (fun (key, run) ->
-        let r = run.Report
-        { Id = key; Member = Bozzetto.MemberTable.MemberId.display run.Member; Role = string run.Role
-          Name = r.Name; Session = r.Session; ReportSequence = r.Sequence; Model = r.Model; Endpoint = r.Endpoint
-          Project = r.Project; Focus = r.Focus; Operation = r.Operation; Status = r.Status
-          UpdatedAtMs = DateTimeOffset(run.UpdatedAt).ToUnixTimeMilliseconds()
-          Activity = List.toArray run.Activity; OmittedActivity = run.OmittedActivity
-          Usage = r.Usage |> Option.map (fun u -> { Input = u.Input; Output = u.Output; CacheRead = u.CacheRead; CacheWrite = u.CacheWrite; Total = u.Total; EstimateUsd = u.EstimateUsd }) }) }
+      Presence = [||]
+      Runs = agentWorkRuns state }
 
   let targetOf (authority: Authority) : SessionTarget =
     { SessionTarget.Worker = { WorkerTarget.Host = authority.Host; Epoch = authority.Epoch }; Session = authority.Session }
@@ -229,18 +289,21 @@ module Project =
   /// 0: the page's decoder accepts only finite numbers.
   let health (sources: HealthSources) : DaemonHealth =
     let finite value = if Double.IsFinite value then value else 0.0
-    let observed = sources.Health
+    // The level is the level owner's, settled from the same reading as the
+    // machine figures; a record's own copy may be older.
+    let observed = sources.Health |> Option.map (fun h -> { h with MemoryPressure = sources.Level })
     let telemetry = sources.Telemetry
-    { DaemonHealth.Version = observed |> Option.map _.Version |> Option.defaultValue sources.Version
+    { DaemonHealth.Revision = 0L
+      Version = observed |> Option.map _.Version |> Option.defaultValue sources.Version
       ProcessId = observed |> Option.map _.DaemonPid |> Option.defaultValue sources.ProcessId
       McpPort = observed |> Option.map _.DaemonPort |> Option.defaultValue sources.McpPort
       Overall =
         observed
         |> Option.map (fun h -> Bozzetto.Features.DaemonHealth.healthLabel (Bozzetto.Features.DaemonHealth.overallStatus h))
         |> Option.defaultValue "Unknown"
-      MemoryPressure = observed |> Option.map _.MemoryPressure |> Option.defaultValue Bozzetto.MemoryPressure.Normal |> pressureName
+      MemoryPressure = pressureName sources.Level
       MemoryPressureNote =
-        let level = observed |> Option.map _.MemoryPressure |> Option.defaultValue Bozzetto.MemoryPressure.Normal
+        let level = sources.Level
         let availableFrac =
           if sources.Machine.TotalBytes > 0L then float sources.Machine.AvailableBytes / float sources.Machine.TotalBytes else 0.0
         let thresholds = Bozzetto.MemorySupervisor.pressureThresholds Bozzetto.MemorySupervisor.defaultThresholds
@@ -257,7 +320,9 @@ module Project =
             { ProcessSample.ProcessId = p.ProcessId; Role = p.Role; ResidentBytes = p.ResidentBytes; CpuPercent = finite p.CpuPercent })
           |> List.toArray)
         |> Option.defaultValue [||]
-      Alarms = observed |> Option.map (fun h -> alarms h.Anomalies) |> Option.defaultValue [||] }
+      Alarms = observed |> Option.map (fun h -> alarms h.Anomalies) |> Option.defaultValue [||]
+      SampledAtMs = sources.SampledAtMs
+      RecordAtMs = sources.RecordAtMs }
 
   /// A stable, non-secret identity for one grant, derived only from what the
   /// board already shows (a holder holds at most one lease at a time).
@@ -265,9 +330,11 @@ module Project =
     let identity = holder + "\n" + kind + "\n" + grantedAt.UtcTicks.ToString(CultureInfo.InvariantCulture)
     "lease-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes identity), 0, 4).ToLowerInvariant()
 
-  /// The pool as `ExpensiveWorkLease.snapshot` reports it, which carries no LeaseId.
-  let leaseBoard (active: Bozzetto.ExpensiveWorkLease.GrantView list) (queue: Bozzetto.ExpensiveWorkLease.QueueView list) : LeaseBoard =
-    { LeaseBoard.Active =
+  /// The pool as `ExpensiveWorkLease.snapshot` reports it, which carries no
+  /// LeaseId, stamped by the publication that produced it.
+  let leaseBoard (revision: int64) (active: Bozzetto.ExpensiveWorkLease.GrantView list) (queue: Bozzetto.ExpensiveWorkLease.QueueView list) : LeaseBoard =
+    { LeaseBoard.Revision = revision
+      Active =
         active
         |> List.map (fun lease ->
           { LeaseGrant.Id = leaseDisplayId lease.Holder lease.Kind lease.GrantedAt
@@ -651,6 +718,325 @@ module UptimeClock =
       return uptime ()
     }
 
+// ── The fact plane ─────────────────────────────────────────────────────────
+
+/// The daemon's own facts as a page receives them. Each fact has one owner,
+/// which publishes a complete immutable value with its own serial; the plane
+/// admits publications in serial order and projects them onto the wire with
+/// pure works on the shared incremental core (Fidelity.FSharp.Incremental, the
+/// foundation ResourceGraph and the agent publication already stand on). A
+/// page registers a sink and receives the current values in the same critical
+/// section; every later publication reaches it through the sink, latest-wins
+/// per fact. Pages hold no demand: the projections are demanded for the
+/// daemon's lifetime, so a connecting page is answered at once.
+type BridgeFacts = {
+  /// Registers a page's sink and returns the current values in the same
+  /// critical section, so nothing settled between the two is lost or doubled.
+  Register: (Push -> Event -> unit) -> Event list * IDisposable
+  /// The current values, for an explicit resync.
+  Current: unit -> Event list
+  /// Asks the health owner for a fresh record: a page connecting or resyncing.
+  Refresh: unit -> unit
+}
+
+module Facts =
+  open Fidelity.FSharp.Incremental
+
+  /// The cohort's membership as the board shows it, from the cohort owner's
+  /// frame, with the ledger sequence that produced it.
+  type Membership = {
+    Version: int64
+    Members: (Bozzetto.MemberTable.MemberId * Bozzetto.Cohort.JoinableRole * Bozzetto.Cohort.SeatState * DateTime) list
+  }
+
+  let membershipOf (frame: Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTable.MemberId>) : Membership =
+    { Version = int64 frame.Version
+      Members = List.init frame.MemberIds.Length (fun i -> frame.MemberIds[i], frame.MemberRole[i], frame.MemberSeat[i], frame.MemberRenewal[i]) }
+
+  /// What the health projection cannot derive from a fact: the daemon's identity.
+  type Constants = { McpPort: int; Version: string; ProcessId: int }
+
+  /// The owners the plane subscribes to: each as its change signal and its
+  /// current value.
+  type Owners = {
+    Tick: IObservable<Bozzetto.Server.HealthTick.Tick> * (unit -> Bozzetto.Server.HealthTick.Tick option)
+    Pool: IObservable<Bozzetto.Features.LeaseWatch.Pool> * (unit -> Bozzetto.Features.LeaseWatch.Pool)
+    Agents: (IObservable<unit> * (unit -> Bozzetto.AgentWork.State)) option
+    Membership: (IObservable<unit> * (unit -> Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTable.MemberId>)) option
+  }
+
+  /// Why a publication was not admitted. `Conflict` and `ForeignIncarnation`
+  /// are owner protocol faults; the other two are the ordinary cost of owners
+  /// announcing outside their own gates.
+  [<RequireQualifiedAccess>]
+  type Refusal =
+    | Older
+    | Duplicate
+    | Conflict
+    | ForeignIncarnation
+    /// The plane has retired its epoch at shutdown; nothing is admitted after.
+    | Retired
+
+  [<RequireQualifiedAccess>]
+  type private Fact =
+    | Tick of Bozzetto.Server.HealthTick.Tick
+    | Pool of Bozzetto.Features.LeaseWatch.Pool
+    | Agents of Bozzetto.AgentWork.State
+    | Membership of Membership
+
+  /// What a value token names: an admitted fact, or a settled projection.
+  [<RequireQualifiedAccess>]
+  type private Payload =
+    | Fact of Fact
+    | Value of Event
+
+  let private tickInput, poolInput, agentsInput, membershipInput = InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL
+  let private healthWork, leasesWork, boardWork = WorkId 1UL, WorkId 2UL, WorkId 3UL
+  let private scope = ScopeId 1UL
+
+  /// Sets admitted per epoch before the plane retires it and starts the next:
+  /// the core keeps every stamp and completion of an epoch, so the plane bounds them.
+  let recycleBound = 4096
+
+  /// The plane of one daemon. `incarnation` is the agent board owner's, bound
+  /// at start: a publication from any other incarnation is refused, so a
+  /// retired owner can never roll the board back.
+  type Graph(constants: Constants, incarnation: string) =
+    let gate = obj ()
+    let mutable epoch = 1UL
+    let mutable core = Core.init (EpochId epoch)
+    /// One counter for input stamps and value tokens: unique for the plane's lifetime.
+    let mutable serial = 0UL
+    let mutable store : Map<ValueToken, Payload> = Map.empty
+    let mutable inputs : Map<InputId, ValueToken> = Map.empty
+    let mutable admitted : Map<InputId, int64> = Map.empty
+    /// The publication serial each work's current value carries on the wire.
+    let mutable stamps : Map<WorkId, int64> = Map.empty
+    let mutable failed : Set<WorkId> = Set.empty
+    let mutable sets = 0
+    let mutable handover = false
+    let mutable stopped = false
+    let mutable faults = 0
+    let sinks = System.Collections.Generic.Dictionary<int64, Push -> Event -> unit>()
+    let mutable nextSink = 0L
+
+    let pushOf (work: WorkId) = if work = healthWork then Push.Health elif work = leasesWork then Push.Leases else Push.AgentWork
+
+    /// The projection of one work over the facts its frozen reads name, with
+    /// the publication serial the result carries on the wire.
+    let project (work: WorkId) (stamp: int64) (facts: Map<ReadSlotId, Fact>) : Event =
+      let fact slot = Map.tryFind (ReadSlotId slot) facts
+      if work = healthWork then
+        match fact 1UL with
+        | Some(Fact.Tick tick) ->
+          Health
+            { Project.health
+                { HealthSources.McpPort = constants.McpPort; Version = constants.Version; ProcessId = constants.ProcessId
+                  Health = tick.Record; Telemetry = tick.Telemetry; Machine = tick.Machine; Level = tick.Level
+                  SampledAtMs = tick.SampledAtMs; RecordAtMs = tick.RecordAtMs }
+              with Revision = stamp }
+        | other -> invalidOp (sprintf "Bridge facts: Health read %A" other)
+      elif work = leasesWork then
+        match fact 1UL with
+        | Some(Fact.Pool pool) -> Leases(Project.leaseBoard stamp pool.Active pool.Queue)
+        | other -> invalidOp (sprintf "Bridge facts: Leases read %A" other)
+      else
+        match fact 1UL, fact 2UL, fact 3UL with
+        | Some(Fact.Agents state), Some(Fact.Pool pool), Some(Fact.Membership membership) ->
+          AgentWork(Project.agentBoard stamp state (Project.presence pool.Active pool.Queue membership.Members state.Runs))
+        | other -> invalidOp (sprintf "Bridge facts: Board read %A" other)
+
+    let deliver (work: WorkId) (event: Event) =
+      let kind = pushOf work
+      for sink in sinks.Values do
+        try sink kind event with _ -> () // A page's outbox never fails the plane.
+
+    /// One command, its state committed, then its effects in their returned
+    /// order. A projection runs here, synchronously, over frozen receipts:
+    /// Start, store, Finished, Drained; the Offer that follows is delivered.
+    let rec apply (action: Action) : unit =
+      let next, effects =
+        Core.step { Epoch = EpochId epoch; Action = action } core
+        |> Result.defaultWith (fun error -> invalidOp (sprintf "Bridge facts: %A" error))
+      core <- next
+      for effect in effects do
+        match effect.Action with
+        | EffectAction.Start request ->
+          let work = request.Definition.Work
+          let facts =
+            request.Reads
+            |> List.choose (fun read ->
+              match read.Value with
+              | ReadValue.Input(_, _, token) ->
+                match Map.tryFind token store with
+                | Some(Payload.Fact fact) -> Some(read.Slot, fact)
+                | _ -> None
+              | ReadValue.Work _ -> None)
+            |> Map.ofList
+          // A recomputation during an epoch handover is not news: it keeps its stamp.
+          let stamp = (Map.tryFind work stamps |> Option.defaultValue 0L) + (if handover then 0L else 1L)
+          match (try Ok(project work stamp facts) with error -> Error error) with
+          | Ok event ->
+            serial <- serial + 1UL
+            let token = ValueToken serial
+            store <- Map.add token (Payload.Value event) store
+            stamps <- Map.add work stamp stamps
+            apply (Action.Finished(request.Attempt, Completion.Succeeded token))
+            apply (Action.Drained request.Attempt)
+          | Error error ->
+            Log.warn "[ui-bridge] projecting %A failed: %s" work error.Message
+            faults <- faults + 1
+            failed <- Set.add work failed
+            apply (Action.Finished(request.Attempt, Completion.Failed({ Code = "projection"; Message = error.Message }: Failure)))
+            apply (Action.Drained request.Attempt)
+        | EffectAction.Offer handle ->
+          match Map.tryFind handle.Value store with
+          | Some(Payload.Value event) when not handover -> deliver handle.Work event
+          | _ -> ()
+        | EffectAction.Withdraw handle -> store <- Map.remove handle.Value store
+        | EffectAction.Cancel attempt ->
+          apply (Action.Finished(attempt, Completion.Cancelled))
+          apply (Action.Drained attempt)
+        | EffectAction.Drain attempt -> apply (Action.Drained attempt)
+        | EffectAction.Suspended _ | EffectAction.Continue _ | EffectAction.ScopeClosed _ | EffectAction.EpochDrained -> ()
+
+    let define () =
+      apply (Action.ReserveScope(scope, RevisionId 1UL))
+      apply (Action.ReplaceScope(scope, RevisionId 1UL, [
+        ScopeEntry.Define { Work = healthWork; Stamp = DefinitionStamp 1UL; Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input tickInput } ] }
+        ScopeEntry.Define { Work = leasesWork; Stamp = DefinitionStamp 1UL; Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input poolInput } ] }
+        ScopeEntry.Define {
+          Work = boardWork; Stamp = DefinitionStamp 1UL
+          Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input agentsInput }
+                    { Slot = ReadSlotId 2UL; Source = ReadSource.Input poolInput }
+                    { Slot = ReadSlotId 3UL; Source = ReadSource.Input membershipInput } ] } ]))
+      apply (Action.Demand(DemandId 1UL, healthWork))
+      apply (Action.Demand(DemandId 2UL, leasesWork))
+      apply (Action.Demand(DemandId 3UL, boardWork))
+
+    /// Retire the epoch and start the next with the same inputs, in one
+    /// section. The recomputations are an artifact of the handover, not news:
+    /// nothing is delivered and no stamp advances; wire identity is preserved.
+    let recycle () =
+      handover <- true
+      try
+        apply Action.Retire
+        if not (Core.isDrained core) then invalidOp "Bridge facts: the retired epoch did not drain"
+        epoch <- epoch + 1UL
+        core <- Core.init (EpochId epoch)
+        sets <- 0
+        failed <- Set.empty
+        define ()
+        let values =
+          inputs |> Map.toList |> List.map (fun (input, token) ->
+            serial <- serial + 1UL
+            { InputValue.Input = input; Stamp = InputStamp serial; Value = token })
+        if not values.IsEmpty then apply (Action.SetInputs values)
+      finally handover <- false
+
+    /// Admission, before SetInputs and under the gate: the owner's serial
+    /// orders its publications, since the core itself only refuses a reused
+    /// stamp and treats an exact duplicate as a no-op. Every fact is a complete
+    /// replacement snapshot, so an older serial is dropped whole.
+    let admit (input: InputId) (ownerSerial: int64) (fact: Fact) : Result<unit, Refusal> =
+      lock gate (fun () ->
+        match Map.tryFind input admitted with
+        | _ when stopped -> Error Refusal.Retired
+        | Some last when ownerSerial < last -> Error Refusal.Older
+        | Some last when ownerSerial = last ->
+          let current = Map.tryFind input inputs |> Option.bind (fun token -> Map.tryFind token store)
+          if current = Some(Payload.Fact fact) then Error Refusal.Duplicate
+          else
+            faults <- faults + 1
+            Log.warn "[ui-bridge] %A republished serial %d with different content" input ownerSerial
+            Error Refusal.Conflict
+        | _ ->
+          for work in failed do apply (Action.Retry work)
+          failed <- Set.empty
+          admitted <- Map.add input ownerSerial admitted
+          serial <- serial + 1UL
+          let token = ValueToken serial
+          let previous = Map.tryFind input inputs
+          store <- Map.add token (Payload.Fact fact) store
+          inputs <- Map.add input token inputs
+          apply (Action.SetInputs [ { InputValue.Input = input; Stamp = InputStamp serial; Value = token } ])
+          previous |> Option.iter (fun old -> store <- Map.remove old store)
+          sets <- sets + 1
+          if sets >= recycleBound then recycle ()
+          Ok())
+
+    /// The eligible value of each work, in wire order: Health, Leases, the board.
+    let current () : Event list =
+      [ healthWork; leasesWork; boardWork ]
+      |> List.choose (fun work ->
+        Core.tryResult work core
+        |> Option.bind (fun handle ->
+          match Map.tryFind handle.Value store with
+          | Some(Payload.Value event) -> Some event
+          | _ -> None))
+
+    do define ()
+
+    /// Registers a page's sink and returns the current values in the same
+    /// critical section: every publication settled after it reaches the sink,
+    /// none settled before it is replayed after a later one.
+    member _.Register(sink: Push -> Event -> unit) : Event list * IDisposable =
+      lock gate (fun () ->
+        nextSink <- nextSink + 1L
+        let id = nextSink
+        sinks[id] <- sink
+        current (), { new IDisposable with member _.Dispose() = lock gate (fun () -> sinks.Remove id |> ignore) })
+
+    member _.Current() : Event list = lock gate current
+    /// Owner protocol faults seen: a serial republished with other content, a
+    /// foreign incarnation, a projection that threw.
+    member _.Faults = lock gate (fun () -> faults)
+    member _.Epoch = lock gate (fun () -> epoch)
+    /// Settled projections the store holds: one per work with a value, never
+    /// a superseded one (Withdraw releases it in the same step sequence).
+    member _.StoredResults =
+      lock gate (fun () -> store |> Map.toSeq |> Seq.filter (fun (_, payload) -> match payload with Payload.Value _ -> true | _ -> false) |> Seq.length)
+    member _.Drained = lock gate (fun () -> Core.isDrained core)
+
+    /// Shutdown: retire the epoch, interpret its effects, and forget the pages.
+    /// A callback already waiting on the gate is refused afterwards as Retired.
+    member _.Stop() =
+      lock gate (fun () ->
+        if not stopped then
+          stopped <- true
+          handover <- true
+          try apply Action.Retire finally handover <- false
+          sinks.Clear())
+
+    member _.Tick(tick: Bozzetto.Server.HealthTick.Tick) = admit tickInput tick.Serial (Fact.Tick tick)
+    member _.Pool(pool: Bozzetto.Features.LeaseWatch.Pool) = admit poolInput pool.Serial (Fact.Pool pool)
+    member _.Agents(state: Bozzetto.AgentWork.State) =
+      if state.Incarnation <> incarnation then
+        lock gate (fun () -> faults <- faults + 1)
+        Log.warn "[ui-bridge] agent work from incarnation %s refused; the plane is bound to %s" state.Incarnation incarnation
+        Error Refusal.ForeignIncarnation
+      else admit agentsInput state.Sequence (Fact.Agents state)
+    member _.Membership(frame: Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTable.MemberId>) =
+      let membership = membershipOf frame
+      admit membershipInput membership.Version (Fact.Membership membership)
+
+    /// Subscribe to every owner and take its current value in one critical
+    /// section, so a publication between the two is applied after it, by serial.
+    member this.Start(owners: Owners) : IDisposable =
+      lock gate (fun () ->
+        let tickChanged, tickNow = owners.Tick
+        let poolChanged, poolNow = owners.Pool
+        let subscriptions =
+          [ yield tickChanged.Subscribe(fun tick -> this.Tick tick |> ignore)
+            yield poolChanged.Subscribe(fun pool -> this.Pool pool |> ignore)
+            yield! owners.Agents |> Option.map (fun (changed, read) -> changed.Subscribe(fun () -> this.Agents(read ()) |> ignore)) |> Option.toList
+            yield! owners.Membership |> Option.map (fun (changed, read) -> changed.Subscribe(fun () -> this.Membership(read ()) |> ignore)) |> Option.toList ]
+        tickNow () |> Option.iter (fun tick -> this.Tick tick |> ignore)
+        this.Pool(poolNow ()) |> ignore
+        owners.Agents |> Option.iter (fun (_, read) -> this.Agents(read ()) |> ignore)
+        owners.Membership |> Option.iter (fun (_, read) -> this.Membership(read ()) |> ignore)
+        { new IDisposable with member _.Dispose() = for subscription in subscriptions do subscription.Dispose() })
+
 // ── The hub ────────────────────────────────────────────────────────────────
 
 /// What the bridge reads and runs. The daemon builds it from its one
@@ -670,13 +1056,8 @@ type BridgeSources = {
   WorkerPid: unit -> int option
   /// The supervisor's own change signal. Each firing may push one Snapshot.
   Changed: IObservable<unit>
-  /// Read on connect and for RequestSnapshot only, never on a schedule.
-  Health: unit -> DaemonHealth
-  /// Read on connect, explicit resync and lease-owner changes only.
-  Leases: unit -> LeaseBoard
-  LeaseChanged: IObservable<unit> option
-  AgentWork: (unit -> AgentWorkBoard) option
-  AgentWorkChanged: IObservable<unit> option
+  /// The daemon's own facts: pushed as their owners publish, current on connect.
+  Facts: BridgeFacts
 }
 
 type BridgeOptions = {
@@ -737,20 +1118,28 @@ let private admit (inflight: SemaphoreSlim) (cancellation: CancellationToken) : 
 /// sleeps for the interval, and tests hold and release it to step the
 /// coalescing deterministically. `uptime` is the uptime clock's tick (see
 /// UptimeClock): UptimeClock.system in the daemon, held by the tests.
+/// A resource sample carries the machine's memory: one more reading for the
+/// daemon's one sequencer, so the level and Health stay as live as the page
+/// that asked for samples.
+let private observeMachine (value: HostResources) =
+  let metric name = value.Metrics |> Array.tryFind (fun m -> m.Name = name) |> Option.bind _.Value
+  match metric "RAM available", metric "RAM total (OS managed)" with
+  | Some available, Some total when total > 0. ->
+    Bozzetto.Server.HealthTick.observe { Bozzetto.Features.MachineMemory.Stats.TotalBytes = int64 total; AvailableBytes = int64 available }
+    |> ignore
+  | _ -> ()
+
 type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationToken, pause: TimeSpan -> Async<unit>, uptime: Async<int64>) =
-  let resources = ResourceMonitor.create ()
+  let resources = ResourceMonitor.create observeMachine
   let connections = ConcurrentDictionary<int64, Outbox>()
   let changes = Channel.CreateBounded<unit>(BoundedChannelOptions(1, FullMode = BoundedChannelFullMode.DropOldest))
   let mutable nextConnection = 0L
 
   let snapshotEvent (directory: ComposerDirectory) = Snapshot(Project.snapshot directory (sources.WorkerPid ()))
 
+  /// The directory's snapshot, then the daemon's current facts.
   let stateEvents (directory: unit -> ComposerDirectory) =
-    [ attempt "snapshot" (fun () -> snapshotEvent (directory ()))
-      attempt "health" sources.Health |> Option.map Health
-      attempt "leases" sources.Leases |> Option.map Leases
-      sources.AgentWork |> Option.bind (attempt "agent work") |> Option.map AgentWork ]
-    |> List.choose id
+    (attempt "snapshot" (fun () -> snapshotEvent (directory ())) |> Option.toList) @ sources.Facts.Current ()
 
   let broadcast (kind: Push) (event: Event) =
     let frame = Outbound.ofEvent event
@@ -769,6 +1158,8 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
       | Ok reply -> return Project.outcome frame.Correlation reply |> List.map Outbound.ofEvent
       | Error message -> return refuse message |> List.map Outbound.ofEvent
     | None ->
+      // An explicit resync asks the daemon how it is before answering.
+      sources.Facts.Refresh ()
       let! directory = settled (fun () -> sources.Directory connection)
       match directory with
       | Ok fresh ->
@@ -808,21 +1199,11 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
   member _.Resources = resources.Current
 
   /// Begin the snapshot pushes. Status reads never raise Changed, so a push
-  /// cannot feed back into another one.
+  /// cannot feed back into another one. The daemon's facts need no loop here:
+  /// their owners' publications reach every registered page through the plane.
   member _.Start() =
     let subscription = sources.Changed.Subscribe(fun () -> changes.Writer.TryWrite(()) |> ignore)
-    let leaseSubscription = sources.LeaseChanged |> Option.map (fun changed ->
-      changed.Subscribe(fun () ->
-        if not connections.IsEmpty then
-          attempt "leases" sources.Leases |> Option.iter (fun board -> broadcast Push.Leases (Leases board))))
-    let workSubscription = sources.AgentWorkChanged |> Option.map (fun changed ->
-      changed.Subscribe(fun () ->
-        if not connections.IsEmpty then
-          sources.AgentWork |> Option.bind (attempt "agent work") |> Option.iter (fun board -> broadcast Push.AgentWork (AgentWork board))))
-    stopping.Register(fun () ->
-      subscription.Dispose()
-      leaseSubscription |> Option.iter _.Dispose()
-      workSubscription |> Option.iter _.Dispose()) |> ignore
+    stopping.Register(fun () -> subscription.Dispose()) |> ignore
     Async.Start(snapshotPushes (), stopping)
 
   /// Serve one connection until the page or the daemon closes it.
@@ -835,6 +1216,11 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
     connections[id] <- outbox
     // Uptime ticks reach this page through its outbox, after the prologue.
     clock.Attach()
+    // A connecting page asks the daemon how it is, then registers for every
+    // later publication and receives the current values in the same section;
+    // the outbox holds pushes until the prologue is written.
+    sources.Facts.Refresh ()
+    let current, registration = sources.Facts.Register(fun kind event -> outbox.Push(kind, Outbound.ofEvent event))
     try
       try
         let welcome =
@@ -843,7 +1229,9 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
             DaemonVersion = sources.DaemonVersion
             StartedAtMs = sources.StartedAtMs
           }
-        outbox.Prime(welcome :: stateEvents sources.CachedDirectory |> List.map Outbound.ofEvent)
+        outbox.Prime(
+          welcome :: (attempt "snapshot" (fun () -> snapshotEvent (sources.CachedDirectory ())) |> Option.toList) @ current
+          |> List.map Outbound.ofEvent)
         let mutable reading = true
         while reading do
           let! inbound = receive socket lifetime.Token
@@ -876,6 +1264,7 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
               else reading <- false
       with error -> Log.warn "[ui-bridge] connection %d failed: %s" id error.Message
     finally
+      registration.Dispose()
       connections.TryRemove(id) |> ignore
       clock.Detach()
       // Ends any RequestSnapshot read still running for this page; Composer
@@ -888,7 +1277,7 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
 // ── The daemon's bridge ────────────────────────────────────────────────────
 
 module BridgeSources =
-  let ofSupervisor (supervisor: ComposerSupervisor) (version: string) (startedAtMs: int64) (health: unit -> DaemonHealth) (leases: unit -> LeaseBoard) =
+  let ofSupervisor (supervisor: ComposerSupervisor) (version: string) (startedAtMs: int64) (facts: BridgeFacts) =
     { DaemonVersion = version
       StartedAtMs = startedAtMs
       Execute = fun request cancellation -> supervisor.ExecuteAsync(request, cancellation)
@@ -896,48 +1285,37 @@ module BridgeSources =
       CachedDirectory = supervisor.CachedDirectory
       WorkerPid = fun () -> supervisor.WorkerPid
       Changed = supervisor.Changed :> IObservable<unit>
-      Health = health
-      Leases = leases
-      LeaseChanged = None
-      AgentWork = None
-      AgentWorkChanged = None }
-
-let readHealth (mcpPort: int) (getHealth: unit -> Bozzetto.Features.HealthSnapshot option) () : DaemonHealth =
-  Project.health {
-    HealthSources.McpPort = mcpPort
-    Version = DaemonInfo.version
-    ProcessId = Environment.ProcessId
-    Health = getHealth ()
-    Telemetry = DaemonTelemetry.current ()
-    Machine = Bozzetto.Features.MachineMemory.current ()
-  }
-
-let readLeases () : LeaseBoard =
-  let pool = Bozzetto.Features.LeaseWatch.snapshot ()
-  Project.leaseBoard pool.Active pool.Queue
+      Facts = facts }
 
 /// When this daemon process started, as the operating system recorded it.
 let private processStartedAtMs () : int64 =
   use self = Process.GetCurrentProcess()
   DateTimeOffset(self.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()
 
-/// The bridge of one daemon, pushing until `stopping`.
-let create (supervisor: ComposerSupervisor) (mcpPort: int) (getHealth: unit -> Bozzetto.Features.HealthSnapshot option) (stopping: CancellationToken) =
-  let sources =
-    { BridgeSources.ofSupervisor supervisor DaemonInfo.version (processStartedAtMs ()) (readHealth mcpPort getHealth) readLeases with
-        LeaseChanged = Some(Bozzetto.Features.LeaseWatch.changed :> IObservable<unit>) }
-  let hub = Hub(sources, BridgeOptions.defaults, stopping)
-  hub.Start()
-  hub
-
-/// Production cohort-backed bridge; retained create remains for compatibility callers.
-let createWithAgentWork supervisor mcpPort getHealth stopping (owner: Bozzetto.Features.CohortOwner.Handle option) =
-  let sources =
-    { BridgeSources.ofSupervisor supervisor DaemonInfo.version (processStartedAtMs()) (readHealth mcpPort getHealth) readLeases with
-        LeaseChanged = Some(Bozzetto.Features.LeaseWatch.changed :> IObservable<unit>)
-        AgentWork = owner |> Option.map (fun o -> fun () -> Project.agentWork (o.ReadWork()))
-        AgentWorkChanged = owner |> Option.map _.WorkChanged }
-  let hub = Hub(sources, BridgeOptions.defaults, stopping)
+/// The bridge of one daemon, pushing until `stopping`. The fact plane
+/// subscribes to the daemon's owners — the health tick, the lease pool and,
+/// when a cohort owner exists, the agent work publication and the cohort frame
+/// — and takes their current values in the same section. Without a cohort
+/// owner there is no agent board.
+let create (supervisor: ComposerSupervisor) (mcpPort: int) (getHealth: unit -> Bozzetto.Features.HealthSnapshot option) (stopping: CancellationToken) (owner: Bozzetto.Features.CohortOwner.Handle option) =
+  Bozzetto.Server.HealthTick.install getHealth
+  let graph =
+    Facts.Graph(
+      { Facts.Constants.McpPort = mcpPort; Version = DaemonInfo.version; ProcessId = Environment.ProcessId },
+      owner |> Option.map (fun o -> o.ReadWork().Incarnation) |> Option.defaultValue "")
+  let subscriptions =
+    graph.Start
+      { Facts.Owners.Tick = Bozzetto.Server.HealthTick.Changed, Bozzetto.Server.HealthTick.current
+        Pool = Bozzetto.Features.LeaseWatch.changed, Bozzetto.Features.LeaseWatch.current
+        Agents = owner |> Option.map (fun o -> o.WorkChanged, (fun () -> o.ReadWork()))
+        Membership = owner |> Option.map (fun o -> (o.Events |> Observable.map ignore), (fun () -> o.ReadFrame())) }
+  stopping.Register(fun () ->
+    subscriptions.Dispose()
+    graph.Stop()) |> ignore
+  // The first record: a page connecting later finds Health settled.
+  Bozzetto.Server.HealthTick.refresh () |> ignore
+  let facts = { BridgeFacts.Register = graph.Register; Current = graph.Current; Refresh = fun () -> Bozzetto.Server.HealthTick.refresh () |> ignore }
+  let hub = Hub(BridgeSources.ofSupervisor supervisor DaemonInfo.version (processStartedAtMs ()) facts, BridgeOptions.defaults, stopping)
   hub.Start()
   hub
 

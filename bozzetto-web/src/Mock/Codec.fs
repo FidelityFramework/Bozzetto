@@ -219,6 +219,9 @@ let encodeEvent (event: Event) : string =
     | Health h ->
       createObj [
         "event" ==> "health"
+        "revision" ==> wide h.Revision
+        "sampledAtMs" ==> wide h.SampledAtMs
+        "recordAtMs" ==> wide h.RecordAtMs
         "version" ==> h.Version
         "processId" ==> h.ProcessId
         "mcpPort" ==> h.McpPort
@@ -242,6 +245,7 @@ let encodeEvent (event: Event) : string =
     | Leases board ->
       createObj [
         "event" ==> "leases"
+        "revision" ==> wide board.Revision
         "active" ==> (board.Active |> Array.map (fun l ->
           createObj [
             "id" ==> l.Id
@@ -281,6 +285,8 @@ let encodeEvent (event: Event) : string =
           "reportSequence" ==> wide r.ReportSequence; "model" ==> r.Model; "endpoint" ==> r.Endpoint
           "project" ==> r.Project; "focus" ==> r.Focus; "operation" ==> r.Operation; "status" ==> r.Status
           "updatedAtMs" ==> wide r.UpdatedAtMs; "omittedActivity" ==> wide r.OmittedActivity; "activity" ==> r.Activity
-          "usage" ==> usage r.Usage ])) ]
+          "usage" ==> usage r.Usage ]))
+        "presence" ==> (board.Presence |> Array.map (fun p -> createObj [
+          "name" ==> p.Name; "source" ==> p.Source; "member" ==> p.Member; "project" ==> p.Project; "detail" ==> p.Detail; "sinceMs" ==> wide p.SinceMs ])) ]
     | Uptime tick -> createObj [ "event" ==> "uptime"; "uptimeMs" ==> wide tick.UptimeMs ]
   JS.JSON.stringify frame

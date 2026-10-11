@@ -24,7 +24,10 @@ let empty status = {
 
 /// Effects at the edge: the injected acquisition is synchronous and bounded by
 /// its source implementation; pure calculations and graph transitions own no I/O.
-type Monitor(acquire: unit -> LinuxResources.Raw, interval: TimeSpan) =
+/// `onSample` sees every sample taken for a page, so an owner of a fact the
+/// sample carries (the machine's memory, and the pressure level it implies)
+/// learns of it when the page does.
+type Monitor(acquire: unit -> LinuxResources.Raw, interval: TimeSpan, onSample: HostResources -> unit) =
   let gate = obj ()
   let mutable latest = empty "stopped"
   let delays = new CancellationTokenSource()
@@ -81,6 +84,7 @@ type Monitor(acquire: unit -> LinuxResources.Raw, interval: TimeSpan) =
             let value = { value with Sequence = sequence + 1L; Metrics = Array.append [|occupied|] value.Metrics
                                      SampleCostMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds }
             publish value
+            let () = try onSample value with _ -> ()
             active |> Map.iter (fun _ d -> send d.Send value)
             schedule generation
             // Recycle the pure graph after 60 acquisitions, retaining no old
@@ -113,4 +117,4 @@ type Monitor(acquire: unit -> LinuxResources.Raw, interval: TimeSpan) =
     do! closed.Task |> Async.AwaitTask
   }
 
-let create () = new Monitor(LinuxResources.acquire, TimeSpan.FromSeconds 2.)
+let create (onSample: HostResources -> unit) = new Monitor(LinuxResources.acquire, TimeSpan.FromSeconds 2., onSample)

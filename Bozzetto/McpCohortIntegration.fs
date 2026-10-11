@@ -40,6 +40,10 @@ module McpCohortIntegration =
   let reportAgentWork (ctx: McpContext) (report: AgentWork.Report) : Async<Result<string, BozzettoError>> = async {
     match currentTransportSessionId.Value, requireCohortOwner ctx with
     | Some transport, Ok owner when not (System.String.IsNullOrWhiteSpace transport) ->
+      // A report is the member's own heartbeat: the cohort reaper renews a
+      // member the activity tracker has seen, so a participant that only
+      // reports is never departed as idle.
+      AgentActivityTracker.recordMemberActivity ctx.ActivityTracker (MemberTable.MemberId.Mcp transport) "" None (Some "report_agent_work") System.DateTime.UtcNow
       let! result = owner.ReportWork(MemberTable.MemberId.Mcp transport, report)
       return result |> Result.map (fun sequence -> sprintf "{\"sequence\":\"%d\"}" sequence)
                     |> Result.mapError (fun error -> BozzettoError.CohortActionFailed(AgentWork.code error, "Correct the report on this same bound connection; reconcile publication with get_agent_work."))
@@ -53,6 +57,11 @@ module McpCohortIntegration =
     match requireCohortOwner ctx with
     | Error error -> return Error error
     | Ok owner ->
+      // Reading the board on a bound connection is activity too.
+      match currentTransportSessionId.Value with
+      | Some transport when not (System.String.IsNullOrWhiteSpace transport) ->
+        AgentActivityTracker.recordMemberActivity ctx.ActivityTracker (MemberTable.MemberId.Mcp transport) "" None (Some "get_agent_work") System.DateTime.UtcNow
+      | _ -> ()
       let! result = owner.ReconcileWork() |> Async.StartAsTask
       return result |> Result.map (fun _ -> AgentWork.json (owner.ReadWork()))
                     |> Result.mapError (fun error -> BozzettoError.CohortActionFailed(AgentWork.code error, "Owner state is retained; retry get_agent_work after fixing publication."))

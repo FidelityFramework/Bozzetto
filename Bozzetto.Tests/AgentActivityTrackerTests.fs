@@ -368,3 +368,35 @@ let allTests = testList "Agent activity tracker" [
   propertyTests
   threadSafetyTests
 ]
+
+// ── Cohort renewal key ───────────────────────────────────────────
+
+/// The cohort reaper renews a member the tracker has seen under the member's
+/// own display key. A cohort tool call (join, report, read) must land there,
+/// or a participant that only reports is departed as idle and every row it
+/// posted turns "disconnected".
+[<Tests>]
+let renewalKeyTests = testList "AgentActivityTracker — cohort renewal key" [
+
+  testCase "member activity is fresh under the display key the reaper compares, and renews that member" <| fun _ ->
+    let tracker = AgentActivityTracker.create()
+    let who = MemberTable.MemberId.Mcp "transport-α"
+    AgentActivityTracker.recordMemberActivity tracker who "" None (Some "report_agent_work") now
+    let fresh =
+      AgentActivityTracker.getActivePresences tracker None (minutes 2.0) (now + minutes 1.0)
+      |> List.map (fun p -> p.AgentName) |> Set.ofList
+    fresh |> Expect.contains "the presence is keyed by the member's display identity" (MemberTable.MemberId.display who)
+    let present () : Bozzetto.Cohort.MemberRecord =
+      { Role = Bozzetto.Cohort.JoinableRole.Observer; Presence = Bozzetto.Cohort.MemberPresence.Present; LastRenewal = now; Session = None }
+    let members = Map.ofList [ who, present (); MemberTable.MemberId.Mcp "silent", present () ]
+    Bozzetto.Server.DaemonMode.cohortMembersToRenew (fun m -> fresh.Contains(MemberTable.MemberId.display m)) members
+    |> Expect.equal "only the member seen is renewed; the silent one is left to the lease window" [ who ]
+
+  testCase "activity older than the window does not renew" <| fun _ ->
+    let tracker = AgentActivityTracker.create()
+    let who = MemberTable.MemberId.Mcp "transport-β"
+    AgentActivityTracker.recordMemberActivity tracker who "" None (Some "get_agent_work") now
+    AgentActivityTracker.getActivePresences tracker None (minutes 2.0) (now + minutes 3.0)
+    |> List.map (fun p -> p.AgentName)
+    |> Expect.isEmpty "three minutes of silence is outside a two-minute window"
+]

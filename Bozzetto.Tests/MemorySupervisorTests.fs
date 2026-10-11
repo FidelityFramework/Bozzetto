@@ -151,3 +151,65 @@ let explainAtTests =
       let critical = MemoryPressure.explainAt thresholds frac MemoryPressure.Critical
       tight.Contains "clears at 30%" && critical.Contains "clears at 15%"
   ]
+
+[<Tests>]
+let watchTests =
+  testSequenced <| testList "MemoryPressureWatch.observe — the level moves with the machine and announces each move" [
+
+    testCase "each reading settles the level under the same hysteresis and Changed fires once per move" <| fun () ->
+      Bozzetto.Features.MemoryPressureWatch.reset ()
+      let moves = ref 0
+      use _subscription = Bozzetto.Features.MemoryPressureWatch.Changed.Subscribe(fun _ -> moves.Value <- moves.Value + 1)
+      let read available =
+        Bozzetto.Features.MemoryPressureWatch.observe defaultThresholds
+          { Bozzetto.Features.MachineMemory.Stats.TotalBytes = 100L; AvailableBytes = available }
+      read 50L |> Expect.equal "half the machine free is Normal" MemoryPressure.Normal
+      moves.Value |> Expect.equal "no move, no announcement" 0
+      read 15L |> Expect.equal "15% free enters Tight" MemoryPressure.Tight
+      moves.Value |> Expect.equal "entering Tight is one move" 1
+      read 25L |> Expect.equal "25% free stays Tight inside the dead zone" MemoryPressure.Tight
+      moves.Value |> Expect.equal "hovering inside the dead zone is not a move" 1
+      read 35L |> Expect.equal "35% free clears Tight" MemoryPressure.Normal
+      moves.Value |> Expect.equal "clearing is the second move" 2
+      Bozzetto.Features.MemoryPressureWatch.currentLevel () |> Expect.equal "readers see the settled level" MemoryPressure.Normal
+      Bozzetto.Features.MemoryPressureWatch.reset ()
+
+    testCase "the announcement carries the level moved to, and a subscriber reading back sees that level settled" <| fun () ->
+      Bozzetto.Features.MemoryPressureWatch.reset ()
+      let seen = System.Collections.Concurrent.ConcurrentQueue<MemoryPressure * MemoryPressure>()
+      use _subscription =
+        Bozzetto.Features.MemoryPressureWatch.Changed.Subscribe(fun move ->
+          seen.Enqueue(move.Level, Bozzetto.Features.MemoryPressureWatch.currentLevel ()))
+      let read available =
+        Bozzetto.Features.MemoryPressureWatch.observe defaultThresholds
+          { Bozzetto.Features.MachineMemory.Stats.TotalBytes = 100L; AvailableBytes = available }
+      read 5L |> ignore
+      read 50L |> ignore
+      seen |> Seq.toList
+      |> Expect.equal "each move is announced with the level it settled, readable from inside the callback"
+           [ MemoryPressure.Critical, MemoryPressure.Critical; MemoryPressure.Normal, MemoryPressure.Normal ]
+      Bozzetto.Features.MemoryPressureWatch.reset ()
+
+    testCase "concurrent readings settle one transition at a time: moves in revision order never repeat a level and end on the retained one" <| fun () ->
+      Bozzetto.Features.MemoryPressureWatch.reset ()
+      let announced = System.Collections.Concurrent.ConcurrentQueue<Bozzetto.Features.MemoryPressureWatch.Move>()
+      use _subscription = Bozzetto.Features.MemoryPressureWatch.Changed.Subscribe(fun move -> announced.Enqueue move)
+      let readings = [| 50L; 15L; 25L; 5L; 35L; 50L; 15L; 50L |]
+      System.Threading.Tasks.Parallel.For(0, 64, fun i ->
+        Bozzetto.Features.MemoryPressureWatch.observe defaultThresholds
+          { Bozzetto.Features.MachineMemory.Stats.TotalBytes = 100L; AvailableBytes = readings[i % readings.Length] } |> ignore) |> ignore
+      let moves = announced |> Seq.toList |> List.sortBy (fun move -> move.Revision)
+      moves |> List.map (fun move -> move.Revision) |> List.pairwise |> List.forall (fun (a, b) -> b = a + 1L)
+      |> Expect.isTrue "revisions are one per move, consecutive, with no gap or repeat (the counter is the daemon's, not this test's)"
+      moves |> List.map (fun move -> move.Level) |> List.pairwise |> List.forall (fun (a, b) -> a <> b)
+      |> Expect.isTrue "two consecutive moves never carry the same level: a transition is decided and committed under one hold"
+      match List.tryLast moves with
+      | Some last -> last.Level |> Expect.equal "the latest move is the level readers now see" (Bozzetto.Features.MemoryPressureWatch.currentLevel ())
+      | None -> Bozzetto.Features.MemoryPressureWatch.currentLevel () |> Expect.equal "no move means the level never left Normal" MemoryPressure.Normal
+      Bozzetto.Features.MemoryPressureWatch.reset ()
+
+    testCase "an unmeasurable machine reads as fully available and never raises the level" <| fun () ->
+      Bozzetto.Features.MemoryPressureWatch.reset ()
+      Bozzetto.Features.MemoryPressureWatch.observe defaultThresholds { Bozzetto.Features.MachineMemory.Stats.TotalBytes = 0L; AvailableBytes = 0L }
+      |> Expect.equal "no total means no claim of pressure" MemoryPressure.Normal
+  ]

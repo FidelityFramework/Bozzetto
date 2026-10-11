@@ -95,6 +95,7 @@ module private Reference =
           match r.Presence with
           | MemberPresence.Present -> SeatState.Present
           | MemberPresence.Departed since -> SeatState.Departed since)
+      MemberRenewal = members |> Array.map (fun (_, r) -> r.LastRenewal)
       ClaimIds = claims |> Array.map fst
       ClaimScope = claims |> Array.map (fun (_, c) -> c.Scope)
       ClaimHolderIndex =

@@ -49,6 +49,7 @@
         <Compile Include="ResourceGraph.fs" />
         <Compile Include="ResourceMonitor.fs" />
         <Compile Include="DaemonTelemetry.fs" />
+        <Compile Include="HealthTick.fs" />
         <Compile Include="ComposerWorkerClient.fs" />
         <Compile Include="ComposerSupervisor.fs" />
         <Compile Include="ComposerClientJson.fs" />

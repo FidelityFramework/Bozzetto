@@ -208,3 +208,176 @@ felt.
   the daemon alone was rebuilt: `Fidelity.PSG.Binary.ContractFingerprint` is inlined into Bozzetto.dll at compile time
   (`458DFDB8…` from the current PSG head) while the retained worker closure carries `7D92113F…` (Oct 4). The next deploy
   ships daemon and worker from one build.
+
+---
+
+## Daemon pair, differential acceptance and the liveness increment (2026-10-11, afternoon)
+
+### The matching pair, deployed
+
+`composer_open_project` had refused every release since the region-rows daemon was built alone against the source
+`Fidelity.PSG` (daemon fingerprint `458DFDB8…`, retained worker closure `7D92113F…`). The daemon was rebuilt with
+`-p:ComposerDistribution=<release>/compiler` so the inlined `Fidelity.PSG.Binary.ContractFingerprint` is the closure's
+(`7D92113F…` on daemon, worker and compiler, checked by `bozzetto/stage-dist-aligned.sh` before staging). The suite built
+the same way read TRUST registered=8450 ran=8450 passed=8447 failed=0 errored=0 ignored=3 verdict=Trusted once the
+runner exported `DOTNET_ROOT`: the one case that had errored on every earlier run ("CLI version prints the release…")
+launches the apphost, which cannot find the mise-managed runtime without it (reproduced by hand: exit 150, "You must
+install or update .NET"). Release `20261011-dist-aligned`, pid 1512763 from 11:50:44Z.
+
+### Differential compilation, observed end to end
+
+`differential/acceptance/run-04d.sh` on `04d_IncrementalScalarRegions` against the installed pair: the cold build
+compiled all three regions (`callable:…:stable`, `callable:…:changeable`, `common`); the unchanged rebuild re-witnessed
+only `common` and reused both callables' objects; editing `changeable` recompiled it and `common` and reused `stable`
+(Alex visits 3 / 0 / 67). The Composer page listed the same three region rows for generation 3 with their witness and
+object states, which is what the owner was fighting to see. `common` is re-witnessed on every build: that is the
+seam named in `docs/Differential_Compilation_Seams_2026-10-11.md`, not a defect of the display.
+
+### Liveness: the memory level and agent presence
+
+The owner saw "Degraded" and "memory Tight" at 70% occupied, and "No active reporting agents" while an agent was
+visibly working. Both were liveness defects, not measurement defects:
+
+- The level lived in a mutable that a five-second sweep updated and nothing pushed. Now every reader folds a fresh
+  reading into the level first (`MemoryPressureWatch.observe`/`sample`: lease request and renew, `/health`, the
+  bridge's health read, `get_daemon_status`, and every resource sample a page drives), the level announces each move
+  (`MemoryPressureWatch.Changed`), and the bridge pushes Health on it (`BridgeSources.HealthChanged`). The dashboard
+  also folds the newest resource sample into the health strip's machine figure, so one fact has one freshest value.
+  No new timer; the sweep remains only for the retired session shedding.
+- The Agent Work board showed self-reports only. It now carries presence derived from facts the daemon owns: every
+  lease held or queued (holder `agent · project`, kind, since) and every present cohort member (name and project from
+  its latest report when it has one, else its connection identity). Lease and membership changes re-publish the
+  board. Bridge protocol 5 → 6 (`AgentPresence`, `AgentWorkBoard.Presence`); open tabs must reload.
+- The agent half of the "re-wiring on resumption" problem is mine: `tools/report.sh resume` re-initializes the MCP
+  session, re-joins and posts a running row, and every call re-wires once on `member_not_present`/`wrong_member`;
+  the memory note `rewire-presence-on-resumption` makes it the first action after a compaction or a daemon swap.
+- Policy, not changed: Tight at ≤20% available on a 61 GB machine (12 GB free) serialises all expensive work to one
+  lease, which is what slowed this afternoon's chains. Kernel PSI read 0 stall throughout. Whether the level should
+  follow PSI or an absolute floor is the owner's call; the question is on the table.
+
+### Findings while doing this
+
+- The Composer worker spawned for the acceptance session held 4.3 GB RSS after three builds of a one-file sample and
+  was the largest process on the machine; the dashboard's resource panel showed it as `dotnet` under the daemon.
+  Closing the session released nothing; `composer_retire_worker` (host + epoch) did, and available memory rose from
+  8.9 GB to 12.9 GB at once. The worker's retention across generations is a Composer/worker owner question, recorded
+  here, not changed.
+- One deferred lease ask (clef `test_suite_run`, 12:09:47Z) stayed queued after the script's automatic withdraw,
+  and then blocked the same holder's next build ask ("outstanding request queued for a different kind"). A manual
+  `withdraw` removed it, and a probe (`acquire` → wait → `withdraw`) removed its ask cleanly, so the cause is not
+  reproduced. The chain scripts now follow a Wait decision by retrying the same ask instead of exiting 75.
+- The cohort reaper renews only members the activity tracker has seen within two minutes, and the tracker was fed
+  by F# session tools alone (retired) and session-status reads; a member that only joined, reported and read the
+  board was departed on schedule and every row it posted turned "disconnected", which is what the owner saw as an
+  empty panel while four chains were running. `join_cohort`, `report_agent_work` and `get_agent_work` now record
+  activity under the member's own key.
+- Agent Work rows are bound to the MCP connection that posted them (identity is the connection, by design). My
+  reporting helper re-wired its session on transient failures, so one afternoon left rows under five member ids,
+  each un-updatable by the next session (`wrong_member`) and shown as "running" until the old member is reaped. The
+  helper now re-wires only on a definite session or membership error and continues under a fresh run on
+  `wrong_member`. The seam itself is a question for the owner: whether a reconnecting client may continue a run it
+  started on an earlier connection when it presents the same client session key, or whether a reconnect is always a
+  new member (as today).
+- `check-pages.js` and the other hand-written JavaScript in `bozzetto-web/` are scaffolding by the owner's ruling,
+  to be replaced by Fable F# or Clef later; the page check's assertions were made structural (presence rows carry
+  their own class) so F# UI work stops snagging on JavaScript text literals.
+
+### Audits (2026-10-11, 12:30Z): two reject verdicts, acted on before any commit or swap
+
+The owner asked why no ChatGPT usage was showing: none of the day's work had gone to the auditor. Two one-shot briefs
+went to `openai/gpt-6.1-sol` through Pi (`sol-audit/2026-10-11-pm/{q1q5,liveness}-{brief.md,return.md,usage.json}`;
+15.2k + 12.8k input tokens, $0.040 + $0.041), and both rows sit on the Agent Work board with model and usage.
+
+| Finding (auditor) | Severity | Action |
+| --- | --- | --- |
+| `MemoryPressureWatch.observe`/`evaluate` compute the transition under one lock and commit under another | blocking | one `transition` under a single hold of the gate; the announcement carries the level moved to |
+| The bridge's `Changed` subscriber reads Health synchronously, and that read samples, so a newer Health can be announced and broadcast before the older one | blocking | Health pushes go through a bounded, latest-wins channel and one loop (`healthPushes`), like Snapshot pushes; a move announced during a read is pushed after it |
+| Announcements carry no level | should-fix | `Changed: IObservable<MemoryPressure>` |
+| `currentLevel` still allows unsampled reads | should-fix | every reader established: lease request/renew (HTTP and MCP), `/health`, `GetDaemonHealth` (bridge and `get_daemon_status`), resource samples; `currentLevel` remains for `LeaseWatch.request`, whose callers sample first |
+| Member `SinceMs` is the latest renewal, not a join time | should-fix | the row says "renewed", not "since"; the daemon keeps no join time |
+| "No agents present" claims absence before a board was received | should-fix | the fallback distinguishes "no agent board received" from an empty board |
+| Tests miss atomic transitions, callback-visible state, re-entry, derivation controls | should-fix | added: announced level equals the settled level inside the callback; 64 concurrent readings never announce the same level twice and end on the retained level; a Health read that announces is pushed again after, never nested; `Project.presence` controls for holder parsing, latest-report naming, departed exclusion, silent members and renewal time |
+| Spec: "bounded by the call that supplies it" is unsound when the same callable is reached by several calls | blocking | reworded: each invocation is bounded by the call through which it is reached; a proof accounts every path separately and lets no path's bound stand for another |
+| The incomplete-coverage fallback discards the scoped formals and declarations it relies on | blocking | `ProgramActivation.invocations` returns the premises; `ProgramValueUses` records them as `InitializationPremise` participants |
+| The prefix-dominance premise in `BindingDemand` is not recorded as schedule evidence | blocking | the cell and every statement after it up to the decision are recorded as `DemandPremise` rows, so a cell moved past the decision retracts the retained proof |
+| The scoped-parameter account has not yet demonstrated the positive control | blocking | demonstrated after three probe facts: the call to a view boundary is absent from the resolver's call table (its body is an intrinsic), so the boundary's own formals are read from the declaration, as `ScopedCallbacks` does; closure settlement lifts the callback to a module-level code binding, so its formation sites are the references to that binding, not the binding's module parent; and the receiving formal is itself an alias of the callback, whose parameter edge is benign only when the formal is a scoped parameter (declared or inferred), so lazy and sequence residence, which also consume coverage, do not widen. The three named BorrowedView cases and "A callable stored by a startup initializer after its slot is ordered by its formation phase" pass; the escaping-parameter negative control stays pending with both reasons |
+| "Partially applied view getter cannot be retained" now fails only on `CCS8011` for the entry's own parameter (`_arg1` in `__clef_program_entry`: "no reachable call supplies it") | note | not Q1: the program entry's parameter is the runtime's inbound contract, the same question as library exports (Q2) and the RC5 family (Q4); recorded for that increment |
+| Arm-swap control checks a generic reason; no `&&`-right-operand or nested-deferred negatives; fallbacks not isolated | should-fix | added: the retained edge names the decision and guard and the swap retracts for the relation-differs reason; `&&` right-operand pending with the first-demand reason and its left-operand mirror scheduled; a captured snapshot pending with the carrier reason; an undeclared boundary reports both reasons; a formed-but-never-applied callable is ordered by its formation |
+
+#### Second pass (12:55Z): reject again, three findings, all acted on
+
+| Finding (auditor) | Severity | Action |
+| --- | --- | --- |
+| `healthPushes` serializes only change-triggered broadcasts; connect and `RequestSnapshot` still read and send Health independently, so an older read can arrive after a newer broadcast with no revision to reject it | blocking | every health read is stamped with an increasing `Revision` at the daemon (`readHealth`); the page keeps the newest and drops an older one, as it already does for the resource and agent-work sequences; wire field on `DaemonHealth`, both codecs, mock, round-trip and bridge fixtures |
+| Presence reconciliation keys hold only display fields, so two members with the same name, project and status collide | should-fix | `AgentPresence.Member` carries the holder string or the connection identity; the page keys rows by source, member and detail |
+| The re-entry test asserts three reads before the queued read may have run, and does not show that no stale frame follows | should-fix | the test waits on the announced read's completion, then checks that every later frame is the newer Health |
+
+Usage: 19.4k input, 0.9k output tokens, $0.048 (`sol-audit/2026-10-11-pm/liveness2-*`). A first attempt of this pass
+produced no output for nine minutes and was stopped; its row on the board is closed as failed.
+
+#### Third pass (14:47Z): reject, two ordering findings, both acted on
+
+| Finding (auditor) | Severity | Action |
+| --- | --- | --- |
+| `readHealth` stamps the revision after collecting, so a read that began earlier but finished later can take the higher revision and overwrite a newer Health | blocking | the revision is taken when the read begins; a control holds one read inside its collection while a later read completes and asserts the earlier read carries the lower revision |
+| Presence changes reuse the owner's report sequence, so two board reads differing only in presence can reach the page out of order with the same sequence | blocking | the board is sequenced by a read counter taken when the read begins (`Project.agentBoard`); a control shows two reads of one unchanged report state ordered by the read |
+
+Validation for the third pass: suite `TRUST registered=8464 ran=8464 passed=8461 failed=0 errored=0 ignored=3 verdict=Trusted`;
+the Release daemon was rebuilt from those sources and staged as `20261011-liveness`; the pass's first launch stalled
+at start (0 bytes) like two earlier ones, so `tools/audit.sh` now kills a silent launch after 90 s and retries. Usage:
+`sol-audit/2026-10-11-pm/liveness3-usage.json`.
+
+#### A void pass (14:50Z)
+
+The first fourth-pass brief was the third pass's text with only its suite line replaced, so its diff predated both
+fixes, and its TRUST line was read from a stale log after the test build had failed on a control's call shape. The
+auditor repeated the two findings against that diff; the pass is void and recorded as such
+(`sol-audit/2026-10-11-pm/liveness4-*`, $0.055). The chain now deletes the suite log before a run and the brief is
+generated from the working tree each time.
+
+#### Fourth pass on the current diff (14:52Z): reject, one finding, acted on
+
+Suite `TRUST registered=8466 ran=8466 passed=8463 failed=0 errored=0 ignored=3 verdict=Trusted` (the two ordering
+controls included). The auditor accepted both ordering fixes implicitly and found the same class once more in the
+board path: merged `AgentWorkChanged` callbacks read and broadcast concurrently, so an older board can replace a newer
+one in the latest-wins outbox before either reaches the page. Action: board pushes (and lease pushes, for the same
+reason) go through a bounded latest-wins channel and one loop each (`pushesOf`), exactly as Health pushes do; control
+`boardPushOrderTests` blocks the first change-triggered read while a second change arrives and asserts the page never
+sees a newer board overtaken, which the callback design fails. Usage `liveness5-usage.json` ($0.058). The brief is
+now generated from the working tree at the moment of sending (`sol-audit/2026-10-11-pm/make-liveness-brief.sh`).
+
+### Course correction (15:00Z): the push plane becomes a derived graph on the foundation
+
+The owner, on the serialized loops: "why is that necessary if you're using Fidelity.FSharp.Incremental? What
+happened to the call by value advantage?" — and the direction: Ranvier's shape (signals, memos, effects; one owner
+of mutation; "I love Ranvier and consider it to have been inspired by my work with signals in Clef and Fidelity
+Framework"), built on Fidelity.FSharp.Incremental "as much as possible as Bozzetto is targeting self-hosting along
+with Alex, Clef, and eventually composer". The loops, the two revision counters and the level-carrying event are
+not deployed and not committed; the presence derivation, cohort activity, sampling at readers and the wire fields
+stay. Drift accounting given to the owner: contained in the uncommitted Bozzetto tree; committed clef and spec
+heads audited and accepted.
+
+A design brief went to the auditor before any code (`sol-audit/2026-10-11-pm/bridge-graph-design-*`, $0.011):
+**reject**, four blocking (the machine-sample input would have two publishers; serial filtering needs atomic
+value-with-serial capture for every input, which "members read with the frame version" is not; `Core.step` under
+one gate does not by itself order asynchronous completions or hub publication; connect-time replay and live
+pushes need one ordering boundary) and six should-fix (derived-value store ownership and token retention; one
+atomic `SetInputs` for telemetry and snapshot; startup subscribe-and-snapshot; demand persistence after `Offer`;
+accepted-input versus settled-output versus latest-wins delivery; hazard tests). At the owner's instruction the
+auditor is making its own study of both libraries with a read tool over the checkouts
+(`sol-audit/2026-10-11-pm/library-study-*`); design v2 follows that study and a second design pass precedes code.
+
+#### clef, second pass (13:12Z): the code stands, one spec sentence rejected
+
+The second-pass brief carried the final clef diff, the amended spec and the backstop (2492/2467/25, four resolved,
+none new). The auditor raised no finding on the code or the controls and one blocking finding on the amendment: "a
+callable constructed in the entry's body, or in code the entry reaches, is not invoked during startup" wrongly
+excludes a callable formed in a helper reached from both a startup initializer and the entry. The sentence now limits
+the claim to code reached only through the entry call and states the shared case path by path (the invocations
+reached through the initializer are bounded by its phase, only those reached through the entry by the entry's),
+which is what `ProgramValueUses.combine` already computes. A third pass on the wording alone follows. Usage of the
+second pass: `sol-audit/2026-10-11-pm/q1q5-2-usage.json`. The third pass (wording only, 891 input tokens, $0.003) returned **accept**: "the revised
+wording resolves the prior blocking finding by treating shared-helper invocations separately under their initializer
+and entry paths." Committed: clef `d0df2e0` (`feat(baker): branch-local demand schedules and formation-bounded
+callback phases`, five files by explicit path) and clef-lang-spec `5983f0e` (`docs(spec): bound callable invocations
+per path and declare scoped callbacks (owner review)`), both pushed to main.

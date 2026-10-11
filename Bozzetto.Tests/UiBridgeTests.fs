@@ -214,6 +214,9 @@ module private Ui =
       | other -> Error("kind: unknown " + other))
 
   let private health o = decode {
+    let! revision = wide "revision" o
+    let! sampledAt = wide "sampledAtMs" o
+    let! recordAt = wide "recordAtMs" o
     let! version = text "version" o
     let! processId = whole "processId" o
     let! mcpPort = whole "mcpPort" o
@@ -240,7 +243,8 @@ module private Ui =
         return { HealthAlarm.Signal = signal; State = state; Message = message }
       }) o
     return {
-      DaemonHealth.Version = version
+      DaemonHealth.Revision = revision
+      Version = version
       ProcessId = processId
       McpPort = mcpPort
       Overall = overall
@@ -252,10 +256,13 @@ module private Ui =
       CpuPercent = cpu
       Processes = processes
       Alarms = alarms
+      SampledAtMs = sampledAt
+      RecordAtMs = recordAt
     }
   }
 
   let private leases o = decode {
+    let! revision = wide "revision" o
     let! active =
       items "active" (fun l -> decode {
         let! id = text "id" l
@@ -272,7 +279,7 @@ module private Ui =
         let! requested = wide "requestedAtMs" q
         return { LeaseWait.Kind = kind; Holder = holder; RequestedAtMs = requested }
       }) o
-    return { LeaseBoard.Active = active; Queued = queued }
+    return { LeaseBoard.Revision = revision; Active = active; Queued = queued }
   }
 
   let private optionalReal name o =
@@ -353,7 +360,17 @@ module private Ui =
                  Model = model; Endpoint = endpoint; Project = project; Focus = focus; Operation = operation; Status = status
                  UpdatedAtMs = at; Activity = activity; OmittedActivity = omitted; Usage = usage }
       }) o
-    return { AgentWorkBoard.Incarnation = incarnation; Sequence = sequence; ExecutionHost = host; Capacity = capacity; Runs = runs }
+    let! presence =
+      items "presence" (fun p -> decode {
+        let! name = text "name" p
+        let! source = text "source" p
+        let! project = text "project" p
+        let! detail = text "detail" p
+        let! member' = text "member" p
+        let! since = wide "sinceMs" p
+        return { AgentPresence.Name = name; Source = source; Member = member'; Project = project; Detail = detail; SinceMs = since }
+      }) o
+    return { AgentWorkBoard.Incarnation = incarnation; Sequence = sequence; ExecutionHost = host; Capacity = capacity; Runs = runs; Presence = presence }
   }
 
   let decodeEvent (payload: string) : Result<Event, string> =
@@ -527,7 +544,8 @@ let private events = [
     StandardError = ""
   }
   Health {
-    DaemonHealth.Version = "0.6.834"
+    DaemonHealth.Revision = 1L
+    Version = "0.6.834"
     ProcessId = 4242
     McpPort = 47749
     Overall = "Healthy"
@@ -539,9 +557,12 @@ let private events = [
     CpuPercent = 1e-7
     Processes = [||]
     Alarms = [||]
+    SampledAtMs = 1759420800000L
+    RecordAtMs = 0L
   }
   Health {
-    DaemonHealth.Version = "v"
+    DaemonHealth.Revision = 2L
+    Version = "v"
     ProcessId = 1
     McpPort = 47759
     Overall = "Degraded"
@@ -556,10 +577,13 @@ let private events = [
       { ProcessSample.ProcessId = 2; Role = "composer-worker"; ResidentBytes = Int64.MaxValue; CpuPercent = 12.5 }
     |]
     Alarms = [| { HealthAlarm.Signal = "WorkerRss"; State = "Broken"; Message = "RSS ↑" } |]
+    SampledAtMs = Int64.MaxValue
+    RecordAtMs = -1L
   }
-  Leases { LeaseBoard.Active = [||]; Queued = [||] }
+  Leases { LeaseBoard.Revision = 0L; Active = [||]; Queued = [||] }
   Leases {
-    LeaseBoard.Active = [|
+    LeaseBoard.Revision = 9007199254740993L
+    Active = [|
       { LeaseGrant.Id = "lease-1"; Kind = "full_build"; Holder = "gate-command-1"; GrantedAtMs = 1759420800000L; ExpiresAtMs = Int64.MaxValue }
     |]
     Queued = [| { LeaseWait.Kind = "test_suite_run"; Holder = "agent-ü"; RequestedAtMs = -1L } |]
@@ -570,7 +594,9 @@ let private events = [
   Resources {
     Sequence = 1L; Status = "complete"; SampledAtMs = 123L; IntervalMs = 2000.; SampleCostMs = 12.5
     Metrics = [||]; Processes = [||]; ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = "test" }
-  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Capacity = 256; Runs = [||] }
+  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Capacity = 256; Runs = [||]; Presence = [||] }
+  AgentWork { Incarnation = "daemon-b"; Sequence = 2L; ExecutionHost = "local"; Capacity = 256; Runs = [||]
+              Presence = [| { Name = "pi"; Source = "lease"; Member = "pi · /repo/clef"; Project = "/repo/clef"; Detail = "holds full_build"; SinceMs = 1759420800000L } |] }
 ]
 
 /// The frames bozzetto-web's Fable codecs produce for the samples above:
@@ -592,7 +618,7 @@ let private commandWires = [
 ]
 
 let private eventWires = [
-  """{"event":"welcome","protocolVersion":5,"daemonVersion":"0.6.834","startedAtMs":"1759420800123"}"""
+  """{"event":"welcome","protocolVersion":7,"daemonVersion":"0.6.834","startedAtMs":"1759420800123"}"""
   """{"event":"welcome","protocolVersion":2147483647,"daemonVersion":"","startedAtMs":"-9223372036854775808"}"""
   """{"event":"snapshot","revision":"0","worker":{"state":"unconfigured"},"sessions":[]}"""
   """{"event":"snapshot","revision":"1","worker":{"state":"idle"},"sessions":[{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼","generation":"-9223372036854775808","project":"/home/ü/Ünïcode.fidproj","closed":false,"busy":false,"statusFresh":true,"revocationPending":false,"cleanupPending":false,"formatterCleanupPending":false,"current":null,"backendError":null,"formatterError":null,"cleanupError":null,"workerRetirementRequired":null,"statusError":null,"workerError":null}]}"""
@@ -609,15 +635,16 @@ let private eventWires = [
   """{"event":"refused","correlation":0,"target":{"host":"","epoch":"","session":""},"code":"invalid_request","message":"Frame is not JSON."}"""
   """{"event":"refused","correlation":2147483647,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"code":"busy","message":"ünïcode ⚠"}"""
   """{"event":"run_output","correlation":7,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"generation":"-9223372036854775808","sourceVersion":"src-2","exitCode":-2147483648,"standardOutput":"line one\r\nline two\ttab — 日本語 🎼\u0000nul","standardError":""}"""
-  """{"event":"health","version":"0.6.834","processId":4242,"mcpPort":47749,"overall":"Healthy","memoryPressure":"Normal","memoryPressureNote":"60.0% of RAM available — the machine has room; tight at or below 20%","residentBytes":"0","machineAvailableBytes":"9223372036854775807","machineTotalBytes":"66571993088","cpuPercent":1e-7,"processes":[],"alarms":[]}"""
-  """{"event":"health","version":"v","processId":1,"mcpPort":47759,"overall":"Degraded","memoryPressure":"Critical","memoryPressureNote":"7.0% of RAM available — critical is entered at or below 8% and clears at 15%; expensive work is queued until pressure eases","residentBytes":"55000000000","machineAvailableBytes":"1","machineTotalBytes":"2","cpuPercent":99.5,"processes":[{"processId":1,"role":"daemon","residentBytes":"1","cpuPercent":0},{"processId":2,"role":"composer-worker","residentBytes":"9223372036854775807","cpuPercent":12.5}],"alarms":[{"signal":"WorkerRss","state":"Broken","message":"RSS ↑"}]}"""
-  """{"event":"leases","active":[],"queued":[]}"""
-  """{"event":"leases","active":[{"id":"lease-1","kind":"full_build","holder":"gate-command-1","grantedAtMs":"1759420800000","expiresAtMs":"9223372036854775807"}],"queued":[{"kind":"test_suite_run","holder":"agent-ü","requestedAtMs":"-1"}]}"""
+  """{"event":"health","revision":"1","sampledAtMs":"1759420800000","recordAtMs":"0","version":"0.6.834","processId":4242,"mcpPort":47749,"overall":"Healthy","memoryPressure":"Normal","memoryPressureNote":"60.0% of RAM available — the machine has room; tight at or below 20%","residentBytes":"0","machineAvailableBytes":"9223372036854775807","machineTotalBytes":"66571993088","cpuPercent":1e-7,"processes":[],"alarms":[]}"""
+  """{"event":"health","revision":"2","sampledAtMs":"9223372036854775807","recordAtMs":"-1","version":"v","processId":1,"mcpPort":47759,"overall":"Degraded","memoryPressure":"Critical","memoryPressureNote":"7.0% of RAM available — critical is entered at or below 8% and clears at 15%; expensive work is queued until pressure eases","residentBytes":"55000000000","machineAvailableBytes":"1","machineTotalBytes":"2","cpuPercent":99.5,"processes":[{"processId":1,"role":"daemon","residentBytes":"1","cpuPercent":0},{"processId":2,"role":"composer-worker","residentBytes":"9223372036854775807","cpuPercent":12.5}],"alarms":[{"signal":"WorkerRss","state":"Broken","message":"RSS ↑"}]}"""
+  """{"event":"leases","revision":"0","active":[],"queued":[]}"""
+  """{"event":"leases","revision":"9007199254740993","active":[{"id":"lease-1","kind":"full_build","holder":"gate-command-1","grantedAtMs":"1759420800000","expiresAtMs":"9223372036854775807"}],"queued":[{"kind":"test_suite_run","holder":"agent-ü","requestedAtMs":"-1"}]}"""
   """{"event":"uptime","uptimeMs":"0"}"""
   """{"event":"uptime","uptimeMs":"93784005"}"""
   """{"event":"uptime","uptimeMs":"9223372036854775807"}"""
   """{"event":"resources","sequence":"1","status":"complete","sampledAtMs":"123","intervalMs":2000,"sampleCostMs":12.5,"processCount":0,"unreadableCount":0,"omittedCount":0,"note":"test","metrics":[],"processes":[]}"""
-  """{"event":"agent_work","incarnation":"daemon-a","sequence":"1","executionHost":"local","capacity":256,"runs":[]}"""
+  """{"event":"agent_work","incarnation":"daemon-a","sequence":"1","executionHost":"local","capacity":256,"runs":[],"presence":[]}"""
+  """{"event":"agent_work","incarnation":"daemon-b","sequence":"2","executionHost":"local","capacity":256,"runs":[],"presence":[{"name":"pi","source":"lease","member":"pi · /repo/clef","project":"/repo/clef","detail":"holds full_build","sinceMs":"1759420800000"}]}"""
 ]
 
 let private caseName (value: obj) (unionType: Type) =
@@ -710,8 +737,13 @@ module private Readings =
     { SampledAt = DateTimeOffset.UnixEpoch; AggregateResidentBytes = 10L; AggregateCpuPercent = nan
       Processes = [ { ProcessId = 77; Role = "daemon"; ResidentBytes = 10L; CpuTime = TimeSpan.Zero; CpuPercent = infinity } ] }
 
+  /// One reading as the health tick publishes it: the fact Health derives from.
+  let tick serial level : Bozzetto.Server.HealthTick.Tick =
+    { Serial = serial; SampledAtMs = serial * 1000L; Machine = machine; Level = level; Record = None; Telemetry = None; RecordAtMs = 0L }
+
 let private sampleHealth = {
-  DaemonHealth.Version = "0.6.834-test"
+  DaemonHealth.Revision = 7L
+  Version = "0.6.834-test"
   ProcessId = 99
   McpPort = 47759
   Overall = "Healthy"
@@ -723,6 +755,8 @@ let private sampleHealth = {
   CpuPercent = 0.5
   Processes = [||]
   Alarms = [||]
+  SampledAtMs = 0L
+  RecordAtMs = 0L
 }
 
 // ── Fakes for the connection contract ──────────────────────────────────────
@@ -760,29 +794,44 @@ type private FakeSocket() =
       Task.CompletedTask
     member _.Abort() = Volatile.Write(&closed, 1)
 
-/// The supervisor as the bridge sees it. A build is held until the test
-/// releases it, so a socket can close while the build is in flight. Health and
-/// lease reads are counted: the bridge may read them only to answer a connect
-/// or a RequestSnapshot.
+/// The supervisor as the bridge sees it, with the daemon's fact plane fed by
+/// this fake's owners. A build is held until the test releases it, so a socket
+/// can close while the build is in flight. Asks of the health owner are
+/// counted: the bridge may ask only for a connect or a RequestSnapshot.
 type private FakeComposer() =
   let changed = Microsoft.FSharp.Control.Event<unit>()
-  let leaseChanged = Microsoft.FSharp.Control.Event<unit>()
   let buildEntered = TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously)
   let buildReleased = TaskCompletionSource<ComposerResponse>(TaskCreationOptions.RunContinuationsAsynchronously)
   let mutable revision = 1L
-  let mutable healthReads = 0
-  let mutable leaseReads = 0
+  let mutable refreshes = 0
+  let mutable tickSerial = 1L
+  let mutable poolSerial = 1L
+  let graph = Facts.Graph({ Facts.Constants.McpPort = 47759; Version = "0.6.834-test"; ProcessId = 99 }, "daemon-o")
+  do
+    // The owners' first values, so a page's prologue carries Health and Leases.
+    graph.Tick(Readings.tick tickSerial Bozzetto.MemoryPressure.Normal) |> ignore
+    graph.Pool({ Serial = poolSerial; Active = []; Queue = [] }: Bozzetto.Features.LeaseWatch.Pool) |> ignore
   member val HoldBuilds = false with get, set
-  member _.HealthReads = Volatile.Read &healthReads
-  member _.LeaseReads = Volatile.Read &leaseReads
+  /// Asks of the health owner: one per connect and one per explicit resync.
+  member _.Refreshes = Volatile.Read &refreshes
+  member _.Graph = graph
   member _.Revision
     with get () = Volatile.Read &revision
     and set value = Volatile.Write(&revision, value)
   member _.BuildEntered = buildEntered.Task
   member _.ReleaseBuild() = buildReleased.TrySetResult(response (Result.Ok(Built accepted))) |> ignore
   member _.Change() = changed.Trigger()
-  member _.ChangeLeases() = leaseChanged.Trigger()
-  member val Board = { LeaseBoard.Active = [||]; Queued = [||] } with get, set
+  /// The health owner publishes a reading at `level`.
+  member _.PublishLevel(level: Bozzetto.MemoryPressure) =
+    tickSerial <- tickSerial + 1L
+    graph.Tick(Readings.tick tickSerial level) |> ignore
+  /// The lease owner publishes its pool.
+  member _.PublishPool(active: Bozzetto.ExpensiveWorkLease.GrantView list, queue: Bozzetto.ExpensiveWorkLease.QueueView list) =
+    poolSerial <- poolSerial + 1L
+    graph.Pool({ Serial = poolSerial; Active = active; Queue = queue }: Bozzetto.Features.LeaseWatch.Pool) |> ignore
+  /// What the plane projects for the latest facts, stamped as it stamps.
+  member _.CurrentHealth = graph.Current() |> List.pick (function Health h -> Some h | _ -> None)
+  member _.CurrentLeases = graph.Current() |> List.pick (function Leases l -> Some l | _ -> None)
   member this.Directory() : ComposerDirectory =
     { Configured = true; Revision = this.Revision; Worker = Some hello
       Sessions = [| response (Result.Ok(Observed observed)) |] }
@@ -806,17 +855,7 @@ type private FakeComposer() =
     CachedDirectory = fun () -> this.Directory()
     WorkerPid = fun () -> Some 4242
     Changed = changed.Publish :> IObservable<unit>
-    Health =
-      fun () ->
-        Interlocked.Increment &healthReads |> ignore
-        sampleHealth
-    Leases =
-      fun () ->
-        Interlocked.Increment &leaseReads |> ignore
-        this.Board
-    LeaseChanged = Some(leaseChanged.Publish :> IObservable<unit>)
-    AgentWork = None
-    AgentWorkChanged = None
+    Facts = { Register = graph.Register; Current = graph.Current; Refresh = fun () -> Interlocked.Increment &refreshes |> ignore }
   }
 
 /// The snapshot spacing, held by the test. Each pause the hub enters is
@@ -1149,12 +1188,12 @@ let tests =
       }
 
       test "health reads the daemon's own observations, spelled as Protocol.fs spells them" {
-        let sources = { HealthSources.McpPort = 47759; Version = "fallback"; ProcessId = 11; Health = None; Telemetry = None; Machine = Readings.machine }
+        let sources = { HealthSources.McpPort = 47759; Version = "fallback"; ProcessId = 11; Health = None; Telemetry = None; Machine = Readings.machine; Level = Bozzetto.MemoryPressure.Normal; SampledAtMs = 0L; RecordAtMs = 0L }
         let cold = Project.health sources
         (cold.Version, cold.ProcessId, cold.McpPort, cold.Overall, cold.MemoryPressure)
         |> Expect.equal "before the first health tick" ("fallback", 11, 47759, "Unknown", "Normal")
         (cold.MachineAvailableBytes, cold.MachineTotalBytes) |> Expect.equal "machine memory" (32L, 64L)
-        let warm = Project.health { sources with Health = Some Readings.health; Telemetry = Some Readings.telemetry }
+        let warm = Project.health { sources with Health = Some Readings.health; Telemetry = Some Readings.telemetry; Level = Bozzetto.MemoryPressure.Tight }
         (warm.Version, warm.ProcessId, warm.McpPort) |> Expect.equal "the health snapshot" ("9.9", 77, 47749)
         (warm.Overall, warm.MemoryPressure) |> Expect.equal "tight memory degrades the daemon" ("Degraded", "Tight")
         warm.ResidentBytes |> Expect.equal "MiB to bytes" (3L * 1_048_576L)
@@ -1185,7 +1224,7 @@ let tests =
           |> List.fold request (Bozzetto.ExpensiveWorkLease.empty, [])
         leaseIds.Length |> Expect.equal "two grants, one queued" 2
         let snapshot = Bozzetto.ExpensiveWorkLease.snapshot (now.AddSeconds 3.) pool
-        let board = Project.leaseBoard snapshot.Active snapshot.Queue
+        let board = Project.leaseBoard 1L snapshot.Active snapshot.Queue
         let wire = Codec.encodeEvent (Leases board)
         for leaseId in leaseIds do
           wire.Contains leaseId |> Expect.isFalse "the release capability never leaves the daemon"
@@ -1193,7 +1232,7 @@ let tests =
         board.Active |> Array.map _.GrantedAtMs |> Expect.equal "granted at" [| now.ToUnixTimeMilliseconds(); now.AddSeconds(1.).ToUnixTimeMilliseconds() |]
         board.Active |> Array.map _.Id |> Array.distinct |> Array.length |> Expect.equal "display ids are distinct" 2
         board.Active |> Array.forall (fun grant -> grant.Id.StartsWith "lease-") |> Expect.isTrue "display ids are labelled"
-        Project.leaseBoard snapshot.Active snapshot.Queue |> Expect.equal "display ids are stable" board
+        Project.leaseBoard 1L snapshot.Active snapshot.Queue |> Expect.equal "display ids are stable" board
         board.Queued |> Expect.equal "the queued request" [| { LeaseWait.Kind = "rebuild"; Holder = "agent-c"; RequestedAtMs = now.AddSeconds(2.).ToUnixTimeMilliseconds() } |]
       }
     ]
@@ -1417,44 +1456,91 @@ let tests =
         stopping.Cancel()
       }
 
-      testTask "lease owner changes reach every page without refresh and detach on shutdown" {
+      testTask "a memory level change reaches every page as one Health push" {
         let stopping = new CancellationTokenSource()
         let composer = FakeComposer()
         let hub = hubOf composer stopping.Token unpaused (ClockGate())
         hub.Start()
-        composer.ChangeLeases()
-        composer.LeaseReads |> Expect.equal "no readers before any page subscribes" 0
+        composer.PublishLevel Bozzetto.MemoryPressure.Tight
+        composer.Refreshes |> Expect.equal "no page, no ask of the health owner" 0
         let first, second = FakeSocket(), FakeSocket()
         let firstRun = hub.RunAsync(first, CancellationToken.None)
         let secondRun = hub.RunAsync(second, CancellationToken.None)
         let! _ = readPrologue first
         let! _ = readPrologue second
-        let grant = { LeaseGrant.Id = "display-only"; Kind = "full_build"; Holder = "pi · /repo/clef"
-                      GrantedAtMs = 1L; ExpiresAtMs = 2L }
-        composer.Board <- { LeaseBoard.Active = [| grant |]; Queued = [||] }
-        composer.ChangeLeases()
+        composer.PublishLevel Bozzetto.MemoryPressure.Normal
         let! one = first.Next()
         let! two = second.Next()
-        one |> Expect.equal "push, not a RequestSnapshot response" (Leases composer.Board)
+        one |> Expect.equal "push, not a RequestSnapshot response: the plane's projection of the reading" (Health composer.CurrentHealth)
+        two |> Expect.equal "the same health reaches the second page" one
+        (match one with Health h -> h.MemoryPressure, h.Revision | other -> failtestf "not health: %A" other)
+        |> Expect.equal "the moved level, stamped one on from the two readings before it" ("Normal", 3L)
+        composer.Refreshes |> Expect.equal "one ask per page at connect, none for the change" 2
+        first.Hangup()
+        second.Hangup()
+        do! settle firstRun
+        do! settle secondRun
+        stopping.Cancel()
+      }
+
+      testTask "an older reading announced after a newer one never reaches a page, which ends on the newer Health" {
+        let stopping = new CancellationTokenSource()
+        let composer = FakeComposer()
+        let hub = hubOf composer stopping.Token unpaused (ClockGate())
+        hub.Start()
+        let page = FakeSocket()
+        let run = hub.RunAsync(page, CancellationToken.None)
+        let! _ = readPrologue page
+        // Two readings heard out of order, as owners announcing outside their gates can be.
+        composer.Graph.Tick(Readings.tick 3L Bozzetto.MemoryPressure.Tight) |> Expect.equal "the newer is admitted" (Ok())
+        composer.Graph.Tick(Readings.tick 2L Bozzetto.MemoryPressure.Normal) |> Expect.equal "the older is dropped" (Error Facts.Refusal.Older)
+        let! first = page.Next()
+        first |> Expect.equal "the one frame is the newer Health" (Health composer.CurrentHealth)
+        do! Task.Delay 50
+        page.Waiting |> Expect.equal "nothing stale follows" 0
+        page.Hangup()
+        do! settle run
+        stopping.Cancel()
+      }
+
+      testTask "lease owner changes reach every page without refresh and detach on shutdown" {
+        let stopping = new CancellationTokenSource()
+        let composer = FakeComposer()
+        let hub = hubOf composer stopping.Token unpaused (ClockGate())
+        hub.Start()
+        composer.PublishPool([], [])
+        composer.Refreshes |> Expect.equal "no page, no ask of the health owner" 0
+        let first, second = FakeSocket(), FakeSocket()
+        let firstRun = hub.RunAsync(first, CancellationToken.None)
+        let secondRun = hub.RunAsync(second, CancellationToken.None)
+        let! _ = readPrologue first
+        let! _ = readPrologue second
+        let grant : Bozzetto.ExpensiveWorkLease.GrantView =
+          { Holder = "pi · /repo/clef"; Kind = "full_build"
+            GrantedAt = DateTimeOffset.FromUnixTimeMilliseconds 1L; ExpiresAt = DateTimeOffset.FromUnixTimeMilliseconds 2L }
+        composer.PublishPool([ grant ], [])
+        let! one = first.Next()
+        let! two = second.Next()
+        one |> Expect.equal "push, not a RequestSnapshot response" (Leases composer.CurrentLeases)
         two |> Expect.equal "the same board reaches the second page" one
-        composer.HealthReads |> Expect.equal "lease updates never resample health" 2
+        (match one with Leases l -> l.Active |> Array.map (fun g -> g.Holder, g.Kind) | other -> failtestf "not leases: %A" other)
+        |> Expect.equal "the grant as the pool published it" [| "pi · /repo/clef", "full_build" |]
+        composer.Refreshes |> Expect.equal "lease updates never ask the health owner" 2
         first.Hangup()
         do! settle firstRun
-        composer.Board <- { LeaseBoard.Active = [||]; Queued = [||] }
-        composer.ChangeLeases()
+        composer.PublishPool([], [])
         let! released = second.Next()
-        released |> Expect.equal "release clears the live board" (Leases composer.Board)
+        released |> Expect.equal "release clears the live board" (Leases composer.CurrentLeases)
         first.LateWrites |> Expect.equal "closed page receives nothing" 0
         second.Hangup()
         do! settle secondRun
         stopping.Cancel()
-        let reads = composer.LeaseReads
-        composer.ChangeLeases()
-        composer.LeaseReads |> Expect.equal "subscription is disposed" reads
+        composer.PublishPool([ grant ], [])
+        second.LateWrites |> Expect.equal "a closed page's registration is gone" 0
         stopping.Dispose()
       }
 
-      testTask "without an owner change, health and leases are read only for the connect and the pull" {
+      testTask "without an owner change, the health owner is asked only at the connect and the pull, and the facts come from the plane" {
         let stopping = new CancellationTokenSource()
         let composer = FakeComposer()
         let gate = PauseGate()
@@ -1463,21 +1549,21 @@ let tests =
         let socket = FakeSocket()
         let running = hub.RunAsync(socket, CancellationToken.None)
         let! _ = readPrologue socket
-        (composer.HealthReads, composer.LeaseReads) |> Expect.equal "the prologue read each once" (1, 1)
+        composer.Refreshes |> Expect.equal "the connect asked once" 1
         let names (events: Event list) = events |> List.map (fun e -> caseName (box e) typeof<Event>)
         // A supervisor change and a command: a snapshot and an outcome, and
-        // neither health nor leases is read or pushed.
+        // neither health nor leases is asked for or pushed.
         composer.Change()
         let! (pause: TaskCompletionSource<unit>) = gate.Entered()
         socket.Deliver(frame 1 (Reserve { ReserveEdit.Target = target; Label = "edit" }))
         let! (changed: Event list) = readUntil socket (fun seen -> seen |> List.exists (fun e -> correlationOf e = Some 1))
         names changed |> Expect.equal "the change's snapshot, then the command's outcome" [ "Snapshot"; "Accepted" ]
-        (composer.HealthReads, composer.LeaseReads) |> Expect.equal "neither read since the prologue" (1, 1)
-        // The explicit pull answers with fresh state, reading each once more.
+        composer.Refreshes |> Expect.equal "no ask since the connect" 1
+        // The explicit pull asks once more and answers with the plane's current values.
         socket.Deliver(frame 2 RequestSnapshot)
         let! (pulled: Event list) = readUntil socket (fun seen -> seen |> List.exists (fun e -> correlationOf e = Some 2))
         names pulled |> Expect.equal "fresh state, then the acknowledgement" [ "Snapshot"; "Health"; "Leases"; "Accepted" ]
-        (composer.HealthReads, composer.LeaseReads) |> Expect.equal "the pull read each once" (2, 2)
+        composer.Refreshes |> Expect.equal "the pull asked once more" 2
         socket.Waiting |> Expect.equal "nothing else was written" 0
         pause.SetResult()
         socket.Hangup()
@@ -1624,4 +1710,71 @@ let tests =
         stopping.Cancel()
       }
     ]
+  ]
+
+/// A board is sequenced by the publication, not by the owner's report count:
+/// presence moves with leases and membership while the report count stands.
+[<Tests>]
+let boardSequenceTests =
+  testList "UiBridge.Project.agentBoard — sequenced by the publication" [
+    testCase "two publications of one unchanged report state with different presence are ordered by the publication" <| fun () ->
+      let state = { Bozzetto.AgentWork.empty with Incarnation = "daemon-x"; Sequence = 5L }
+      let held = [| { AgentPresence.Name = "pi"; Source = "lease"; Member = "pi · /repo"; Project = "/repo"; Detail = "holds full_build"; SinceMs = 1L } |]
+      let before = Project.agentBoard 10L state [||]
+      let after = Project.agentBoard 11L state held
+      (after.Sequence > before.Sequence) |> Expect.isTrue "the later publication carries the later sequence although no report changed"
+      after.Incarnation |> Expect.equal "the incarnation is still the owner's" "daemon-x"
+      after.Presence |> Expect.equal "the later publication carries the presence it saw" held
+  ]
+
+/// Presence is derived from facts the daemon owns; these controls pin what each
+/// row may claim and the mutations a derivation could drift into.
+[<Tests>]
+let presenceTests =
+  let at (seconds: int) = DateTimeOffset(2026, 10, 11, 12, 0, 0, TimeSpan.Zero).AddSeconds(float seconds)
+  let grant holder kind seconds : Bozzetto.ExpensiveWorkLease.GrantView =
+    { Holder = holder; Kind = kind; GrantedAt = at seconds; ExpiresAt = at (seconds + 600) }
+  let ask holder kind seconds : Bozzetto.ExpensiveWorkLease.QueueView = { Holder = holder; Kind = kind; RequestedAt = at seconds }
+  let renewal seconds = DateTime(2026, 10, 11, 12, 0, 0, DateTimeKind.Utc).AddSeconds(float seconds)
+  let present id seconds = id, Bozzetto.Cohort.JoinableRole.Observer, Bozzetto.Cohort.SeatState.Present, renewal seconds
+  let departed id seconds = id, Bozzetto.Cohort.JoinableRole.Observer, Bozzetto.Cohort.SeatState.Departed DateTime.UtcNow, renewal seconds
+  let report name project status sequence : Bozzetto.AgentWork.Report =
+    { Run = "run-" + string sequence; Session = "s"; Sequence = sequence; Name = name; Model = "m"; Endpoint = "e"
+      Project = project; Focus = "f"; Operation = "o"; Status = status; Usage = None }
+  let run who (r: Bozzetto.AgentWork.Report) (seconds: int) : Bozzetto.AgentWork.Run =
+    { Member = who; Role = Bozzetto.Cohort.JoinableRole.Observer; Report = r
+      UpdatedAt = DateTime(2026, 10, 11, 12, 0, 0, DateTimeKind.Utc).AddSeconds(float seconds); Activity = [ r.Operation ]; OmittedActivity = 0L }
+  testList "UiBridge.Project.presence — derived from leases and the cohort frame" [
+    testCase "a lease holder spelled agent · project becomes that agent at that project, held or queued, since its grant or ask" <| fun () ->
+      let rows = Project.presence [ grant "pi · /repo/clef" "full_build" 10 ] [ ask "pi · /repo/clef" "test_suite_run" 20 ] [] Map.empty
+      rows |> Array.map (fun p -> p.Member) |> Expect.equal "the whole holder is the row's identity" [| "pi · /repo/clef"; "pi · /repo/clef" |]
+      rows |> Array.map (fun p -> p.Name, p.Project, p.Source, p.Detail, p.SinceMs)
+      |> Expect.equal "one row per lease fact"
+           [| "pi", "/repo/clef", "lease", "holds full_build", (at 10).ToUnixTimeMilliseconds()
+              "pi", "/repo/clef", "lease", "queued for test_suite_run", (at 20).ToUnixTimeMilliseconds() |]
+    testCase "a holder without the separator is the whole name and claims no project" <| fun () ->
+      let rows = Project.presence [ grant "gate-command-1" "full_build" 0 ] [] [] Map.empty
+      rows |> Array.map (fun p -> p.Name, p.Project) |> Expect.equal "no invented project" [| "gate-command-1", "" |]
+    testCase "a present member is named by its latest report and shows that report's status; a departed member is not shown" <| fun () ->
+      let here = Bozzetto.MemberTable.MemberId.Mcp "here"
+      let gone = Bozzetto.MemberTable.MemberId.Mcp "gone"
+      let runs =
+        Map.ofList [
+          "run-1", run here (report "old-name" "/old" "completed" 1L) 5
+          "run-2", run here (report "claude-primary" "/repo/Bozzetto" "running" 2L) 9
+          "run-3", run gone (report "pi" "/repo" "running" 1L) 7 ]
+      let rows = Project.presence [] [] [ present here 30; departed gone 31 ] runs
+      rows |> Array.map (fun p -> p.Name, p.Project, p.Source, p.Detail, p.SinceMs)
+      |> Expect.equal "the latest report names the member; the departed one is absent"
+           [| "claude-primary", "/repo/Bozzetto", "member", "Observer member · last report running", (at 30).ToUnixTimeMilliseconds() |]
+      rows[0].Member |> Expect.equal "the connection identity, not the reported name, is the row's identity" "mcp:here"
+    testCase "a present member with no report is shown by its connection identity and says so" <| fun () ->
+      let quiet = Bozzetto.MemberTable.MemberId.Mcp "quiet"
+      let rows = Project.presence [] [] [ present quiet 0 ] Map.empty
+      rows |> Array.map (fun p -> p.Name, p.Project, p.Detail)
+      |> Expect.equal "no name is invented for a silent member" [| "mcp:quiet", "", "Observer member · no report yet" |]
+    testCase "a member's time is its latest renewal, the fact the daemon retains" <| fun () ->
+      let m = Bozzetto.MemberTable.MemberId.Mcp "m"
+      let rows = Project.presence [] [] [ present m 45 ] Map.empty
+      rows[0].SinceMs |> Expect.equal "renewal time, not a join time the daemon does not keep" ((at 45).ToUnixTimeMilliseconds())
   ]

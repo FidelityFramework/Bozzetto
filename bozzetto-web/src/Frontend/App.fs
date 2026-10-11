@@ -195,6 +195,11 @@ let HealthStrip (model: ModelView) (uptime: unit -> float) =
       Show (when' = (model.health.pressure <> "Normal" && model.health.note <> "")) {
         span (class' = "opacity-60 text-xs") { model.health.note }
       }
+      // The age of what this strip shows: the daemon reads when asked, not on a timer, and says when it last looked.
+      span (class' = "health-age opacity-50 font-mono", title = "When the daemon last read the machine, and last took its own record") {
+        "read " + duration (max 0.0 (model.startedAt + uptime () - model.health.sampledAt)) + " ago"
+        + (if model.health.recordAt > 0.0 then " · record " + duration (max 0.0 (model.startedAt + uptime () - model.health.recordAt)) + " ago" else " · no record yet")
+      }
       For (each = model.health.processes) {
         yield fun p _ ->
           span (class' = "font-mono opacity-60") { p.role + " " + string p.pid + " " + bytes p.rss }
@@ -568,24 +573,42 @@ let AgentsPanel (model: ModelView) =
         h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80 flex-1") { "Agent work" }
         Information "Agent accounting" (fun () -> [|
           "Current reporting activity stays visible. Earlier passes are expandable, newest first. Missing reports do not establish that no work is happening."
+          "Presence rows derive from facts the daemon owns, a lease held or queued and cohort membership, so an agent that never reports is still seen."
           "Identity, progress and usage are participant-reported; unknown usage and cost are not zero."
           "Execution host: " + model.executionHost + " · publication " + model.agentSequence
           "This board retains up to 64 reporting participants and 256 runs during the current daemon lifetime."
         |])
       }
       Show (
-        when' = (model.agents |> Array.exists currentAgent),
-        fallback = (p (class' = "text-xs opacity-50") { "No active reporting agents." })
+        when' = (model.agents |> Array.exists currentAgent || model.presence.Length > 0),
+        fallback = (p (class' = "text-xs opacity-50") {
+          // Absence is claimed only from a received board; before one arrives the
+          // daemon has said nothing about agents.
+          if model.agentIncarnation = "" then "No agent board received from the daemon yet."
+          else "No agents present: no lease held or queued, no cohort member, no running report."
+        })
       ) {
         For (each = (model.agents |> Array.filter currentAgent |> Array.sortByDescending (fun agent -> agent.updatedAt, agent.id))) {
           yield fun agent _ ->
             div (class' = "border-t border-base-content/10 pt-2 text-xs break-words") {
               div (class' = "font-semibold") { agent.name + " · " + agent.role + " · reported " + agent.status }
-              div (class' = "opacity-60") { "Updated " + clockTime agent.updatedAt }
+              div (class' = "opacity-60") { "Updated " + clockTime agent.updatedAt + " · " + agent.model + " · " + agent.endpoint }
               div () { agent.project + " · " + agent.operation }
               details () {
                 summary (class' = "cursor-pointer opacity-60") { "Details" }
                 AgentDetails agent
+              }
+            }
+        }
+        For (each = (model.presence |> Array.sortByDescending (fun here -> here.since, here.id))) {
+          yield fun here _ ->
+            div (class' = "presence border-t border-base-content/10 pt-2 text-xs break-words") {
+              div (class' = "font-semibold") { here.name + " · " + here.detail }
+              div (class' = "opacity-60") {
+                // A lease's time is its grant or ask; a membership's is its latest renewal,
+                // which is what the daemon retains, not when the member joined.
+                here.source + (if here.source = "member" then " renewed " else " since ") + clockTime here.since
+                + (if here.project = "" then "" else " · " + here.project)
               }
             }
         }

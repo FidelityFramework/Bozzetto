@@ -97,7 +97,7 @@ module Bozzetto.Web.Shared.Protocol
 /// 2: Welcome carries StartedAtMs; Health no longer carries an uptime.
 /// 3: the Uptime event, pushed by the backend's clock while a page is connected.
 [<Literal>]
-let ProtocolVersion = 5
+let ProtocolVersion = 7
 
 // ── Addresses ──────────────────────────────────────────────────────────────
 
@@ -265,6 +265,10 @@ type HealthAlarm = { Signal: string; State: string; Message: string }
 /// memory pressure level, the process set, the alarms); the byte and CPU
 /// figures are readings taken when it is sent, never a reason to send it.
 type DaemonHealth = {
+  /// Stamped when the daemon read it, one per read, increasing: a page keeps
+  /// the newest and drops an older read that arrives later (a connect or
+  /// snapshot answer racing a pushed change).
+  Revision: int64
   Version: string
   ProcessId: int32
   McpPort: int32
@@ -281,6 +285,12 @@ type DaemonHealth = {
   CpuPercent: float
   Processes: ProcessSample array
   Alarms: HealthAlarm array
+  /// When the daemon last read the machine (Unix epoch ms): the age of the
+  /// figures and of the level.
+  SampledAtMs: int64
+  /// When the daemon last took its own record (Unix epoch ms); 0 before the
+  /// first, so a page can say how old what it shows is.
+  RecordAtMs: int64
 }
 
 /// A granted expensive-work lease. Id is a display identity, never the
@@ -298,7 +308,12 @@ type LeaseGrant = {
 /// A queued lease request.
 type LeaseWait = { Kind: string; Holder: string; RequestedAtMs: int64 }
 
-type LeaseBoard = { Active: LeaseGrant array; Queued: LeaseWait array }
+type LeaseBoard = {
+  /// Stamped by the daemon per publication, increasing: a page keeps the newest.
+  Revision: int64
+  Active: LeaseGrant array
+  Queued: LeaseWait array
+}
 
 /// First event on every connection, sent once. The daemon's start time is a
 /// fact of its process, fixed for its lifetime like its version: a restart
@@ -359,7 +374,16 @@ type AgentRun = {
   Focus: string; Operation: string; Status: string; UpdatedAtMs: int64
   Activity: string array; OmittedActivity: int64; Usage: AgentUsage option
 }
-type AgentWorkBoard = { Incarnation: string; Sequence: int64; ExecutionHost: string; Capacity: int32; Runs: AgentRun array }
+/// An agent the daemon knows to be here from a fact it owns: a lease it holds
+/// or waits for (`Source = "lease"`), or a cohort membership (`Source =
+/// "member"`). Derived, not reported, so an agent that never reports is still
+/// seen; `Detail` says what the fact is and `SinceMs` when it began.
+type AgentPresence = { Name: string; Source: string; Member: string; Project: string; Detail: string; SinceMs: int64 }
+type AgentWorkBoard = {
+  Incarnation: string; Sequence: int64; ExecutionHost: string; Capacity: int32
+  Runs: AgentRun array
+  Presence: AgentPresence array
+}
 
 /// What the backend pushes to the UI. Events fold into the UI's model.
 type Event =

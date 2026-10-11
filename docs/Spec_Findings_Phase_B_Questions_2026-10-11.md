@@ -34,6 +34,23 @@ verifier "refuted" the reading in the sense of correcting its grounding; every d
 
 **Clarification to draft:** A. program-structure-and-execution.md, section "Execution of Static Initializers", new paragraph immediately after line 193 ("...an initialization-order proof does not supply any of them."): "Activation dependencies include invocations the program's own text does not spell. A callable the program supplies to a declared boundary operation is activated within that operation's call when the operation's binding declares that it invokes the callable and retires every use of it before returning (a *scoped callback*; [Platform Bindings](platform-bindings.md), Scoped Callback Declarations; [FFI Boundary Semantics §5.6](ffi-boundary.md#56-boundary-proof-obligations)). For initialization-order [...]
 
+**Status (2026-10-11, afternoon):** amended and implemented, validation in flight. The spec now states the bound
+and the premise (clef-lang-spec `5983f0e`, flagged for owner review; the auditor accepted the wording on its third pass after
+requiring the bound to be stated per invocation path): the phase of a
+callable's invocation is bounded below by the phase of its construction and of the call that supplies it; a callable
+constructed in the entry's reach is not invoked during startup; a declared boundary's activation is contract evidence
+an initialization-order proof MAY rely on as a recorded premise and SHALL NOT report as established
+(`program-structure-and-execution.md` after line 193; `platform-bindings.md` gains the `ScopedCallbackDescriptor`
+record beside the other descriptors; `ffi-boundary.md` §5.3 names the declaration as a library obligation). In clef:
+`ProgramActivation.analyze` accounts an argument whose formal is a scoped parameter (declared or inferred,
+`ScopedCallbacks.read`) as an invocation bounded by the boundary call site, with the formal and its declaration
+participants recorded as premises on the coverage edge; `ProgramActivation.invocations` exposes an implementation's
+accounted sites and supports; and `ProgramValueUses` bounds an uncovered implementation by those sites, or by its
+formation site when it is never applied in source, reporting both reasons when neither reaches a startup or entry
+scope. Controls: the three named BorrowedViewTests, "A callable stored by a startup initializer after its slot is
+ordered by its formation phase", and the negative control "A callback handed to an undeclared boundary leaves its
+stores unordered"; the ProgramInitializationOrderCases "uncovered-entry" control keeps its "invocation scope" reason.
+
 ## Q6. How does the spec say an integer parameter's range is observed when the parameter is supplied through a fu…
 
 **Reader:** `implies` — The spec decides the parts the compiler implements and is silent on the one part that produces the refusal. It DECIDES that (1) a function's parameter range is the join over its call sites (ntu-types.md:79), (2) ranges are propagated forward to a least fixed point (ntu-types.md:174, :198), loops close by widening, the integer domain is the five-case lattice with half-lines, and the integer widening thresholds are declared-representation boundaries, then settled constants, then infinity (numeric-selection.md:205, :210; program-hypergraph.md:43 requires widening followed by narrowing), (3) an integer still unobservable at commitment is CCS8011 and never defaulted (width-inference.md:80, [...]

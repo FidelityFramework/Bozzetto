@@ -2278,7 +2278,10 @@ let run
                   Failed = summary.Failed
                   Running = summary.Running }
                 : Bozzetto.Features.LiveTestHealthSummary)
-    let machineMemory = Bozzetto.Features.MachineMemory.current ()
+    // One reading of the machine for this record, handed to the daemon's one
+    // sequencer: the level reported below is the one this reading implies now.
+    let tick = Bozzetto.Server.HealthTick.observe (Bozzetto.Features.MachineMemory.current ())
+    let machineMemory = tick.Machine
     let telemetry =
       Bozzetto.Server.DaemonTelemetry.sample (
         Bozzetto.Server.DaemonTelemetry.ownedProcesses
@@ -2312,7 +2315,7 @@ let run
             MemoryMB = memoryMB
             Anomalies = Bozzetto.Features.HealthWatch.troubled ()
             GcDumpOutcome = Bozzetto.Features.GcDumpWatch.lastCaptureOutcome ()
-            MemoryPressure = Bozzetto.Features.MemoryPressureWatch.currentLevel () }
+            MemoryPressure = tick.Level }
       : Bozzetto.Features.HealthSnapshot)
 
   // Both listeners share one origin set: the MCP port and the control

@@ -308,6 +308,9 @@ let private eventJson (event: Event) =
   | Health health ->
     JsonValue.Object [
       tag "health"
+      "revision", wide health.Revision
+      "sampledAtMs", wide health.SampledAtMs
+      "recordAtMs", wide health.RecordAtMs
       "version", str health.Version
       "processId", whole health.ProcessId
       "mcpPort", whole health.McpPort
@@ -337,6 +340,7 @@ let private eventJson (event: Event) =
   | Leases board ->
     JsonValue.Object [
       tag "leases"
+      "revision", wide board.Revision
       "active",
       JsonValue.Array [
         for grant in board.Active ->
@@ -392,6 +396,9 @@ let private eventJson (event: Event) =
                ])
         ]
       ]
+      "presence", JsonValue.Array [
+        for p in board.Presence -> JsonValue.Object [
+          "name", str p.Name; "source", str p.Source; "member", str p.Member; "project", str p.Project; "detail", str p.Detail; "sinceMs", wide p.SinceMs ] ]
     ]
   | Uptime tick -> JsonValue.Object [ tag "uptime"; "uptimeMs", wide tick.UptimeMs ]
 

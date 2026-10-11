@@ -1452,6 +1452,9 @@ module Cohort =
     MemberIds: 'm[]
     MemberRole: JoinableRole[]
     MemberSeat: SeatState[]
+    /// When each member last renewed: the one liveness fact the daemon retains
+    /// about a member, so a presence row can say when it was last heard from.
+    MemberRenewal: DateTime[]
     ClaimIds: ClaimId[]
     ClaimScope: ClaimScope[]
     /// Index into `MemberIds`; -1 when the claim is not currently `Held`
@@ -1622,6 +1625,7 @@ module Cohort =
           match r.Presence with
           | MemberPresence.Present -> SeatState.Present
           | MemberPresence.Departed since -> SeatState.Departed since)
+      MemberRenewal = members |> Array.map (fun (_, r) -> r.LastRenewal)
       ClaimIds = claims |> Array.map fst
       ClaimScope = claims |> Array.map (fun (_, c) -> c.Scope)
       ClaimHolderIndex =

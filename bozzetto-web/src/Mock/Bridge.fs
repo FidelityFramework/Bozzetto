@@ -65,6 +65,7 @@ let private snapshot () =
     Sessions = sessions |> Seq.map (fun s -> s.Status) |> Seq.toArray
   }
 
+let mutable private healthRevision = 0L
 let private healthValue () : DaemonHealth =
   let workerProcesses =
     match worker with
@@ -81,8 +82,10 @@ let private healthValue () : DaemonHealth =
     if open' >= 3 then
       [| { HealthAlarm.Signal = "WorkerRss"; State = "Drifting"; Message = "Composer worker RSS is 2.4 sigma above its baseline (mock)." } |]
     else [||]
+  healthRevision <- healthRevision + 1L
   {
-    DaemonHealth.Version = daemonVersion
+    DaemonHealth.Revision = healthRevision
+    Version = daemonVersion
     ProcessId = 4242
     McpPort = 47759
     Overall = (if alarms.Length > 0 then "Degraded" else "Healthy")
@@ -91,6 +94,8 @@ let private healthValue () : DaemonHealth =
     ResidentBytes = 186_000_000L + int64 (random () * 12_000_000.0)
     MachineAvailableBytes = 38_500_000_000L + int64 (random () * 400_000_000.0)
     MachineTotalBytes = 66_571_993_088L
+    SampledAtMs = int64 (nowMs ())
+    RecordAtMs = int64 (nowMs ())
     CpuPercent = random () * 6.0
     Processes =
       Array.append
@@ -133,6 +138,12 @@ let private agentWork () =
         (Some { Input = 0L; Output = 0L; CacheRead = 0L; CacheWrite = 0L; Total = 0L; EstimateUsd = None }) "disconnected" -1000L
       run "mock-uncertain" "mock:uncertain" "Mock uncertain" "Observer" None "unknown" -1000L
     |]
+    // Derived presence: a lease the mock implementer holds and a member that
+    // has made no report, so the panel shows both shapes.
+    Presence = [|
+      { Name = "Mock builder"; Source = "lease"; Member = "Mock builder · /mock/clef"; Project = "/mock/clef"; Detail = "holds full_build"; SinceMs = int64 startedAt - 4000L }
+      { Name = "mcp:quiet"; Source = "member"; Member = "mcp:quiet"; Project = ""; Detail = "Observer member · no report yet"; SinceMs = int64 startedAt - 9000L }
+    |]
   }
 
 /// The discrete facts a Health push is for. The byte and CPU readings are
@@ -142,9 +153,12 @@ let private healthFacts (h: DaemonHealth) =
   let alarms = h.Alarms |> Array.map (fun a -> a.Signal + ":" + a.State) |> String.concat ","
   h.Overall + "|" + h.MemoryPressure + "|" + processes + "|" + alarms
 
+let mutable private leaseRevision = 0L
 let private leases () =
+  leaseRevision <- leaseRevision + 1L
   Leases {
-    LeaseBoard.Active = active.ToArray()
+    LeaseBoard.Revision = leaseRevision
+    Active = active.ToArray()
     Queued = queued |> Seq.map (fun (wait, _, _) -> wait) |> Seq.toArray
   }
 

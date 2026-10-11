@@ -68,10 +68,15 @@ type AgentView = {| id: string; memberId: string; name: string; role: string; mo
                     project: string; focus: string; operation: string; status: string; updatedAt: float; reportSequence: string
                     usage: string; cost: string; activity: string; omitted: string |}
 
+/// An agent the daemon derives from a fact it owns (a lease, a membership),
+/// shown whether or not the agent ever reports.
+type PresenceView = {| id: string; name: string; source: string; project: string; detail: string; since: float |}
+
 type AlarmView = {| id: string; signal: string; state: string; message: string |}
 
 type HealthView =
   {|
+    revision: float
     version: string
     pid: int
     port: int
@@ -84,6 +89,9 @@ type HealthView =
     cpu: float
     processes: ProcessView array
     alarms: AlarmView array
+    /// When the daemon last read the machine and last took its record (epoch ms; 0 = never).
+    sampledAt: float
+    recordAt: float
   |}
 
 type LeaseView = {| id: string; kind: string; holder: string; grantedAt: float; expiresAt: float |}
@@ -118,6 +126,7 @@ type ModelView =
     worker: WorkerView
     sessions: SessionView array
     agents: AgentView array
+    presence: PresenceView array
     agentIncarnation: string
     agentSequence: string
     executionHost: string
@@ -129,6 +138,8 @@ type ModelView =
     health: HealthView
     leases: LeaseView array
     queue: WaitView array
+    /// The lease board's stamp as last applied: a page keeps the newest.
+    leaseRevision: float
     activity: OutcomeView array
     runs: RunView array
   |}
@@ -173,6 +184,7 @@ let private noArtifact () : ArtifactView =
 
 let private noHealth () : HealthView =
   {|
+    revision = 0.0
     version = ""
     pid = 0
     port = 0
@@ -185,6 +197,8 @@ let private noHealth () : HealthView =
     cpu = 0.0
     processes = Array.empty
     alarms = Array.empty
+    sampledAt = 0.0
+    recordAt = 0.0
   |}
 
 let create () : Stores =
@@ -199,6 +213,7 @@ let create () : Stores =
         worker = noWorker ()
         sessions = Array.empty<SessionView>
         agents = Array.empty<AgentView>
+        presence = Array.empty<PresenceView>
         agentIncarnation = ""
         agentSequence = ""
         executionHost = ""
@@ -209,6 +224,7 @@ let create () : Stores =
         health = noHealth ()
         leases = Array.empty<LeaseView>
         queue = Array.empty<WaitView>
+        leaseRevision = 0.0
         activity = Array.empty<OutcomeView>
         runs = Array.empty<RunView>
       |}
@@ -355,6 +371,7 @@ let private workerView (w: WorkerState) : WorkerView =
 
 let private healthView (h: DaemonHealth) : HealthView =
   {|
+    revision = float h.Revision
     version = h.Version
     pid = h.ProcessId
     port = h.McpPort
@@ -371,6 +388,8 @@ let private healthView (h: DaemonHealth) : HealthView =
     alarms =
       h.Alarms
       |> Array.map (fun a -> {| id = a.Signal + "|" + a.State; signal = a.Signal; state = a.State; message = a.Message |})
+    sampledAt = float h.SampledAtMs
+    recordAt = float h.RecordAtMs
   |}
 
 let private leaseView (l: LeaseGrant) : LeaseView =
@@ -481,12 +500,17 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       // ticks, the page shows only the start time.
       stores.SetUptime(-1.0)
       reconcileSlice stores "agents" (box Array.empty<AgentView>)
+      reconcileSlice stores "presence" (box Array.empty<PresenceView>)
       setSlice stores "agentIncarnation" (box "")
       setSlice stores "agentSequence" (box "")
       setSlice stores "executionHost" (box "")
       setSlice stores "resources" (box (noResources ()))
       reconcileSlice stores "resourceMetrics" (box Array.empty<ResourceMetricView>)
       reconcileSlice stores "resourceProcesses" (box Array.empty<ResourceProcessView>)
+      // A restarted daemon stamps its facts from one again: forget the old stamps,
+      // and show health only once the new daemon has published it.
+      setSlice stores "healthSeen" (box false)
+      setSlice stores "leaseRevision" (box 0.0)
       setSlice stores "welcomed" (box true)
       setSlice stores "daemonVersion" (box w.DaemonVersion)
       setSlice stores "startedAt" (box (float w.StartedAtMs))
@@ -547,6 +571,9 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
              usage = r.Usage |> Option.map (fun u -> string u.Total + " tokens (cumulative)") |> Option.defaultValue "usage unavailable"
              cost = r.Usage |> Option.bind _.EstimateUsd |> Option.map (fun c -> "$" + string c + " Pi estimate") |> Option.defaultValue "price unavailable"
              activity = String.concat " · " r.Activity; omitted = string r.OmittedActivity |})))
+        reconcileSlice stores "presence" (box (board.Presence |> Array.map (fun p ->
+          {| id = p.Source + "|" + p.Member + "|" + p.Detail; name = p.Name; source = p.Source
+             project = p.Project; detail = p.Detail; since = float p.SinceMs |})))
     | Resources r ->
       if stores.Model.resources.sequence = "" || r.Sequence >= int64 stores.Model.resources.sequence then
         reconcileSlice stores "resources" (box {|
@@ -558,9 +585,15 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
           {| id = string p.ProcessId + ":" + p.StartTicks; pid = p.ProcessId; parent = p.ParentId; name = p.Name; context = p.Context
              cpuKnown = p.CpuPercent.IsSome; cpu = Option.defaultValue 0. p.CpuPercent; rss = p.ResidentBytes; threads = p.Threads |})))
     | Health health ->
-      setSlice stores "healthSeen" (box true)
-      reconcileSlice stores "health" (box (healthView health))
+      // A connect or snapshot answer can arrive after a pushed change; the
+      // revision stamped at the daemon's read keeps the newest.
+      if not stores.Model.healthSeen || float health.Revision >= stores.Model.health.revision then
+        setSlice stores "healthSeen" (box true)
+        reconcileSlice stores "health" (box (healthView health))
     | Leases board ->
-      reconcileSlice stores "leases" (box (board.Active |> Array.map leaseView))
-      reconcileSlice stores "queue" (box (board.Queued |> Array.map waitView))
+      // Stamped per publication; an older board arriving after a newer one is kept out.
+      if float board.Revision >= stores.Model.leaseRevision then
+        setSlice stores "leaseRevision" (box (float board.Revision))
+        reconcileSlice stores "leases" (box (board.Active |> Array.map leaseView))
+        reconcileSlice stores "queue" (box (board.Queued |> Array.map waitView))
     | Uptime tick -> stores.SetUptime(float tick.UptimeMs))
