@@ -29,7 +29,7 @@ Use the shared installed daemon, independently of any individual client's lifeti
 4. Inspect the installed daemon and worker identities and their readiness. A checkout change does not replace a loaded compiler distribution. Report exact version, type and protocol errors.
 5. Use `/composer` for the human view and `composer://sessions` for the MCP session directory. Subscribe to supported resources rather than adding status polling.
 
-Current connection checks belong in [operations.md](operations.md), not dated deployment checkpoints. The root `AGENTS.md` still names `Bozzetto_Live_Provider_Checkpoint_2026-09-30.md`; its active navigation duty must move to operations when the owner integrates this set. Until that guidance is updated, this staged document does not silently repeal it. Current identity and readiness must be observed against the installed provider; dated PIDs, package paths and test counts cannot establish today's state. Deployment, matching daemon/worker replacement and rollback belong in [operations.md](operations.md).
+Current connection checks belong in [operations.md](operations.md): installed identity, readiness and the matching daemon and worker pair.
 
 Development restarts are authorized by `AGENTS.md`, but check active leases and Composer work first. Never interrupt another caller's active work or replace unrelated compiler components. Keep the previous installed release available for rollback.
 

@@ -19,7 +19,7 @@ that reservation, and execute through `composer_run_current`.
 Embedded F# session hosting is retired. Creating, resuming or rebuilding an
 inherited F# session is refused; do not retry it or substitute an F# REPL.
 LLVM ORC JIT remains a planned backend. See the
-[host transition](../../docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md).
+[architecture](../../docs/architecture.md).
 
 ## Bozzetto’s own F# implementation
 
@@ -47,7 +47,7 @@ Bozzetto; do not ask for permission on each update. Build and validate under
 leases, check active work, preserve unrelated compiler/worker binaries, replace
 and probe readiness. A newer checkout does not establish that the installed
 daemon is current. For connection, worker and deployment binding, read the
-[live checkpoint](../../docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md).
+[operations](../../docs/operations.md).
 After replacement, browser tabs need a page reload to load a changed embedded
 bundle; a WebSocket reconnect alone only updates data in their existing bundle.
 

@@ -13,7 +13,7 @@
 /// MCP client (ModelContextProtocol.Client.McpClient — the real-wire
 /// pattern CohortMcpToolsIntegrationTests.fs already established for tools
 /// with no REST fallback, since list_tests/explain_test_failure/diagnose
-/// are MCP-only, per docs/LIVE_TESTING_GUIDE.md's own "there is no ...
+/// are MCP-only, as the retired live-testing guide itself stated: "there is no ...
 /// get_live_test_status ... MCP tool" statement) against a REAL daemon this
 /// file spawns on its own isolated port + BOZZETTO_DATA_DIR, with a REAL
 /// compiled test project, through a genuine on-disk Passed→Failed

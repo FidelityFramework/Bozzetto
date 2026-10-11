@@ -133,7 +133,7 @@ The wrapper renews the lease while the command runs. Read the `TRUST` line a sui
 | `bozzetto-web/` | The Partas.Solid browser application and the shared data types used by its bridge. |
 | `bozzetto-vscode/` | The VS Code extension. |
 | `Bozzetto.Tests/`, `Bozzetto.Composer.Tests/` | Expecto suites. |
-| `docs/` | The twelve documents of the [documentation index](docs/README.md). |
+| `docs/` | The twelve documents of the [documentation index](docs/README.md) and the FFI correction compendium. |
 | `scripts/` | The shared daemon launcher and the lease wrapper. |
 
 Start with the [documentation index](docs/README.md) for Bozzetto's scope, its use of PSG, Fidelity.FSharp.Incremental and Ranvier, and the status of implemented and planned features. Dated checkpoints and audit records are kept separately from the current documentation.

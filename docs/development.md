@@ -149,7 +149,7 @@ Tier scratch is keyed by checkout path under `${XDG_CACHE_HOME:-$HOME/.cache}/bo
 
 Keep the filled handoff to one page. Put rationale in the governing specification or code, and link bulky matrices and receipts. This format applies to all three centerpiece contracts, not just FFI.
 
-**Integration navigation requirement:** move the active evidence-recording duty from `Incremental_Provider_Checkpoint_2026-10-01.md` to this document's evidence binding and handoff sections, and the active handoff duty from `FFI_Increment_Handoff_Template.md` to the format below. The root `AGENTS.md` still names those records and must be updated by the owner when this set is integrated; staging these replacements does not silently repeal governing guidance. Preserve historical checkpoint identities and receipts outside active navigation. Current installed-provider checks belong in [operations](operations.md), not the dated live-provider checkpoint.
+This document holds the evidence binding and the handoff format; the dated checkpoints that once carried them are evidence outside the active documentation. The FFI correction, the one increment series still in progress, keeps its standing record in [ffi-correction-compendium.md](ffi-correction-compendium.md).
 
 ```text
 Increment / date / implementer:

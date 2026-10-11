@@ -6,7 +6,7 @@ Three components define the architecture together:
 
 - **Fidelity.PSG** carries compiler-published semantic facts and their identities. Compiler owners decide what those facts establish.
 - **Fidelity.FSharp.Incremental** owns declared dependency bookkeeping, demand, result eligibility and explicitly started work lifetimes. Eligibility is not compiler proof or permission to execute.
-- **Ranvier** supplies the signal/memo/effect reference shape for the reactive push plane: admitted immutable inputs, derived views and effects within one mutation domain. This is a design reference, not a claim that Bozzetto runs Ranvier or inherits all its semantics.
+- **Ranvier** supplies the signal/memo/effect reference shape for the reactive push plane: admitted immutable inputs, derived views and effects within one mutation domain. This is a design reference, not a claim that Bozzetto runs Ranvier or inherits all its semantics. The owner's direction is that this shape and Fidelity.FSharp.Incremental pervade every Fidelity tool, Clef Auto Complete and Lattice included, so that design-time re-evaluation reacts to graph changes as narrowly as the compiler's own differential compilation. Bozzetto's fact plane (`Bozzetto/UiBridge.fs`, module `Facts`) is the first implementation of that direction; for the other tools it is direction, not delivery.
 
 The governing rules are in `AGENTS.md`, particularly Architecture, Language and stack, Clef and Composer work, and Daemon lifecycle. The owner's wire ruling requires typed binary direct interchange. It supersedes broader allowances for external JSON in older hosting documents.
 

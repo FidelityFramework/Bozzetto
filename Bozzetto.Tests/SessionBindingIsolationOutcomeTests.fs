@@ -1,6 +1,6 @@
 module Bozzetto.Tests.SessionBindingIsolationOutcomeTests
 
-/// OUTCOME gate for `docs/multi-session.md:27-33` — "two sessions cannot see
+/// OUTCOME gate for the session-isolation rule the retired multi-session guide stated — "two sessions cannot see
 /// each other's bindings" (outcome-gate-sweep.md Gap K).
 ///
 /// WHAT WAS ALREADY COVERED, AND WHY IT IS NOT ENOUGH.
