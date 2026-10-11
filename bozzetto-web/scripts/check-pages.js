@@ -74,7 +74,7 @@ async function tab(origin, route, width) {
   await call('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
   await call('Page.navigate', { url: origin + route }, sessionId);
   const facts = route.startsWith('/dashboard')
-    ? "document.querySelector('.daemon-health')?.innerText.includes('Healthy') && document.body.innerText.includes('Mock implementer') && document.body.innerText.includes('Mock verifier')"
+    ? "document.querySelector('.daemon-health')?.innerText.includes('Healthy') && document.body.innerText.includes('Mock implementer') && document.body.innerText.includes('Earlier passes (2)')"
     : "document.body.innerText.includes('Composer sessions') || document.body.innerText.includes('COMPOSER SESSIONS')";
   await waitFor(sessionId, `[...document.querySelectorAll('span')].some(s => s.innerText === 'connected') && (${facts})`);
   return sessionId;
@@ -114,7 +114,37 @@ async function check() {
   assert.equal(d.title, 'Dashboard · Bozzetto');
   assert.equal(c.title, 'Composer · Bozzetto');
   for (const text of ['Whole-machine resources', 'Work leases', 'Observe for 2 minutes', 'Agent work', 'Healthy', 'memory Normal']) assert.ok(d.text.toLowerCase().includes(text.toLowerCase()), text);
-  for (const text of ['Mock implementer', 'Implementer · reported running', 'Mock verifier', 'Verifier · reported completed', 'Mock observer', 'Observer · reported disconnected', 'Updated ', '250 tokens (cumulative)', '0 tokens (cumulative)', 'usage unavailable', '$0.125 Pi estimate', 'price unavailable']) assert.ok(d.text.includes(text), `populated agent row: ${text}`);
+  const agentPanel = "[...document.querySelectorAll('h2')].find(h => h.textContent === 'Agent work').closest('.card-body')";
+  const historyDetails = `${agentPanel}.querySelector(':scope > details')`;
+  const historyNames = () => evaluate(dashboard, `[...${historyDetails}.querySelectorAll(':scope > details > summary')].map(s => s.textContent.split(' · ')[0])`);
+  const currentNames = () => evaluate(dashboard, `[...${agentPanel}.querySelectorAll(':scope > div.border-t > .font-semibold')].map(s => s.textContent.split(' · ')[0])`);
+  const trafficBeforeExpansion = {fetches: pageRequests.length, commands: pageFrames.length};
+  for (const text of ['Mock implementer', 'Implementer · reported running', 'Mock uncertain', 'Observer · reported unknown', 'Updated ', 'Earlier passes (2)']) assert.ok(d.text.includes(text), `current work: ${text}`);
+  for (const text of ['Mock verifier', 'Mock observer', '250 tokens (cumulative)', '$0.125 Pi estimate']) assert.ok(!d.text.includes(text), `details start hidden: ${text}`);
+  assert.deepEqual(await currentNames(), ['Mock uncertain', 'Mock implementer'], 'current and uncertain work stay visible, newest first');
+  assert.deepEqual(await historyNames(), ['Mock observer', 'Mock verifier'], 'earlier passes are newest first, not input/id order');
+  assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'earlier passes start collapsed');
+  assert.equal(await evaluate(dashboard, `${agentPanel}.querySelectorAll('details[open]').length`), 0, 'per-pass details start collapsed too');
+  assert.equal(await evaluate(dashboard, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); return cards.indexOf('Agent work') < cards.indexOf('Work leases') && cards.indexOf('Work leases') < cards.indexOf('Whole-machine resources'); })()`), true, 'work and leases precede resources');
+  assert.equal(await evaluate(dashboard, "[...document.querySelectorAll('h2')].find(h => h.textContent === 'Work leases').getBoundingClientRect().bottom < innerHeight"), true, 'leases are visible without scrolling past history');
+  // Native disclosures retain every supplied detail without dumping them into
+  // the default view. Opening them must not fetch or issue bridge commands.
+  await evaluate(dashboard, `${historyDetails}.querySelector(':scope > summary').click()`);
+  let expanded = (await inspect(dashboard)).text;
+  assert.ok(expanded.includes('Mock verifier') && expanded.includes('Mock observer'), 'opening earlier passes reveals compact summaries');
+  assert.ok(!expanded.includes('0 tokens (cumulative)'), 'per-pass accounting remains collapsed');
+  await evaluate(dashboard, `${agentPanel}.querySelectorAll('details').forEach(d => { d.open = true; })`);
+  expanded = (await inspect(dashboard)).text;
+  for (const text of ['Mock verifier', 'Verifier · reported completed', 'Mock observer', 'Observer · reported disconnected', '250 tokens (cumulative)', '0 tokens (cumulative)', 'usage unavailable', '$0.125 Pi estimate', 'price unavailable']) assert.ok(expanded.includes(text), `retained expanded detail: ${text}`);
+  await evaluate(dashboard, `${agentPanel}.querySelectorAll('details').forEach(d => { d.open = false; })`);
+  assert.deepEqual({fetches: pageRequests.length, commands: pageFrames.length}, trafficBeforeExpansion, 'accordion expansion requires no frontend fetch or command');
+  // The same ordering assertion must fail when rendered pass order is reversed.
+  const assertHistoryOrder = () => historyNames().then(names => assert.deepEqual(names, ['Mock observer', 'Mock verifier'], 'earlier passes must be newest first'));
+  await evaluate(dashboard, `(() => { const d = ${historyDetails}; d.append(...[...d.querySelectorAll(':scope > details')].reverse()); })()`);
+  await assert.rejects(assertHistoryOrder, {code:'ERR_ASSERTION'}, 'latest-first assertion catches reversed history');
+  await evaluate(dashboard, `(() => { const d = ${historyDetails}; d.append(...[...d.querySelectorAll(':scope > details')].reverse()); })()`);
+  await assertHistoryOrder();
+  await writeFile(join(evidence, 'agent-accordion.json'), JSON.stringify({current:await currentNames(), earlier:await historyNames(), initiallyCollapsed:true, fullDetailsRetained:true, noExpansionTraffic:true, reverseOrderMutationCaught:true}, null, 2));
   for (const text of ['Open project', 'Compiler worker', 'Run output', 'Composer sessions']) assert.ok(!d.text.toLowerCase().includes(text.toLowerCase()), `dashboard excludes ${text}`);
   for (const text of ['Composer sessions', 'Compiler worker', 'Run output', 'Open project', 'No open projects.']) assert.ok(c.text.toLowerCase().includes(text.toLowerCase()), text);
   for (const text of ['Whole-machine resources', 'Observe for 2 minutes', 'Work leases', 'Agent work']) assert.ok(!c.text.toLowerCase().includes(text.toLowerCase()), `composer excludes ${text}`);
@@ -169,21 +199,38 @@ async function check() {
   // This is a bridge regression, not a claim of live MCP/compiler execution.
   const agent = new WebSocket(origin.replace(/^http/, 'ws') + '/ui/bridge', {origin});
   try {
-    await new Promise((resolve, reject) => {
-      let accepted = 0;
-      agent.once('error', reject);
-      agent.on('message', data => {
+    await new Promise((resolve, reject) => { agent.once('open', resolve); agent.once('error', reject); });
+    const openProject = (name, correlation) => new Promise((resolve, reject) => {
+      const receive = data => {
         const frame = JSON.parse(data);
-        if (frame.event === 'refused' && frame.correlation >= 101) reject(new Error(frame.message));
-        if (frame.event === 'accepted' && frame.correlation >= 101 && ++accepted === 2) resolve();
-      });
-      agent.once('open', () => {
-        for (const [index, name] of ['SideBySide', 'SecondAgentProject'].entries()) {
-          agent.send(JSON.stringify({correlation:101 + index, command:'open_project', project:`/mock/${name}.fidproj`}));
+        if (frame.correlation !== correlation) return;
+        if (frame.event === 'accepted' || frame.event === 'refused') {
+          agent.off('message', receive);
+          frame.event === 'accepted' ? resolve() : reject(new Error(frame.message));
         }
-      });
+      };
+      agent.on('message', receive);
+      agent.send(JSON.stringify({correlation, command:'open_project', project:`/mock/${name}.fidproj`}));
     });
+    await openProject('SideBySide', 101);
+    await waitFor(dashboard, "document.body.innerText.includes('mock read progressed')");
+    assert.deepEqual(await currentNames(), ['Mock implementer', 'Mock uncertain'], 'a pushed update moves current work to the top');
+    assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'progress does not expand history');
+    // Preserve a chosen per-pass expansion even when new completed work enters
+    // ahead of it. The outer history disclosure stays closed throughout.
+    await evaluate(dashboard, `${historyDetails}.querySelector(':scope > details').open = true`);
+    await openProject('SecondAgentProject', 102);
     await waitFor(composer, "document.body.innerText.includes('SideBySide.fidproj') && document.body.innerText.includes('SecondAgentProject.fidproj')");
+    await waitFor(dashboard, "document.body.innerText.includes('Earlier passes (3)')");
+    assert.deepEqual(await currentNames(), ['Mock uncertain'], 'completion removes the pass from current work');
+    assert.deepEqual(await historyNames(), ['Mock implementer', 'Mock observer', 'Mock verifier'], 'completed work enters history newest first');
+    assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'completion does not expand history');
+    assert.equal(await evaluate(dashboard, `${historyDetails}.querySelectorAll(':scope > details')[1].open`), true, 'existing per-pass disclosure state survives reorder');
+    assert.ok(!(await inspect(dashboard)).text.includes('Mock implementer'), 'completed work no longer fills the current view');
+    await evaluate(dashboard, `${historyDetails}.querySelector(':scope > summary').click(); ${historyDetails}.querySelector(':scope > details > summary').click()`);
+    assert.ok((await inspect(dashboard)).text.includes('mock read completed'), 'expansion immediately exposes the pushed final result');
+    await evaluate(dashboard, `${historyDetails}.querySelectorAll('details').forEach(d => { d.open = false; }); ${historyDetails}.open = false`);
+    await writeFile(join(evidence, 'agent-push.json'), JSON.stringify({progressReordered:true, completedMovedToHistory:true, historyStayedClosed:true, nestedStateRetained:true, finalDetailAvailable:true}, null, 2));
   } finally { agent.terminate(); }
   assert.equal(await evaluate(composer, "document.querySelector('input[placeholder=\"/absolute/path/Project.fidproj\"]').closest('details').open"), false, 'no manual opening was needed');
   assert.ok(!(await inspect(dashboard)).text.includes('SideBySide.fidproj'));
@@ -205,7 +252,7 @@ async function check() {
     assert.equal((await inspect(session)).overflow, false, `${name} fits a narrow viewport`);
   }
   assert.deepEqual(browserErrors, [], 'no browser runtime errors');
-  console.log(`Page checks passed: isolated views, live collapsed store, native information controls, navigation, shared-owner command, reload, 900/480 px layouts. Evidence: ${evidence}`);
+  console.log(`Page checks passed: latest-first agent accordions, pushed progress/completion, retained disclosure state, isolated views, live collapsed store, native information controls, navigation, shared-owner command, reload, 900/480 px layouts. Evidence: ${evidence}`);
 }
 let timeout;
 try {

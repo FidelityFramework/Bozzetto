@@ -103,21 +103,34 @@ let private health () = Health(healthValue ())
 /// Explicitly synthetic reports cover populated rows, unknown usage and known
 /// zero. They are never model-worker, compiler or installed-delivery evidence.
 let private agentWork () =
-  let run id memberId name role usage status : AgentRun = {
+  // Existing project-open controls advance a synthetic pass: progress, then
+  // completion. No timer, extra command or live-daemon activity is invented.
+  let stage = min 2 sessions.Count
+  let run id memberId name role usage status offset : AgentRun = {
     Id = id; Member = memberId; Role = role; Name = name; Session = "mock-session"
     ReportSequence = 1L; Model = "mock-model"; Endpoint = "mock inference"
     Project = "/mock/Visibility.fidproj"; Focus = "mock visibility check"; Operation = "read"
-    Status = status; UpdatedAtMs = int64 startedAt; Activity = [| "read" |]
+    Status = status; UpdatedAtMs = int64 startedAt + offset; Activity = [| "read" |]
     OmittedActivity = 0L; Usage = usage
   }
+  let implementation =
+    run "mock-implementation" "mock:impl" "Mock implementer" "Implementer"
+      (Some { Input = 100L; Output = 50L; CacheRead = 100L; CacheWrite = 0L; Total = 250L; EstimateUsd = Some 0.125 }) "running" -3000L
+  let implementation =
+    if stage = 0 then implementation
+    else
+      let operation = if stage = 1 then "mock read progressed" else "mock read completed"
+      { implementation with Status = (if stage = 1 then "running" else "completed")
+                            ReportSequence = int64 stage + 1L; UpdatedAtMs = int64 startedAt + int64 stage
+                            Operation = operation; Activity = [| operation; "read" |] }
   AgentWork {
-    Incarnation = "mock-incarnation"; Sequence = 3L; ExecutionHost = "mock-host"; Capacity = 256
+    Incarnation = "mock-incarnation"; Sequence = 4L + int64 stage; ExecutionHost = "mock-host"; Capacity = 256
     Runs = [|
-      run "mock-implementation" "mock:impl" "Mock implementer" "Implementer"
-        (Some { Input = 100L; Output = 50L; CacheRead = 100L; CacheWrite = 0L; Total = 250L; EstimateUsd = Some 0.125 }) "running"
-      run "mock-audit" "mock:verifier" "Mock verifier" "Verifier" None "completed"
+      implementation
+      run "mock-audit" "mock:verifier" "Mock verifier" "Verifier" None "completed" -2000L
       run "mock-zero" "mock:observer" "Mock observer" "Observer"
-        (Some { Input = 0L; Output = 0L; CacheRead = 0L; CacheWrite = 0L; Total = 0L; EstimateUsd = None }) "disconnected"
+        (Some { Input = 0L; Output = 0L; CacheRead = 0L; CacheWrite = 0L; Total = 0L; EstimateUsd = None }) "disconnected" -1000L
+      run "mock-uncertain" "mock:uncertain" "Mock uncertain" "Observer" None "unknown" -1000L
     |]
   }
 
@@ -277,6 +290,7 @@ let private handle (send: string -> unit) (frame: CommandFrame) =
       }
       sessions.Add { Status = status; Reservation = None }
       changed ()
+      broadcast (agentWork ())
       accept send correlation target SessionOpened
   | Reserve edit ->
     withSession send correlation edit.Target (fun session ->

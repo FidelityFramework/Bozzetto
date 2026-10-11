@@ -39,7 +39,7 @@ this project real time or code.
 
 ## Daemon lifecycle
 
-The daemon is long-running and is not supposed to exit.
+The daemon is long-running; intentional development restarts are normal.
 
 - **Start:** `scripts/start-shared-daemon`. It launches the reviewed installed
   `boz` from the dedicated workspace (`$XDG_DATA_HOME/bozzetto/workspace`,
@@ -54,11 +54,14 @@ The daemon is long-running and is not supposed to exit.
 - **Never block on the daemon's lifetime.** Do not run it in the foreground,
   `wait` on it, or retry a probe in a loop. After starting it, the next action
   is the bounded probe, not a status message.
-- **Preserve a running daemon.** Stopping, restarting or switching the shared
-  daemon is an operational step the owner triggers. A worktree's code can be
-  newer than the installed daemon. If the daemon refuses with a version or
-  "type not found" error, report the exact error. Do not restart it or work
-  around it.
+- **Restart during Bozzetto development as needed.** The owner has explicitly
+  authorized development restarts; do not ask for permission on every update.
+  Build and validate the changed owner, check active leases and Composer work,
+  then replace the daemon and verify identity/readiness. Do not interrupt
+  another caller's active work or deploy unrelated compiler/worker changes.
+  Keep the previous installed release available for rollback. A checkout can
+  be newer than the installed daemon; report exact version/type errors and fix
+  that mismatch rather than preserving an obsolete daemon or hiding a refusal.
 - **Second daemons** are only for testing daemon code the running one cannot
   execute. Give one an explicit owner and time limit.
 - **The dashboard's CPU figure covers the daemon and its worker only.** It does

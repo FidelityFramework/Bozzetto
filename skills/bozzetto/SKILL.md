@@ -37,10 +37,14 @@ proceed only when granted, and release the exact `leaseId` with the same
 connection after the work finishes, including after failure. On a deferred or
 refused lease, follow the memory-pressure procedure in the agent guidelines.
 
-Preserve the running shared daemon. A newer checkout does not establish that
-the installed daemon is current. For connection, worker and deployment binding,
-read the [live checkpoint](../../docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md).
-Starting or replacing the shared daemon is an owner-triggered operational step.
+Development daemon restarts are authorized as needed while working on
+Bozzetto; do not ask for permission on each update. Build and validate under
+leases, check active work, preserve unrelated compiler/worker binaries, replace
+and probe readiness. A newer checkout does not establish that the installed
+daemon is current. For connection, worker and deployment binding, read the
+[live checkpoint](../../docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md).
+After replacement, browser tabs need a page reload to load a changed embedded
+bundle; a WebSocket reconnect alone only updates data in their existing bundle.
 
 When delegating F# work, include the governing source, retrieval sequence,
 direct-read exception where applicable, growth rule, matching lease procedure

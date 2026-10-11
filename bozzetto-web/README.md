@@ -117,8 +117,13 @@ focus restoration; it uses the same theme and no additional dependency.
 Closed dialogs explicitly use `display: none`: the modal component's grid must
 not expose hidden text or Close buttons to the accessibility tree. Agent rows
 show **reported** status and the last update instant, not observed process
-liveness. Dashboard health/pressure/alarms remain visible outside the detailed
-connection-time snapshot.
+liveness. Current/uncertain work appears first, newest update first, followed
+immediately by leases. Current rows keep their accounting and activity behind
+**Details**. **Earlier passes** starts collapsed; each retained pass has its own
+expandable details, also newest first. Owner pushes update and reorder these rows
+without opening disclosures or fetching on expansion. Resource observation stays
+below work and leases. Dashboard health/pressure/alarms remain visible outside the
+detailed connection-time snapshot.
 
 Diagnostics keep their exact source text, newlines and tab indentation in
 readable trace panels. Headings describe the existing status field; bodies

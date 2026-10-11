@@ -509,6 +509,29 @@ let WorkerPanel (model: ModelView) (local: LocalView) (connected: unit -> bool) 
     }
   }
 
+let private currentAgent (agent: AgentView) =
+  agent.status = "running" || agent.status = "unknown"
+
+[<SolidComponent>]
+let private AgentDetails (agent: AgentView) =
+  div (class' = "flex flex-col gap-1 py-2 text-xs break-words") {
+    div (class' = "flex items-center gap-2") {
+      span () { agent.model }
+      Information "Invocation" (fun () -> [|
+        "Member: " + agent.memberId
+        "Session: " + agent.session + " · run: " + agent.id
+        "Report sequence: " + agent.reportSequence + " · updated " + dateTime agent.updatedAt
+        "Reported inference endpoint: " + agent.endpoint
+      |])
+    }
+    div () { agent.project + " · " + agent.focus }
+    div () { agent.operation }
+    div () { agent.usage + " · " + agent.cost }
+    div (class' = "opacity-60") {
+      agent.activity + (if agent.omitted = "0" then "" else " · " + agent.omitted + " earlier omitted")
+    }
+  }
+
 [<SolidComponent>]
 let AgentsPanel (model: ModelView) =
   div (class' = "card card-compact panel") {
@@ -516,34 +539,43 @@ let AgentsPanel (model: ModelView) =
       div (class' = "flex items-center gap-2") {
         h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80 flex-1") { "Agent work" }
         Information "Agent accounting" (fun () -> [|
-          "Each participant reports its model, endpoint, project, focus and invocation progress. Token counters and cost estimates summarize reported usage."
+          "Current reporting activity stays visible. Earlier passes are expandable, newest first. Missing reports do not establish that no work is happening."
+          "Identity, progress and usage are participant-reported; unknown usage and cost are not zero."
           "Execution host: " + model.executionHost + " · publication " + model.agentSequence
-          "This board retains up to 64 reporting participants and 256 runs during the current daemon lifetime. Earlier activity is summarized with omission counts; capacity decisions are returned to the reporter."
+          "This board retains up to 64 reporting participants and 256 runs during the current daemon lifetime."
         |])
       }
-      Show (when' = (model.agents.Length > 0), fallback = (p (class' = "text-xs opacity-50") { "No agent activity." })) {
-        For (each = model.agents) {
+      Show (
+        when' = (model.agents |> Array.exists currentAgent),
+        fallback = (p (class' = "text-xs opacity-50") { "No active reporting agents." })
+      ) {
+        For (each = (model.agents |> Array.filter currentAgent |> Array.sortByDescending (fun agent -> agent.updatedAt, agent.id))) {
           yield fun agent _ ->
             div (class' = "border-t border-base-content/10 pt-2 text-xs break-words") {
-              div (class' = "font-semibold") {
-                agent.name + " · " + agent.role + " · reported " + agent.status
-              }
+              div (class' = "font-semibold") { agent.name + " · " + agent.role + " · reported " + agent.status }
               div (class' = "opacity-60") { "Updated " + clockTime agent.updatedAt }
-              div (class' = "flex items-center gap-2") {
-                span () { agent.model }
-                Information "Invocation" (fun () -> [|
-                  "Member: " + agent.memberId
-                  "Session: " + agent.session + " · run: " + agent.id
-                  "Report sequence: " + agent.reportSequence + " · updated " + dateTime agent.updatedAt
-                  "Reported inference endpoint: " + agent.endpoint
-                |])
-              }
-              div () { agent.project + " · " + agent.focus + " · " + agent.operation }
-              div () { agent.usage + " · " + agent.cost }
-              div (class' = "opacity-60") {
-                agent.activity + (if agent.omitted = "0" then "" else " · " + agent.omitted + " earlier omitted")
+              div () { agent.project + " · " + agent.operation }
+              details () {
+                summary (class' = "cursor-pointer opacity-60") { "Details" }
+                AgentDetails agent
               }
             }
+        }
+      }
+      Show (when' = (model.agents |> Array.exists (currentAgent >> not))) {
+        details (class' = "border-t border-base-content/10 pt-2") {
+          summary (class' = "cursor-pointer text-xs opacity-60") {
+            "Earlier passes (" + string (model.agents |> Array.filter (currentAgent >> not) |> Array.length) + ")"
+          }
+          For (each = (model.agents |> Array.filter (currentAgent >> not) |> Array.sortByDescending (fun agent -> agent.updatedAt, agent.id))) {
+            yield fun agent _ ->
+              details (class' = "border-t border-base-content/10 mt-2 pt-2 text-xs break-words") {
+                summary (class' = "cursor-pointer font-semibold") {
+                  agent.name + " · " + agent.role + " · reported " + agent.status + " · " + clockTime agent.updatedAt
+                }
+                AgentDetails agent
+              }
+          }
         }
       }
     }
@@ -737,9 +769,9 @@ let App () =
         when' = composerPage,
         fallback = (div (class' = "flex flex-col gap-4 p-4") {
           HealthStrip model stores.Uptime
-          HostPanel model local stores.Uptime connected dispatch
           AgentsPanel model
           LeasesPanel model
+          HostPanel model local stores.Uptime connected dispatch
           details () {
             summary (class' = "cursor-pointer text-xs opacity-60") { "Daemon snapshot" }
             ResourcesPanel model
