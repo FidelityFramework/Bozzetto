@@ -1,289 +1,215 @@
-# MCP Tools Reference
+# MCP tools and resources
 
-Bozzetto's MCP server exposes Clef/Composer project sessions on port **47749**.
-The `composer_*` tools and [Composer browser page](http://127.0.0.1:47749/composer)
-share one daemon-owned supervisor, session authority and compiler worker.
-Open an explicit `.fidproj`, reserve before editing, build the reservation and
-run through `composer_run_current`.
+Bozzetto's MCP adapter exposes the daemon's Composer, coordination and work-admission owners. The daemon listens on port **47749** for MCP, HTTP and browser access; **47750** is the control listener, not the MCP endpoint. Composer is a differential compiler. Open an explicit `.fidproj`, reserve before editing, and execute only through `composer_run_current`.
 
-No separate F# REPL service is part of the Bozzetto workflow. F# changes to
-Bozzetto's own code are validated with `dotnet build` and the unfiltered test
-suite under the [work leases](#daemon-status-and-external-work-leases).
-Bozzetto's [retained F# compatibility tools](#retained-f-compatibility-tools)
-are documented below; Composer does not require an FSI session.
+This is the supported-remit reference, not a reproduction of every inherited tool advertised by `tools/list`. Embedded production F# session hosting is retired. Remaining registrations and descriptions for that surface are drift to remove, not instructions for a working REPL, warmup or runtime-patching service.
 
-The [October 1 host transition](Bozzetto_Clefx_Host_Transition_2026-10-01.md)
-retires embedded production FSI hosting in this checkout. The inherited catalog
-below is a compatibility reference: creation, resume and rebuild requests now
-refuse at the retired provider boundary. Installed releases retain their own
-deployment identity; a source change alone does not replace them.
+**Evidence:** this reference is based on checkout source reads, not an executed daemon probe or acceptance run. Registration is in `Bozzetto/McpServer.fs`, `configureMcpProtocolWithComposer`; attributed methods are in `Bozzetto/McpTools.fs`, `Bozzetto/ComposerTools.fs` and `Bozzetto/McpResources.fs`. An installed release can differ from the checkout. Retrieval was unavailable to this audit's read/write-only tool surface; no fresh index snapshot or pinned source revision was established.
 
-`tools/list` advertises the registered catalog. Calls validate availability and
-authority at execution time, so a listed tool can still refuse an operation.
-Use `get_daemon_status` for daemon health and `composer_list_sessions` for Composer
-state. The daemon's HTTP endpoints (`/api/...`) are separate from MCP tools.
+## Transport and ownership boundary
 
-## Connect
+Connect an MCP client using Streamable HTTP at `http://127.0.0.1:47749/`. Complete the client's MCP initialization, then inspect `tools/list` and `resources/list`. A configured URL is not evidence of a live connection, configured compiler worker or available operation. Use `get_daemon_status` and `composer_list_sessions` to inspect those facts. Connection and deployment procedures belong in [operations.md](operations.md).
 
-For shared work, use the reviewed installed `boz` and attach to the independently
-running daemon over **Streamable HTTP**:
+**MCP's external JSON-RPC standard is the one external exception to the no-JSON direct-interchange rule.** MCP arguments, structured results and resource content below are representations at that adapter only. They do not define the daemon-worker, daemon-browser or agent-owned direct protocol. Do not copy these representations into a second internal wire contract.
 
-```json
-{ "mcpServers": { "bozzetto": { "url": "http://127.0.0.1:47749/" } } }
-```
+| Boundary | Contract and observed status |
+| --- | --- |
+| External MCP | JSON-RPC through the MCP SDK. `ComposerTools.fs` constructs typed provider requests and projects replies into MCP content. `McpServer.fs` registers the HTTP transport. |
+| Daemon and Composer worker | `AGENTS.md` requires the matching typed binary contract in `Bozzetto.Composer.Protocol`. The tools use its request types; this source audit does not independently establish transport conformance or the installed pair's compatibility. |
+| Direct HTTP, browser and agent-owned interchange | Typed binary is required. `McpServer.fs` still reads and writes JSON for direct lease HTTP operations. `ComposerClientJson.fs` also contains a direct client request parser, and `UiBridgeCodec.fs` explicitly implements an interim JSON browser wire. These are current implementation drift to remove, not additional exceptions. |
+| Diagnostic export | Fidelity.Data JSON export belongs at the independent, MailboxProcessor-driven sink process. The local MCP friction tools are not evidence that this process boundary has been delivered. See [Bozzetto_Diagnostic_Sink.md](Bozzetto_Diagnostic_Sink.md). |
 
-Follow the [live provider checkpoint](Bozzetto_Live_Provider_Checkpoint_2026-09-30.md)
-for the installed compiler/runtime identities and connection setup. If the daemon
-is absent, `scripts/start-shared-daemon` starts it from its dedicated external
-workspace and preserves existing listeners. The daemon is long-running; inspect
-its identity, health and Composer configuration with bounded requests:
+Changing the serializer does not satisfy the typed-binary requirement. Existing use of Fidelity.Data at a direct JSON wire remains drift.
 
-```sh
-boz status
-curl --fail --max-time 3 http://127.0.0.1:47749/health
-curl --fail --max-time 3 http://127.0.0.1:47749/api/composer/sessions
-```
+The three centerpiece contracts constrain every adapter:
 
-The Composer page is on **47749**; **47750** carries only the minimal control
-listener (`/api/daemon-info`, `/api/shutdown`) behind `boz status` and `boz stop`. SSE compatibility
-is available at `http://127.0.0.1:47749/sse`. For individual client workflows,
-`boz mcp` remains a stdio bridge:
+- **Fidelity.PSG** supplies compiler-owned evidence. A displayed witness, object manifest or accepted-artifact summary is not host-created proof or execution permission.
+- **Fidelity.FSharp.Incremental** owns declared dependency bookkeeping and explicitly started work. An Offer is eligibility, not permission to reuse proof, publish PSG or execute an artifact. Complete declared reads, shared demand and physical drain remain distinct obligations.
+- **Ranvier** supplies the signal/memo/effect reference shape for reactive presentation under one mutation domain. It is not a delivery claim for these MCP handlers. Equal display values cannot erase compiler proof identity, and effect cleanup cannot certify physical drain. The foundation does not dynamically discover reads.
 
-```json
-{ "mcpServers": { "bozzetto": { "command": "boz", "args": [ "mcp" ] } } }
-```
+See [Bozzetto_Fidelity_Component_Contracts.md](Bozzetto_Fidelity_Component_Contracts.md), [Bozzetto_Incremental_Foundation_Adoption.md](Bozzetto_Incremental_Foundation_Adoption.md) and [reactive-push.md](reactive-push.md).
 
-If tools are missing, confirm that the daemon responds, that the client targets
-port 47749 and that the client has a live MCP connection. Reconnect the client
-after correcting its configuration. A configured URL alone does not establish
-that tools are connected or the compiler worker is configured.
+## Identity, discovery and refusals
 
-## Clef/Composer workflow
+Caller identity is bound to the MCP transport session. `agentName` is a label, not an authority credential. Two connections supplying the same label are different members and lease holders. Reconnecting does not transfer the previous connection's claims or leases. `Bozzetto/Mcp.fs`, `memberIdFor` and `resolvedKey`, implement that binding; `McpServer.fs`, `createServerCaptureFilter`, supplies it before a tool body runs.
 
-1. Call `composer_open_project` with an absolute `.fidproj` path. Retain the
-   returned `host`, `session` and `epoch` for subsequent calls.
-2. Call `composer_reserve_edit` and await a successful response before changing
-   source or dependency files. Retain its opaque, single-use `reservation`.
-3. Make the edit, then call `composer_build` with that reservation.
-4. Call `composer_run_current` after an accepted build, supplying `arguments` as
-   an array of individual strings (`[]` for none). Composer revalidates inputs
-   and executable bytes; never launch an artifact path directly.
-5. Close the session when finished and inspect pending cleanup or errors.
+Composer uses explicit `host`, `session` and `epoch` handles. These are not inherited F# session IDs and do not depend on a connection's active-session selection. Checkout-aware routing for retained session operations is a separate concern. In particular, a worktree without its own session must not fall back to the main checkout, and creating an inherited F# session is not a remedy for a Composer failure. See `AGENTS.md`, **Multi-agent and worktree sessions**, and [agents.md](agents.md).
 
-Every session operation below takes `host`, `session` and `epoch`, except
-`composer_open_project`, `composer_list_sessions` and `composer_retire_worker`.
-These handles belong to the returned worker epoch; do not substitute F# session
-ids or reuse them after worker replacement.
+Registration does not guarantee admission:
 
-| Tool | Additional arguments and behavior |
-|:---|:---|
-| `composer_open_project` | `project`: absolute `.fidproj` path. Returns shared session and worker authority. |
-| `composer_list_sessions` | No arguments. Lists shared Composer sessions, worker identity and cleanup failures. |
-| `composer_reserve_edit` | `label`: edit description. Withdraws old run authority and returns a reservation; only a successful response authorizes the source write. |
-| `composer_build` | `reservation`: opaque token from the successful reservation. Builds that revision and preserves compiler diagnostics and proof refusals. |
-| `composer_session_status` | No additional arguments. Reports accepted metadata, pending revocation, `formatterError`, `formatterCleanupPending`, `workerRetirementRequired`, and session cleanup errors. See the formatter lifecycle contract below. Reading status grants no execution authority. |
-| `composer_format_preview` | `generation`, `document` (opaque buffer label), `incarnation` (GUID), `revision` (uint64), `source` (immutable text), `configuration` (`clef-two-space-lf-v1`). Returns formatted text, exact base `sourceSha256` and captured formatter deployment identity. Performs no file reads or writes and preserves accepted artifact authority. |
-| `composer_run_current` | `arguments`: string array. Runs the current accepted artifact through Composer's revalidation gates. |
-| `composer_cancel` | No additional arguments. Withdraws authority and cancels outstanding work; physical withdrawal can remain pending or fail. |
-| `composer_close_session` | No additional arguments. Closes the session and begins cleanup; inspect `cleanupPending` and `cleanupError`, then use status to observe formatter cleanup and any worker-retirement requirement. |
-| `composer_retire_worker` | `host`, `epoch`. Retires every session and stops the worker before compiler replacement. Coordinate with other owners; cleanup errors remain explicit refusals, and replacement requires observed process exit and a new epoch. |
+- The call filter checks declared affordances before execution. Unknown declarations fail closed. Composer tools pass the generic session-state gate but still enforce provider authority through the supervisor.
+- Cohort actions additionally check the caller's current published role, followed by the cohort owner's command validation. A client-declared role or holder name cannot bypass that owner.
+- Provider absence, stale authority, resource pressure, capacity and cleanup failure remain refusals. Do not route around them with another process or direct artifact launch.
 
-The `composer://sessions` MCP resource exposes the same session directory as
-`composer_list_sessions` and the browser. Subscribe for updates after shared
-changes. Cached accepted metadata always requires execution revalidation.
+Sources: `Bozzetto/Mcp.fs`, `enforceToolCallGate`; `Bozzetto.Core/Affordances.fs`; `Bozzetto/ComposerTools.fs`.
 
-Formatting preview uses the existing Composer worker and Calque's explicitly
-started per-document incremental host. Pending previews refuse completion after
-a newer reservation, revision, incarnation or worker epoch. To apply a completed
-preview, obtain a new successful `composer_reserve_edit`, compare the current
-source with the preview's exact immutable base (and its SHA256), then save the
-formatted text and build with that reservation. The completed preview grants no
-write authority. The formatter identity records deployment file paths and SHA256
-captured when its owner was created; mutable development files do not prove the
-loaded assembly bytes.
+Read both MCP error state and the operation's domain result. They are not interchangeable:
 
-Formatter status separates diagnostics from compiler errors:
+| Response family | How to interpret it |
+| --- | --- |
+| Composer tool | `structuredContent` and a text block contain the same projection. `success=false` sets MCP `isError=true`; inspect `error.code` and `error.message`. |
+| Classified host/cohort failure | `withEchoOutcome` raises the typed `BozzettoError`; the filter returns `isError=true` with `case`, `message` and `suggestedAction`. |
+| Gate rejection or unexpected exception | The filter returns `isError=true`, but may provide only a text block. Do not assume every error has structured content. |
+| Lease acquisition | `granted`, `wait` and `refused` are domain decisions in a returned payload. A completed MCP call does not imply a grant. |
+| Local diagnostic tools | Some failures remain ordinary text results. Inspect the text; success at the RPC layer does not prove persistence or clearing succeeded. |
 
-| Field | Meaning |
-|:---|:---|
-| `formatterError` | Nullable formatter diagnostic text, bounded to 16 KiB of UTF-8 including separators and `[formatter evidence truncated]` when older evidence is dropped or an oversized entry is clipped. Retains the newest evidence across reserve, cancel and close; it is separate from `backendError`. |
-| `formatterCleanupPending` | Physical formatter cleanup remains owned and has not finished. Authority may already have been withdrawn. |
-| `workerRetirementRequired` | Nullable reason for retiring the whole compiler worker. A formatter cleanup reaching 30 seconds sets this reason permanently for that worker epoch, even if cleanup later finishes. |
+Sources: `Bozzetto/ComposerTools.fs`, `toolResult`; `Bozzetto/McpTools.fs`, `withEchoOutcome` and diagnostic methods; `Bozzetto/McpServer.fs`, `structuredToolErrorResult` and the call filter.
 
-The daemon monitors status every 100 ms while formatter cleanup is pending,
-including cleanup started by an outstanding request. No further client request
-is needed to observe the deadline. When retirement is required, the supervisor
-withdraws authority from every session in that worker and stops the worker.
-Replacement requires observed process exit and a fresh worker epoch; the
-deadline itself never counts as completed cleanup. After replacement, open a
-fresh session and obtain new handles and reservations. If retirement fails,
-the worker remains unavailable and clients must inspect the reported error
-instead of assuming that retrying an old operation can restore authority.
+## Composer tool arguments
 
-Each session retains at most 32 live or closing formatter handles and remembers
-at most 8192 admitted document incarnations. Use a stable `document` label for a
-buffer and a fresh `incarnation` when reopening it. A new incarnation of the same
-label retires its previous incarnation, whose cleanup remains owned until it
-finishes. Retired identities stay rejected as `superseded`.
+All tools below are registered in `Bozzetto/ComposerTools.fs`. Arguments are required unless stated otherwise. SDK-supplied cancellation tokens are not client arguments. Strings carrying handles and reservations are opaque; do not manufacture them.
 
-- With spare handle capacity, the replacement and unrelated previews can start
-  while the previous incarnation closes.
-- At 32 handles, replacing an existing label initiates its old incarnation's
-  cleanup and returns `busy`. Any other new document also receives `busy` while
-  capacity is full and a close is pending. Existing live handles can still
-  serve previews. Retry a refused preview after cleanup releases capacity,
-  using the current generation and buffer snapshot; the refused request does
-  not schedule a later preview automatically.
-- A 33rd distinct label with no cleanup pending returns `session_capacity`.
-  No idle document is evicted to make room, so retrying alone cannot free a slot;
-  open a fresh session. The 8192-incarnation limit also returns
-  `session_capacity` and requires a fresh session.
+For the session operations marked **address**, supply `host: string`, `session: string` and `epoch: string` exactly as returned in the response's `authority`. `composer_retire_worker` takes only the worker handles.
 
-`busy` can also report temporary demand or provider-control queue pressure.
-It is distinct from `session_capacity`, which requires a new session. There is
-currently no per-buffer close tool: closing an editor view alone does not retire
-state shared by other consumers.
+| Tool | Arguments | Result or obligation |
+| --- | --- | --- |
+| `composer_open_project` | `project: string`, absolute `.fidproj` path | Opens a shared project session. Retain returned authority. |
+| `composer_list_sessions` | None | Shared directory, configuration, worker identity and session observations. |
+| `composer_reserve_edit` | **address**, `label: string` | Withdraws old artifact authority and returns an edit reservation. Await success before writing source or dependencies. |
+| `composer_build` | **address**, `reservation: string` | Builds the reserved revision. Reservation is bound to the session and epoch; concurrent observers share its admitted build. |
+| `composer_session_status` | **address** | Observes status and accepted metadata. Grants no build or execution authority. |
+| `composer_format_preview` | **address**, `generation: int64`, `document: string`, `incarnation: string`, `revision: uint64`, `source: string`, `configuration: string` | Formats an immutable buffer snapshot without file reads or writes. See the preview rules below. |
+| `composer_run_current` | **address**, `arguments: string[]` | Revalidates inputs and executable bytes, then runs the accepted artifact. Supply individual strings, including an empty array when there are none. |
+| `composer_cancel` | **address** | Withdraws current artifact authority and cancels outstanding work. Physical withdrawal can remain pending. |
+| `composer_close_session` | **address** | Logically closes the session and begins cleanup. The session cannot be reopened. |
+| `composer_retire_worker` | `host: string`, `epoch: string` | Retires every session in the worker before compiler replacement. Coordinate with other owners and inspect cleanup failures. |
 
-Active compiler patching is unsupported. A newer compiler needs a validated,
-explicit distribution and its own provider acceptance; changing a compiler
-checkout does not update the running worker. See the
-[development plan](Clef_Composer_Development_Plan.md) for remaining editor,
-standalone-host and LLVM ORC JIT work.
+The edit/build/run loop is:
 
-## Daemon status and external work leases
+1. Open the explicit project and retain its authority.
+2. Reserve and await a successful acknowledgement.
+3. Edit, then build with the returned reservation.
+4. Execute only through `composer_run_current` after an accepted build.
+5. Close and inspect pending cleanup or failures.
 
-These operations do not require a Composer or F# session. Acquire the appropriate
-lease before caller-owned expensive work and release it afterward. Built-in
-operations account for their own work.
+A timed-out or cancelled observer is not proof that an operation never committed. Do not authorize a source write from mere enqueue receipt or blindly replay a lost reservation request. Request reconciliation across a transport failure needs an explicit contract; the existence of `requestId` in a reply does not establish durable retry semantics. See [composer-workflow.md](composer-workflow.md).
 
-| Tool | What it does |
-|:---|:---|
-| `get_daemon_status` | Version, health, memory pressure, process telemetry, F# session counts and lease summaries. Composer sessions are listed separately. |
-| `acquire_full_build_lease` | Requests a lease for an external full build. |
-| `acquire_test_suite_lease` | Requests a lease for an external test-suite run. |
-| `acquire_run_app_lease` | Requests a lease for an external application process. |
-| `release_work_lease` | Releases the caller-owned `lease_id` returned by a granted acquisition. |
+### Composer replies and evidence
 
-Renewal and withdrawal are HTTP operations on the same pool, used by
-`scripts/work-lease` rather than exposed as MCP tools: `POST /api/lease/renew`
-with `{holder, leaseId}` extends a live lease by its kind's lifetime, and
-`POST /api/lease/withdraw` with `{holder, kind}` removes the holder's queued
-ask. An expired lease is never renewed, and only the holder may renew or
-withdraw. A queued ask nobody retries within two minutes is reaped.
+`Bozzetto/ComposerClientJson.fs` defines the current MCP projection:
 
-## Cohort and multi-agent coordination
+- Operation envelope: `protocolVersion`, `requestId`, `authority`, `success`, `result`, `error`.
+- Authority: `host`, `session`, `epoch`, `provider`, `generation`.
+- Directory: `protocolVersion`, `provider`, `configured`, `revision`, `worker`, `sessions`.
+- Worker hello: compiler path/hash/version, supported `operations`, binary transport label, `workerProtocolVersion`, `contractDigest`, and separate PSG schema, assembly hash, format version and contract fingerprint.
+- Accepted artifact: generation/source identity, artifact path/hash, object manifest, changed/retained/retired witnesses, witness visits and compiled/reused/retired objects.
 
-For running several agents against one repo at once. One implicit cohort per
-daemon; the first agent to join becomes its conductor. Every tool resolves
-the caller's identity from the MCP connection, not the `agentName` argument.
-Two connections that pass the same name are still two different members.
+The public projection's `protocolVersion=1` is not the worker agreement version or the PSG schema version. Keep all three identities distinct. A returned transport label does not independently validate deployed bytes. An artifact path is evidence to inspect, never a command to launch directly.
 
-| Tool | What it does |
-|:---|:---|
-| `join_cohort` | Join the daemon's shared coordination session. The first joiner becomes conductor. |
-| `leave_cohort` | Leave. Any claims you still hold are orphaned (the conductor must reassign them). |
-| `get_cohort_status` | Members, claims and fences, the test matrix, and the landing queue. Wait-free: reads a published snapshot. Also available on the `cohort://status` MCP resource for subscription. |
-| `acquire_claim` | Take an exclusive claim over a file or project (`file:<path>` or `project:<path>`) so others know it's yours to edit. |
-| `release_claim` | Release a claim you hold. The presented fence must match the current one. |
-| `reassign_claim` | Conductor-only: reassign an orphaned claim to a present member. |
-| `request_landing` | Retained landing queue contract. Its production verification journey requires the retired F# integration session and is unavailable in current source; Composer verification remains future work. |
-| `set_integration_ref` | Refuses before worktree, cohort or build changes because its embedded F# integration session is retired. |
+Status includes `current`, `closed`, `busy`, `revocationPending`, `backendError`, `formatterError`, `formatterCleanupPending`, `workerRetirementRequired`, `cleanupPending`, `cleanupError`, `statusFresh`, `statusError`, `workerAvailable` and `workerError`. Cached metadata can remain visible when the observation or worker is unavailable. `executionRequiresRevalidation` is true.
 
-## Friction telemetry (local only)
+The refusal projection includes authority/provider errors (`wrong_authority`, `wrong_provider`, `unknown_session`, `closed`, `compiler_retired`), admission errors (`busy`, `observation_capacity`, `session_capacity`, `invalid_reservation`, `not_accepted`), compatibility/framing errors and compiler/backend/cleanup/retirement failures. Use the exact `error.code` returned, rather than interpreting a status row as permission. The exhaustive mapping is `ComposerClientJson.refusalCode`; this document does not assign undocumented recovery semantics to every code.
 
-These tools read or write local diagnostic data.
+### Formatting and cleanup
 
-| Tool | What it does |
-|:---|:---|
-| `get_friction_summary` | Compact summary of recorded MCP friction. |
-| `get_friction_report` | Structured JSON report of MCP pain points. |
-| `report_friction` | Record structured feedback about a confusing tool call. |
-| `manage_local_data` | See what Bozzetto stores under its data dir (rows, bytes, oldest row, retention rules), or clear it. |
+Use a stable opaque `document` label, a GUID `incarnation` for that buffer opening, an unsigned revision, the current generation and `configuration=clef-two-space-lf-v1`. A new incarnation retires its predecessor. The preview returns `formatted`, exact base `sourceSha256` and `formatterIdentity`, together with document/incarnation/revision/configuration. It grants neither edit nor execution permission.
 
-## Retained F# compatibility tools
+Before applying a preview, obtain a new successful reservation and compare the current buffer with the preview's exact immutable base and hash. Save only if the base still matches, then build with that reservation. A superseded preview is not a patch to merge automatically.
 
-These tools document Bozzetto's inherited F# host and remain in the catalog for
-compatibility. Embedded production F# execution is retired in current source;
-no separate F# REPL service replaces it; Clef/Composer uses the workflow above.
-Listing a tool does not establish an available execution provider.
+The registered tool description specifies at most 32 live/closing formatter handles. At capacity, replacement that initiates cleanup returns `busy`; retry after capacity is freed using the current generation and buffer. A distinct label at capacity with no pending close returns `session_capacity`, requiring a fresh session. There is no registered per-buffer close tool.
 
-<details>
-<summary>Expand the retained F# tool reference</summary>
+Status descriptions specify bounded formatter evidence and autonomous whole-worker retirement when formatter cleanup reaches 30 seconds. `formatterCleanupPending` is separate from logical authority withdrawal; `workerRetirementRequired` is sticky for that epoch. A deadline, cancelled tool wait or closed session does not prove physical drain. Replacement requires observed process exit and a new epoch. These are exposed lifecycle obligations in `ComposerTools.fs`; this audit did not execute the deadline or capacity controls.
 
-### Execution and status
+## Caller-owned work leases
 
-| Tool | What it does |
-|:---|:---|
-| `send_fsharp_code` | Evaluate F# code in the session. Each `;;` is a transaction boundary: a failure discards that one statement and keeps everything before it. |
-| `check_fsharp_code` | Type-check a snippet without running it, in the current FSI context. Earlier `send_fsharp_code` definitions are in scope, but namespaces still need an explicit `open`. A "not defined" error here almost always just means you forgot the `open`, nothing more sinister. |
-| `cancel_eval` | Cancel a running evaluation. |
-| `get_session_status` | The selected session's lifecycle, loaded projects, progress, and tools available in the current state. |
-| `get_recent_fsi_events` | Recent evals, errors, and loads with timestamps. |
+These registered tools require no Composer session. They admit external work that the daemon does not run itself. They do not confer compiler proof or native execution authority.
 
-### Sessions and lifecycle
+| Tool | Arguments | Kind or outcome |
+| --- | --- | --- |
+| `get_daemon_status` | None | Daemon version, health, memory/process telemetry and safe lease summaries. Composer directory is separate. |
+| `acquire_full_build_lease` | None | `full_build` |
+| `acquire_test_suite_lease` | None | `test_suite_run` |
+| `acquire_run_app_lease` | None | `run_app`; Composer execution still uses `composer_run_current`. |
+| `release_work_lease` | `lease_id: string` | `released` or `already_gone_or_not_owned`. Empty input is an error. |
 
-| Tool | What it does |
-|:---|:---|
-| `create_project_session` | Create an isolated session for one explicit `.fsproj`. Missing generated build state is rebuilt before the session is registered. |
-| `create_solution_session` | Create an isolated session for one explicit `.sln` or `.slnx`. |
-| `create_bare_session` | Create an isolated project-free REPL. It never auto-discovers. |
-| `list_sessions` | List retained F# sessions; use `composer_list_sessions` for Composer. |
-| `switch_session` | Change which session your calls route to. |
-| `stop_session` | Stop a session by id. MCP-bound sessions can only be stopped by the connection that created them. |
-| `reset_fsi_session` | Soft reset: clears definitions, keeps loaded DLLs. |
-| `hard_reset_fsi_session` | Full reset: rebuilds the project, reloads, starts fresh. Needed after `.fsproj` or package changes. |
-| `get_available_projects` | Discover `.fsproj` / `.sln` / `.slnx` files under a directory. |
-| `list_runnable_projects` | List the session's projects and which ones `run_app` can run (`OutputType=Exe`). |
-| `switch_workflow` | Switch the session's workflow: `repl` (Interactive), `livetesting` (Live Testing), or `live` (Hot Reload, aliases `hotreload`/`weblive`/`web`, kept for backward compatibility). Creates a new session in the target workflow and stops the old one; VS Code's own `POST /api/sessions/{sid}/workflow` route restarts the same session id in place instead. |
+Acquisition returns `kind` and `decision`. `granted` carries `leaseId` and `expiresAt`; `wait` carries `retryAfterSeconds` and `reason`; `refused` carries `reason`. Only a grant admits work. Release on completion or failure using the same bound connection. A successful release RPC returning `already_gone_or_not_owned` is not evidence that the caller held the lease through completion.
 
-### Hot reload and running apps
+Sources: registration in `Bozzetto/McpTools.fs`; `Bozzetto/Mcp.fs`, `leaseDecisionJson`, `acquireWorkLease` and `releaseWorkLease`.
 
-| Tool | What it does |
-|:---|:---|
-| `enable_hot_reload` | Turn on file watching and hot reload for the session. |
-| `disable_hot_reload` | Turn it off. |
-| `reset_hot_reload_state` | List the live state a save kept when you edited its initializer (binding, kept value, waiting initializer), or pass a binding to run only that initializer in the running app. |
-| `set_reflection_read_mode` | Show how hot reload watches values read through reflection (the mode, whether the watch is on, and any question a hot reflective loop raised), or pass `exact-every-read`, `mark-on-reflect` or `probe-callers` to switch the running app. No restart. See [Hot Reload](hot-reload.md#reflection-reads). |
-| `run_app` | Run the session's executable project the way `dotnet run` would, with hot reload. Applies `launchSettings.json` (first "Project" profile) and picks a free loopback port when the project sets no URL. Restarts an Interactive session into the Hot Reload workflow first, so REPL bindings are lost. Saving source then hot-patches the running app, including a route table built once at startup. |
-| `stop_app` | Stop the app started by `run_app`. Its web host stops and frees its port; the session keeps running. |
+A lease is a heartbeat, not a command deadline. Current default lifetimes are 10 minutes for a full build, 15 minutes for a suite and four hours for an external app. Renewal extends a live grant; an expired one cannot be renewed. Retries of the same holder/kind retain the queued ask, and abandoned asks are reaped after two minutes without retry. Source: `Bozzetto.Core/ExpensiveWorkLease.fs`; governing caller rules: `AGENTS.md`, **Building and testing Bozzetto**.
 
-### Testing and verification
+No renewal or withdrawal MCP tool is registered. Current direct HTTP renewal uses `holder` and `leaseId`; withdrawal uses `holder` and `kind`, at `/api/lease/renew` and `/api/lease/withdraw`. Their JSON bodies in `McpServer.fs` are drift requiring typed-binary replacement. A caller-supplied HTTP holder is not the MCP connection binding. Do not mix holders or claim that MCP acquisition alone supplies an automatic heartbeat. `scripts/work-lease run` manages renewal for caller-owned commands; its current direct wire has the same migration obligation.
 
-| Tool | What it does |
-|:---|:---|
-| `list_tests` | List discovered tests, grouped by file with source locations. A compiled-project session's tests are ReflectionOnly and carry no file/line, so those come back under a separate `WithoutSourceLocation` field instead of being dropped. Optional pattern or file filter. |
-| `targeted_verify` | Plan a trustworthy verification pass for one changed behavior. Refuses to claim green when session trust is ambiguous or loaded code is stale. It doesn't run tests itself. It returns the next trustworthy move. |
-| `explain_test_failure` | Enriched failure context for a test that recently went from passing to failing. |
+Follow wait/refused decisions without bypassing accounting. Investigate memory deferrals rather than polling blindly or stopping another owner's processes. Lease grants and queued Clef/Composer work belong on `/composer`; the Dashboard's CPU figure covers only the daemon and its worker, not external leased processes. See [operations.md](operations.md) and [development.md](development.md) for validation under `net10.0` and the unfiltered TRUST acceptance rule.
 
-F# live-testing runs are driven by file saves or editor run controls;
-agents read results through `list_tests`, `explain_test_failure` and `diagnose`.
+## Cohort coordination
 
-### Analysis and diagnostics
+One implicit cohort exists per daemon. The first joiner becomes conductor. Joining without a resolved retained checkout session can succeed, but supplies no per-session test-matrix binding. `join_cohort` does not open a Composer project or establish a Composer verification session. Sources: `Bozzetto/Mcp.fs`, `resolveJoinSession` and `joinCohort`.
 
-| Tool | What it does |
-|:---|:---|
-| `diagnose` | Full diagnostic report: test failures, cell staleness, ripple plan, suggestions. |
-| `coverage_intel` | Coverage-quality analysis: blind spots, correlated failures. |
-| `impact_forecast` | Forecast the performance impact and downstream blast radius of cells. |
-| `suggest_next_action` | Prioritized "what next" queue combining coverage, impact, and staleness. |
-| `suggest_next_cell` | Type-directed suggestions for what to evaluate next, from the bindings in scope. |
-| `suggest_repair` | Given a failing test, trace causal changes and suggest the symbol to fix. |
-| `plan_ripple` | Plan cascade re-evaluation for changed cells using the live dependency graph. |
-| `preview_what_if` | Preview what would change if a binding had a different value, without executing. |
-| `decompose_pipeline` | Break an F# pipeline into stages, each classified pure / effectful / unknown. |
-| `get_cell_dependencies` | The cell dependency graph with staleness annotations. |
-| `discover_features` | Context-aware feature discovery, ranked by relevance to the session state. |
+Every tool below is attributed in `Bozzetto/McpTools.fs`. Required argument names retain their current spelling.
 
-### Export and history
+| Tool | Arguments | Behavior |
+| --- | --- | --- |
+| `join_cohort` | `agentName: string`, `role: string`, optional `working_directory: string = ""` | Roles: Implementer, Verifier or Observer, parsed case-insensitively. First join binds conductor. |
+| `leave_cohort` | `agentName: string` | Departs; held claims become orphaned, not free. |
+| `get_cohort_status` | None | Published members, roles, claims/fences, test matrix, ledger head and landing queue. |
+| `acquire_claim` | `agentName: string`, `scope: string`, `purpose: string` | Exclusive `file:<path>` or `project:<path>` claim. Purpose is one line, at most 200 characters. Returns claim ID and fence. |
+| `release_claim` | `agentName: string`, `claimId: string`, `fence: int64` | Only the current holder with the current fence may release. |
+| `reassign_claim` | `agentName: string`, `claimId: string`, `toMember: string` | Conductor-only; orphaned claim to a present recipient named by its exact displayed identity. |
+| `request_landing` | `agentName: string`, `claims: string`, `commits: string`, `statement: string` | Claims are comma-separated `claimId:fence` pairs, empty for none; commits are comma-separated SHAs. Statement is at most 1000 characters. Queue receipt is not verification or landing. |
+| `set_integration_ref` | `agentName: string`, `integrationRef: string` | Retained conductor-gated setup operation. Refuses at the retired provider boundary before worktree, cohort-head, binding or build changes. |
 
-| Tool | What it does |
-|:---|:---|
-| `export_notebook` | Export the session as a notebook-style `.fsx` with cell metadata. |
-| `export_session_transcript` | Export the session as a clean, topologically sorted `.fsx` transcript. |
-| `get_session_filmstrip` | Visual history of evaluations: each a frame with code, bindings, and duration. |
-| `get_eval_timeline` | Eval-duration sparkline and P50/P95/P99 statistics. |
-| `get_eval_diff` | Before/after diff of recent evaluation outputs. |
-| `get_message_journal` | Audit log of eval events, filterable by severity and source. |
-| `manage_scratch_pad` | View, export, or promote ephemeral snippets from session history. |
+The current role gate allows join/status to every caller, leave to present members, and claim/release/landing actions to Implementers and the conductor. Reassignment and integration setup require conductor authority. The cohort owner still checks membership, scope overlap, holder, fence, recipient and command state. Sources: `Bozzetto.Core/Affordances.fs`, `cohortTools`; `Bozzetto/Mcp.fs`, cohort command adapters and error mapping.
 
-</details>
+Claims coordinate edits; they do not replace `composer_reserve_edit`. Leaving without release keeps an orphaned claim for conductor action. Stale fences and conflicting scopes remain loud refusals.
+
+**Landing verification is unavailable:** `request_landing` retains the queue contract, but its production verification journey depended on the retired F# integration provider. Composer integration verification is not implemented. `Bozzetto/McpCohortIntegration.fs` implements the setup refusal and reports this boundary in status. Do not describe a queued landing or matrix row as compiler acceptance.
+
+## Agent-work reporting
+
+`report_agent_work` and `get_agent_work` are registered in `Bozzetto/McpTools.fs`; admission and reconciliation use the same cohort owner in `Bozzetto/McpCohortIntegration.fs`. No Composer session is required. Reporting requires the participant's enrolled, bound MCP connection and present membership, not a claimed agent name.
+
+`report_agent_work` requires every argument below. These are client-reported invocation snapshots, not prompts, thinking, transcripts or tool payloads.
+
+| Arguments | Type and rule |
+| --- | --- |
+| `run`, `session` | Strings with stable globally unique keys, each at most 128 UTF-8 bytes. `session` here is the reporting client's session key, not a Composer handle. |
+| `sequence` | int64, starts at 1 and increases; maximum 9007199254740991. Exact duplicate reports are idempotent. |
+| `name`, `model` | Strings, at most 128 UTF-8 bytes each. Name and session cannot change within a run. Model is a label, not attestation. |
+| `endpoint`, `project`, `focus`, `operation` | Strings, limits 256, 512, 256 and 128 UTF-8 bytes respectively. Endpoint rejects `@`, `?`, `#` and `=`; do not include credentials. |
+| `status` | `running`, `completed`, `failed`, `aborted`, `disconnected` or `unknown`. Every non-running status is terminal. |
+| `usageAvailable` | Boolean. False means unknown, not known zero. |
+| `input`, `output`, `cacheRead`, `cacheWrite`, `total` | int64 cumulative finalized-message counters, nonnegative and at most 9007199254740991. Total must equal the sum of the four components. |
+| `estimateUsd` | Floating-point USD estimate; `-1` means unavailable. Otherwise finite and nonnegative. Not billing. |
+
+All label fields must be nonblank and contain no control characters. When usage is unavailable, supply zero placeholder counters and `estimateUsd=-1`; these placeholders are not recorded as known zero. Known counters and known estimates cannot regress or become unknown. A terminal run rejects newer reports, while its exact last duplicate remains idempotent.
+
+`Bozzetto.Core/AgentWork.fs` defines validation and refusal tokens, including `wrong_member`, `stale_sequence`, `conflicting_duplicate`, `terminal_run`, `invalid_field:<field>`, `oversized_field:<field>`, `invalid_usage`, `regressing_usage` and capacity failures. State is bounded to 256 runs, 64 members, 16 recent activity labels per run and a retained-byte budget. Reuse neither another member's run key nor a terminal key for a new invocation.
+
+`get_agent_work` takes no arguments. It attempts owner publication reconciliation once and returns the compact published board or a loud refusal such as `publication_failed`; retained owner state is not silently discarded. Subscribe to `agents://work` for changes. The board includes incarnation and publication sequence; several wide integer values are strings in the current MCP projection. Completion status never establishes test acceptance or compiler proof.
+
+## Resources and subscriptions
+
+Resources are direct URIs without template parameters. `resources/read`, `resources/subscribe` and `resources/unsubscribe` take `uri`. All four currently advertise `application/json` at the external MCP adapter.
+
+| URI | Resource name | Owning observation |
+| --- | --- | --- |
+| `composer://sessions` | `composer_sessions` | Composer supervisor directory, same owner as `composer_list_sessions`. |
+| `cohort://status` | `cohort_status` | Published cohort frame. With no wired owner, reports an empty cohort frame. |
+| `agents://work` | `agent_work` | Published agent reports, or empty board when no owner is wired. |
+| `sessions://list` | `sessions_list` | Retained session registry, not the Composer directory. Compatibility observation only. |
+
+Registrations: `Bozzetto/ComposerTools.fs`, `ComposerResources`; `Bozzetto/McpResources.fs`, `BozzettoResources`.
+
+Subscribe on the live connection, read the current resource, and reread after `notifications/resources/updated`. The notification identifies the URI; it is not the new contents, a lossless event journal or execution authority. Unsubscribe when finished. Restore subscriptions and current observations after reconnect instead of treating old handles or cached state as current.
+
+`McpServer.fs` tracks per-connection URI subscriptions. Unsubscribe is idempotent. The subscribe handler records the requested URI without checking it against the resource catalog; subscription acknowledgement does not prove a resource exists. Notifications go only to subscribed connections, with a 500 ms per-send bound; failed sends remove the tracked connection and its subscriptions.
+
+Composer updates follow `supervisor.Changed`, and agent-work updates follow `owner.WorkChanged`. Cohort and retained-session updates use version-gated owner/model observations in `McpServer.fs`, `wireCohortEventSubscription` and `wireSessionsResourceSubscription`. These are implemented push hooks, not evidence of atomic reconnect reconciliation, universal foundation adoption or Ranvier settlement conformance. Some hooks still share retained SSE-oriented implementation code; that is not an endorsement of SSE as the browser pipeline.
+
+The current tracker registers a server in the tool-call filter. A resource-only client that has never called a tool must not assume subscription alone made it a tracked notification recipient. Make an initial status tool call, then subscribe/read. Repairing this subscription seam belongs to the MCP owner, not to a new polling mechanism.
+
+## Local friction and data management
+
+These four tools are registered in `Bozzetto/McpTools.fs` and operate on local diagnostics. They do not supervise a compiler or grant acceptance.
+
+| Tool | Arguments | Behavior |
+| --- | --- | --- |
+| `get_friction_summary` | None | Compact summary for the running version, or explicit absence/read failure. |
+| `get_friction_report` | None | Structured local report of blockers, tool transitions, feedback and observed signals. No store currently returns an empty object. |
+| `report_friction` | `tool_name: string`, `feedback_kind: string`, `short_reason: string`, optional `alternative_tool: string = ""` | Records local feedback if a store exists. |
+| `manage_local_data` | Optional `action: string = "status"`, `store: string = "all"` | Status reports storage/retention. Clear targets friction, cohort or all; cohort clearing is refused while a cohort is running. Inspect the returned result. |
+
+Supported feedback tokens are `output_too_large`, `intent_unclear`, `name_misleading`, `needed_another_tool` and `trust_not_established`. The current handler maps an unrecognized token to the last category rather than rejecting it. Use a listed token; do not rely on that permissive behavior as a new contract.
+
+Diagnostic recording and JSON-shaped reports at MCP do not establish the separate-process sink requirement. That delivery and the remaining direct-wire migrations need owner-specific evidence. Retired F# catalog descriptions, runtime patching and internal SSE/JSON paths must be removed at their owning boundaries, not preserved here as alternate workflows.

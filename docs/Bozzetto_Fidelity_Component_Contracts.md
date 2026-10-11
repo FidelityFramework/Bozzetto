@@ -1,409 +1,198 @@
-# Bozzetto contracts with Fidelity components
+# Fidelity component contracts
 
-October 1, 2026. These are Bozzetto's required integration contracts for the
-[three development horizons](Bozzetto_Development_Horizons.md). They describe what
-Bozzetto must supply and what it needs from peer components. New interfaces and
-ownership extensions below are proposals for implementation with those owners;
-this document does not claim that another component has delivered or accepted
-them. Existing language and compiler contracts remain authoritative.
+Bozzetto is the development controller for Clef/Composer. It routes client demand, supervises the Composer worker and owns host admission and process lifetimes. Composer is a differential compiler. Bozzetto remains outside the compiler pipeline and does not establish language meaning, proof validity or native execution authority.
 
-For exploratory horizons these are conditional acceptance requirements, not a
-funded implementation backlog. CPU execution preserving another target's numeric
-and hardware semantics must first pass the roadmap's
-[demand and feasibility gate](Bozzetto_Development_Horizons.md#demand-and-feasibility-before-expansion).
-Ordinary CPU REPL delivery is independent of that research tranche.
+Three components define the integration:
 
-The current baseline is the [provider handoff](Clef_Composer_Provider_Handoff.md),
-[provider data types](../Bozzetto.Composer/ProviderContracts.fs),
-[shared workspace direction](Bozzetto_Editor_Workspace_Direction_2026-09-30.md)
-and [native workflow evidence](Bozzetto_Incremental_Workflow_Auditor_Assessment_2026-09-30.md).
-Today's provider exposes local project build/run operations and one accepted
-artifact receipt. The richer evaluation, application manifest, target lifecycle
-and remote operation contracts below remain development work.
+- **Fidelity.PSG** carries immutable, source-authorized compiler facts and their identities. It is not a host-generated semantic graph.
+- **Fidelity.FSharp.Incremental** owns declared dependency bookkeeping, demand, invalidation and explicitly started work. Its eligibility results do not grant compiler authority.
+- **Ranvier** supplies the signal/memo/effect reference shape for reactive presentation under one mutation owner. It does not replace compiler evidence or the foundation's work-lifetime protocol.
 
-## Ownership and required handoffs
+The governing host rules are in `AGENTS.md`, especially Architecture, Clef and Composer work, Language and stack, and Validation posture. The owner’s direct-interchange ruling is stricter than that file's general allowance for unavoidable text serialization: direct interchange must be typed binary.
 
-| Component or owner | Contract Bozzetto needs | Bozzetto responsibility |
-|---|---|---|
-| Fidelity.FSharp.Incremental | Explicit dependency, demand, invalidation and execution-lifetime protocol; interim .NET hosting and portable conformance requirements. | Adopt the shared foundation for workspace coordination, map identities and resource ownership, and preserve compiler admission beyond library eligibility. |
-| Clef specification, CCS and Baker | Source admission, binding/redefinition, initialization, effects, capture/lifetime rules, numeric selection and evaluation-context requirements. | Preserve compiler authority and refusals; never reconstruct language meaning in an adapter. |
-| Fidelity.PSG | Immutable revision-bound observations, dependency facts and source/occurrence correspondence needed by consumers. | Route and retain observations with identity; distinguish compiler facts from presentation and user annotations. |
-| Composer and Alex | Shared workspace operations, proof/evidence publication, witnessed lowering, artifact manifests, compatible compositions and execution admission. Alex remains a passive witness of settled facts. | Supervise workers, order requests and expose the same accepted state to all clients. |
-| Composer native execution and ORC integration | Callable materialization, invocation, redefinition, typed results, initializer policy, live references and retirement. | Manage session/execution lifetime and display state; do not infer that a replaced symbol is safe to unload. |
-| Compiler and toolchain distribution owners | Immutable dependency closure, tool/runtime identities, compatibility information and parity/acceptance evidence. | Install/select reviewed distributions, fence replacement and repeat provider acceptance against their exact identities. |
-| Fidelity.Platform | Selected hardware/environment/profile facts, available numeric operations, device access and deployment constraints; adapters need explicit conformance to those facts. | Discover operational availability and route to compatible authorized hosts. Reachability does not establish semantic capability. |
-| BAREWire | Layout, extent, ABI and boundary declarations for memory, values and transfers, with ownership/visibility obligations connected to compiler evidence. | Carry declared data and resource identities; avoid serializing raw local pointers as remote values. |
-| Farscape and native binding owners | Versioned ABI/calling-convention facts, callback/resource ownership and supported native entry points. | Report missing bindings or incompatible runtime versions and preserve native-handle lifetime. |
-| Olivier, Prospero and Ariel | Application effect/actor semantics, supervision/placement and dispatch, including valid quiescence and resource-release observations where supplied. | Coordinate development operations around these runtime contracts; do not create a competing application scheduler. |
-| Lattice, Atelier, browser and MCP adapters | Workspace attachment, versioned editing and execution requests, observation subscriptions and explicit presentation of context. | Provide one owner and operation model across interfaces; clients keep presentation state, not independent semantic state. |
-| Target adapters and future Bozzetto site nodes | Device/runtime identity, scoped resource ownership, stage/activate/observe/retire operations, cancellation and recovery evidence. | Coordinate application transitions, host selection, admission and reconciliation across participants. |
+## Evidence and capability boundary
 
-The [Composer workbench](../../Composer/docs/Interactive_Compiler_Workbench.md),
-[numeric selection](../../clef-lang-spec/spec/numeric-selection.md),
-[platform predicates](../../clef-lang-spec/spec/platform-predicates.md),
-[platform structure](../../Fidelity.Platform/README.md),
-[BAREWire declarations](../../BAREWire/README.md) and
-[scheduler contract](../../clef-lang-spec/spec/scheduler-contract.md) supply the
-existing ownership basis. Their design requirements and reference packages must
-not be reported as implemented Bozzetto integrations.
+Implementation statements below are based on local source reads, not executed acceptance or installed-daemon inspection. The available tools could not request a fresh retrieval schema or determine a checkout revision. Directory reads failed; project files supplied the bounded source roster. No claim here establishes a promoted distribution, running identity or whole-pipeline conformance.
 
-## Host observation and UMA coordination
+| Boundary | What the inspected code establishes | What it does not establish |
+| --- | --- | --- |
+| Worker control transport | Closed protocol, explicit BAREWire codecs and Unix-domain socket transport in `Bozzetto.Composer.Protocol/Protocol.fs`, `BAREWireCodec.fs`, `StreamFrames.fs` and `Bozzetto.Composer/Program.fs`. | Scoped PSG delivery or receiving proof/native acceptance. |
+| Foundation use | `Bozzetto.Composer/ProviderSession.fs` uses `AsyncMailbox`, explicit scopes, demands, release, eligibility checks and close joins. `Bozzetto.Composer/Bozzetto.Composer.fsproj` requires the selected distribution's core and Hosting assemblies. | Complete adoption across every owner, portable native conformance or installed assembly equality. |
+| Compiler handoff | `Bozzetto.Composer/ComposerAdapter.fs` delegates reserve/build/run to Composer's `ProjectSession` and copies accepted witness/object receipts. | Independent verification of Composer internals or arbitrary source-region execution. |
+| Browser/client wire | `Bozzetto/UiBridgeCodec.fs` uses Fidelity.Data JSON; `Bozzetto/ComposerRoutes.fs` accepts and returns JSON and retains an SSE change endpoint. | Compliance with typed-binary direct interchange. These paths are drift to remove. |
+| Worker compatibility | `Bozzetto.Composer/Worker.fs` checks the wire agreement and reports loaded compiler/PSG identities. `Bozzetto/ComposerWorkerClient.fs` also compares PSG against daemon-loaded constants. | D1 separation or manifest-bound distribution selection. The daemon comparison remains drift. |
+| Native hosting and distribution | The inspected provider is a .NET host; worker and protocol projects target `net10.0`. | LLVM ORC JIT, a self-hosted Clef controller or authenticated distributed lab-node authority. These remain planned or required. |
 
-The [resource observation and UMA contract](Bozzetto_Resource_Observation_And_UMA.md)
-is first-horizon infrastructure for FFI, Farscape and compiler-component work.
-Bozzetto owns whole-host observation and correlation with admitted operations;
-its existing lease owner retains admission. Fidelity.Platform and Farscape/native
-binding owners supply platform capability and ABI boundaries, not a second
-scheduler. Lemonade remains an independent workload with explicitly observed
-configuration and performance.
+See [architecture](architecture.md) for process boundaries and [operations](operations.md) for installed identity and deployment. Historical package pins and gate counts are not current capability evidence.
 
-Physical memory domains, device budgets, shared backing, process attribution and
-actual pressure must remain distinct. Neither managed-process RSS nor a GPU
-allocation counter is a universal physical-usage total. Portable, versioned
-observations carry scope, provenance, interval, coverage and freshness; Linux,
-Windows and Apple-silicon adapters establish their own evidence. Native Clef
-collection replaces the acquisition edge, not the accounting contract. The design
-specifies staged delivery and coexistence experiments; no unimplemented collector
-or sibling-project handoff is claimed complete.
+## One owner for each fact
 
-## Identity and evidence
+| Owner | Authority retained there | Bozzetto's obligation |
+| --- | --- | --- |
+| Clef specification and CCS/Baker | Language meaning, lookup support, reachability, semantic closure, complete premises, settlement and reuse justification. | Carry current facts and explicit refusals; never reconstruct them from paths, output or display state. |
+| Fidelity.PSG over BAREWire | Immutable scoped representations, authorization/delta declarations and structural validation. | Preserve source identity and typed reference roles; do not turn structural validity into semantic truth. |
+| Alex | Passive witnessing of source-authorized occurrences and settled boundaries. | Present its receipts without moving pruning, adapter construction or dependency inference into Alex or the host. |
+| Composer | Source capture, proof discharge, artifact correspondence, accepted publication and actual execution admission. | Delegate compiler operations and preserve its ordering and refusal boundaries. |
+| Fidelity.FSharp.Incremental | Explicit reads, demand, invalidation, work eligibility and hosted work-lifetime machinery. | Map owner identities and retain actual cleanup responsibility at external resource edges. |
+| Ranvier-shaped presentation owner | Signals, derived display state and subscription effects in one mutation domain. | Admit immutable owner observations and push typed views without minting compiler authority. |
+| Compiler/toolchain distribution owner | Reviewed immutable dependency closure and compatibility evidence. | Select exact bytes, fence replacement and verify the serving worker against the selected manifest. |
+| Fidelity.Platform, BAREWire and native binding owners | Target capabilities, layout/extent/ABI facts and resource obligations. | Route only compatible authorized operations; do not infer capability from reachability or ownership from missing metadata. |
+| Runtime and device owners | Application scheduling, actual completion, live resource ownership and safe retirement. | Coordinate development operations without creating a competing application scheduler. |
+| Bozzetto | Client routing, leases, supervised processes and faithful observations. | Keep host admission distinct from compiler acceptance and resource-owner authorization. |
 
-Each operation must identify its owning context. The following are conceptual
-fields to refine into a versioned schema; they are not new MCP tools or wire
-fields in the current provider.
+Shared foundation use does not imply a shared mutable graph across processes. Each owner retains its state and exchanges versioned typed requests or immutable observations. A diagnostic sink, browser or agent is a consumer, not a second compiler authority.
+
+## Identity, proof and eligibility
+
+The following distinctions are requirements for component handoffs, not a claim that every field is present in today's worker wire:
 
 | Identity | Required distinction |
-|---|---|
-| Workspace and input snapshot | Owner/session, project/configuration/dependency identities, ordered source bytes and overlays. A path or editor document version alone is insufficient. |
-| Compiler distribution and epoch | Compiler/toolchain closure digest and live worker incarnation. Rebuilding a checkout does not replace a deployed worker. |
-| Target and arithmetic context | Hardware/environment/profile, ABI, selected numeric contract, execution mode and any model or substitutions. |
-| Proof context | Source premises, semantic target, actual execution capabilities, representation/lowering policy, assumptions and correspondence obligations. Different realizations cannot inherit acceptance solely from shared source. |
-| Selection and evaluation context | Source span plus compiler-resolved entity/occurrence in its snapshot, dependencies, arguments, captures, initialization and resource bindings. A line number is not stable semantic identity. |
-| Artifact and application composition | Exact bytes, producer, dependencies, interfaces and the compatible set of artifacts selected for activation. |
-| Host and device | Authenticated node/host identity, device identity, attachment route, runtime/reset incarnation and scoped authority. A route change need not change the device; a reset can invalidate its resources. |
-| Operation and active execution | Stable request identity, expected state, ownership fence, activation/run identity and actual observed artifact/resource set. |
-| Evidence | Source and target scope, producer/checker identity, verdict, original bytes/digest, observation time and any missing history or unverified premise. |
+| --- | --- |
+| Workspace/input snapshot | Explicit project, configuration, dependency closure, ordered source bytes and overlays. A pathname is not a snapshot. |
+| Compiler distribution/worker incarnation | Exact loaded closure versus the live host/epoch. Rebuilding source does not replace a worker. |
+| Adapter/compiler generation | Host coordination revision versus compiler generation and source version. |
+| PSG observation | Checked revision, scope content version, occurrence/traversal identity and subscription cursor remain separate. |
+| Proof context | Complete source premises, target capabilities, arithmetic/effect policy, lowering assumptions and checker/discharge identity. |
+| Artifact/composition | Exact accepted bytes, producer, dependencies and compatible artifact set. |
+| Execution/resource | Actual invocation, active artifact set, resource grant, device/reset incarnation and physical lifetime. |
+| Delivery | Exact resident base, proposed change, current authorization and verified installed base. |
 
-Compilation success, transfer completion, installation, activation and observed
-execution are separate facts. Packaging or signing can change artifact bytes;
-record the derivation from compiled artifacts to the final installed package.
-Never label a requested revision as running merely because its upload succeeded.
+Today's `Authority` and `AcceptedArtifact` are defined in `Bozzetto.Composer.Protocol/ProviderData.fs`. The authority generation is explicitly distinct from compiler generations in artifact/run payloads. `SessionSnapshot.Observation` orders actual status captures; it grants no compiler permission. `Protocol.fs` likewise identifies a worker address as a host/epoch address, not artifact or run authority.
 
-Compiler epochs and execution epochs are distinct. An edit can revoke admission
-for new invocations while already-admitted frames or device jobs still hold the
-previous code and buffers. Their continued existence is observable state, not
-permission to submit more obsolete work. Preserve both identities until lifetime
-rules permit retirement.
+An `Offer` or eligible foundation result means only that declared dependency and lifecycle conditions hold. Compiler owners must still establish complete premises, current proof, accepted publication and lawful execution. A proposition, its discharge receipt, an Alex witness and an accepted object are different evidence. Equal source text, ABI shape, output value or content hash cannot substitute for those checks.
 
-## First horizon workspace and native execution
+Complete declared reads include negative support: lookup absence, collection membership, rule/declaration identity and joint participants where applicable. The foundation does not dynamically discover these premises. Until precise support exists, conservative source-owner revalidation is valid; a consumer must not invent a narrower dependency account.
 
-### Shared incremental foundation
+Compilation, transfer, installation, activation and observed execution are separate facts. Packaging or signing may change bytes and must retain its derivation from the accepted artifact. Compiler epochs and execution lifetimes also differ: an edit can forbid new invocations while old frames or device jobs still retain code and buffers.
 
-Fidelity.FSharp.Incremental is the selected foundation for incremental dependency
-bookkeeping and explicitly started work across Bozzetto's interim .NET host and
-Clef/CCS/Baker/Composer. The [adoption contract](Bozzetto_Incremental_Foundation_Adoption.md)
-records the initial library source, ownership boundaries and integration gates.
-Adoption is planned; the local pre-integration library is not yet a pinned
-Bozzetto dependency.
+See [foundation adoption](Bozzetto_Incremental_Foundation_Adoption.md) for reads, Offers and demand, and [Composer workflow](composer-workflow.md) for per-region witness/object validation.
 
-Its core command/effect protocol and replaceable hosting layer should carry the
-same lifetime rules into self-hosting. Library eligibility cannot replace Baker's
-complete premises or Composer's proof, artifact and execution gates. Agree identity
-mapping, shared consumer cancellation, actual child-resource draining, queue and
-retention limits, and portable conformance before declaring a consumer integrated.
-Cold execution must preserve authority at the actual start/commit point, including
-Bozzetto's ordering of artifact launch against edit reservation.
+## Source-authorized scoped PSG delivery
 
-The implemented mailbox coordinator and scoped suspension protocol have a separate
-[Bozzetto audit contract](Bozzetto_Incremental_Foundation_Adoption.md#workspace-coordinator-and-scoped-resumptions):
-reservation replies acknowledge committed authority changes; resumptions retain
-explicit ownership; control and cleanup remain serviceable under queue pressure.
-Posting a request, selecting a cancellation path or stopping a mailbox supplies
-none of those guarantees by itself.
+This section is the required delivery contract. The current worker operation union in `Bozzetto.Composer.Protocol/Protocol.fs` contains project control and formatting operations, not scoped PSG attachment or delta subscriptions. Binary project control must not be described as delivery of this contract.
 
-The [functional assessment](../../Fidelity.FSharp.Incremental/docs/Functional_Async_Auditor_Assessment_2026-10-01.md)
-accepts `AsyncMailbox` and preserves F1's repair; consumer integration remains
-open. Typed module operations and F# async now provide the preferred hosted
-surface, with necessary CLR interop at explicit boundaries. Retained operation
-handles support local re-observation after cancellation; adapters still own
-transport correlation and restart recovery. Native lowering must preserve the
-ownership protocol without requiring CLR Task objects or boxed payloads in
-its semantics; see the [authoring contract](Bozzetto_Incremental_Foundation_Adoption.md#functional-async-authoring-and-native-execution).
+### Source selection and representation
 
-### Workspace service
+Full retained-graph transmission is prohibited on initial attachment, update and reconnect. Soft-deleted node bodies and source-private analytical hyperedges must not cross the service boundary. Increasing a frame cap, filtering a complete `Revision` at the receiver or debouncing whole-graph sends is not compliance.
 
-Composer must expose one service that owns input snapshots, checking/proof
-scheduling, publication and execution admission. Bozzetto attaches editor, MCP and
-browser demand to that owner. Opening the same path in another checker does not
-attach to the same workspace.
+An `open` changes lookup visibility. It neither demands every library member nor authorizes eager mapping of that library. A visibility change can alter binding selection or an absence judgment, which the source owner must reconsider. Actual references demand only their necessary semantic closure; unrelated settled content stays resident.
 
-The contract needs ordered edit reservations and overlay transactions with
-expected-base identity; shared demand and bounded queues; structured diagnostics
-and refusals; immutable artifact/proof observations; explicit cancellation scope;
-and stale-publication rejection. Observation subscriptions need resynchronization
-after event gaps. Compiler-owned correspondence connects source, graph, lowered
-operations and exact artifact bytes.
+CCS/Baker owns scope closure and accepted-revision authorization, including all relevant support. Publication copies source-settled facts; it must not become a second place that computes semantics. Fidelity.PSG validates the structural declarations over BAREWire without a compiler reference or semantic inference. Alex follows source-authored paths and settled facts passively.
 
-Concurrency must be specified rather than inherited accidentally from CLR thread
-pool behavior. Define which compiler state is process-global, which operations
-serialize, what solver work consumes immutable inputs outside that section, and
-the limits for processes, threads, queues and cancellation. Native hosting must
-preserve these decisions, with measured changes made explicitly.
+A payload must distinguish:
 
-### Interactive semantics and execution
+- Live executable occurrence bodies.
+- Settled imported boundary facts and module context headers.
+- Current propositions and their separate discharge receipts.
+- Historical identity references that do not require a delivered body.
 
-The compiler must specify binding and redefinition, initialization frequency,
-effects, captured mutable state, closures, callbacks, exceptions/failures and
-target access. Composer's execution service must carry these rules through actual
-materialization and invocation. A source proof or symbol-compatible replacement
-alone does not establish that live state is compatible.
+Definition, storage and activation owners need complete replacement and retirement accounts, including splits and merges. Source-private history and whole-domain premise support may remain retained at the source without being emitted. Public consumers must use source-authored typed accounts, not request analytical edges back to reconstruct missing facts.
 
-Result inspection needs compiler-described types, layouts and bounded value
-access. Formatters produce labelled presentations of those values. Inspection
-must not silently force lazy computations, rerun initializers or traverse invalid
-native handles. An effectful inspection is a separate admitted operation.
+The normative source ownership basis is the clef-lang-spec repository, `spec/program-hypergraph.md`, §5–5.1, at the revision selected for the contract. The stronger ban on full retained service transfer is an owner requirement. This audit did not independently read or pin that external specification; no unspecified transport checkpoint serves as current evidence.
 
-Retirement requires evidence that no live frame, closure, callback or external
-resource can still reach the retired code/data. If state cannot be preserved,
-the contract returns a supported migration, restart requirement or refusal. The
-host must not hide state loss behind successful evaluation output.
+### Attachment, delta and reauthorization
 
-### Distribution promotion
+1. **Attach by demand.** Obtain only requested, source-authorized scopes. A fresh attachment is not a full-corpus recovery path.
+2. **Identify the exact base.** Each update names the receiver's resident delivery base and the affected additions, replacements, withdrawals and retirements.
+3. **Refuse incompatible continuity.** Missing/foreign bases, reversed updates and foreign session, epoch or subscription identities produce explicit diagnostics with no partial installation. Recovery remains demand-scoped.
+4. **Reauthorize retained content.** Unchanged bytes require explicit current source authorization after complete support validates. A hash, schema, producer name or structurally valid catalog cannot grant that permission.
+5. **Account for installation.** An acknowledgement advances only a verified installed delivery base. It grants neither proof nor execution permission and cannot restore withdrawn authority.
 
-The compiler owner supplies a validated immutable closure and identifies the
-parity scope, native tool dependencies and known gaps. Bozzetto coordinates
-withdrawal of the old worker, physical retirement and activation of its
-replacement, then exercises the provider journey against that exact closure.
-CLI deployment is independent. Neither installing new CLI help nor building new
-compiler source proves a changed compiler is serving requests.
+Checked revision, content version, traversal identity and delivery cursor must not be collapsed. Source-owned correspondence must preserve unrelated identities; equal encoded sizes or body counts do not prove identity continuity or unchanged-body reuse.
 
-## Second horizon evaluation contexts
+### Reservation and installation fences
 
-This section defines the required behavior if the demand-gated capability is
-selected. Feasibility and proof cost must be established for a bounded set of
-realizations before promising general availability.
+Resident bytes, a pending packet and current source eligibility are distinct states. Edit reservation withdraws affected eligibility before source-write permission. Retained bytes may remain as an ineligible base for a later exact-base delta.
 
-The request is to execute selected application code in an identified context.
-The selection may be a function, expression or supported region in the existing
-project. Acceptance must include code with actual application dependencies and
-state; a required `Common` directory or pure-helper rewrite would narrow the
-product objective incorrectly.
+Authorization must be checked at staging and at receiver installation, with defined ordering against reservation and retirement. Encoding while authorized and waiting later for writer admission is insufficient: reservation may overtake the packet. A late packet or acknowledgement cannot reintroduce authority withdrawn by a newer reservation. Composer separately fences actual execution.
 
-The compiler's proposed evaluation-plan response must supply:
+Edits must not wait for arbitrary browser acknowledgements. Observation cancellation does not certify physical join. Close and retirement retain ownership until admitted work, callbacks, socket activity, process exit and required diagnostic drains join; cleanup failures remain observable.
 
-1. The selected source identity and valid entry/control-flow boundary, including
-   resolved private helpers, captures, generic specialization and dependencies.
-2. Required arguments, initialization, mutable state and resource bindings, with
-   a lawful snapshot/capture boundary and lifetime requirements.
-3. Available execution modes: CPU realization, CPU execution preserving selected
-   target semantics, named emulator/model, or actual target execution. Missing
-   capabilities and unsupported operations remain explicit.
-4. The chosen arithmetic and effect contracts, including any supplied inputs,
-   models, substitutions or remote operations. A substitute is never implicit.
-5. Admitted callable artifacts and interfaces, evidence prerequisites, invocation
-   limits, result observation and disposal/retirement requirements.
+[Binary formats](binary-format-spec.md) identifies the owning PSG/BAREWire schemas. This document defines seams, not a duplicate codec or schema authority.
 
-Bozzetto presents unresolved inputs, binds authorized resources and dispatches
-the admitted plan. Composer revalidates the plan against current source, target
-and execution context before invocation. Native pointers, device handles and
-captured references are not portable merely because their surrounding function
-can compile for a CPU.
+## Foundation lifetimes and Ranvier-shaped push
 
-The evaluation plan must preserve the selected code's semantics or state exactly
-which explicit alternative context is being evaluated. Rerunning initialization
-to reconstruct state can have effects and cannot substitute silently for the
-original state. Arbitrary source selection remains a goal even when execution
-requires a particular device; a CPU-only interpretation is not mandatory.
+The foundation carries cold work descriptions through explicit admission and start. Constructing or queueing work must not start compiler, filesystem, solver or device effects. Withdrawal removes eligibility before cancellation is requested. Releasing one consumer's demand must preserve a producer still needed by another.
 
-### Numeric and effect models
+`Bozzetto.Composer/ProviderSession.fs` implements provider-local scopes and demands through `AsyncMailbox`. Build/run definitions use `Reads = []` because the provider delegates the compiler operation; this is not evidence that compiler proof dependencies are empty. Publication checks both provider generation and foundation eligibility. Reservation observes committed withdrawals before returning its token, and the invocation semaphore orders backend reserve against actual run invocation.
 
-CCS/Baker and the target description own representation choice and validity.
-Required arithmetic observations include widths, scaling, rounding order,
-overflow behavior, FMA/reassociation permissions, special values, accumulator
-capacity and transfer representation where applicable. Use the
-[numeric acceptance cases](../../Composer/docs/PRDs/Numeric_Validation_Cases.md)
-to discriminate a faithful implementation from a plausible result.
+`Bozzetto.Composer/ProviderContracts.fs` keeps compiler tickets process-local and requires `RunCurrentAsync` to select and launch synchronously before returning its task. `ComposerAdapter.fs` delegates that boundary to Composer. Moving to a cold native host must preserve the actual start/commit fence, not merely recheck a queued description.
 
-Reference calculations, target-mode CPU execution and physical execution retain
-different evidence scopes. Comparison can require exact bits, a specified error
-bound or another compiler/application-declared relation; Bozzetto must not pick
-an arbitrary tolerance to turn a mismatch green. Model coverage is explicit for
-device effects, interrupts, synchronization and timing. Full processor emulation
-is separate work, not an implied dependency of every preview.
+Provider close joins foundation close, owned controls/observations and formatting before backend disposal, retaining failures (`ProviderSession.fs`). Worker socket shutdown seals and retires native tools (`Program.fs`); daemon worker stop joins process exit, transport work and redirected output (`Bozzetto/ComposerWorkerClient.fs`). These are code-read mechanisms, not executed proof of every drain path.
 
-### Proof contexts across realizations
+Ranvier's signal/memo/effect shape applies to the observation plane:
 
-The compiler must distinguish three cases: a CPU-native realization with its own
-admitted numeric choices; a physical-target realization; and CPU execution that
-implements specified target semantics. Each carries its own proof and artifact
-context. Changing the target is not just choosing a different code generator
-after all semantic and proof work is complete.
+- One mutation owner admits immutable inputs from fact owners.
+- Memos derive display values; effects own subscriptions and typed push.
+- Equal display values may suppress redundant rendering, but never erase changed proof, artifact or authorization identity.
+- Effect cleanup may detach a subscription, but cannot certify compiler/process/device drain.
+- Reconnect reconciles a coherent owner snapshot and cursors atomically before applying subsequent updates. It cannot restore old authority from cached display state.
 
-Differences can change range/precision obligations, intermediate representations,
-operation order, layouts, ABI, resource access, memory visibility, atomicity and
-concurrency premises. New obligations may appear, others may no longer apply,
-and apparently identical queries may have different surrounding assumptions.
-Bozzetto must display the verdict for the selected realization rather than carry
-forward a previous green result.
+Ranvier adoption and reactive settlement require their own code and acceptance evidence. No implementation claim follows from resemblance to its model. See [reactive push](reactive-push.md) for the presentation contract.
 
-For execution preserving target semantics on a CPU, record both the semantic
-contract being modeled and the actual CPU execution environment. The compiler
-must establish the relevant correspondence between the admitted target operations
-and their CPU implementation. It cannot claim that the CPU acquired a hardware
-capability merely because the model names it. Unsupported device effects or
-unestablished correspondence remain explicit limitations or refusals.
+## Typed direct interchange and diagnostic isolation
 
-CCS/Baker and Composer own obligation construction, invalidation and any permitted
-reuse, following the [proof composition contract](../../Composer/docs/Proof_Composition_Architecture.md).
-Reuse requires complete applicable dependencies: source and captures, selected
-platform facts, arithmetic/effect policies, resource assumptions and the relevant
-lowering/model implementation. Shared source text, matching solver input or a
-successful CPU result alone is insufficient. Conservative rechecking remains
-valid until a narrower reuse claim is demonstrated.
+| Boundary | Required contract | Current evidence or limit |
+| --- | --- | --- |
+| Daemon to worker | Closed versioned typed-binary requests/replies, exact agreement and authority fences; no JSON, stdio or anonymous-pipe fallback. | Implemented socket path in `ComposerWorkerClient.fs` and `Bozzetto.Composer/Program.fs`; explicit codec/framing in `Bozzetto.Composer.Protocol/`. |
+| Daemon to browser | Typed-binary pushed observations and commands over the bridge, with coherent reconnect reconciliation. | JSON remains in `Bozzetto/UiBridgeCodec.fs`. This is drift even though it uses Fidelity.Data. |
+| Agent-owned direct APIs | Typed-binary contracts and owner identities. | JSON Composer HTTP requests/replies remain in `Bozzetto/ComposerRoutes.fs`; its SSE endpoint is not the required UI pipeline. |
+| MCP external boundary | JSON-RPC as required by the external MCP standard; translate to typed owner operations. | The sole external interchange exception. It does not permit JSON between internal owners or agent-owned direct peers. |
+| Diagnostic capture/export | Binary source-owned PSG capture to an independent MailboxProcessor-driven sink process; Fidelity.Data JSON only as export. | `Bozzetto.Composer/DiagnosticCapture.fs` requests source-prepared occurrence capture and delegates to the diagnostic client. This read alone does not prove process isolation or sink conformance. |
 
-The feasibility record must compare the proof work and latency across proposed
-realizations as well as their execution results. An implementation that produces
-correct answers but multiplies checking cost beyond the workflow's needs may not
-justify the investment. This is a product and engineering decision before the
-tranche is committed, not a late optimization exercise.
+Strings representing source, arguments or output inside a typed binary envelope do not make the envelope a JSON wire. Conversely, wrapping JSON in binary bytes or changing its serializer does not establish a typed contract. Opaque metadata must retain its owner's schema rather than become an alternate authority.
 
-## Second horizon application transitions
+The sink has no compilation, proof, publication or launch authority. Capture refusal, persistence success and export success are diagnostic facts only. Bound retained data, queues and drains independently from compiler admission. See [diagnostic sink](Bozzetto_Diagnostic_Sink.md) and [MCP tools](mcp-tools.md).
 
-### Composition and target capabilities
+## Wire compatibility and distribution identity
 
-Composer supplies the dependency and interface manifest for the application's
-CPU code, accelerator artifacts and other deployable parts. Fidelity.Platform,
-BAREWire and binding owners supply the target/layout/resource requirements. The
-target adapter supplies actual availability and supported transition operations.
-The participating owners must establish agreement before Bozzetto activates a set.
+D1 requires separation between what the daemon interprets and what the worker loads:
 
-Each adapter must report supported update modes, required safe boundaries,
-state capture/migration capabilities, resource acquisition/release, completion
-observations and recovery limits. An NPU program/model reload, MCU flash and FPGA
-reprogram are not assumed to have the same semantics as CPU code replacement.
-Unsupported transitions must still permit an accurately labelled supported
-restart/reprogram workflow where available.
+- The daemon checks the exact worker wire protocol, encoding and contract digest it understands.
+- Worker-loaded PSG schema, binary format, fingerprint and assembly bytes are checked against the selected reviewed distribution manifest, not against the daemon's own PSG assembly.
+- The selected manifest binds the complete compiler/toolchain dependency closure. One compiler DLL hash or version string is not the closure.
+- A content hash identifies bytes. It does not identify who approved them. In an environment where agents can write the filesystem, an approval file is not human-only authorization.
 
-### Transition lifecycle
+`Bozzetto.Composer/Worker.fs` already separates the wire `Agreement` from reported compiler and `PsgIdentity` data. However, `Bozzetto/ComposerWorkerClient.fs` still compares `hello.Psg.Schema`, `FormatVersion` and `ContractFingerprint` to daemon-loaded PSG constants. That coupling contradicts D1 and must be removed at its owner while replacing it with manifest-bound checks. Dropping checks without establishing the selected identity is not the repair.
 
-The coordinator requests a plan against the currently observed execution set.
-The plan identifies compatible retained artifacts, replaced artifacts, affected
-state/resources and each participant's activation boundary. The required lifecycle
-is:
+**Current deployment rule:** replace daemon and worker as a matching pair from one selected closure, verify the PSG contract fingerprint and perform a Composer open. The existing coupling in `Bozzetto/ComposerWorkerClient.fs` is not compatible worker-only replacement; see [operations](operations.md) for the current procedure.
 
-1. Validate the new composition and obtain current resource authority.
-2. Prepare and transfer verified artifacts; stage them where the target permits.
-3. Stop admitting incompatible new work and reach the declared safe boundary.
-4. Preserve, migrate or recreate state according to the admitted plan.
-5. Activate the compatible set and collect per-participant execution receipts.
-6. Retire previous code/resources only after their final users complete.
+**Required D1 destination:** while the wire stays compatible, permit worker replacement without daemon replacement. Compiler sessions still end. Preserve the shared project list and reopen fresh sessions so clients return to the same projects under new authority; never carry old reservations or accepted-run permission into the new epoch. Project-list restoration is a requirement here, not a verified current implementation.
 
-Targets unable to stage before stopping report that interruption explicitly.
-Global atomic activation is not assumed. Where mixed activation cannot preserve
-compatibility, use a declared stop/start boundary or refuse the transition.
-Failed stages leave an observable state with permitted recovery actions. Rollback
-needs a real target capability and a valid state strategy; prior external effects
-are not undone by restoring an older binary.
+If the interpreted wire changes, validate and deploy a matching daemon-worker pair. Compiler component acceptance and controller integration acceptance remain separate; a shared dashboard switch does not gate compiler acceptance. Use the current restart and active-work policy in [operations](operations.md) and `AGENTS.md`, not superseded restart prohibitions from correction records. Retain reviewed rollback bytes and report the exact serving identity after replacement.
 
-### Memory and resource handoffs
+## Distributed authority and native destination
 
-Shared memory needs layout, extent, access, ownership, visibility and completion
-contracts. The application must not replace a CPU buffer layout while an older
-GPU/NPU job can access it. Keep old allocations alive, drain work, or use an
-admitted migration. Shared physical backing does not create device mappings or
-remove cache/synchronization obligations. Consult the
-[platform handoff design](../../Fidelity.Platform/docs/ADMISSION_AND_SIDECARS.md)
-and [BAREWire platform declarations](../../BAREWire/docs/11%20Platform%20Description.md).
+Distributed lab-node operation is a requirement, not delivered capability established by these source reads. `Bozzetto.Core/BozzettoConfig.fs` restricts configured binding to loopback. Its retained F# execution wording is stale; it does not restore embedded F# hosting. Changing a bind address or adding a tunnel does not implement federation.
 
-For distributed resources, identical bytes do not imply interchangeable live
-handles. Transfers carry declared layouts and resource ownership; the receiving
-adapter establishes local handles and reports their lifetime. Device reset,
-runtime replacement or lease fencing invalidates affected handles explicitly.
+A distributed operation must distinguish workstation, compiler owner, build/package host, execution host, device and transport route. Required boundaries include:
 
-## Second and third horizon host coordination
+- Authenticated enrollment, project/device authorization and separately reported reachability, compatibility, capacity and readiness.
+- Stable operation identity and expected target state, with enough owner-retained status to reconcile lost replies, duplicate delivery and restarts.
+- Resource-owner-enforced grants and fencing tokens. Stale tokens cannot authorize queued physical effects after ownership changes.
+- Independent compiler epoch, node incarnation and device/reset fences, including invalidation of affected local handles.
+- Explicit disconnected-node policy for already-admitted work, refused new work, renewal and recovery.
+- Separate observations for cancellation request, acknowledgement, process exit, device drain and resource release.
 
-### Hosts and destinations
+A timeout is uncertainty, not proof that an effect failed. Do not blindly repeat uncertain activation or device work. Failover must establish a new owner and fence the old one. Local expensive-work leases do not establish distributed resource authority.
 
-Model the workstation, compiler owner, build/package host, execution host, device
-and transport route independently. A Mac may build/sign an iOS package while a
-Linux host installs it on a locally attached phone. A remote GPU host may compile
-or execute while datasets remain in its own site. These are proposed arrangements,
-with support contingent on validated adapters and platform requirements.
+Remote values carry declared layouts, extents and ownership, not raw local pointers. Shared physical backing does not establish mappings, visibility or completion. Live frames, closures, callbacks and device jobs retain their code/resources until the appropriate owner establishes retirement. Unsupported state migration or activation boundaries must produce a supported restart requirement or an explicit refusal.
 
-Discovery reports capabilities and operational readiness separately: reachable,
-paired, authorized, toolchain-compatible, busy and ready are different states.
-Authentication and project/device authorization govern use. Signing credentials
-remain with their authorized owner. Discovery does not grant device control.
+LLVM ORC JIT is the intended future Clef backend and is not implemented under the governing host rules. Embedded F# session hosting and runtime patching are retired, not fallback execution mechanisms. Native self-hosting must preserve the same owner contracts and demonstrate physical lifetimes without relying on CLR objects as semantic authority.
 
-The existing [loopback configuration](../Bozzetto.Core/BozzettoConfig.fs) rejects
-LAN binding because the current service lacks authentication. Remote coordination
-requires an authenticated boundary and explicit host enrollment; changing the
-bind address is not its implementation. A narrowly scoped authenticated tunnel
-can support an initial experiment, but does not supply device ownership, remote
-operation durability or the federation contract by itself.
+## Acceptance at the seams
 
-### Remote authority and operations
+Each owner supplies conformance evidence for its boundary. A local codec round trip, successful upload or filtered suite cannot close a receiving compiler/host contract.
 
-Each operation needs a stable identity and an expected target/execution state.
-The executing host persists enough status to reconcile a missing reply or node
-restart. Duplicate delivery returns the known outcome or enters reconciliation;
-operations with uncertain physical effects are not blindly repeated. A transport
-timeout is not a definitive device-operation failure.
+| Seam | Discriminating acceptance required |
+| --- | --- |
+| Scoped demand | Unused library growth and unused `open` add no delivered/mapped bodies; actual references deliver only necessary scoped facts. |
+| Support and reuse | Lookup/absence changes revoke affected judgments. Unchanged builds resend no settled bodies; a one-callable edit preserves another's facts, witness and object only after current source reauthorization. |
+| Delivery fencing | Wrong base, reversed update and foreign session/epoch/subscription are refused atomically. Reservation overtakes held delivery and late acknowledgements without restoring authority. |
+| Receiving compiler path | The actual received scope packet feeds independent proof discharge, passive witnessing and native artifact/execution checks. |
+| Lifetime | Last-demand withdrawal, delayed callbacks, split/merge retirement, socket failure and cleanup faults retain owners through actual joins and expose failures. |
+| Compatibility | A compatible wire admits a manifest-approved changed worker PSG; incompatible wire and wrong loaded distribution bytes are refused for their specific reasons. |
+| Distributed recovery | Lost acknowledgement, duplicates, node restart, device reset and stale fencing cannot cause obsolete activation or an unobserved second effect. |
+| Native hosting | Portable contract traces and physical ownership gates pass in the deployed native host; .NET code resemblance is insufficient. |
 
-Host/device leases must be scoped and enforced at the executing resource owner.
-A fencing token identifies the current grant; an older token cannot authorize
-queued activation after ownership changes. Define the physical effect boundary,
-including what can finish after expiry. The policy for a disconnected node is
-explicit: which already-admitted operations can finish, which new work is refused,
-and how authority is renewed. The current local expensive-work lease pool does
-not establish these distributed guarantees.
-
-Cancellation requested, cancellation acknowledged, process stopped, device work
-drained and resources released are separate observable states. Reconnect queries
-the owner and reconciles them with the client's request history. Compiler epoch,
-node restart and device reset fences all apply independently. Cross-site failover
-must establish a new owner and fence the old one rather than silently presenting
-two mutable workspaces as one.
-
-### Scheduling and observations
-
-Bozzetto schedules build/test/deploy/inspect operations with bounded admission and
-declared priorities. Compiler services retain compiler/proof scheduling; runtime
-owners retain application scheduling. Nodes exchange operations and evidence
-across latency domains, not actor-turn dispatch.
-
-Expose queue time, compiler work, artifact transfer, preparation, activation,
-interruption and target execution separately. Correlate events by operation and
-artifact identity with clock provenance; wall-clock timestamps from different
-hosts alone do not establish order. Bound event buffers and mark lost history;
-after reconnect provide a current snapshot and the available operation history.
-Bulk data can use a suitable direct transport with verified endpoints and bytes,
-without making the workstation the mandatory relay.
-
-## Acceptance and delivery responsibilities
-
-| Boundary | Required discriminating evidence |
-|---|---|
-| Shared workspace | Human/editor/MCP requests use the same admitted snapshot; conflicts, cancellation, supersession and epoch changes cannot publish stale success. |
-| Native REPL | Actual materialization/invocation and retained state/callback behavior, with failed replacement and final-reference retirement. Host simulations alone are insufficient. |
-| Arbitrary application selection | A function/region in existing application structure executes with resolved dependencies and explicit state/effects, without extraction into a shared module. Missing context is actionable. |
-| Numeric and proof context | Cases that distinguish rounding, representation, ordering and overflow; change target capabilities and require affected obligations/verdicts to change, with explicit reuse evidence and unsupported-model refusals. |
-| Heterogeneous update | Real work holds an old artifact/resource while a new compatible set is prepared; activation and retirement preserve declared lifetimes and expose partial failure. |
-| Independent hosts | Build/package and device hosts differ; exact final bytes and actual running identity are observable on the physical destination. |
-| Remote recovery | Lost acknowledgment, duplicate delivery, node restart, device reset and stale ownership cannot cause an unobserved second effect or obsolete activation. |
-| Native host | The same portable contracts and required lifecycle gates pass without the .NET runtime in the deployed Clef host. |
-
-The component that owns a semantic or target boundary supplies its implementation
-and conformance evidence. Bozzetto owns adapter, coordination and complete user
-journey acceptance. Independent audit retains its own scope and evidence.
-Register the relevant tests in whole-suite acceptance tiers, record execution
-counts and preserve actual hardware/toolchain identities. Passing a fixture for
-one target or transition does not close another target's positive requirement.
-
-For implementation, agree a versioned bounded handoff with the named owners at
-each selected tranche. Exploratory second- and third-horizon work first requires
-its demand and feasibility decision; this adds no gate to first-horizon CPU REPL
-work. Refine these conceptual fields into schemas and conformance cases,
-then update this document with links to delivered interfaces and acceptance.
-No repository outside Bozzetto is changed or assigned completed work by this
-design record.
+For each new rule, provide a positive control, a negative control asserting the specific refusal and a mutation the test catches. Integration requires one unfiltered acceptance run per increment and its `TRUST` evidence where the Bozzetto harness applies. Record matched producer/contract/consumer identities, actual packet/artifact receipts and installed identities separately. See [development](development.md) for the evidence ledger and handoff procedure.

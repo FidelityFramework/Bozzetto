@@ -7,7 +7,7 @@ sits outside the compiler pipeline: compiler work is accepted on component
 gates, and Bozzetto adapts on its own track.
 
 Embedded F# session hosting is retired in this checkout
-([Clefx host transition](docs/Bozzetto_Clefx_Host_Transition_2026-10-01.md)).
+([architecture](docs/architecture.md)).
 No F# REPL service is part of any workflow. LLVM ORC JIT is the intended future
 Clef execution backend and is not implemented.
 
@@ -66,9 +66,9 @@ The daemon is long-running; intentional development restarts are normal.
   execute. Give one an explicit owner and time limit.
 - **The dashboard's CPU figure covers the daemon and its worker only.** It does
   not show leased builds or tests
-  ([findings](docs/Workstation_Findings_Ionide_And_Bozzetto_Telemetry_2026-10-04.md)).
+  ([operations](docs/operations.md)).
 
-Read `docs/Bozzetto_Live_Provider_Checkpoint_2026-09-30.md` before assuming an
+Read `docs/operations.md` (installed identity and readiness) before assuming an
 agent is connected.
 
 ## Clef and Composer work
@@ -135,7 +135,7 @@ as narrowly as the evidence allows, and keep one honest backstop.
    predicted the full run's failures over several increments.
 
 Cross-repository increments use the one-page
-[handoff template](docs/FFI_Increment_Handoff_Template.md).
+[development guide](docs/development.md).
 
 ### The TRUST line
 
@@ -265,7 +265,7 @@ Composer is a **differential compiler**: it recompiles what a change affects.
   [adoption contract](docs/Bozzetto_Incremental_Foundation_Adoption.md). Do not
   grow separate invalidation or work-lifetime mechanisms. Record identities and
   acceptance evidence in the
-  [cross-project checkpoint](docs/Incremental_Provider_Checkpoint_2026-10-01.md).
+  [development guide](docs/development.md) and the increment's evidence manifest.
 - **Shape.** CQRS read and write models; features as vertical slices in single
   files; clients (VS Code, Neovim, MCP, browser) use session-scoped contracts,
   with `/api/composer/*` as the HTTP client contract.

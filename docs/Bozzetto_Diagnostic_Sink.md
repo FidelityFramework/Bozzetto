@@ -1,27 +1,212 @@
-# Diagnostic PSG capture
+# Diagnostic sink
 
-`Bozzetto.Diagnostics` is an independent .NET process that receives source-owned
-PSG occurrence captures and keeps them after compiler-worker or Bozzetto exit.
-It references Fidelity.PSG, BAREWire and Fidelity.Data; it loads no compiler.
+## Purpose and authority
 
-The first capture stage is `occurrence-structure-v1`. CCS supplies its already
-selected live occurrences and sparse declaration context through its publication
-boundary. The capture includes the actual source demand, checked workspace
-revision, source-input identity and expected scope stamps. It contains no retained
-compiler graph, inactive node bodies or complete semantic/proof tables.
+The diagnostic sink preserves source-owned Fidelity.PSG occurrence evidence in an
+independent process. It is not a compiler service, an execution backend, or a
+second authority for source meaning. Composer is a differential compiler;
+diagnostic capture observes compiler-selected evidence without changing its
+proof, artifact or execution decisions.
 
-Every referenced identity must have a captured body, a declared context header,
-or the source's explicit omitted-child account. Unknown references and imported
-boundaries whose facts are unavailable are refused. A deliberately narrow,
-complete occurrence capture is distinct from an incomplete transport: truncated
-transfers never produce a committed snapshot. This stage does not establish
-complete semantic PSG integrity or confer proof, artifact or execution authority.
+The required design has three distinct responsibilities:
 
-## Run the sink
+- **Fidelity.PSG** owns the occurrence and scoped-publication vocabulary. The
+  sink validates and preserves a bounded capture, not a reconstructed compiler
+  graph.
+- **Fidelity.FSharp.Incremental** owns declared dependency bookkeeping and
+  explicitly started work in its consumers. Diagnostic transport must preserve
+  the owning operation's admission and cleanup obligations, not introduce an
+  alternative invalidation or lifetime authority.
+- **Ranvier** supplies the signal/memo/effect reference shape for presenting
+  observations. Presentation does not establish capture integrity, compiler
+  eligibility or physical drain. No Ranvier integration is demonstrated by the
+  sink sources inspected here.
 
-Publish `Bozzetto.Diagnostics/Bozzetto.Diagnostics.fsproj` with the same selected
-PSG/BAREWire closure as the compiler worker. Start it independently of Bozzetto
-and the worker's owned process tree:
+These boundaries follow `AGENTS.md`, particularly **Architecture**, **Language
+and stack**, **Clef and Composer work**, and **Validation posture**, together
+with the owner's stricter export-only JSON ruling. See
+[component contracts](Bozzetto_Fidelity_Component_Contracts.md),
+[foundation adoption](Bozzetto_Incremental_Foundation_Adoption.md) and
+[reactive push](reactive-push.md).
+
+## Implementation status
+
+“Implemented” below means present in the inspected source, not verified in an
+installed release or by an executed test in this audit.
+
+| Capability | Status and code evidence |
+|---|---|
+| Separate executable targeting `net10.0` | Implemented in `Bozzetto.Diagnostics/Bozzetto.Diagnostics.fsproj`. It imports the PSG/BAREWire closure selection in `build/ComposerContract.props` and references Fidelity.Data. It does not reference a compiler project. |
+| Source-owned occurrence capture and structural validation | Implemented in `Bozzetto.Diagnostics/Capture.fs` and `CaptureCodec.fs`, using Fidelity.PSG types and its occurrence codec. |
+| Binary local request and receipt transport | Implemented in `Bozzetto.Diagnostics/ManagedHost.fs` and `Client.fs`, using managed named pipes and BAREWire framing. |
+| Bounded binary persistence and Fidelity.Data JSON descriptor export | Implemented in `Bozzetto.Diagnostics/ManagedHost.fs`; CLI defaults are in `Program.fs`. |
+| Optional worker capture callback | Implemented in `Bozzetto.Composer/DiagnosticCapture.fs`, attached to `ProjectSession` by `ComposerAdapter.fs`. |
+| MailboxProcessor-driven sink process | **Required, not implemented in the inspected sink.** `ManagedHost.run` uses a serial async receive loop, not a `MailboxProcessor`. A separate executable alone does not satisfy this requirement. |
+| Complete semantic PSG capture, diagnostic deltas and proof transcripts | Planned integration, not capabilities established by this capture stage. |
+| Exact compiler handoff timing and joined compiler-close behavior | Not established by the worker adapter alone. These require compiler-owner source and execution evidence. |
+
+The inspected sink process is independent in its launch contract. The client
+connects to an existing endpoint; it neither starts nor stops the sink
+(`Bozzetto.Diagnostics/Client.fs`). The worker references the diagnostics project
+for the callback and client code (`Bozzetto.Composer/Bozzetto.Composer.fsproj`),
+which is not evidence that it launches the sink executable.
+
+The similarly named `Bozzetto.Core/Features/Diagnostics.fs` and
+`DiagnosticsStore.fs` are not this sink. They contain retained FCS/FSI diagnostic
+extraction and an in-memory map keyed by a code hash. They supply neither PSG
+capture nor durable independent-process storage. Embedded F# hosting is retired;
+these modules are not a prerequisite or a current workflow to restore.
+
+## Process and mailbox contract
+
+**Requirement:** the sink must run in a separate process driven by an F#
+`MailboxProcessor`. An in-daemon mailbox, a compiler callback that writes JSON
+instead of submitting typed binary diagnostic capture,
+or the current serial async loop does not satisfy the combined requirement.
+The sink's lifetime must be independent of the daemon and supervised Composer
+worker, so already persisted evidence survives either process exiting.
+
+The mailbox must own typed admission, capture correlation, persistence completion
+and shutdown transitions. Posting a message is not a persistence acknowledgement.
+Transport and filesystem effects need explicit owned lifetimes; blocking storage
+must not hide outstanding work or make shutdown claim that writes have drained.
+Queue admission, byte ownership and overload behavior must be bounded, not just
+the number of actively executing writes. Exact queue policy is an owner decision,
+not a default inferred from `MailboxProcessor`.
+
+This extends the existing sink owner rather than creating a second store or
+compiler coordinator. Its acceptance must distinguish receipt, validation,
+persistence and reply delivery. Once accepted persistence is owned by the sink,
+a disconnected client or cancelled observation cannot detach it. Shutdown must
+seal admission and account for accepted writes before reporting completion.
+The current `ManagedHost.serve` already lets persistence continue after complete
+request bytes arrive and awaits it before returning; the mailbox migration must
+preserve that behavior.
+
+Foundation eligibility remains separate from compiler proof. The foundation uses
+complete declared reads; it does not discover compiler dependencies dynamically.
+A Ranvier memo's equal display value cannot erase a changed proof identity, and
+an effect cleanup cannot certify that a filesystem operation or child process
+has physically drained. See [architecture](architecture.md) and
+[foundation adoption](Bozzetto_Incremental_Foundation_Adoption.md).
+
+## Capture scope and validation
+
+The implemented stage is `occurrence-structure-v1`
+(`Bozzetto.Diagnostics/Capture.fs`). An `OccurrenceCapture` contains demand and
+source-version metadata, expected scope stamps, a PSG `OccurrenceDelivery`,
+sparse source-context headers and explicit context roots. The checked revision
+is carried by the delivery transaction.
+
+Validation requires a standalone first delivery with an empty subscription base,
+matching base and target revisions, only added scopes, no withdrawals, and an
+exact account of demanded scope stamps. It invokes Fidelity.PSG occurrence and
+scoped-publication validation. It also checks duplicate bodies and headers,
+context paths, declaration positions and node-reference accounts.
+
+A referenced node must be accounted for by a captured body, a declaration header
+or the applicable source-declared omitted-child handle. Headers cannot stand in
+for live structural bodies. Unknown references, imported traversal and required
+imported boundary facts unavailable in this stage are refused. The sink must not
+fetch inactive bodies or expand capture into the retained compiler graph to make
+those refusals disappear.
+
+A complete narrow occurrence account is not complete semantic PSG integrity.
+`Capture.validate` explicitly excludes support truth, complete semantic tables,
+proof and current-source eligibility. Persisting a capture establishes none of
+those facts. A worker that dies before handing over valid bytes cannot provide a
+postmortem capture through this protocol.
+
+PSG and BAREWire schemas remain with their owners. `CaptureCodec.fs` wraps the
+owner codec rather than defining an alternative PSG schema. See
+[binary format and schema ownership](binary-format-spec.md) and
+[component contracts](Bozzetto_Fidelity_Component_Contracts.md).
+
+## Binary interchange and export-only JSON
+
+**JSON is prohibited in direct daemon-worker, daemon-browser and agent-owned
+interchange.** Diagnostic requests and receipts are typed binary too. Replacing
+a serializer with Fidelity.Data does not make a JSON wire compliant.
+
+The sink's implemented local transport uses one request and one reply per
+connection. A BAREWire `u32` length prefixes a bounded envelope. The receiver
+checks the length before allocating its body, then checks checksum, magic,
+schema, stage, complete decoding and capture structure
+(`Bozzetto.Diagnostics/ManagedHost.fs`, `CaptureCodec.fs`). Truncated or
+trailing-byte envelopes are refused, not committed snapshots. The checksum is
+SHA-256; it detects content mismatch but does not authenticate compiler
+provenance or establish authority.
+
+**Permitted JSON uses:** Fidelity.Data export at export edges anywhere, and the
+diagnostic sink, which is required to run as its own MailboxProcessor-driven
+process and export through Fidelity.Data. An export is a file or stream read by
+a human or external tool, never a message between daemon, worker, browser or
+agents. General exports need not pass through the sink; sink isolation remains
+mandatory for diagnostic capture. Neither use permits direct JSON interchange.
+
+The current sink export is a small descriptor, not a JSON serialization of the
+complete PSG. `Bozzetto.Diagnostics/ManagedHost.fs`, `ManagedHost.descriptor`, uses
+`Fidelity.Data.JSON`, preserves integer identities with explicit integer values,
+and emits `compilerAuthority: false`. The complete received capture remains in
+the binary file. Neither the descriptor nor an exported report may be fed back
+as a command, compiler premise, proof token or execution permission.
+
+MCP's externally standardized JSON-RPC boundary is the single external protocol
+exception, documented in [MCP tools](mcp-tools.md). It does not permit JSON inside
+owned protocols or at this diagnostic pipe.
+
+Current direct-wire JSON is drift to remove. For example,
+`Bozzetto/UiBridgeCodec.fs` explicitly implements an interim JSON browser codec,
+and `Bozzetto/ComposerClientJson.fs` projects MCP/browser values. Its browser use
+is not legitimized by Fidelity.Data or by the MCP exception. Migration belongs
+at the owning wire seam, not in diagnostic storage. See
+[reactive push](reactive-push.md).
+
+## Persistence, bounds and receipts
+
+`Bozzetto.Diagnostics/ManagedHost.fs` implements an exclusive open store lock
+and a single serial receiver. It writes `<SHA256>.bare`, then exports
+`<SHA256>.json`. Temporary files are flushed, closed and renamed; the descriptor
+is published last. Before a successful receipt, it rechecks the stored payload's
+length, digest and decoding, and compares the descriptor bytes with the expected
+export. A filename or descriptor alone is not integrity evidence.
+
+| Bound | Implemented value or policy |
+|---|---|
+| Transport body | At most 32 MiB, checked before body allocation. |
+| Default store | 128 `.bare` captures and 256 MiB of store files. |
+| Default connection I/O timeout | 10 seconds; configurable from 100 to 60,000 ms. |
+| Idle lifetime | Required, from 1 to 86,400 seconds. Successful persistence renews it; invalid or idle clients do not. |
+| Capacity exhaustion | Refuse new captures and retain existing evidence. No silent eviction. |
+
+These values come from `CaptureCodec.fs`, `ManagedHost.fs` and `Program.fs`.
+The PSG decoder also receives explicit collection, depth, string and value
+limits in `CaptureCodec.fs`; the frame bound is not the only validation bound.
+Store byte accounting includes files already present. Orphaned payloads count
+against quota, and replay can verify and complete an interrupted publication.
+Changing retention or deletion policy requires owner approval.
+
+Replaying identical bytes revalidates the existing payload and export instead of
+duplicating evidence. A lost receipt means **persistence unconfirmed**, not
+“nothing was written.” The client checks a successful receipt's digest, byte
+count and stage against its submitted payload (`Client.fs`, `Program.fs`).
+
+The I/O timeout and idle lifetime are not filesystem cancellation guarantees.
+Accepted persistence is awaited and can outlast them if storage stalls. Flush
+and rename do not establish power-loss durability of directory metadata.
+Do not report a deadline, disconnected client or stopped observer as physical
+drain.
+
+## Running the implemented executable
+
+These commands describe the current serial-loop implementation, not completion
+of the MailboxProcessor requirement. Publish the `net10.0` diagnostics project
+with the selected PSG/BAREWire closure used by the worker. Closure selection is
+in `build/ComposerContract.props`; a matching selection is not proof that two
+installed deployments contain identical bytes. Deployment and rollback checks
+belong in [operations](operations.md).
+
+Start the sink independently, with an absolute external state directory:
 
 ```sh
 dotnet /absolute/sink/Bozzetto.Diagnostics.dll \
@@ -30,59 +215,51 @@ dotnet /absolute/sink/Bozzetto.Diagnostics.dll \
   --idle-seconds 3600
 ```
 
-The pipe uses the managed local named-pipe API with access restricted to the
-current user. The sink prints `DIAGNOSTIC_SINK_READY pipe=...` after creating its
-listener. An exclusive store lock prevents two sinks from writing the same store.
-Use the host's normal service manager when a longer service lifetime is wanted.
+`Program.fs` also accepts `--max-captures`, `--max-store-bytes` and
+`--io-timeout-ms`. `ManagedHost.run` restricts the named pipe to the current user
+and prints `DIAGNOSTIC_SINK_READY pipe=...` after listener creation. The open
+`sink.lock` handle prevents another sink from writing that store even through a
+different pipe name. A remaining lock filename alone does not mean a sink lives.
 
-Set `BOZZETTO_DIAGNOSTIC_PIPE=fidelity-diagnostics` in the compiler worker's
-environment. Bozzetto's worker inherits its environment. This does not start or
-stop the sink. Without that setting, Composer creates no diagnostic occurrence
-reading and makes no sink connection.
+Configure `BOZZETTO_DIAGNOSTIC_PIPE=fidelity-diagnostics` in the worker's launch
+environment. `DiagnosticCapture.fromEnvironment` returns no callback for an
+unset or blank value. When set, the callback converts compiler-supplied
+`BuildCapture` values into the occurrence envelope, uses a ten-second client
+exchange deadline, and reports source refusal, transport failure or a receipt to
+worker stderr. Encoding occurs before that exchange deadline (`Client.fs`).
+The callback returns no compiler-authority value and does not launch the sink.
 
-The compiler hands over the immutable capture after binding the checked source
-identity and before proof dispatch or native tools. The host uses a cold `Async`
-operation with a ten-second transport and acknowledgement deadline. Encoding
-precedes that deadline. Diagnostic refusal is reported
-to worker stderr and does not change compiler authority. Project close still
-seals and cancels native tools immediately; any admitted diagnostic handoff joins
-as owned work. A lost acknowledgment leaves persistence unconfirmed, even if the
-sink subsequently completes it.
-
-## Persistence and limits
-
-The binary envelope includes scope metadata and the existing occurrence codec,
-with a checksum over the complete capture. The receiver checks length, checksum,
-schema, occurrence structure and reference accounts before persistence. Frames
-are bounded to 32 MiB before body allocation. JSON never carries the PSG between
-processes.
-
-The sink writes `<SHA256>.bare` and derives `<SHA256>.json` using Fidelity.Data.
-The small JSON descriptor preserves exact integer identities and names the
-capture stage. The binary file retains the complete received capture. Temporary
-files are flushed and atomically renamed; the descriptor is published last.
-A persistence acknowledgment is sent only after both files have been checked.
-This is not a guarantee against power loss during directory metadata updates.
-
-Replaying the same capture rechecks the stored bytes and descriptor. It neither
-duplicates evidence nor treats a filename as proof of integrity. The finite
-replay command is:
+A finite replay uses an existing binary capture:
 
 ```sh
 dotnet /absolute/sink/Bozzetto.Diagnostics.dll submit \
-  --pipe fidelity-diagnostics --capture /absolute/capture.bare --timeout-ms 10000
+  --pipe fidelity-diagnostics \
+  --capture /absolute/capture.bare \
+  --timeout-ms 10000
 ```
 
-Defaults are 128 captures, 256 MiB of store files, and a ten-second connection
-I/O deadline. Set `--max-captures`, `--max-store-bytes` and `--io-timeout-ms` to
-choose another policy. A full store refuses new captures and preserves existing
-evidence. Nothing is silently evicted. Payloads left without a descriptor after
-an interrupted write count against the quota and can be verified by replay.
+Do not claim that sink readiness establishes worker capture activation or a
+successful compiler handoff. Verify those separately. Capture placement before
+proof dispatch and joined ownership through compiler close require evidence
+from the compiler owner, not assumptions about this adapter.
 
-`--idle-seconds` is required. Idle shutdown retains all stored evidence; malformed
-or idle clients do not renew the idle period. An accepted filesystem write is
-joined physically and can outlast that deadline if the filesystem stalls.
+## Acceptance and evidence limits
 
-Complete semantic scopes, incremental diagnostic deltas, proof transcripts and
-earlier failed-check captures remain subsequent integration work. A worker killed
-before handing over a valid capture cannot supply a final dump after its death.
+The remaining mailbox implementation needs positive and specific negative
+controls plus a mutation caught by a test for each new rule. At integration,
+retain one unfiltered TRUST acceptance run as required by `AGENTS.md` and
+[development](development.md). Acceptance should include malformed/truncated
+frames, unavailable boundary facts, quota refusal without eviction, duplicate
+replay, corrupted stored bytes, lost receipts, disconnect during persistence,
+store exclusion, saturated admission and shutdown with a delayed write. Check
+that sink failure cannot grant or revoke compiler proof or execution authority.
+
+This audit read the cited local source files and project manifests. Directory
+reads were unsupported, so project manifests supplied source locations. The
+harness provided only file read/write tools: no fresh retrieval schema, revision
+verification, build, test or installed-process probe was available. No
+outside-index exemption or deployed acceptance is inferred from that limitation.
+The source evidence confirms binary capture and bounded export storage; it also
+confirms the outstanding MailboxProcessor requirement. Compiler-internal timing,
+full lifecycle integration, native hosting and distribution remain separate
+claims requiring their own evidence.
