@@ -169,3 +169,8 @@ opaque-aggregate cases expect the located CCS8011 at `first` while keeping their
 **Final clef gate of this record (clef `b0ef172d`, E, unfiltered, leased): total=2484 passed=2455 failed=29 | vs the committed
 29: new-failures=0 resolved=0; the two new boundary controls pass.** Heads at close: clef `b0ef172d1eef6afd244020a03b3bd3c49b9dbcb0`, Bozzetto (this record's
 commit), Composer `0caa67d8`, speakez-lab `03406ad`, clef-lang-spec `4d5c445`.
+
+- `ClosureEnvironmentCases.Complete higher order invocation borrows the actual environment…` (E, `probes/ce-probe.out`):
+  `twice f x = f (f x)` makes the callback's formal range feed its own result, so the per-formal fixpoint widens and the
+  commitment refuses CCS8011 even for `twice (fun v -> v * 2) 3`. Yes/no: is that refusal the intended answer (re-expect
+  the fixture as an active refusal), or should complete higher-order invocations specialize the callback per call site?
