@@ -20,10 +20,11 @@ queued asks withdraw and age, and builds/suites show on the Composer page.
 ```text
 clef Clef.Compiler.Service.Tests at 2ac56b2 (baseline, E): total=2476 passed=2417 failed=59
 clef Clef.Compiler.Service.Tests at e8d54312 (E): total=2482 passed=2430 failed=52 | vs baseline 2ac56b2: new-failures=0 resolved=7 (the six R4 cases and CallableApplicationTests "A known callable beside an opaque input cannot establish a bounded result", resolved by the same census change)
-Bozzetto default suite at 15f68ad5 (E): TRUST tier=default registered=8447 ran=8447 passed=8443 failed=0 errored=1 ignored=3 verdict=TestsFailed (the one errored case is the pre-existing CLI-version check)
+Bozzetto default suite at 15f68ad5 (E): TRUST tier=default registered=8447 ran=8447 passed=8443 failed=0 errored=1 ignored=3 verdict=TestsFailed (the one errored case is the pre-existing `Public release version.CLI version prints the release rather than a four-part CLR stamp`)
 bozzetto-web after the Composer-page change (E): verify 145.5 KiB self-contained bundle; codec round trip 203 checks 0 failures; page checks passed (leases beside the compiler worker on /composer, absent from /dashboard)
-Bozzetto default suite after the Composer-page change (E): TRUST tier=default registered=8447 ran=8447 passed=8443 failed=0 errored=1 ignored=3 verdict=TestsFailed (0 failed, 1 errored) (the one errored case is the pre-existing CLI-version check)
+Bozzetto default suite after the Composer-page change (E): TRUST tier=default registered=8447 ran=8447 passed=8443 failed=0 errored=1 ignored=3 verdict=TestsFailed (0 failed, 1 errored) (the one errored case is the pre-existing `Public release version.CLI version prints the release rather than a four-part CLR stamp`)
 Composer tests/regression at Composer head (E): 53 samples, --jobs 8 --timeout 120, 357 s; compile 4/53, execute 4/4 (baseline; serial run was ~24 min)
+  first-coded failure per sample (E, regression/results3-first-codes.txt): 14 CCS8403 BoundaryEmission "Sys.write requires…", 12 CCS8706 non-Clef source types (uint64 6, int64 4, unativeint/uint32/byte 1 each), 4 CCS8403 NumericPublication required integer, 3 CCS8403 completed partial application, 2 CCS8403 finite-cell, 2 CCS8403 callable declaration phase, 2 CCS8414, 4 with no code in the logs
 ```
 
 **Binding:** `~/.cache/bozzetto/evidence/ffi-correction-2026-10-03/increment-2026-10-10/`
@@ -75,3 +76,37 @@ initialization-order settlement), SequenceAggregateCases 5, ResultOperationCases
 CallEffectRangeCases 3, SequenceConsumerCases 2, SequencePullEffectCases 2, DirectCaptureCarrierTests 2,
 OptionFoldCases 2, ResultEliminationCases 2, and one each in ClosureEnvironment, Dimensional, SequenceConsumption,
 SequenceFactoryResults, RecursiveInstantiation, SequenceApplication and ArrayConstruction.
+
+---
+
+## Handoff: borrowed-view group (zeroed default and view length), 2026-10-11
+
+**Scope:** Phase B, the 21 `BorrowedViewTests` failures; 18 resolved by tabling two intrinsic results and by two fixture
+corrections; 3 left as an owner question (below).
+
+**Heads:** `clef` `d2e6cf64347b446d3ac60d847f4844ed7786e2ff` (pushed, clean).
+
+**Gates** (unfiltered, leased, released):
+
+```text
+clef Clef.Compiler.Service.Tests at d2e6cf64 (E): total=2482 passed=2448 failed=34 | vs e8d5431: new-failures=0 resolved=18
+```
+
+**Rule ledger.**
+
+| Rule (owner file:line) | Positive source control | Negative source control | Mutant killed (test name) |
+| --- | --- | --- | --- |
+| `clef src/Compiler/NativeTypedTree/Expressions/Intrinsics.fs` `RangeSources.intrinsic`: `NativeDefault.zeroed` of an integer kind is the point 0 (zero-initialized storage is the compiler's own fact); `BorrowedView.length` is a length, bounded by the platform's Pointer width like the other lengths | the 16 `withView`-stub fixtures check clean (E, `clef/results-bv/bv-targeted.trx`, second run) | `BorrowedViewTests.Borrowed view cannot be manufactured with a default value`: the view's origin finding stays ("no source constructor") while no integer is committed | a `zeroed` row matching an empty argument list (first run) leaves all 16 refused: `NativeDefault.zeroed ()` applies to a unit argument |
+
+**Fixture corrections:** the two manufactured-view cases `ignore` the view and return 0 instead of returning
+`BorrowedView.length view`; a committed length is unobservable on a platform-less check (`RangeSources.lengthRange`), which
+is not what those cases guard (E, `probes/bv-probe2.out`: the finding is produced without the commitment).
+
+**Growth:** `clef` 2 files, +11/−5 (one table row pair, two fixture bodies).
+
+**Open, owner decision needed (yes/no):** the three remaining `BorrowedViewTests` cases refuse with CCS8403
+"Complete ordinary invocation scope is unavailable" because `ProgramActivation.coverage` covers a lambda only through
+callers that lead back to the entry, while the fixture's `viewScope` descriptor declares the callback's invocation to
+`ScopedCallbacks` only. Should a declared scoped callback count as a covered activation (invoked within its declaring
+boundary's call) for initialization-order settlement? If no, the three fixtures expect CCS8403 until platform boundaries
+declare invocation. Details: evidence `borrowed-view-notes.md`.
