@@ -119,20 +119,27 @@ dotnet fsi ci-pipeline.fsx     # full pipeline; `-- ci`, `-- composer`, `-- pack
 ### Validation posture
 
 Broad defensive test sweeps are a habit to re-examine, not a virtue. Validate
-as narrowly as the evidence allows, and keep one honest backstop.
+the changed owner and its direct consumers, with wider regression selected for
+the risk it addresses.
 
 1. **Inner loop: targeted.** Run the tests for the owner you changed and for
    the components that consume its facts. Filters are fine here.
 2. **Prove each new rule.** A new check or refusal needs a positive control, a
    negative control that asserts the specific reason, and one mutation that a
    test catches.
-3. **Acceptance: one unfiltered run per increment,** by the implementer, at
-   integration. A filtered run is never the acceptance check. Do not repeat the
-   full run without cause; a reviewer verifies heads, manifests and the TRUST
-   ledger instead.
-4. **Blind spots remain.** Host code is not yet covered by the compiler's own
-   guarantees, so the unfiltered backstop stays until targeted selection has
-   predicted the full run's failures over several increments.
+3. **Acceptance scope belongs to the auditor.** Claude Code running Opus 5.5
+   is the sole auditor. It reviews the focused evidence and decides whether a
+   full regression is earned, recording the risk, exact scope and expected
+   wall-clock cost. No full sweep runs automatically per increment. The
+   implementer executes the selected gates under leases and records their
+   actual scope; a filtered result remains `NarrowedRun`.
+4. **Blind spots remain.** Missing consumer coverage, changed shared contracts
+   or an unexplained result can earn broader regression. Retain accepted
+   evidence and verify its binding; rerun only for a recorded reason.
+
+The owner authorizes the implementer to coordinate agents and carry out the
+settled work. LAN first-pass reading and local design reviews support that work;
+they do not replace the sole auditor's verdict or decide unsettled owner policy.
 
 Cross-repository increments use the one-page
 [development guide](docs/development.md).
@@ -146,7 +153,7 @@ or a stage colour.
 | Verdict | Meaning | Exit |
 | --- | --- | --- |
 | `Trusted` | Unfiltered, everything registered ran, nothing failed | 0 |
-| `NarrowedRun` | Passed, but a filter narrowed it; inner loop only | 0 |
+| `NarrowedRun` | Passed within the selected filter; claims only that scope | 0 |
 | `TestsFailed` | Something failed or errored | 1/2 |
 | `NothingRan` | Zero tests executed | 3 |
 | `CountMismatch` | Unfiltered, but ran ≠ registered | 3 |

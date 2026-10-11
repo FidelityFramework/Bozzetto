@@ -37,6 +37,8 @@ If retrieval is unavailable, report that limitation. An unavailable service does
 
 Prefer extending or deleting at the owner. Each new file, dependency, abstraction or duplicated producer/reader rule needs a reason. No second authority, inferred replay or fallback may conceal a missing owner contract. Delegate bulk first-pass reading where workers are available; include retrieval and lease rules in every brief. Use one reviewer and one checklist.
 
+The owner's 2026-10-11 authorization lets the implementer coordinate agents and carry out settled implementation work without asking again for routine delegation. Claude Code running Opus 5.5 is the sole auditor. LAN research and local design reviews supply leads and implementation checks; the auditor owns the acceptance verdict and the decision to widen regression. Unsettled owner decisions retain the boundary above.
+
 ### Authoring conventions
 
 Target `net10.0` and the `.slnx` solution. Use two-space indentation, immutable data, discriminated unions, pattern matching, small pure functions and `Result` for expected failures. Prefer cold `async`; isolate required CLR interoperability at execution edges. Package versions belong in `Directory.Packages.props`; adding a package requires owner agreement. Change the shared release version only for an owner-requested release.
@@ -64,9 +66,9 @@ Clef/Composer projects instead follow [Composer workflow](composer-workflow.md):
 
 Development daemon restarts are authorized, but never interrupt another caller's active work. Validate the changed owner, check leases and Composer work, preserve rollback, replace only the intended matching deployment and make one bounded identity/readiness check. The daemon serves MCP, HTTP and UI on 47749 and control on 47750. See [operations](operations.md) for deployment binding.
 
-## Narrow inner loop, one honest backstop
+## Focused validation and earned regression
 
-Select tests for the owner changed and the components that consume its facts. Filters are useful for the inner loop, not acceptance:
+Select tests for the changed owner and its direct consumers. Record the selection so a filtered result proves only its declared scope:
 
 | Flag | Selection |
 |---|---|
@@ -78,7 +80,9 @@ Check what actually ran. A zero-match Expecto filter can otherwise look successf
 
 Register new gates as ordinary `[<Tests>]` values or through the structural `Integration` registry, never solely through a name filter. `Integration.hostList` and `hostCase` register self-contained host tests; dedicated gates need a real runner and pipeline selection. The registry separates retired F# journeys from executable acceptance and removes retired nested leaves from active host lists (`Bozzetto.Tests/TestInfrastructure.fs`, `Integration`). Retired counts are not passed or ignored evidence.
 
-At integration, the implementer performs one unfiltered acceptance run per increment across its declared tiers. A default unfiltered tier is not evidence for omitted host, Composer or consumer tiers. Select the required tier set before running. Repeat a full run only for a cause such as changed acceptance inputs, a binding mismatch or an unexplained result. The reviewer normally verifies the retained evidence instead of rerunning suites.
+At integration, the auditor reviews the focused owner and consumer evidence, shape matrix and discriminating mutations, then decides whether full regression is earned. Record the decision, the risk being tested, exact tiers and expected wall-clock cost before dispatch; record elapsed time with the result. No full sweep runs automatically per increment. A default unfiltered tier is not evidence for omitted host, Composer or consumer tiers. Repeat a run only for a recorded cause such as changed acceptance inputs, a binding mismatch or an unexplained result. The auditor normally verifies retained evidence instead of rerunning suites.
+
+Acceptance is the auditor's verdict against this declared evidence scope. It does not change a runner's verdict: `NarrowedRun` remains narrowed, and omitted cases remain unverified. Historical unfiltered gates and their accepted counts retain their original scope.
 
 `ci-pipeline.fsx` builds the solution once in Release and declares default and sharded host tiers. `ci` adds the mutation-score tier; `composer` adds a worker build and provider tier using `BOZZETTO_COMPOSER_DISTRIBUTION` and `BOZZETTO_COMPOSER_FIXTURE`; `pack` adds package creation and payload checks after the trust report. These are implementation facts, not receipts of successful execution.
 
@@ -96,7 +100,7 @@ The script has its own lease acquisition; do not add nested leases to its tier c
 | Verdict | Meaning and acceptance action |
 |---|---|
 | `Trusted` | Unfiltered, nonzero execution count equals registered count, no failures or errors. Check ignored cases separately. |
-| `NarrowedRun` | Passing narrowed run. Inner-loop evidence only. |
+| `NarrowedRun` | Passing narrowed run. Evidence only for the selected scope; never a whole-tier result. |
 | `TestsFailed` | Failure or error. Report it as a failure. |
 | `NothingRan` | Zero execution. Not acceptance; trust exit is 3. |
 | `CountMismatch` | Unfiltered registered/ran mismatch. Not acceptance; trust exit is 3. |
@@ -156,7 +160,9 @@ Increment / date / implementer:
 Scope: governing clause, owning component, changed items and consumers.
 Heads: repository -> full pushed SHA, clean; base -> head.
 Dependencies: exact package/assembly/distribution identities.
-Gates: declared unfiltered tiers; commands; lease grant/release evidence;
+Gates: focused changed-owner/direct-consumer selection; auditor's full-regression
+  decision with risk, exact scope and expected wall-clock cost; commands and
+  filters; actual elapsed time; lease grant/renewal/release evidence;
   verbatim TRUST lines; counts including ignored/skipped; baseline delta
   (missing, added, new failures, resolved); original report/log paths.
 Binding: manifest path and coverage of every changed path; built artifact
@@ -176,7 +182,7 @@ The implementer supplies adversarial checks before transfer. Do not ask the revi
 
 ## Auditor binding review and return
 
-The reviewer checks binding first: heads equal the claimed remote heads; manifests verify; artifact provenance matches; ledger lines agree with original reports; every rule-ledger test exists and belongs to the declared executable gate. An unperformed check remains unverified, not grade E.
+Claude Code running Opus 5.5 checks binding first: heads equal the claimed remote heads; manifests verify; artifact provenance matches; ledger lines agree with original reports; every rule-ledger test exists and belongs to the declared executable gate. It records whether the proposed evidence scope addresses the change's risk and whether broader regression is earned. An unperformed check remains unverified, not grade E.
 
 Review the diff with one checklist:
 
@@ -189,7 +195,7 @@ Review the diff with one checklist:
 - Direct interchange is binary; export and MCP exceptions stay at their boundaries.
 - Retrieval context, heads, manifests, dependency closures and acceptance scope bind together.
 
-Reproduce gates only for a binding mismatch, ledger anomaly or owner-requested spot check. Record the reason and whether reproduction agrees. Do not repeat an unfiltered suite as a review ritual.
+Reproduce existing gates for a binding mismatch, ledger anomaly or owner-requested spot check; widening regression requires the auditor's recorded risk, scope and wall-clock rationale. Record the reason and whether reproduction agrees. Do not repeat an unfiltered suite as a review ritual.
 
 Return findings only, most severe first: severity, E/R/S/I grade, file:line, defect, required fix and discriminating exit test. Conclude **accept**, **accept with follow-up** or **changes required**. A failed required gate or unexpected matrix row cannot be relabeled a harmless residual.
 
