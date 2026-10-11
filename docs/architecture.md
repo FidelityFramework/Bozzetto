@@ -128,7 +128,8 @@ The intended reactive shape is owner input, derived projection, then delivery ef
 A bounded implementation exists in `Bozzetto/UiBridge.fs`, `Facts.Graph`:
 
 - Owners publish complete immutable health, lease, agent-work and membership values with their own serials.
-- Admission refuses older publications, distinguishes exact duplicates from conflicting equal serials, and fences foreign agent-board incarnations.
+- The supervisor also publishes its bounded, memory-only journal of every caller's settled non-status Composer operations, including refusals and run output, as the fifth input; the fourth work derives protocol 8 `operations` for the Composer page's Activity and Run output tabs, with adapter-reported caller labels rather than authenticated identities (`Bozzetto/ComposerJournal.fs`, `Bozzetto/ComposerSupervisor.fs`, `Bozzetto/UiBridge.fs`, `bozzetto-web/src/Shared/Protocol.fs`, `bozzetto-web/src/Frontend/App.fs`).
+- Admission refuses older publications, distinguishes exact duplicates from conflicting equal serials, and fences foreign agent-board and journal incarnations.
 - Foundation work definitions declare their reads explicitly. Pure synchronous projections report Finished and Drained and deliver through Offers.
 - Sink registration and retrieval of current fact values occur under the same gate, preventing a gap between current-state delivery and later fact publications.
 - Epoch recycling retires and checks foundation drain before rebuilding the bounded projection graph, preserving public projection stamps during handover.

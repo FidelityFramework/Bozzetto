@@ -42,6 +42,28 @@ For a build without edits, still obtain an explicit reservation and then build. 
 
 Caller-owned builds and test suites require work leases under `AGENTS.md`. A lease governs resource admission, not compiler proof or edit permission. Follow grant, wait and refused decisions, renew while work runs, and release on completion or failure. See [agents.md](agents.md) and [operations.md](operations.md). Do not route Clef/Composer execution around the provider by launching an artifact or invoking a compiler independently.
 
+## Operations journal
+
+The supervisor owns a memory-only journal of settled Composer calls from all adapters, not just commands issued by the viewing page. `Bozzetto/ComposerSupervisor.fs`, `ExecuteAsync` and `Record`, records every non-status call that returns or throws, including refused operations. This includes open, reserve, build, run, cancel, close, compiler retirement and format preview. Status reads are never journaled, whether successful or refused; directory observation and internal status reconciliation do not append entries. Commands handled by the bridge without a supervisor operation, such as snapshot requests and resource observation, are not Composer journal entries.
+
+Each entry carries a journal sequence, settlement time, caller label, operation, session, available project text and outcome. A returned reply records its outcome; an escaping exception records `Outcome.Failed` and is rethrown. Cancellation records a `Canceled` refusal; if cancellation escapes the wrapper it is rethrown after recording. A returned `Ran` outcome also carries exit code, compiler generation, `sourceVersion`, standard output and standard error (`Bozzetto/ComposerJournal.fs`, `settle`). A nonzero program exit code is still a successfully returned run operation, not a compiler refusal. Project text comes from the open request or the available session observation; it can be empty and is not recovered by rereading a finished session (`ComposerSupervisor.Record`).
+
+The caller is an **adapter-reported label**, not an authenticated identity or proof of who performed the work. The journal vocabulary gives examples `mcp:<transport>`, `http` and `browser`; the two-argument supervisor overload reports `unknown`. `Bozzetto/UiBridge.fs`, `Project.operations`, carries this as `CallerLabel` in `OperationsBoard`. `bozzetto-web/src/Frontend/App.fs`, `OutputPane`, marks the caller's provenance in its title text. The requirement is to preserve this distinction, not infer identity or authorization from a label.
+
+`Bozzetto/ComposerJournal.fs` bounds the journal three ways:
+
+| Bound | Implemented behavior |
+| --- | --- |
+| Entry count | At most 200 entries, newest first; appending the 201st drops the oldest entry. |
+| Each transcript stream | At most 16,384 UTF-16 code units of stream content. A longer stream keeps its end, prefixed by `[cut: N characters omitted]`; that bounded marker line is additional to the content limit. |
+| Aggregate transcripts | At most 512 × 1024 UTF-16 code units across retained standard-output and standard-error strings, including cut markers. Oldest live transcripts are cleared first until the budget fits; their entries and run metadata remain with `Dropped = true`. |
+
+Other entry text is bounded too: caller labels, session identities and run source versions to 128 code units, project paths and refusal/exception messages to 512. These are character limits, not UTF-8 byte limits or an encoded-frame size guarantee. Nothing is persisted by this journal, and it does not enlist the independent diagnostic sink.
+
+The supervisor publishes the complete immutable journal with a fixed incarnation and increasing entry sequence through `Journal` and `JournalChanged`. The fact plane derives the stamped `operations` event on protocol 8 and supplies current state on connect and resync (`Bozzetto/UiBridge.fs`, `Facts`; `bozzetto-web/src/Shared/Protocol.fs`, `OperationsBoard`). Push coalescing may skip intermediate snapshots, and the bounds mean this is not a durable audit history or missed-event replay.
+
+On the Composer page, Activity lists the journal newest first. Run output offers journal entries with run metadata, defaults to the newest journal run when no retained selection matches, and displays `[transcript dropped for space]` when output was evicted. The page's own command activity and run output remain separate, labelled `this page`; a browser operation can therefore appear in both sources (`bozzetto-web/src/Frontend/App.fs`, `OutputPane`; `bozzetto-web/src/Frontend/Model.fs`, `apply`). A journal outcome or retained transcript grants no current execution or physical-drain authority.
+
 ## Reserve before write
 
 A successful reservation means that the owning provider has committed the required withdrawal and invoked the compiler's reservation boundary. A queued request, transport receipt, pending browser button or timeout is not permission to edit.
@@ -79,9 +101,11 @@ Keep these counters distinct:
 | Artifact generation and `sourceVersion` | Compiler-issued identity of an accepted build. |
 | Status observation | Order of actual provider status captures within an address. |
 | Supervisor snapshot revision | Local shared-directory change order, not compiler proof identity. |
+| Journal sequence | Settled-entry order within one supervisor incarnation. |
+| Operations board revision | Publication stamp of the plane's Operations work, not the journal sequence. |
 | Browser correlation | Matches a command to its outcome, not an edit or execution capability. |
 
-These distinctions are explicit in `Bozzetto.Composer.Protocol/ProviderData.fs`, `Bozzetto/ComposerSupervisor.fs` and `bozzetto-web/src/Shared/Protocol.fs`. Never substitute one counter for another or infer global ordering across epochs.
+These distinctions are explicit in `Bozzetto.Composer.Protocol/ProviderData.fs`, `Bozzetto/ComposerSupervisor.fs`, `Bozzetto/ComposerJournal.fs`, `Bozzetto/UiBridge.fs` and `bozzetto-web/src/Shared/Protocol.fs`. Never substitute one counter for another or infer global ordering across epochs.
 
 | Situation | Response |
 |---|---|

@@ -2,7 +2,7 @@
 
 **A shared development daemon for the Fidelity Framework.**
 
-People and agents use Bozzetto to edit, build and run a shared Clef project. Clients explicitly open Composer project sessions and reserve edits before changing files. Composer is a differential compiler, so builds recompile only what a change affects. Composer allows execution only if the compiler has accepted the artifact. MCP clients, the browser and command-line tools share sessions under Composer's authority. The browser shows daemon health, leases and the agents at work. An operations journal is being added to show Composer operations from all callers.
+People and agents use Bozzetto to edit, build and run a shared Clef project. Clients explicitly open Composer project sessions and reserve edits before changing files. Composer is a differential compiler, so builds recompile only what a change affects. Composer allows execution only if the compiler has accepted the artifact. MCP clients, the browser and command-line tools share sessions under Composer's authority. The browser shows daemon health, leases and the agents at work. The operations journal shows settled non-status Composer operations from all callers, including refusals and bounded run output ([journal owner](Bozzetto/ComposerJournal.fs), [supervisor](Bozzetto/ComposerSupervisor.fs), [page](bozzetto-web/src/Frontend/App.fs)).
 
 [Architecture](docs/architecture.md) · [Composer workflow](docs/composer-workflow.md) · [Operations](docs/operations.md) · [Get started](#get-started) · [Documentation](docs/README.md)
 
@@ -97,7 +97,7 @@ curl --fail --max-time 3 http://127.0.0.1:47749/health
 | Interface | Address |
 |---|---|
 | Dashboard: health, machine resources, agents at work | `http://127.0.0.1:47749/dashboard` |
-| Composer: worker, sessions and leases, with operations and run output from all callers planned for the operations journal | `http://127.0.0.1:47749/composer` |
+| Composer: worker, sessions and leases, plus Activity and Run output from all callers through the [operations journal](docs/composer-workflow.md#operations-journal) (`bozzetto-web/src/Frontend/App.fs`, `OutputPane`) | `http://127.0.0.1:47749/composer` |
 | Streamable HTTP MCP | `http://127.0.0.1:47749/` |
 | Composer session resource | `composer://sessions` through MCP |
 | Control listener | `http://127.0.0.1:47750/api/daemon-info` |
