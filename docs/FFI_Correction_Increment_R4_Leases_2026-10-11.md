@@ -189,3 +189,22 @@ so open tabs must reload). Gate: TRUST registered=8450 ran=8450 passed=8446 fail
 case is the pre-existing CLI-version check); codec round trip 203/0; page checks passed. Whether 20%/30% are the right
 thresholds for a 58.5 GiB workstation is a policy choice for the owner; the numbers are now visible where the decision is
 felt.
+
+---
+
+## Follow-through from the spec sweep (2026-10-11, later)
+
+- Q5 is decided by the spec (lazy by default; a branch demands its condition and selected arm; definitions never force
+  at their binding; conditional demand stays pending). clef's `BindingDemand` ingredient now opens one activation per
+  `Sequential` arm of a reached decision, with the conditional entry path as proof premises, admits a decision's
+  condition (including the lowered `&&`/`||`) and a terminal reference as unconditional first demands, and requires the
+  cell to be established in the activation or a dominating prefix. The defective Array.init fixture (Phase 0 RC4) now
+  demands the write before observing; two controls were added (the 257/3 sharing control and an arm-swap retraction).
+- The spec was amended at clef-lang-spec `9947c9e` (expressions.md: selected-arm demand and first-demand read time over
+  mutable storage; width-inference.md §2.2: the relevant demand is the first demand; error-handling.md: `CCS8403` tabled
+  as an unestablished settlement). **Owner review requested**: the wording follows the verified sweep text.
+- Q1, Q6, Q2, Q4 and Q3 follow in that order; see `docs/Spec_Findings_Phase_B_Questions_2026-10-11.md`.
+- Bozzetto: `composer_open_project` refused "Composer worker contract does not match the daemon" on every release since
+  the daemon alone was rebuilt: `Fidelity.PSG.Binary.ContractFingerprint` is inlined into Bozzetto.dll at compile time
+  (`458DFDB8…` from the current PSG head) while the retained worker closure carries `7D92113F…` (Oct 4). The next deploy
+  ships daemon and worker from one build.
