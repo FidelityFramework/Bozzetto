@@ -174,3 +174,18 @@ commit), Composer `0caa67d8`, speakez-lab `03406ad`, clef-lang-spec `4d5c445`.
   `twice f x = f (f x)` makes the callback's formal range feed its own result, so the per-formal fixpoint widens and the
   commitment refuses CCS8011 even for `twice (fun v -> v * 2) 3`. Yes/no: is that refusal the intended answer (re-expect
   the fixture as an active refusal), or should complete higher-order invocations specialize the callback per call site?
+
+---
+
+## Bozzetto: the memory-pressure level now explains itself (2026-10-11, `738ac64f`)
+
+The owner saw "memory Tight" with 74% of RAM occupied. The classifier (`Bozzetto.Core/MemoryPressure.fs`) works on the
+fraction of RAM *available* with hysteresis: Tight is entered at or below 20% available and left only at or above 30%
+(`defaultThresholds`; the lease pool caps expensive work at one lease while Tight). At 15.0 of 58.5 GiB the machine sits at
+25.6% available, above the entry threshold and below the exit threshold, so it stayed Tight from an earlier dip. The level
+is unchanged; what changed is that the health event, the dashboard chip (tooltip and a visible line while not Normal) and
+the status note now carry the observed fraction and both thresholds (`MemoryPressure.explainAt`; bridge protocol 3 → 4,
+so open tabs must reload). Gate: TRUST registered=8450 ran=8450 passed=8446 failed=0 errored=1 ignored=3 (the one errored
+case is the pre-existing CLI-version check); codec round trip 203/0; page checks passed. Whether 20%/30% are the right
+thresholds for a 58.5 GiB workstation is a policy choice for the owner; the numbers are now visible where the decision is
+felt.
