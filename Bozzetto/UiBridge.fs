@@ -67,15 +67,32 @@ module Project =
   let targetOf (authority: Authority) : SessionTarget =
     { SessionTarget.Worker = { WorkerTarget.Host = authority.Host; Epoch = authority.Epoch }; Session = authority.Session }
 
+  /// One row per region identity named anywhere in the accepted generation, in
+  /// identity order: the witness state Alex reported and the object state the
+  /// back end reported, with the nodes Alex visited for it.
   let artifactSummary (artifact: AcceptedArtifact) : ArtifactSummary =
+    let visits = artifact.WitnessVisits |> Map.ofArray
+    let stateOf (first: string array) (second: string array) (third: string array) (labels: string * string * string) identity =
+      let a, b, c = labels
+      if Array.contains identity first then a
+      elif Array.contains identity second then b
+      elif Array.contains identity third then c
+      else ""
+    let identities =
+      Seq.concat [ artifact.ChangedWitnesses; artifact.RetainedWitnesses; artifact.RetiredWitnesses
+                   artifact.WitnessVisits |> Array.map fst
+                   artifact.CompiledObjects; artifact.ReusedObjects; artifact.RetiredObjects ]
+      |> Seq.distinct |> Seq.sort |> Seq.toArray
     { ArtifactSummary.Generation = artifact.Generation
       SourceVersion = artifact.SourceVersion
       ArtifactPath = artifact.ArtifactPath
       ArtifactSha256 = artifact.ArtifactSha256
-      CompiledObjects = artifact.CompiledObjects.Length
-      ReusedObjects = artifact.ReusedObjects.Length
-      RetiredObjects = artifact.RetiredObjects.Length
-      ChangedWitnesses = artifact.ChangedWitnesses.Length }
+      Regions =
+        identities |> Array.map (fun identity ->
+          { RegionRow.Identity = identity
+            Witness = stateOf artifact.ChangedWitnesses artifact.RetainedWitnesses artifact.RetiredWitnesses ("changed", "retained", "retired") identity
+            Visits = visits |> Map.tryFind identity |> Option.defaultValue 0
+            Object = stateOf artifact.CompiledObjects artifact.ReusedObjects artifact.RetiredObjects ("compiled", "reused", "retired") identity }) }
 
   /// The supervisor caches only observed statuses. Anything else is shown as
   /// a stale entry rather than hidden, so the page never loses a session.

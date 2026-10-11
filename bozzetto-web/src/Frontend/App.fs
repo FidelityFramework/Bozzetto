@@ -413,6 +413,31 @@ let SessionCard (s: SessionView) (local: LocalView) (connected: unit -> bool) (d
             + string s.current.retired + " retired · " + string s.current.changed + " witnesses changed"
           }
         }
+        // What the change recompiled and what it reused, region by region: the
+        // differential fact itself, not only its totals.
+        Show (when' = (s.current.regions.Length > 0)) {
+          table (class' = "table table-xs mt-1") {
+            thead () {
+              tr () {
+                th () { "region" }
+                th () { "witness" }
+                th (class' = "text-right") { "visits" }
+                th () { "object" }
+              }
+            }
+            tbody () {
+              For (each = s.current.regions) {
+                yield fun r _ ->
+                  tr () {
+                    td (class' = "font-mono break-all max-w-[28rem]") { r.Identity }
+                    td () { r.Witness }
+                    td (class' = "text-right font-mono") { string r.Visits }
+                    td () { r.Object }
+                  }
+              }
+            }
+          }
+        }
       }
       For (each = s.notices) {
         yield fun n _ -> DiagnosticBlock true (fun () -> n.label) (fun () -> n.text)

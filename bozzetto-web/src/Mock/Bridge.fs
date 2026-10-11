@@ -249,10 +249,11 @@ let private artifactFor (session: MockSession) =
     SourceVersion = "src-" + token ()
     ArtifactPath = "/tmp/composer-mock/" + session.Status.Target.Session + "/a.out"
     ArtifactSha256 = token () + token () + token () + token () + token () + token () + token () + token ()
-    CompiledObjects = 1 + int (random () * 6.0)
-    ReusedObjects = 10 + int (random () * 40.0)
-    RetiredObjects = int (random () * 2.0)
-    ChangedWitnesses = 1 + int (random () * 4.0) }
+    Regions =
+      let secondChanged = random () < 0.5
+      [| { RegionRow.Identity = "common"; Witness = "changed"; Visits = 40 + int (random () * 400.0); Object = "compiled" }
+         { RegionRow.Identity = "callable:Demo:first"; Witness = "retained"; Visits = 0; Object = "reused" }
+         { RegionRow.Identity = "callable:Demo:second"; Witness = (if secondChanged then "changed" else "retained"); Visits = (if secondChanged then 9 else 0); Object = (if secondChanged then "compiled" else "reused") } |] }
 
 let private handle (send: string -> unit) (frame: CommandFrame) =
   let correlation = frame.Correlation

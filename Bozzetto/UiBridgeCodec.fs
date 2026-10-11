@@ -209,10 +209,11 @@ let private artifactJson (a: ArtifactSummary) =
     "sourceVersion", str a.SourceVersion
     "artifactPath", str a.ArtifactPath
     "artifactSha256", str a.ArtifactSha256
-    "compiledObjects", whole a.CompiledObjects
-    "reusedObjects", whole a.ReusedObjects
-    "retiredObjects", whole a.RetiredObjects
-    "changedWitnesses", whole a.ChangedWitnesses
+    "regions",
+    JsonValue.Array [
+      for r in a.Regions ->
+        JsonValue.Object [ "identity", str r.Identity; "witness", str r.Witness; "visits", whole r.Visits; "object", str r.Object ]
+    ]
   ]
 
 let private sessionJson (s: SessionStatus) =

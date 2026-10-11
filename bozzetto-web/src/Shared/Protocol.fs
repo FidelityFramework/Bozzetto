@@ -44,7 +44,7 @@
 ///     "retire_worker"   "worker":{"host","epoch"}
 ///
 ///   backend -> UI: {"event":<tag>,...}
-///     "welcome"     "protocolVersion":4, "daemonVersion", "startedAtMs":<int64>
+///     "welcome"     "protocolVersion":5, "daemonVersion", "startedAtMs":<int64>
 ///     "snapshot"    "revision":<int64>, "worker":W, "sessions":[S...]
 ///                   W = {"state":"unconfigured"} | {"state":"idle"}
 ///                     | {"state":"running","host","epoch","compilerVersion","processId":<int32>|null}
@@ -55,8 +55,8 @@
 ///                        "cleanupError","workerRetirementRequired",
 ///                        "statusError","workerError"}   (the last six: string|null)
 ///                   A = {"generation":<int64>,"sourceVersion","artifactPath",
-///                        "artifactSha256","compiledObjects","reusedObjects",
-///                        "retiredObjects","changedWitnesses"}   (counts: int32)
+///                        "artifactSha256","regions":[{"identity","witness",
+///                        "visits":<int32>,"object"}]}
 ///     "accepted"    "correlation", "target":T, "completion":C
 ///                   C = {"kind":"session_opened"} | {"kind":"edit_reserved","reservation"}
 ///                     | {"kind":"reservation_built","artifact":A}
@@ -97,7 +97,7 @@ module Bozzetto.Web.Shared.Protocol
 /// 2: Welcome carries StartedAtMs; Health no longer carries an uptime.
 /// 3: the Uptime event, pushed by the backend's clock while a page is connected.
 [<Literal>]
-let ProtocolVersion = 4
+let ProtocolVersion = 5
 
 // ── Addresses ──────────────────────────────────────────────────────────────
 
@@ -145,16 +145,20 @@ type CommandFrame = { Correlation: int32; Command: Command }
 
 // ── Composer state (backend -> UI) ─────────────────────────────────────────
 
-/// The accepted artifact a session currently holds, summarized for display.
+/// One witness region of an accepted generation: how Alex treated it and how
+/// the back end treated its object. Witness is "changed", "retained" or
+/// "retired" (or "" for an object with no witness row); Object is "compiled",
+/// "reused", "retired" or "" when the region produced no object of its own.
+type RegionRow = { Identity: string; Witness: string; Visits: int32; Object: string }
+
+/// The accepted artifact a session currently holds: its identity and one row
+/// per region, so a build shows what a change recompiled and what it reused.
 type ArtifactSummary = {
   Generation: int64
   SourceVersion: string
   ArtifactPath: string
   ArtifactSha256: string
-  CompiledObjects: int32
-  ReusedObjects: int32
-  RetiredObjects: int32
-  ChangedWitnesses: int32
+  Regions: RegionRow array
 }
 
 /// One session as the supervisor last observed it. Status grants nothing:

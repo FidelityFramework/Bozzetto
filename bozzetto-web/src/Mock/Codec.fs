@@ -123,10 +123,7 @@ let private artifactJson (a: ArtifactSummary) =
     "sourceVersion" ==> a.SourceVersion
     "artifactPath" ==> a.ArtifactPath
     "artifactSha256" ==> a.ArtifactSha256
-    "compiledObjects" ==> a.CompiledObjects
-    "reusedObjects" ==> a.ReusedObjects
-    "retiredObjects" ==> a.RetiredObjects
-    "changedWitnesses" ==> a.ChangedWitnesses
+    "regions" ==> (a.Regions |> Array.map (fun r -> createObj [ "identity" ==> r.Identity; "witness" ==> r.Witness; "visits" ==> r.Visits; "object" ==> r.Object ]))
   ]
 
 let private sessionJson (s: SessionStatus) =

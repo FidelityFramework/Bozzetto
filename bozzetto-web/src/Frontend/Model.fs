@@ -27,6 +27,7 @@ type ArtifactView =
     reused: int
     retired: int
     changed: int
+    regions: RegionRow array
   |}
 
 type NoticeView = {| id: string; label: string; text: string |}
@@ -168,7 +169,7 @@ let WorkerKey = "worker"
 let private noWorker () : WorkerView = {| state = "idle"; host = ""; epoch = ""; compilerVersion = ""; pid = "" |}
 
 let private noArtifact () : ArtifactView =
-  {| generation = ""; sourceVersion = ""; path = ""; sha = ""; compiled = 0; reused = 0; retired = 0; changed = 0 |}
+  {| generation = ""; sourceVersion = ""; path = ""; sha = ""; compiled = 0; reused = 0; retired = 0; changed = 0; regions = [||] |}
 
 let private noHealth () : HealthView =
   {|
@@ -302,10 +303,11 @@ let private artifactView (a: ArtifactSummary) : ArtifactView =
     sourceVersion = a.SourceVersion
     path = a.ArtifactPath
     sha = a.ArtifactSha256
-    compiled = a.CompiledObjects
-    reused = a.ReusedObjects
-    retired = a.RetiredObjects
-    changed = a.ChangedWitnesses
+    compiled = a.Regions |> Array.filter (fun r -> r.Object = "compiled") |> Array.length
+    reused = a.Regions |> Array.filter (fun r -> r.Object = "reused") |> Array.length
+    retired = a.Regions |> Array.filter (fun r -> r.Object = "retired") |> Array.length
+    changed = a.Regions |> Array.filter (fun r -> r.Witness = "changed") |> Array.length
+    regions = a.Regions
   |}
 
 let private sessionView (s: SessionStatus) : SessionView =
@@ -462,7 +464,8 @@ let private completionText (c: Completion) =
   | EditReserved reservation -> "edit reserved (" + shortHash reservation + "…); edit sources, then build"
   | ReservationBuilt a ->
     "built generation " + string a.Generation + " · " + shortHash a.ArtifactSha256
-    + " · " + string a.CompiledObjects + " compiled, " + string a.ReusedObjects + " reused"
+    + " · " + string (a.Regions |> Array.filter (fun r -> r.Object = "compiled") |> Array.length) + " compiled, "
+    + string (a.Regions |> Array.filter (fun r -> r.Object = "reused") |> Array.length) + " reused"
   | RunFinished exitCode -> "run finished, exit " + string exitCode
   | WorkCanceled -> "canceled; artifact authority withdrawn"
   | SessionClosed -> "closed; cleanup started"

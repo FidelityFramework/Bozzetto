@@ -125,19 +125,19 @@ module private Ui =
     let! sourceVersion = text "sourceVersion" o
     let! artifactPath = text "artifactPath" o
     let! artifactSha256 = text "artifactSha256" o
-    let! compiled = whole "compiledObjects" o
-    let! reused = whole "reusedObjects" o
-    let! retired = whole "retiredObjects" o
-    let! changed = whole "changedWitnesses" o
+    let! regions =
+      items "regions" (fun r -> decode {
+        let! identity = text "identity" r
+        let! witness = text "witness" r
+        let! visits = whole "visits" r
+        let! object = text "object" r
+        return { RegionRow.Identity = identity; Witness = witness; Visits = visits; Object = object } }) o
     return {
       ArtifactSummary.Generation = generation
       SourceVersion = sourceVersion
       ArtifactPath = artifactPath
       ArtifactSha256 = artifactSha256
-      CompiledObjects = compiled
-      ReusedObjects = reused
-      RetiredObjects = retired
-      ChangedWitnesses = changed
+      Regions = regions
     }
   }
 
@@ -428,10 +428,11 @@ let private artifact = {
   SourceVersion = "src \"quoted\" \\ back"
   ArtifactPath = "/tmp/a b/naïve.out"
   ArtifactSha256 = String.replicate 64 "f"
-  CompiledObjects = Int32.MaxValue
-  ReusedObjects = 0
-  RetiredObjects = Int32.MinValue
-  ChangedWitnesses = 3
+  Regions = [|
+    { RegionRow.Identity = "common"; Witness = "changed"; Visits = Int32.MaxValue; Object = "compiled" }
+    { RegionRow.Identity = "callable:M:f \"q\""; Witness = "retained"; Visits = 0; Object = "" }
+    { RegionRow.Identity = "o-retired"; Witness = ""; Visits = Int32.MinValue; Object = "retired" }
+  |]
 }
 
 let private fullSession = {
@@ -591,15 +592,15 @@ let private commandWires = [
 ]
 
 let private eventWires = [
-  """{"event":"welcome","protocolVersion":4,"daemonVersion":"0.6.834","startedAtMs":"1759420800123"}"""
+  """{"event":"welcome","protocolVersion":5,"daemonVersion":"0.6.834","startedAtMs":"1759420800123"}"""
   """{"event":"welcome","protocolVersion":2147483647,"daemonVersion":"","startedAtMs":"-9223372036854775808"}"""
   """{"event":"snapshot","revision":"0","worker":{"state":"unconfigured"},"sessions":[]}"""
   """{"event":"snapshot","revision":"1","worker":{"state":"idle"},"sessions":[{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼","generation":"-9223372036854775808","project":"/home/ü/Ünïcode.fidproj","closed":false,"busy":false,"statusFresh":true,"revocationPending":false,"cleanupPending":false,"formatterCleanupPending":false,"current":null,"backendError":null,"formatterError":null,"cleanupError":null,"workerRetirementRequired":null,"statusError":null,"workerError":null}]}"""
-  """{"event":"snapshot","revision":"9223372036854775807","worker":{"state":"running","host":"host-α","epoch":"epoch-0001","compilerVersion":"0.0.2+abc","processId":31337},"sessions":[{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼","generation":"9007199254740993","project":"/home/ü/Ünïcode.fidproj","closed":true,"busy":true,"statusFresh":false,"revocationPending":true,"cleanupPending":true,"formatterCleanupPending":true,"current":{"generation":"9223372036854775807","sourceVersion":"src \"quoted\" \\ back","artifactPath":"/tmp/a b/naïve.out","artifactSha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","compiledObjects":2147483647,"reusedObjects":0,"retiredObjects":-2147483648,"changedWitnesses":3},"backendError":"backend\nline two","formatterError":"formatter","cleanupError":"cleanup","workerRetirementRequired":"retire","statusError":"stale","workerError":""},{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼","generation":"-9223372036854775808","project":"/home/ü/Ünïcode.fidproj","closed":false,"busy":false,"statusFresh":true,"revocationPending":false,"cleanupPending":false,"formatterCleanupPending":false,"current":null,"backendError":null,"formatterError":null,"cleanupError":null,"workerRetirementRequired":null,"statusError":null,"workerError":null}]}"""
+  """{"event":"snapshot","revision":"9223372036854775807","worker":{"state":"running","host":"host-α","epoch":"epoch-0001","compilerVersion":"0.0.2+abc","processId":31337},"sessions":[{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼","generation":"9007199254740993","project":"/home/ü/Ünïcode.fidproj","closed":true,"busy":true,"statusFresh":false,"revocationPending":true,"cleanupPending":true,"formatterCleanupPending":true,"current":{"generation":"9223372036854775807","sourceVersion":"src \"quoted\" \\ back","artifactPath":"/tmp/a b/naïve.out","artifactSha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","regions":[{"identity":"common","witness":"changed","visits":2147483647,"object":"compiled"},{"identity":"callable:M:f \"q\"","witness":"retained","visits":0,"object":""},{"identity":"o-retired","witness":"","visits":-2147483648,"object":"retired"}]},"backendError":"backend\nline two","formatterError":"formatter","cleanupError":"cleanup","workerRetirementRequired":"retire","statusError":"stale","workerError":""},{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼","generation":"-9223372036854775808","project":"/home/ü/Ünïcode.fidproj","closed":false,"busy":false,"statusFresh":true,"revocationPending":false,"cleanupPending":false,"formatterCleanupPending":false,"current":null,"backendError":null,"formatterError":null,"cleanupError":null,"workerRetirementRequired":null,"statusError":null,"workerError":null}]}"""
   """{"event":"snapshot","revision":"2","worker":{"state":"running","host":"host-α","epoch":"epoch-0001","compilerVersion":"","processId":null},"sessions":[]}"""
   """{"event":"accepted","correlation":1,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"session_opened"}}"""
   """{"event":"accepted","correlation":2,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"edit_reserved","reservation":"rsv-ü"}}"""
-  """{"event":"accepted","correlation":3,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"reservation_built","artifact":{"generation":"9223372036854775807","sourceVersion":"src \"quoted\" \\ back","artifactPath":"/tmp/a b/naïve.out","artifactSha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","compiledObjects":2147483647,"reusedObjects":0,"retiredObjects":-2147483648,"changedWitnesses":3}}}"""
+  """{"event":"accepted","correlation":3,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"reservation_built","artifact":{"generation":"9223372036854775807","sourceVersion":"src \"quoted\" \\ back","artifactPath":"/tmp/a b/naïve.out","artifactSha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","regions":[{"identity":"common","witness":"changed","visits":2147483647,"object":"compiled"},{"identity":"callable:M:f \"q\"","witness":"retained","visits":0,"object":""},{"identity":"o-retired","witness":"","visits":-2147483648,"object":"retired"}]}}}"""
   """{"event":"accepted","correlation":4,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"run_finished","exitCode":-1}}"""
   """{"event":"accepted","correlation":5,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"work_canceled"}}"""
   """{"event":"accepted","correlation":6,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"session_closed"}}"""
@@ -1099,7 +1100,12 @@ let tests =
         |> Expect.equal "built, summarized with counts" [
           acceptance (ReservationBuilt {
             ArtifactSummary.Generation = 3L; SourceVersion = "v3"; ArtifactPath = "/external/a.out"; ArtifactSha256 = "sha"
-            CompiledObjects = 2; ReusedObjects = 1; RetiredObjects = 0; ChangedWitnesses = 2 }) ]
+            Regions = [|
+              { RegionRow.Identity = "o1"; Witness = ""; Visits = 0; Object = "compiled" }
+              { RegionRow.Identity = "o2"; Witness = ""; Visits = 0; Object = "compiled" }
+              { RegionRow.Identity = "o3"; Witness = ""; Visits = 0; Object = "reused" }
+              { RegionRow.Identity = "w1"; Witness = "changed"; Visits = 0; Object = "" }
+              { RegionRow.Identity = "w2"; Witness = "changed"; Visits = 0; Object = "" } |] }) ]
         outcome (Ran { RunResult.Generation = 3L; SourceVersion = "v3"; ExitCode = 3; StandardOutput = "out"; StandardError = "err" })
         |> Expect.equal "transcript, then the exit code" [
           RunOutput { RunTranscript.Correlation = 5; Target = target; Generation = 3L; SourceVersion = "v3"; ExitCode = 3; StandardOutput = "out"; StandardError = "err" }
@@ -1129,7 +1135,12 @@ let tests =
           { SessionStatus.Target = { SessionTarget.Worker = { WorkerTarget.Host = "h"; Epoch = "e" }; Session = "s1" }
             Generation = 4L; Project = "/p/Main.fidproj"; Closed = false; Busy = true; StatusFresh = false
             RevocationPending = true; CleanupPending = true; FormatterCleanupPending = true
-            Current = Some { ArtifactSummary.Generation = 3L; SourceVersion = "v3"; ArtifactPath = "/external/a.out"; ArtifactSha256 = "sha"; CompiledObjects = 2; ReusedObjects = 1; RetiredObjects = 0; ChangedWitnesses = 2 }
+            Current = Some { ArtifactSummary.Generation = 3L; SourceVersion = "v3"; ArtifactPath = "/external/a.out"; ArtifactSha256 = "sha"; Regions = [|
+              { RegionRow.Identity = "o1"; Witness = ""; Visits = 0; Object = "compiled" }
+              { RegionRow.Identity = "o2"; Witness = ""; Visits = 0; Object = "compiled" }
+              { RegionRow.Identity = "o3"; Witness = ""; Visits = 0; Object = "reused" }
+              { RegionRow.Identity = "w1"; Witness = "changed"; Visits = 0; Object = "" }
+              { RegionRow.Identity = "w2"; Witness = "changed"; Visits = 0; Object = "" } |] }
             BackendError = Some "backend"; FormatterError = Some "formatter"; CleanupError = Some "cleanup"
             WorkerRetirementRequired = Some "retire"; StatusError = Some "reading"; WorkerError = Some "gone" } |]
         let unobserved = Project.sessionStatus (response (Result.Ok(Reserved { Reservation = "rsv" })))

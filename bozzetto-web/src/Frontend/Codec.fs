@@ -132,24 +132,32 @@ let private sessionTarget (o: obj) = decode {
   return { SessionTarget.Worker = { WorkerTarget.Host = host; Epoch = epoch }; Session = session }
 }
 
+let private regionRow (o: obj) = decode {
+  let! identity = text o "identity"
+  let! witness = text o "witness"
+  let! visits = whole o "visits"
+  let! object = text o "object"
+  // A state outside the two vocabularies is a protocol defect, refused with
+  // its reason rather than rendered as an empty cell.
+  let! row =
+    if List.contains witness [ "changed"; "retained"; "retired"; "" ] && List.contains object [ "compiled"; "reused"; "retired"; "" ] then
+      Ok { RegionRow.Identity = identity; Witness = witness; Visits = visits; Object = object }
+    else Error ("region '" + identity + "' has an unknown witness or object state: '" + witness + "'/'" + object + "'")
+  return row
+}
+
 let private artifact (o: obj) = decode {
   let! generation = wide o "generation"
   let! sourceVersion = text o "sourceVersion"
   let! artifactPath = text o "artifactPath"
   let! artifactSha256 = text o "artifactSha256"
-  let! compiled = whole o "compiledObjects"
-  let! reused = whole o "reusedObjects"
-  let! retired = whole o "retiredObjects"
-  let! changed = whole o "changedWitnesses"
+  let! regions = items o "regions" regionRow
   return {
     ArtifactSummary.Generation = generation
     SourceVersion = sourceVersion
     ArtifactPath = artifactPath
     ArtifactSha256 = artifactSha256
-    CompiledObjects = compiled
-    ReusedObjects = reused
-    RetiredObjects = retired
-    ChangedWitnesses = changed
+    Regions = regions
   }
 }
 

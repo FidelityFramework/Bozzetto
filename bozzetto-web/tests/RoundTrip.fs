@@ -46,10 +46,11 @@ let private artifact = {
   SourceVersion = "src \"quoted\" \\ back"
   ArtifactPath = "/tmp/a b/naïve.out"
   ArtifactSha256 = String.replicate 64 "f"
-  CompiledObjects = System.Int32.MaxValue
-  ReusedObjects = 0
-  RetiredObjects = System.Int32.MinValue
-  ChangedWitnesses = 3
+  Regions = [|
+    { RegionRow.Identity = "common"; Witness = "changed"; Visits = System.Int32.MaxValue; Object = "compiled" }
+    { RegionRow.Identity = "callable:M:f \"q\""; Witness = "retained"; Visits = 0; Object = "" }
+    { RegionRow.Identity = "o-retired"; Witness = ""; Visits = System.Int32.MinValue; Object = "retired" }
+  |]
 }
 
 let private fullSession = {
