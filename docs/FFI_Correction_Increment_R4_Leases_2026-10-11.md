@@ -58,6 +58,16 @@ deployment status), `probes/` (the three executed probes and outputs), and `r4-s
   runner heartbeat, tests, simulation, docs). Composer-page change: 4 files, +24/−10, no protocol change.
 - `speakez-lab` 03406ad: edge default `max_turns` 500 (bound 5000); tests aligned.
 
+**Lease-plane rule ledger (auditor finding 4; owner `Bozzetto.Core/ExpensiveWorkLease.fs`, tests
+`Bozzetto.Tests/ExpensiveWorkLeaseTests.fs`, HTTP routes `Bozzetto/McpServer.fs:2770` renew and `:2790` withdraw):**
+
+| Rule (owner file:line) | Positive control | Negative control | Reproduction / mutation |
+| --- | --- | --- | --- |
+| `renew` (:365): only the holder renews a live lease, by its kind's TTL | "the holder renews a live lease and its expiry moves forward by the kind's TTL" (:170) | "another holder cannot keep a lease alive" (:186); "an unknown lease id renews nothing" (:193); "an expired lease is reclaimed, never resurrected by a late renewal" (:199) | property "renewal never changes the active count, the holder set or the queue order" (:207) |
+| `withdraw` (:344): a caller leaves the line for one kind only | "a waiting caller that withdraws leaves the line" (:233) | "withdraw touches only the holder's own ask for that kind" (:244) | — |
+| queued-ask aging (:201-210, `queuedAskLifetime` 2 min; retry refreshes `LastAskedAt` :256) | "a ghost ask whose caller never retried is aged out of the line" (:254) | "a live retrier is never aged out: each retry refreshes the ask" (:264) | "REPRODUCED — without aging, two abandoned asks block a later caller" (:288): the defect reproduced inside the ask lifetime and released after it |
+| same-scope supersession (:256-259) | "a newer ask from the same scope supersedes its older queued ask instead of lining up behind it" (:274); "a retrying holder does not create a duplicate queue entry" (:112) | — | — |
+
 **Owner rulings applied (2026-10-10):** builds and test suites over Clef/Composer code are Composer
 work; Work leases render on the Composer page; development daemon restarts are authorized; one
 stable lease holder per agent and project; never 50-turn sessions on 131K-context LAN workers.
@@ -98,6 +108,12 @@ clef Clef.Compiler.Service.Tests at d2e6cf64 (E): total=2482 passed=2448 failed=
 | --- | --- | --- | --- |
 | `clef src/Compiler/NativeTypedTree/Expressions/Intrinsics.fs` `RangeSources.intrinsic`: `NativeDefault.zeroed` of an integer kind is the point 0 (zero-initialized storage is the compiler's own fact); `BorrowedView.length` is a length, bounded by the platform's Pointer width like the other lengths | the 16 `withView`-stub fixtures check clean (E, `clef/results-bv/bv-targeted.trx`, second run) | `BorrowedViewTests.Borrowed view cannot be manufactured with a default value`: the view's origin finding stays ("no source constructor") while no integer is committed | a `zeroed` row matching an empty argument list (first run) leaves all 16 refused: `NativeDefault.zeroed ()` applies to a unit argument |
 
+**Domain of the two rows (auditor finding 2):** `RangeSources.intrinsic` is consulted from `transfer`, which ranges
+only integer, boolean and char nodes (RangeAnalysis.fs:2163-2176), so the `zeroed` row's point 0 applies to those kinds
+alone (false for a boolean, NUL for a char); `lengthRange` is `[0, 2^(Pointer-1) - 1]` on a context declaring a Pointer
+width and unobservable otherwise (Intrinsics.fs:1304-1308), which is why a platform-less commitment of a view's length
+still refuses.
+
 **Fixture corrections:** the two manufactured-view cases `ignore` the view and return 0 instead of returning
 `BorrowedView.length view`; a committed length is unobservable on a platform-less check (`RangeSources.lengthRange`), which
 is not what those cases guard (E, `probes/bv-probe2.out`: the finding is produced without the commitment).
@@ -110,3 +126,46 @@ callers that lead back to the entry, while the fixture's `viewScope` descriptor 
 `ScopedCallbacks` only. Should a declared scoped callback count as a covered activation (invoked within its declaring
 boundary's call) for initialization-order settlement? If no, the three fixtures expect CCS8403 until platform boundaries
 declare invocation. Details: evidence `borrowed-view-notes.md`.
+
+**Further owner decisions surfaced while scoping the remaining 34 (evidence: `borrowed-view-notes.md`, `probes/`):**
+
+- The eight `calls`-counter fixtures (ResultOperation 3, OptionFold 2, ResultElimination 2, SequenceApplication 1)
+  snapshot a lambda stored in `let mutable callback` through a partial `Result.map`/`Option.fold`/`Seq.fold`, reassign
+  the slot, and invoke the snapshot once. closure-representation.md:118-120 and Callable_Aggregates_Design rule 4 say the
+  retained snapshot keeps its pair; today `CallableOrigins` resolves the snapshot's call to every writer and
+  `CallableIngress` builds no family for a lambda stored in a mutable cell, so `FiniteCellRanges` cannot bound `calls`.
+  Yes/no: extend the ingress and finite-cell owners to admit a mutable callable cell's complete exact write set as the
+  finite family (MutableCallableStorage.fs:19, "the first finite family") in this engagement, or re-expect the eight?
+- The three `CallEffectRangeCases` fixtures place a scalar snapshot (`let observed = state`) inside a branch;
+  `BindingDemand` (Baker ingredient) declares such schedules pending by design (BindingDemand.fs:200-204) and
+  `failures` turns pending into CCS8403 at settlement. Yes/no: should a pending binding-demand schedule leave the snapshot
+  eager at its binding instead of refusing the program?
+
+**Auditor return (Sol, 2026-10-11, `sol-audit/sol-return.md`):** six findings, all acted on.
+
+1. Gate binding → `manifest.md` binds each gate to its tree, commit, binaries and log; `clef/run.sh` now records
+   `tree.txt`.
+2. Row domains → stated above (`transfer` ranges integer/bool/char nodes; `lengthRange` needs a Pointer width).
+3. Length-row controls → **the finding was right in substance.** The executed mutant (`clef/mut-status.log`, lengthrow:
+   the row forgets borrowed views) left a platform-aware positive control passing: a borrowed view's length is bounded by
+   `BorrowedViews.numericBoundary` (BorrowedViews.fs:95-101, the declared pointer-extent boundary), so the row I added was a
+   second authority for a fact that owner already holds. **Withdrawn** (`fix(ranges): …` on clef main); the two
+   manufactured-view fixtures were resolved by their fixture change alone. The two new `BorrowedViewTests` controls now
+   guard `numericBoundary`: positive (declared extent `[0, 2^63-1]` under Pointer 64) and negative (no platform: CCS8011 at
+   a length the entry commits).
+4. Lease-plane ledger → stated above.
+5. R4 active-exclusion mutant → executed (`clef/mut2-status.log`, genexcl: RangeAnalysis defers every node a
+   SeqGenerator lambda owns, i.e. excludes active generators): `LoopRangeCases.An invoked unknown trip bound refuses every
+   committed cell` and `SequenceAccumulationCases.An invoked sequence with an unobservable element refuses every committed
+   cell` fail, the passive cases pass. A first mutant (dropping the census's activation guard) did not reach the twins
+   because an invoked implementation's formals keep active suppliers (`suppliersInactive`); recorded as such.
+6. Contradictory join sentence → struck through and superseded in `r4-six-ruling.md`.
+
+**Re-expectations landed after the audit brief (clef `068c5246`, E, unfiltered, leased): total=2482 passed=2453 failed=29 |
+vs d2e6cf6: new-failures=0 resolved=5.** The uninvoked pull-effect pair asserts the counter's exclusion under the
+inactivity proof instead of an unobservable range (the recipe runs only for committed cells); the three invoked
+opaque-aggregate cases expect the located CCS8011 at `first` while keeping their structural assertions.
+
+**Final clef gate of this record (clef `b0ef172d`, E, unfiltered, leased): total=2484 passed=2455 failed=29 | vs the committed
+29: new-failures=0 resolved=0; the two new boundary controls pass.** Heads at close: clef `b0ef172d1eef6afd244020a03b3bd3c49b9dbcb0`, Bozzetto (this record's
+commit), Composer `0caa67d8`, speakez-lab `03406ad`, clef-lang-spec `4d5c445`.
