@@ -164,6 +164,13 @@ operations account for their own work.
 | `acquire_run_app_lease` | Requests a lease for an external application process. |
 | `release_work_lease` | Releases the caller-owned `lease_id` returned by a granted acquisition. |
 
+Renewal and withdrawal are HTTP operations on the same pool, used by
+`scripts/work-lease` rather than exposed as MCP tools: `POST /api/lease/renew`
+with `{holder, leaseId}` extends a live lease by its kind's lifetime, and
+`POST /api/lease/withdraw` with `{holder, kind}` removes the holder's queued
+ask. An expired lease is never renewed, and only the holder may renew or
+withdraw. A queued ask nobody retries within two minutes is reaped.
+
 ## Cohort and multi-agent coordination
 
 For running several agents against one repo at once. One implicit cohort per

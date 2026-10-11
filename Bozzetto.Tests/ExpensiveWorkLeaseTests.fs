@@ -165,6 +165,144 @@ let neverExpiresTwinTests =
   ]
 
 [<Tests>]
+let renewalTests =
+  testList "ExpensiveWorkLease.renew — a live run outlasts a fixed TTL" [
+    testCase "the holder renews a live lease and its expiry moves forward by the kind's TTL" <| fun () ->
+      let state, decision = request epoch MemoryPressure.Normal empty "agent-a" Kind.TestSuiteRun
+      let leaseId, firstExpiry = match decision with Decision.Granted(id, at) -> id, at | _ -> failtest "expected Granted"
+      let later = epoch.AddMinutes 12.0
+      let renewed, outcome = renew later "agent-a" leaseId state
+      outcome |> Expect.equal "renewed from the renewal instant, not the grant" (RenewOutcome.Renewed(later + Kind.defaultTtl Kind.TestSuiteRun))
+      let lease = renewed.Active |> List.exactlyOne
+      (lease.ExpiresAt > firstExpiry) |> Expect.isTrue "the lease now lives past its original expiry"
+      lease.GrantedAt |> Expect.equal "renewal is not a new grant" epoch
+      renewed.Queue |> Expect.equal "the queue is untouched" state.Queue
+      // The renewed lease still counts: a second holder at Tight (cap 1) still waits.
+      let _, second = request later MemoryPressure.Tight renewed "agent-b" Kind.FullBuild
+      match second with
+      | Decision.Wait _ -> ()
+      | other -> failtestf "a renewed lease must still occupy its slot, got %A" other
+
+    testCase "another holder cannot keep a lease alive" <| fun () ->
+      let state, decision = request epoch MemoryPressure.Normal empty "agent-a" Kind.FullBuild
+      let leaseId = match decision with Decision.Granted(id, _) -> id | _ -> failtest "expected Granted"
+      let after, outcome = renew (epoch.AddMinutes 1.0) "agent-b" leaseId state
+      outcome |> Expect.equal "wrong holder is refused" RenewOutcome.AlreadyGone
+      (after.Active |> List.exactlyOne).ExpiresAt |> Expect.equal "the expiry is unchanged" (epoch + Kind.defaultTtl Kind.FullBuild)
+
+    testCase "an unknown lease id renews nothing" <| fun () ->
+      let state, _ = request epoch MemoryPressure.Normal empty "agent-a" Kind.FullBuild
+      let after, outcome = renew (epoch.AddMinutes 1.0) "agent-a" (LeaseId.create ()) state
+      outcome |> Expect.equal "fabricated id" RenewOutcome.AlreadyGone
+      after.Active |> Expect.equal "nothing changed" state.Active
+
+    testCase "an expired lease is reclaimed, never resurrected by a late renewal" <| fun () ->
+      let expired =
+        { Id = LeaseId.create (); Kind = Kind.TestSuiteRun; Holder = "agent-a"; GrantedAt = epoch.AddMinutes -30.0; ExpiresAt = epoch.AddMinutes -1.0 }
+      let state = { empty with Active = [ expired ] }
+      let after, outcome = renew epoch "agent-a" expired.Id state
+      outcome |> Expect.equal "too late: the crashed-holder guarantee holds" RenewOutcome.AlreadyGone
+      after.Active |> Expect.isEmpty "the expired lease was reaped on the way"
+
+    testProperty "renewal never changes the active count, the holder set or the queue order" <| fun (seconds: uint8) ->
+      // Inside the queued-ask lifetime, so the only reap a renewal can trigger
+      // is the holder's own expired lease; queued asks are all still live.
+      let now = epoch.AddSeconds(float seconds % queuedAskLifetime.TotalSeconds)
+      let s1, d1 = request epoch MemoryPressure.Normal empty "agent-a" Kind.Rebuild
+      let s2, _ = request epoch MemoryPressure.Normal s1 "agent-b" Kind.FullBuild
+      // Fill the Normal cap so later askers queue, giving the property a queue to protect.
+      let s3, _ = request epoch MemoryPressure.Normal s2 "agent-c" Kind.TestSuiteRun
+      let s4, _ = request epoch MemoryPressure.Normal s3 "agent-d" Kind.Rebuild
+      let s5, _ = request epoch MemoryPressure.Normal s4 "agent-e" Kind.FullBuild
+      let leaseId = match d1 with Decision.Granted(id, _) -> id | _ -> failtest "expected Granted"
+      let after, _ = renew now "agent-a" leaseId s5
+      let holders (s: PoolState) = s.Active |> List.map (fun l -> l.Holder) |> List.sort
+      List.length after.Active |> Expect.equal "an in-time renewal changes no count" (List.length s5.Active)
+      holders after |> Expect.equal "the holder set is preserved" (holders s5)
+      after.Queue |> Expect.equal "the queue is never reordered or shortened by a renewal" s5.Queue
+  ]
+
+/// Four holders take the Normal cap so a fifth asker is told to Wait.
+let private fillNormalCap state =
+  [ "h1"; "h2"; "h3"; "h4" ]
+  |> List.fold (fun s h -> fst (request epoch MemoryPressure.Normal s h Kind.Rebuild)) state
+
+[<Tests>]
+let queuedAskTests =
+  testList "ExpensiveWorkLease — a queued ask is a claim held by a live caller" [
+    testCase "a waiting caller that withdraws leaves the line" <| fun () ->
+      let full = fillNormalCap empty
+      let queued, decision = request epoch MemoryPressure.Normal full "late" Kind.FullBuild
+      match decision with Decision.Wait _ -> () | other -> failtestf "expected Wait, got %A" other
+      queued.Queue |> List.map (fun q -> q.Holder) |> Expect.equal "the ask is queued" [ "late" ]
+      let after, outcome = withdraw "late" Kind.FullBuild queued
+      outcome |> Expect.equal "withdrawn" WithdrawOutcome.Withdrawn
+      after.Queue |> Expect.isEmpty "the line closed up"
+      after.Active |> Expect.equal "active leases untouched" queued.Active
+      snd (withdraw "late" Kind.FullBuild after) |> Expect.equal "withdrawing twice finds nothing" WithdrawOutcome.NotQueued
+
+    testCase "withdraw touches only the holder's own ask for that kind" <| fun () ->
+      let full = fillNormalCap empty
+      let s1, _ = request epoch MemoryPressure.Normal full "late-a" Kind.FullBuild
+      let s2, _ = request (epoch.AddSeconds 1.0) MemoryPressure.Normal s1 "late-b" Kind.TestSuiteRun
+      let after, outcome = withdraw "late-a" Kind.TestSuiteRun s2
+      outcome |> Expect.equal "late-a never queued that kind" WithdrawOutcome.NotQueued
+      after.Queue |> Expect.equal "nothing changed" s2.Queue
+      let after', _ = withdraw "late-a" Kind.FullBuild s2
+      after'.Queue |> List.map (fun q -> q.Holder) |> Expect.equal "only late-a left; late-b keeps its place" [ "late-b" ]
+
+    testCase "a ghost ask whose caller never retried is aged out of the line" <| fun () ->
+      let full = fillNormalCap empty
+      let queued, _ = request epoch MemoryPressure.Normal full "ghost" Kind.FullBuild
+      let later = epoch + queuedAskLifetime + TimeSpan.FromSeconds 1.0
+      // Someone else asking later triggers the reap; the ghost is gone and
+      // the newcomer is at the front, not behind a claim nobody holds.
+      let after, decision = request later MemoryPressure.Normal queued "live" Kind.FullBuild
+      after.Queue |> List.map (fun q -> q.Holder) |> Expect.equal "ghost reaped, live asker queued" [ "live" ]
+      match decision with Decision.Wait _ -> () | other -> failtestf "cap still full, so Wait, got %A" other
+
+    testCase "a live retrier is never aged out: each retry refreshes the ask" <| fun () ->
+      let full = fillNormalCap empty
+      let queued, _ = request epoch MemoryPressure.Normal full "patient" Kind.FullBuild
+      let halfway = epoch + TimeSpan.FromTicks(queuedAskLifetime.Ticks / 2L)
+      let retried, _ = request halfway MemoryPressure.Normal queued "patient" Kind.FullBuild
+      let nearlyTwice = halfway + queuedAskLifetime - TimeSpan.FromSeconds 1.0
+      let after, _ = request nearlyTwice MemoryPressure.Normal retried "other" Kind.FullBuild
+      after.Queue |> List.map (fun q -> q.Holder) |> Expect.equal "patient kept its place by retrying" [ "patient"; "other" ]
+      (after.Queue |> List.head).Seq |> Expect.equal "and its original position" (queued.Queue |> List.head).Seq
+
+    testCase "a newer ask from the same scope supersedes its older queued ask instead of lining up behind it" <| fun () ->
+      // Code changed; the same agent/project asks to build again. The pool
+      // must hold ONE claim for that scope, at its original position, and
+      // the stale earlier ask must not be served first.
+      let full = fillNormalCap empty
+      let s1, d1 = request epoch MemoryPressure.Normal full "claude · /repos/Bozzetto" Kind.FullBuild
+      match d1 with Decision.Wait _ -> () | other -> failtestf "expected Wait, got %A" other
+      let s2, _ = request (epoch.AddSeconds 5.0) MemoryPressure.Normal s1 "other-agent" Kind.FullBuild
+      let s3, d3 = request (epoch.AddSeconds 20.0) MemoryPressure.Normal s2 "claude · /repos/Bozzetto" Kind.FullBuild
+      match d3 with Decision.Wait _ -> () | other -> failtestf "still waiting, got %A" other
+      s3.Queue |> List.map (fun q -> q.Holder) |> Expect.equal "one claim per scope, position kept" [ "claude · /repos/Bozzetto"; "other-agent" ]
+      (s3.Queue |> List.head).LastAskedAt |> Expect.equal "the claim now represents the newest ask" (epoch.AddSeconds 20.0)
+      (s3.Queue |> List.head).FirstAskedAt |> Expect.equal "arrival order is unchanged" epoch
+
+    testCase "REPRODUCED — without aging, two abandoned asks block a later caller" <| fun () ->
+      // The shape from the dashboard: two one-shot callers were told to Wait,
+      // exited, and never retried. Under the real pool they age out.
+      let full = fillNormalCap empty
+      let s1, _ = request epoch MemoryPressure.Normal full "gate-1" Kind.FullBuild
+      let s2, _ = request epoch MemoryPressure.Normal s1 "gate-2" Kind.FullBuild
+      let freed = [ "h1"; "h2"; "h3"; "h4" ] |> List.fold (fun (s: PoolState) h ->
+        let id = (s.Active |> List.find (fun l -> l.Holder = h)).Id
+        fst (release id s)) s2
+      let soon = epoch.AddSeconds 30.0
+      let _, blocked = request soon MemoryPressure.Normal freed "newcomer" Kind.FullBuild
+      match blocked with Decision.Wait _ -> () | other -> failtestf "within the lifetime the ghosts still hold the line, got %A" other
+      let later = epoch + queuedAskLifetime + TimeSpan.FromSeconds 1.0
+      let _, unblocked = request later MemoryPressure.Normal freed "newcomer" Kind.FullBuild
+      match unblocked with Decision.Granted _ -> () | other -> failtestf "after the lifetime the ghosts are reaped and the newcomer is granted, got %A" other
+  ]
+
+[<Tests>]
 let observationDeadlineTests =
   testList "Lease observation deadlines" [
     test "the owner arms only the earliest future expiry" {

@@ -73,6 +73,14 @@ module LeaseWatch =
   let releaseOwned (holder: string) (leaseId: ExpensiveWorkLease.LeaseId) : ExpensiveWorkLease.ReleaseOutcome =
     update (ExpensiveWorkLease.releaseOwned holder leaseId)
 
+  /// Heartbeat from a live holder; the pool's expiry deadline moves with it.
+  let renew (holder: string) (leaseId: ExpensiveWorkLease.LeaseId) : ExpensiveWorkLease.RenewOutcome =
+    update (ExpensiveWorkLease.renew DateTimeOffset.UtcNow holder leaseId)
+
+  /// A caller leaving the line says so, instead of leaving a ghost.
+  let withdraw (holder: string) (kind: ExpensiveWorkLease.Kind) : ExpensiveWorkLease.WithdrawOutcome =
+    update (ExpensiveWorkLease.withdraw holder kind)
+
   /// Safe observation: the release capability never appears in this snapshot.
   let snapshot () = lock gate (fun () -> ExpensiveWorkLease.snapshot DateTimeOffset.UtcNow pool)
 

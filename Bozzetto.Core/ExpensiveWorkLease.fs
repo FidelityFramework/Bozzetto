@@ -118,6 +118,9 @@ module ExpensiveWorkLease =
     /// from a seed is exact regardless of clock resolution.
     Seq: int64
     FirstAskedAt: DateTimeOffset
+    /// The holder's most recent retry. A queued ask is a claim held by a
+    /// live caller; this is what proves the caller is still there.
+    LastAskedAt: DateTimeOffset
   }
 
   [<RequireQualifiedAccess>]
@@ -188,9 +191,23 @@ module ExpensiveWorkLease =
     // immediately" — a Wait always costs the caller at least a beat.
     List.max [ minRetryAfter; TimeSpan.FromTicks(int64 (frac * float computed.Ticks)) ]
 
-  /// The real reclaim: drop every lease whose `ExpiresAt` has passed.
+  /// How long a queued ask stays a claim without its holder asking again. A
+  /// caller told to `Wait` is expected back inside its `retryAfter`; one
+  /// that never returns (it exited, crashed, or was told to wait and gave
+  /// up) must not keep a place in line forever, or every later asker is
+  /// behind a ghost. The window is well past any retry-after this module
+  /// hands out (seconds to tens of seconds), so a live retrier is never
+  /// aged out.
+  let queuedAskLifetime = TimeSpan.FromMinutes 2.0
+
+  /// The real reclaim: drop every lease whose `ExpiresAt` has passed, and
+  /// every queued ask whose holder has not come back within the ask's
+  /// lifetime. A retry refreshes `LastAskedAt` (see `requestCore`), so the
+  /// age is measured from the holder's most recent ask, not its first.
   let private reapExpired (now: DateTimeOffset) (state: PoolState) : PoolState =
-    { state with Active = state.Active |> List.filter (fun l -> l.ExpiresAt > now) }
+    { state with
+        Active = state.Active |> List.filter (fun l -> l.ExpiresAt > now)
+        Queue = state.Queue |> List.filter (fun q -> now - q.LastAskedAt < queuedAskLifetime) }
 
   /// `reap` is injected so the never-expiring TWIN below can share every
   /// other line of the real decision logic — the only difference between
@@ -234,10 +251,12 @@ module ExpensiveWorkLease =
       let existing = state.Queue |> List.tryFind (fun q -> q.Holder = holder && q.Kind = kind)
       let mySeq, queueWithMine, nextSeq =
         match existing with
-        | Some q -> q.Seq, state.Queue, state.NextSeq
+        | Some q ->
+          // The same ask, retried: keep its place in line, refresh its liveness.
+          q.Seq, state.Queue |> List.map (fun e -> if e.Seq = q.Seq then { e with LastAskedAt = now } else e), state.NextSeq
         | None ->
           let seq = state.NextSeq
-          seq, state.Queue @ [ { Holder = holder; Kind = kind; Seq = seq; FirstAskedAt = now } ], state.NextSeq + 1L
+          seq, state.Queue @ [ { Holder = holder; Kind = kind; Seq = seq; FirstAskedAt = now; LastAskedAt = now } ], state.NextSeq + 1L
       let sortedQueue = queueWithMine |> List.sortBy (fun q -> q.Seq)
       let cap = maxConcurrentFor pressure
       let capacityAvailable = List.length state.Active < cap
@@ -310,6 +329,47 @@ module ExpensiveWorkLease =
     match state.Active |> List.tryFind (fun l -> l.Id = leaseId) with
     | Some lease when lease.Holder = holder -> release leaseId state
     | _ -> state, ReleaseOutcome.AlreadyGone
+
+  [<RequireQualifiedAccess>]
+  type WithdrawOutcome =
+    /// The holder's queued ask for this kind is gone; the line closes up.
+    | Withdrawn
+    /// No such ask was queued (already granted, aged out, or never made).
+    | NotQueued
+
+  /// A caller that was told to `Wait` and is not coming back takes its
+  /// ask out of the line explicitly, instead of leaving a ghost for the
+  /// aging reap to find. Only the holder's own ask for that kind is
+  /// affected; active leases and other holders' asks are untouched.
+  let withdraw (holder: string) (kind: Kind) (state: PoolState) : PoolState * WithdrawOutcome =
+    match state.Queue |> List.exists (fun q -> q.Holder = holder && q.Kind = kind) with
+    | false -> state, WithdrawOutcome.NotQueued
+    | true -> { state with Queue = state.Queue |> List.filter (fun q -> not (q.Holder = holder && q.Kind = kind)) }, WithdrawOutcome.Withdrawn
+
+  [<RequireQualifiedAccess>]
+  type RenewOutcome =
+    /// The lease is good until the new `expiresAt`.
+    | Renewed of expiresAt: DateTimeOffset
+    /// Nothing to renew: unknown id, held by someone else, or already
+    /// reclaimed. A caller whose lease lapsed must request a new one; an
+    /// expired lease is never resurrected, so the reclaim guarantee holds.
+    | AlreadyGone
+
+  /// Extend a held lease by its kind's TTL from `now`. A renewal is only
+  /// accepted from the holder, only while the lease is still live, and it
+  /// changes nothing else: the lease was already counted against capacity
+  /// and the queue is untouched, so fairness and the cap are preserved. The
+  /// TTL remains the bound on an ABANDONED lease (a crashed holder stops
+  /// renewing and is reclaimed as before); it is no longer the bound on a
+  /// live run, which renews on a heartbeat until it releases.
+  let renew (now: DateTimeOffset) (holder: string) (leaseId: LeaseId) (state: PoolState) : PoolState * RenewOutcome =
+    let live = reapExpired now state
+    match live.Active |> List.tryFind (fun l -> l.Id = leaseId) with
+    | Some lease when lease.Holder = holder ->
+      let expiresAt = now + Kind.defaultTtl lease.Kind
+      let renewed = { lease with ExpiresAt = expiresAt }
+      { live with Active = live.Active |> List.map (fun l -> if l.Id = leaseId then renewed else l) }, RenewOutcome.Renewed expiresAt
+    | _ -> live, RenewOutcome.AlreadyGone
 
   /// A granted lease as observers see it. Never its LeaseId: that is the
   /// release capability. Named (not anonymous) so another assembly can take

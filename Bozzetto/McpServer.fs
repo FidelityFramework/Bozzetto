@@ -2764,6 +2764,47 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
           do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "decision", JsonValue.String ("refused"); "reason", JsonValue.String (reason) ])
     } :> Task
   ) |> ignore
+  // A live run renews on a heartbeat instead of racing a fixed TTL. The holder
+  // is identified the same way it was at request time, so one caller cannot
+  // keep another caller's lease alive.
+  app.MapPost("/api/lease/renew", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
+    task {
+      let! doc = readJsonBody ctx
+      let root = doc
+      let str name = HttpJson.stringProperty name root
+      match str "holder", str "leaseId" with
+      | None, _ ->
+        do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("missing 'holder' — the same holder the lease was requested with") ])
+      | _, None ->
+        do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("missing 'leaseId'") ])
+      | Some holder, Some leaseIdStr ->
+        let leaseId = Bozzetto.ExpensiveWorkLease.LeaseId.ofWire leaseIdStr
+        match Bozzetto.Features.LeaseWatch.renew holder leaseId with
+        | Bozzetto.ExpensiveWorkLease.RenewOutcome.Renewed expiresAt ->
+          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "outcome", JsonValue.String ("renewed"); "expiresAt", McpJson.timestamp (expiresAt) ])
+        | Bozzetto.ExpensiveWorkLease.RenewOutcome.AlreadyGone ->
+          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "outcome", JsonValue.String ("already_gone") ])
+    } :> Task
+  ) |> ignore
+  // A caller told to wait that will not retry takes its ask out of the line.
+  app.MapPost("/api/lease/withdraw", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
+    task {
+      let! doc = readJsonBody ctx
+      let root = doc
+      let str name = HttpJson.stringProperty name root
+      match str "holder", str "kind" |> Option.bind Bozzetto.ExpensiveWorkLease.Kind.tryParse with
+      | None, _ ->
+        do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("missing 'holder' — the same holder the ask was queued with") ])
+      | _, None ->
+        do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("missing or unrecognized 'kind'") ])
+      | Some holder, Some kind ->
+        match Bozzetto.Features.LeaseWatch.withdraw holder kind with
+        | Bozzetto.ExpensiveWorkLease.WithdrawOutcome.Withdrawn ->
+          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "outcome", JsonValue.String ("withdrawn") ])
+        | Bozzetto.ExpensiveWorkLease.WithdrawOutcome.NotQueued ->
+          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "outcome", JsonValue.String ("not_queued") ])
+    } :> Task
+  ) |> ignore
   app.MapPost("/api/lease/release", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
     task {
       let! doc = readJsonBody ctx

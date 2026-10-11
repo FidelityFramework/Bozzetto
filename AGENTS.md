@@ -95,6 +95,15 @@ dotnet fsi ci-pipeline.fsx     # full pipeline; `-- ci`, `-- composer`, `-- pack
   `scripts/work-lease`, or the MCP tools `acquire_full_build_lease`,
   `acquire_test_suite_lease` and `release_work_lease`. Follow wait and refused
   decisions. Always release.
+- **A lease is a heartbeat, not a deadline.** A granted lease expires after
+  its kind's lifetime only if the holder stops renewing (`/api/lease/renew`).
+  `work-lease run` renews while its command runs, so a long suite is never
+  cut off by the lifetime; a holder that crashes stops renewing and is
+  reclaimed. One stable holder per agent and project: a retry after `wait`
+  is the same queued ask, and a newer ask from that scope supersedes the
+  older one. A caller that gives up withdraws its ask (`/api/lease/withdraw`);
+  an ask nobody retries within two minutes is reaped, so a dead caller never
+  holds a place in line.
 - **`dotnet test` is for CI.** Locally, run the built test DLL.
 - **Memory pressure.** If a lease is deferred for memory, investigate instead
   of polling. Measure available RAM and swap, process RSS with parents, and

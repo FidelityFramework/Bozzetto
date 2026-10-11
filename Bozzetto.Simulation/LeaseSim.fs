@@ -26,6 +26,8 @@ module LeaseSim =
     /// releasing. The lease stays in the pool until expiry (real) or
     /// forever (the never-expires twin).
     | Abandon of agent: string
+    /// `agent` was told to Wait and leaves the line explicitly.
+    | Withdraw of agent: string * kind: Kind
     | PressureChange of MemoryPressure
     | PassSeconds of int
 
@@ -90,6 +92,9 @@ module LeaseSim =
         let pool', _ = release leaseId s.Pool
         { s with Pool = pool'; HeldByAgent = Map.add agent rest s.HeldByAgent }
     | SimEvent.Abandon agent -> { s with HeldByAgent = Map.remove agent s.HeldByAgent }
+    | SimEvent.Withdraw(agent, kind) ->
+      let pool', _ = withdraw agent kind s.Pool
+      { s with Pool = pool' }
     | SimEvent.Request(agent, kind) ->
       let pool', decision = requestFn s.Clock s.Pressure s.Pool agent kind
       let held' =
@@ -129,7 +134,11 @@ module LeaseSim =
           match rng.Next 10 with
           | 0 | 1 | 2 -> SimEvent.Request(agents.[rng.Next agents.Length], kinds.[rng.Next kinds.Length])
           | 3 -> SimEvent.Release agents.[rng.Next agents.Length]
-          | 4 -> SimEvent.Abandon agents.[rng.Next agents.Length]
+          | 4 ->
+            // Half the crashes are polite: the agent leaves the line instead
+            // of vanishing. Both shapes must keep the pool fair and drainable.
+            if rng.Next 2 = 0 then SimEvent.Abandon agents.[rng.Next agents.Length]
+            else SimEvent.Withdraw(agents.[rng.Next agents.Length], kinds.[rng.Next kinds.Length])
           | 5 ->
             SimEvent.PressureChange(
               match rng.Next 3 with

@@ -37,6 +37,11 @@ proceed only when granted, and release the exact `leaseId` with the same
 connection after the work finishes, including after failure. On a deferred or
 refused lease, follow the memory-pressure procedure in the agent guidelines.
 
+Set `BOZZETTO_AGENT` and `BOZZETTO_PROJECT` so `work-lease` presents one stable
+holder per agent and project; the runner renews the lease on a heartbeat while
+the command runs and withdraws its ask when it is deferred. A command that
+outlives a lease without renewing is reclaimed as abandoned, never extended.
+
 Development daemon restarts are authorized as needed while working on
 Bozzetto; do not ask for permission on each update. Build and validate under
 leases, check active work, preserve unrelated compiler/worker binaries, replace
