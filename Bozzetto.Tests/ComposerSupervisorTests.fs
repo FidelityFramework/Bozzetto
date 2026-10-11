@@ -338,6 +338,47 @@ let private delayedSameGenerationStatus humanView duringBuild failedRead () = ta
 [<Tests>]
 let tests =
   testList "Composer daemon supervisor" [
+    taskCase "a session closed with its cleanup finished leaves the directory; a retired worker's sessions stay, withdrawn" <| fun () -> task {
+      // Mutation caught: keep storing the Closed reply and the directory would list a card that is never fresh again.
+      let worker = Worker("closing", 123)
+      let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
+      let! first = openSession owner worker
+      let! second = openSession owner worker
+      let! closed = execute owner (request Operation.Close worker first)
+      success closed |> ignore
+      let! entries = snapshots owner
+      entries |> Array.map sessionOf |> Expect.equal "the closed session is gone; the open one stands" [| second |]
+      let! retired = execute owner (request Operation.PrepareCompilerChange worker "")
+      success retired |> ignore
+      let! after = snapshots owner
+      snapshot second after |> assertWithdrawn
+      do! owner.StopAsync()
+    }
+    taskCase "a status reply delayed past the close cannot bring the forgotten session back" <| fun () -> task {
+      // Mutation caught: drop the tombstone and the late open observation would re-enter the directory as a card.
+      let worker = Worker("late-status", 124)
+      let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
+      let! session = openSession owner worker
+      let entered = completion<unit> ()
+      let released = completion<Reply> ()
+      worker.Intercept <- fun operation current ->
+        if current = session && operation = Operation.Status then
+          entered.TrySetResult() |> ignore
+          Some released.Task
+        else None
+      let pending = execute owner (request Operation.Status worker session)
+      do! entered.Task
+      // An open observation captured before the close; its delivery is delayed past it.
+      let late = worker.Response(Operation.Status, session)
+      worker.Intercept <- fun _ _ -> None
+      let! closed = execute owner (request Operation.Close worker session)
+      success closed |> ignore
+      released.TrySetResult late |> ignore
+      let! _ = pending
+      let! entries = snapshots owner
+      entries |> Array.exists (fun entry -> sessionOf entry = session) |> Expect.isFalse "the forgotten session is not brought back by a delayed observation"
+      do! owner.StopAsync()
+    }
     taskCase "same-generation late tool status is refused after build settles" (delayedSameGenerationStatus false false false)
     taskCase "same-generation late browser status preserves the completed build" (delayedSameGenerationStatus true false false)
     taskCase "same-generation status begun during build cannot replace its completion" (delayedSameGenerationStatus true true false)

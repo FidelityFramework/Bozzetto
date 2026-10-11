@@ -687,14 +687,21 @@ let LeasesPanel (model: ModelView) =
 let OutputPane (model: ModelView) =
   let tab, setTab = createSignal "runs"
   let selected, setSelected = createSignal 0
+  // The pane can be folded to its tab bar; the choice is this page's own.
+  let collapsed, setCollapsed = createSignal false
   let run () =
     let all = model.runs
     match all |> Array.tryFind (fun r -> r.id = selected ()) with
     | Some r -> Some r
     | None -> Array.tryHead all
   let field (pick: RunView -> string) = run () |> Option.map pick |> Option.defaultValue ""
-  div (class' = "flex flex-col h-[34vh] min-h-40 border-t border-base-content/10 bg-base-100") {
+  div (class' = (if collapsed () then "flex flex-col border-t border-base-content/10 bg-base-100" else "flex flex-col h-[34vh] min-h-40 border-t border-base-content/10 bg-base-100")) {
     div (class' = "flex items-center gap-2 px-4 py-1 border-b border-base-content/10") {
+      button (
+        class' = "btn btn-xs btn-ghost output-fold",
+        title = (if collapsed () then "Show the output pane" else "Fold the output pane to its tabs"),
+        onClick = fun _ -> setCollapsed (not (collapsed ()))
+      ) { if collapsed () then "▲" else "▼" }
       div (class' = "tabs tabs-bordered tabs-sm") {
         button (class' = (if tab () = "runs" then "tab tab-active !border-accent text-accent font-semibold" else "tab"), onClick = fun _ -> setTab "runs") {
           "Run output (" + string model.runs.Length + ")"
@@ -713,7 +720,7 @@ let OutputPane (model: ModelView) =
         }
       }
     }
-    div (class' = (if tab () = "runs" then "flex-1 min-h-0 overflow-auto px-4 py-3" else "hidden")) {
+    div (class' = (if tab () = "runs" && not (collapsed ()) then "flex-1 min-h-0 overflow-auto px-4 py-3" else "hidden")) {
       Show (when' = (run ()).IsSome, fallback = (div (class' = "text-xs opacity-50") { "No runs yet." })) {
         div (class' = "flex items-center gap-2 text-xs mb-2") {
           span (class' = exitBadge (run () |> Option.map (fun r -> r.exitCode) |> Option.defaultValue 0)) {
@@ -731,7 +738,7 @@ let OutputPane (model: ModelView) =
         }
       }
     }
-    div (class' = (if tab () = "activity" then "flex-1 min-h-0 overflow-auto px-4 py-1" else "hidden")) {
+    div (class' = (if tab () = "activity" && not (collapsed ()) then "flex-1 min-h-0 overflow-auto px-4 py-1" else "hidden")) {
       Show (when' = (model.activity.Length > 0), fallback = (div (class' = "text-xs opacity-50 py-2") { "No activity yet." })) {
         For (each = model.activity) {
           yield fun a _ ->

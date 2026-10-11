@@ -45,6 +45,17 @@ module ComposerState =
         { snapshot.Reply with Outcome = Result.Ok(Observed { status with Closed = true; Busy = false; Current = None }) }
       | _ -> snapshot.Reply
     { snapshot with Reply = reply; WorkerAvailable = false; WorkerError = Some reason; StatusFresh = false }
+  /// A session the worker reports closed with its cleanup finished has nothing
+  /// further to observe: it leaves the directory instead of standing in it as
+  /// a card that can never be fresh again. A session withdrawn by a worker's
+  /// retirement is not finished in this sense: it carries the reason.
+  let finished snapshot =
+    match snapshot.Reply.Outcome with
+    | Result.Ok(Closed item) -> item.Closed && not item.CleanupPending && item.CleanupError.IsNone
+    | Result.Ok(Observed status) ->
+      status.Closed && not status.CleanupPending && not status.FormatterCleanupPending && status.CleanupError.IsNone
+      && status.WorkerRetirementRequired.IsNone && snapshot.WorkerError.IsNone
+    | _ -> false
   let needsReconciliation snapshot =
     match snapshot.Reply.Outcome with
     | Result.Ok(Observed status) ->
@@ -67,6 +78,10 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
   let changedEvent = Event<unit>()
   let snapshots = Dictionary<string, ComposerResponse>()
   let observations = Dictionary<string, StatusObservation>()
+  /// Sessions forgotten as finished, with the generation they were last seen
+  /// at: a reply delayed past the close cannot bring one back. Cleared when the
+  /// worker retires, since its session identities never recur.
+  let forgotten = Dictionary<string, int64>()
   let monitors = Dictionary<string * string * string, TaskCompletionSource<unit>>()
   let mutable worker: IComposerWorker option = None
   let mutable retiring = false
@@ -101,15 +116,24 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
     lock gate (fun () ->
       for session in snapshots.Keys |> Seq.toArray do
         if ComposerWire.workerAddress snapshots[session].Reply.Authority = owner then
-          snapshots[session] <- ComposerState.terminal reason snapshots[session])
+          snapshots[session] <- ComposerState.terminal reason snapshots[session]
+      forgotten.Clear())
     changed ()
   let remember (connection: IComposerWorker) snapshot =
     let identity = snapshot.Reply.Authority
     lock gate (fun () ->
       let currentEnough = cached identity.Session |> Option.forall (fun previous -> identity.Generation >= previous.Reply.Authority.Generation)
-      if Result.isOk snapshot.Reply.Outcome && active connection && identity.Session <> "" && currentEnough
+      let notForgotten =
+        match forgotten.TryGetValue identity.Session with
+        | true, generation -> identity.Generation > generation
+        | _ -> true
+      if Result.isOk snapshot.Reply.Outcome && active connection && identity.Session <> "" && currentEnough && notForgotten
          && ComposerWire.workerAddress identity = ComposerWire.workerAddress connection.Handshake.Authority then
-        snapshots[identity.Session] <- snapshot
+        if ComposerState.finished snapshot then
+          snapshots.Remove identity.Session |> ignore
+          observations.Remove identity.Session |> ignore
+          forgotten[identity.Session] <- identity.Generation
+        else snapshots[identity.Session] <- snapshot
         true
       else false)
   let uncertain connection session reason =

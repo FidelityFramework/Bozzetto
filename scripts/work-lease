@@ -71,10 +71,13 @@ case "${1:-}" in
     # queued ask to the pool, not a second claim behind the first. The gate
     # suffix made every attempt a new holder and left ghosts in the queue.
     holder="${BOZZETTO_AGENT:-caller} · ${BOZZETTO_PROJECT:-$PWD}"
-    reply=$(acquire "$kind" "$holder")
-    case $? in
+    # A deferred ask (exit 75) stays in the pool's line: the same holder's retry
+    # is the same ask, and an ask nobody retries within two minutes is reaped.
+    # Only a caller that gives up withdraws, with `work-lease withdraw`.
+    rc=0; reply=$(acquire "$kind" "$holder") || rc=$?
+    case $rc in
       0) ;;
-      75) withdraw "$kind" "$holder" >/dev/null 2>&1 || true; exit 75 ;;
+      75) exit 75 ;;
       *) exit 69 ;;
     esac
     lease_id=$(jq -er '.leaseId' <<<"$reply")
