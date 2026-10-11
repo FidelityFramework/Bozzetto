@@ -686,15 +686,37 @@ let LeasesPanel (model: ModelView) =
 [<SolidComponent>]
 let OutputPane (model: ModelView) =
   let tab, setTab = createSignal "runs"
-  let selected, setSelected = createSignal 0
+  // Runs come from two places: the daemon's journal (every caller's, pushed as
+  // facts) and this page's own commands. A pick names its source.
+  let selected, setSelected = createSignal ""
   // The pane can be folded to its tab bar; the choice is this page's own.
   let collapsed, setCollapsed = createSignal false
+  let picks () =
+    Array.append
+      (model.operations
+       |> Array.filter (fun o -> o.hasRun)
+       |> Array.map (fun o ->
+         {| key = "j:" + o.id; label = "#" + o.id + " " + o.caller + " " + o.project + " → " + string o.exitCode
+            project = o.project; exitCode = o.exitCode; generation = o.generation; sourceVersion = o.sourceVersion; at = o.at
+            stdout = (if o.dropped then "[transcript dropped for space]" else o.stdout); stderr = o.stderr; source = o.caller |}))
+      (model.runs
+       |> Array.map (fun r ->
+         {| key = "p:" + string r.id; label = "#" + string r.id + " " + r.project + " → " + string r.exitCode + " (this page)"
+            project = r.project; exitCode = r.exitCode; generation = r.generation; sourceVersion = r.sourceVersion; at = r.at
+            stdout = r.stdout; stderr = r.stderr; source = "this page" |}))
   let run () =
-    let all = model.runs
-    match all |> Array.tryFind (fun r -> r.id = selected ()) with
+    let all = picks ()
+    match all |> Array.tryFind (fun r -> r.key = selected ()) with
     | Some r -> Some r
     | None -> Array.tryHead all
-  let field (pick: RunView -> string) = run () |> Option.map pick |> Option.defaultValue ""
+  let stdoutText () = match run () with Some r -> r.stdout | None -> ""
+  let stderrText () = match run () with Some r -> r.stderr | None -> ""
+  let projectText () = match run () with Some r -> r.project | None -> ""
+  let sourceText () = match run () with Some r -> r.source | None -> ""
+  let exitCodeOf () = match run () with Some r -> r.exitCode | None -> 0
+  let generationText () = match run () with Some r -> "gen " + r.generation + " · src " + shortHash r.sourceVersion | None -> ""
+  let atText () = match run () with Some r -> clockTime r.at | None -> ""
+  let activityCount () = model.operations.Length + model.activity.Length
   div (class' = (if collapsed () then "flex flex-col border-t border-base-content/10 bg-base-100" else "flex flex-col h-[34vh] min-h-40 border-t border-base-content/10 bg-base-100")) {
     div (class' = "flex items-center gap-2 px-4 py-1 border-b border-base-content/10") {
       button (
@@ -704,50 +726,61 @@ let OutputPane (model: ModelView) =
       ) { if collapsed () then "▲" else "▼" }
       div (class' = "tabs tabs-bordered tabs-sm") {
         button (class' = (if tab () = "runs" then "tab tab-active !border-accent text-accent font-semibold" else "tab"), onClick = fun _ -> setTab "runs") {
-          "Run output (" + string model.runs.Length + ")"
+          "Run output (" + string (picks ()).Length + ")"
         }
         button (class' = (if tab () = "activity" then "tab tab-active !border-accent text-accent font-semibold" else "tab"), onClick = fun _ -> setTab "activity") {
-          "Activity (" + string model.activity.Length + ")"
+          "Activity (" + string (activityCount ()) + ")"
         }
       }
       div (class' = (if tab () = "runs" then "flex-1 flex gap-1 overflow-x-auto" else "hidden")) {
-        For (each = model.runs) {
+        For (each = picks ()) {
           yield fun r _ ->
             button (
-              class' = (if (run () |> Option.map (fun x -> x.id)) = Some r.id then "btn btn-xs btn-active font-mono" else "btn btn-xs btn-ghost font-mono"),
-              onClick = fun _ -> setSelected r.id
-            ) { "#" + string r.id + " " + r.project + " → " + string r.exitCode }
+              class' = (if (run () |> Option.map (fun x -> x.key)) = Some r.key then "btn btn-xs btn-active font-mono" else "btn btn-xs btn-ghost font-mono"),
+              onClick = fun _ -> setSelected r.key
+            ) { r.label }
         }
       }
     }
     div (class' = (if tab () = "runs" && not (collapsed ()) then "flex-1 min-h-0 overflow-auto px-4 py-3" else "hidden")) {
-      Show (when' = (run ()).IsSome, fallback = (div (class' = "text-xs opacity-50") { "No runs yet." })) {
+      Show (when' = (run ()).IsSome, fallback = (div (class' = "text-xs opacity-50") { "No runs yet: runs from every caller appear here as the daemon journals them." })) {
         div (class' = "flex items-center gap-2 text-xs mb-2") {
-          span (class' = exitBadge (run () |> Option.map (fun r -> r.exitCode) |> Option.defaultValue 0)) {
-            "exit " + string (run () |> Option.map (fun r -> r.exitCode) |> Option.defaultValue 0)
-          }
-          span (class' = "font-semibold") { field (fun r -> r.project) }
-          span (class' = "font-mono opacity-60") {
-            "gen " + field (fun r -> r.generation) + " · src " + shortHash (field (fun r -> r.sourceVersion))
-          }
-          span (class' = "opacity-50") { run () |> Option.map (fun r -> clockTime r.at) |> Option.defaultValue "" }
+          span (class' = exitBadge (exitCodeOf ())) { "exit " + string (exitCodeOf ()) }
+          span (class' = "font-semibold") { projectText () }
+          span (class' = "font-mono opacity-60") { generationText () }
+          span (class' = "font-mono opacity-60", title = "Who asked, as the adapter reported it; not an authenticated identity") { sourceText () }
+          span (class' = "opacity-50") { atText () }
         }
-        pre (class' = "panel diagnostic-trace") { TraceText (fun () -> field (fun r -> r.stdout)) }
-        div (class' = (if field (fun r -> r.stderr) = "" then "hidden" else "mt-2")) {
-          DiagnosticBlock false (fun () -> "Standard error") (fun () -> field (fun r -> r.stderr))
+        pre (class' = "panel diagnostic-trace") { TraceText stdoutText }
+        div (class' = (if stderrText () = "" then "hidden" else "mt-2")) {
+          DiagnosticBlock false (fun () -> "Standard error") stderrText
         }
       }
     }
     div (class' = (if tab () = "activity" && not (collapsed ()) then "flex-1 min-h-0 overflow-auto px-4 py-1" else "hidden")) {
-      Show (when' = (model.activity.Length > 0), fallback = (div (class' = "text-xs opacity-50 py-2") { "No activity yet." })) {
-        For (each = model.activity) {
-          yield fun a _ ->
-            div (class' = "flex gap-2 text-xs py-2 border-b border-base-content/5") {
-              span (class' = "font-mono opacity-50 shrink-0") { clockTime a.at }
-              span (class' = (if a.ok then "text-success shrink-0" else "text-error shrink-0")) { if a.ok then "✓" else "✗" }
-              span (class' = "font-mono opacity-70 shrink-0") { a.scope }
-              pre (class' = "activity-trace") { TraceText (fun () -> a.text) }
+      Show (when' = (activityCount () > 0), fallback = (div (class' = "text-xs opacity-50 py-2") { "No activity yet: every caller's Composer operations appear here as the daemon journals them." })) {
+        For (each = model.operations) {
+          yield fun o _ ->
+            div (class' = "flex gap-2 text-xs py-2 border-b border-base-content/5 operation") {
+              span (class' = "font-mono opacity-50 shrink-0") { clockTime o.at }
+              span (class' = (if o.ok then "text-success shrink-0" else "text-error shrink-0")) { if o.ok then "✓" else "✗" }
+              span (class' = "font-mono opacity-70 shrink-0", title = "Who asked, as the adapter reported it; not an authenticated identity") { o.caller }
+              span (class' = "font-semibold shrink-0") { o.operation }
+              span (class' = "font-mono opacity-70 shrink-0") { o.project }
+              Show (when' = not o.ok) { span (class' = "opacity-70") { o.code + ": " + o.message } }
             }
+        }
+        Show (when' = (model.activity.Length > 0)) {
+          div (class' = "text-xs opacity-50 pt-2") { "this page" }
+          For (each = model.activity) {
+            yield fun a _ ->
+              div (class' = "flex gap-2 text-xs py-2 border-b border-base-content/5") {
+                span (class' = "font-mono opacity-50 shrink-0") { clockTime a.at }
+                span (class' = (if a.ok then "text-success shrink-0" else "text-error shrink-0")) { if a.ok then "✓" else "✗" }
+                span (class' = "font-mono opacity-70 shrink-0") { a.scope }
+                pre (class' = "activity-trace") { TraceText (fun () -> a.text) }
+              }
+          }
         }
       }
     }

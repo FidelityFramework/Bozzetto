@@ -138,7 +138,8 @@ let factsTests =
           { Facts.Owners.Tick = tickChanged.Publish, (fun () -> Interlocked.Increment &reads.contents |> ignore; Some(tick 1L MemoryPressure.Normal))
             Pool = poolChanged.Publish, (fun () -> Interlocked.Increment &reads.contents |> ignore; pool 1L [] [])
             Agents = None
-            Membership = None }
+            Membership = None
+            Journal = (Event<unit>()).Publish, (fun () -> ComposerIntegration.ComposerJournal.empty "") }
       reads.Value |> Expect.equal "each owner is read once, at start" 2
       for _ in 1 .. 5 do graph.Current() |> ignore
       let _, registration = graph.Register(fun _ _ -> ())
@@ -158,7 +159,8 @@ let factsTests =
           { Facts.Owners.Tick = tickChanged.Publish, (fun () -> tickChanged.Trigger(tick 2L MemoryPressure.Tight); Some(tick 1L MemoryPressure.Normal))
             Pool = poolChanged.Publish, (fun () -> pool 1L [] [])
             Agents = None
-            Membership = None }
+            Membership = None
+            Journal = (Event<unit>()).Publish, (fun () -> ComposerIntegration.ComposerJournal.empty "") }
       let health = healthOf (graph.Current())
       (health.MemoryPressure, health.Revision) |> Expect.equal "the announced newer reading stands; the older current value was dropped" ("Tight", 1L)
 
@@ -218,6 +220,44 @@ let factsTests =
       graph.Pool(pool 2L [ grant "pi · /repo" ] []) |> Expect.equal "so is a late pool" (Error Facts.Refusal.Retired)
       sink.Seen |> List.length |> Expect.equal "nothing was delivered after the stop" 2
       graph.Stop()
+
+    testCase "the operations journal is a fact: admitted by serial, refused from another incarnation, delivered on connect, stamped per publication" <| fun () ->
+      // Mutations caught: leave the journal out of Current (a connecting page would not receive it); admit a journal from another
+      // incarnation (a retired supervisor's would replace the current one); admit a stale serial (an older journal would stand).
+      let graph = Facts.Graph(constants, incarnation, "journal-t")
+      let sink = Sink()
+      let _, _ = graph.Register sink.Push
+      let entry caller op : ComposerIntegration.ComposerJournal.Entry =
+        { Sequence = 0L; AtMs = 1L; Caller = caller; Operation = op; Session = "s"; Project = "/p/P.fidproj"
+          Outcome = ComposerIntegration.ComposerJournal.Outcome.Succeeded; Run = None }
+      let j1 = ComposerIntegration.ComposerJournal.empty "journal-t" |> ComposerIntegration.ComposerJournal.append (entry "mcp:a" Composer.Protocol.Operation.Open)
+      let j2 = j1 |> ComposerIntegration.ComposerJournal.append (entry "http" Composer.Protocol.Operation.Build)
+      graph.Journal j2 |> Expect.equal "admitted" (Ok())
+      graph.Journal j1 |> Expect.equal "the older serial is dropped" (Error Facts.Refusal.Older)
+      graph.Journal { j2 with Incarnation = "journal-retired" } |> Expect.equal "another incarnation is refused" (Error Facts.Refusal.ForeignIncarnation)
+      graph.Journal { j2 with Entries = entry "other" Composer.Protocol.Operation.Close :: j2.Entries } |> Expect.equal "the same serial with other content is a fault" (Error Facts.Refusal.Conflict)
+      graph.Faults |> Expect.equal "two faults counted: the foreign incarnation and the conflict" 2
+      let j3 = j2 |> ComposerIntegration.ComposerJournal.append (entry "browser" Composer.Protocol.Operation.Run)
+      graph.Journal j3 |> Expect.equal "the next serial is admitted" (Ok())
+      sink.Seen |> List.choose (function _, Operations b -> Some(b.Revision, b.Entries.Length) | _ -> None)
+      |> Expect.equal "one publication per admitted journal, stamps advancing" [ 1L, 2; 2L, 3 ]
+      let current, _ = graph.Register (Sink()).Push
+      current |> List.exists (function Operations b -> b.Entries.Length = 3 && b.Entries.[0].CallerLabel = "browser" && b.Entries.[0].Operation = "run" | _ -> false)
+      |> Expect.isTrue "a connecting page receives the current journal, newest first, spelled for the wire"
+
+    testCase "the operations projection spells operations and refusals as the wire does and carries a run" <| fun () ->
+      // Mutation caught: spell the refusal code with the F# case name and the page would show PascalCase codes beside the wire's snake_case.
+      let run : ComposerIntegration.ComposerJournal.Transcript =
+        { ExitCode = 3; Generation = 9L; SourceVersion = "src"; StandardOutput = "out"; StandardError = ""; Dropped = false }
+      let entries : ComposerIntegration.ComposerJournal.Entry list =
+        [ { Sequence = 2L; AtMs = 2L; Caller = "http"; Operation = Composer.Protocol.Operation.Build; Session = "s"; Project = "/p"
+            Outcome = ComposerIntegration.ComposerJournal.Outcome.Refused(Composer.Protocol.RefusalCode.InvalidReservation, "superseded"); Run = None }
+          { Sequence = 1L; AtMs = 1L; Caller = "browser"; Operation = Composer.Protocol.Operation.Run; Session = "s"; Project = "/p"
+            Outcome = ComposerIntegration.ComposerJournal.Outcome.Succeeded; Run = Some run } ]
+      let board = Project.operations 7L { Incarnation = "j"; Sequence = 2L; Entries = entries }
+      (board.Revision, board.Incarnation) |> Expect.equal "stamped by the publication; the owner's incarnation carried" (7L, "j")
+      board.Entries |> Array.map (fun e -> e.Operation, e.Ok, e.Code, e.Message, e.Run |> Option.map _.ExitCode)
+      |> Expect.equal "the wire spellings" [| "build", false, "invalid_reservation", "superseded", None; "run", true, "", "", Some 3 |]
 
     testCase "an epoch handover at the bound keeps wire identity: stamps continue, nothing is re-delivered, values persist" <| fun () ->
       // Mutation caught: deliver during the handover and the sink would see one more Health than readings.

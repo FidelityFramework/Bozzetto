@@ -51,7 +51,7 @@ let mapRoutes (app: WebApplication) (supervisor: ComposerSupervisor) =
         match ComposerClientJson.request (string ctx.Request.RouteValues["operation"]) body with
         | Result.Error(code, message) -> do! writeJson ctx 400 (framingError (ComposerClientJson.refusalCode code) message)
         | Result.Ok request ->
-          let! response = supervisor.ExecuteAsync(request, ctx.RequestAborted)
+          let! response = supervisor.ExecuteAsync(request, "http", ctx.RequestAborted)
           do! writeJson ctx 200 (ComposerClientJson.reply response)
     with
     | :? InvalidDataException as error -> do! writeJson ctx 413 (framingError "request_too_large" error.Message)

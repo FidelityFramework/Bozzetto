@@ -257,6 +257,24 @@ let encodeEvent (event: Event) : string =
         "queued" ==> (board.Queued |> Array.map (fun q ->
           createObj [ "kind" ==> q.Kind; "holder" ==> q.Holder; "requestedAtMs" ==> wide q.RequestedAtMs ]))
       ]
+    | Operations board ->
+      createObj [
+        "event" ==> "operations"
+        "revision" ==> wide board.Revision
+        "incarnation" ==> board.Incarnation
+        "entries" ==> (board.Entries |> Array.map (fun e ->
+          createObj [
+            "sequence" ==> wide e.Sequence; "atMs" ==> wide e.AtMs; "callerLabel" ==> e.CallerLabel; "operation" ==> e.Operation
+            "session" ==> e.Session; "project" ==> e.Project; "ok" ==> e.Ok; "code" ==> e.Code; "message" ==> e.Message
+            "run" ==>
+              (match e.Run with
+               | Some r ->
+                 box (createObj [
+                   "exitCode" ==> r.ExitCode; "generation" ==> wide r.Generation; "sourceVersion" ==> r.SourceVersion
+                   "standardOutput" ==> r.StandardOutput; "standardError" ==> r.StandardError; "dropped" ==> r.Dropped ])
+               | None -> null)
+          ]))
+      ]
     | Resources r ->
       let opt (v: float option) : obj = match v with Some n -> box n | None -> null
       createObj [

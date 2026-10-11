@@ -385,6 +385,23 @@ let private handle (send: string -> unit) (frame: CommandFrame) =
 
 /// Called by the dev-server plugin for each accepted WebSocket. `send` writes
 /// one text frame to that socket. Returns {receive(text), close()}.
+/// The daemon's operations journal as the mock publishes it: three settled operations from two callers.
+let mutable private operationsRevision = 0L
+let private operations () =
+  operationsRevision <- operationsRevision + 1L
+  let at = int64 (nowMs ())
+  Operations {
+    OperationsBoard.Revision = operationsRevision
+    Incarnation = "mock-journal"
+    Entries = [|
+      { OperationEntry.Sequence = 3L; AtMs = at - 20_000L; CallerLabel = "mcp:3f9c"; Operation = "run"; Session = "s-1"; Project = "/home/mock/Hello/Hello.fidproj"
+        Ok = true; Code = ""; Message = ""
+        Run = Some { OperationRun.ExitCode = 0; Generation = 4L; SourceVersion = "src-4"; StandardOutput = "hello from the mock run\n"; StandardError = ""; Dropped = false } }
+      { OperationEntry.Sequence = 2L; AtMs = at - 60_000L; CallerLabel = "mcp:3f9c"; Operation = "build"; Session = "s-1"; Project = "/home/mock/Hello/Hello.fidproj"
+        Ok = false; Code = "invalid_reservation"; Message = "The reservation was superseded."; Run = None }
+      { OperationEntry.Sequence = 1L; AtMs = at - 120_000L; CallerLabel = "browser"; Operation = "open"; Session = "s-1"; Project = "/home/mock/Hello/Hello.fidproj"
+        Ok = true; Code = ""; Message = ""; Run = None } |] }
+
 let connect (send: string -> unit) : obj =
   nextClient <- nextClient + 1
   let id = nextClient
@@ -393,6 +410,7 @@ let connect (send: string -> unit) : obj =
   reply send (health ())
   reply send (leases ())
   reply send (agentWork ())
+  reply send (operations ())
   // Pushes (snapshots, leases, health, uptime) follow the prologue.
   clients[id] <- send
   attachClock ()

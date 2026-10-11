@@ -354,6 +354,45 @@ let tests =
       snapshot second after |> assertWithdrawn
       do! owner.StopAsync()
     }
+    taskCase "every caller's operations are journaled with their outcome, newest first; status reads are not; refusals are" <| fun () -> task {
+      // Mutations caught: journal status reads and the list would carry a fourth entry; drop the refusal branch and the refused build would be missing.
+      let worker = Worker("journal", 125)
+      let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
+      let changes = ref 0
+      use _ = owner.JournalChanged.Subscribe(fun () -> Interlocked.Increment &changes.contents |> ignore)
+      let! opened = owner.ExecuteAsync(request Operation.Open worker "", "mcp:t1", CancellationToken.None)
+      let session = sessionOf (success opened)
+      let! _ = owner.ExecuteAsync(request Operation.Status worker session, "mcp:t1", CancellationToken.None)
+      let! ran = owner.ExecuteAsync(request Operation.Run worker session, "browser", CancellationToken.None)
+      success ran |> ignore
+      let! refusedBuild = owner.ExecuteAsync(request Operation.Build worker "", "http", CancellationToken.None)
+      refusedBuild |> refused RefusalCode.InvalidRequest
+      let journal = owner.Journal
+      journal.Entries |> List.map (fun e -> e.Caller, e.Operation, (match e.Outcome with ComposerJournal.Outcome.Succeeded -> "ok" | ComposerJournal.Outcome.Refused _ -> "refused" | ComposerJournal.Outcome.Failed _ -> "failed"))
+      |> Expect.equal "newest first, no status read, the refusal kept"
+           [ "http", Operation.Build, "refused"; "browser", Operation.Run, "ok"; "mcp:t1", Operation.Open, "ok" ]
+      journal.Entries |> List.map _.Sequence |> Expect.equal "stamped one on per entry" [ 3L; 2L; 1L ]
+      (journal.Entries.[1].Run |> Option.map _.StandardOutput) |> Expect.equal "the run carries its transcript" (Some "native result\n")
+      (journal.Entries.[1].Session, journal.Entries.[2].Project <> "") |> Expect.equal "the run names its session; the open names its project" (session, true)
+      changes.Value |> Expect.equal "one announcement per entry" 3
+      do! owner.StopAsync()
+    }
+    taskCase "the MCP adapter labels the caller with its transport binding, as a report" <| fun () -> task {
+      // Mutation caught: label every MCP call "mcp" and the transport would be lost; label with a self-declared name and it would pose as identity.
+      Bozzetto.Server.ComposerTools.callerLabel (Some "t9") |> Expect.equal "bound" "mcp:t9"
+      Bozzetto.Server.ComposerTools.callerLabel None |> Expect.equal "unbound" "mcp"
+      Bozzetto.Server.ComposerTools.callerLabel (Some " ") |> Expect.equal "blank is unbound" "mcp"
+      let worker = Worker("mcp-label", 126)
+      let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
+      let tools = Bozzetto.Server.ComposerTools.ComposerTools(owner)
+      Bozzetto.McpTools.currentTransportSessionId.Value <- Some "t9"
+      try
+        let! _ = tools.composer_open_project("/project/fixture.fidproj", CancellationToken.None)
+        ()
+      finally Bozzetto.McpTools.currentTransportSessionId.Value <- None
+      owner.Journal.Entries |> List.map (fun e -> e.Caller, e.Operation) |> Expect.equal "the open is journaled under the transport label" [ "mcp:t9", Operation.Open ]
+      do! owner.StopAsync()
+    }
     taskCase "a status reply delayed past the close cannot bring the forgotten session back" <| fun () -> task {
       // Mutation caught: drop the tombstone and the late open observation would re-enter the directory as a card.
       let worker = Worker("late-status", 124)

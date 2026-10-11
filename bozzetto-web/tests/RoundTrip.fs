@@ -207,6 +207,17 @@ let private events = [
     |]
     Queued = [| { LeaseWait.Kind = "test_suite_run"; Holder = "agent-ü"; RequestedAtMs = -1L } |]
   }
+  Operations { OperationsBoard.Revision = 0L; Incarnation = ""; Entries = [||] }
+  Operations {
+    OperationsBoard.Revision = 9007199254740993L
+    Incarnation = "daemon-ü"
+    Entries = [|
+      { OperationEntry.Sequence = System.Int64.MaxValue; AtMs = -1L; CallerLabel = "mcp:3f9c 🎼"; Operation = "run"; Session = "s"; Project = "/p/Ü.fidproj"
+        Ok = true; Code = ""; Message = ""
+        Run = Some { OperationRun.ExitCode = -2147483648; Generation = 7L; SourceVersion = "src"; StandardOutput = "[cut: 5 characters omitted]\nout\u0000"; StandardError = "err — 日本"; Dropped = false } }
+      { OperationEntry.Sequence = 1L; AtMs = 0L; CallerLabel = "http"; Operation = "build"; Session = ""; Project = ""; Ok = false; Code = "invalid_reservation"; Message = "⚠"; Run = None }
+      { OperationEntry.Sequence = 2L; AtMs = 1L; CallerLabel = "browser"; Operation = "run"; Session = "s"; Project = "p"; Ok = true; Code = ""; Message = ""
+        Run = Some { OperationRun.ExitCode = 0; Generation = 0L; SourceVersion = ""; StandardOutput = ""; StandardError = ""; Dropped = true } } |] }
   Uptime { UptimeTick.UptimeMs = 0L }
   Uptime { UptimeTick.UptimeMs = 93784005L }
   Uptime { UptimeTick.UptimeMs = System.Int64.MaxValue }
@@ -221,6 +232,8 @@ let private badEvents = [
   "null"
   "{}"
   """{"event":"nope"}"""
+  """{"event":"operations","revision":"1","incarnation":"d","entries":[{"sequence":"1"}]}"""
+  """{"event":"operations","revision":"1","incarnation":"d","entries":[{"sequence":"1","atMs":"0","caller":"c","operation":"run","session":"","project":"","ok":true,"code":"","message":"","run":5}]}"""
   """{"event":"welcome","protocolVersion":1.5,"daemonVersion":"x","startedAtMs":"0"}"""
   """{"event":"welcome","protocolVersion":2147483648,"daemonVersion":"x","startedAtMs":"0"}"""
   """{"event":"welcome","protocolVersion":2,"daemonVersion":"x"}"""

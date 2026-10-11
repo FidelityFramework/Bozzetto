@@ -97,7 +97,7 @@ module Bozzetto.Web.Shared.Protocol
 /// 2: Welcome carries StartedAtMs; Health no longer carries an uptime.
 /// 3: the Uptime event, pushed by the backend's clock while a page is connected.
 [<Literal>]
-let ProtocolVersion = 7
+let ProtocolVersion = 8
 
 // ── Addresses ──────────────────────────────────────────────────────────────
 
@@ -385,6 +385,28 @@ type AgentWorkBoard = {
   Presence: AgentPresence array
 }
 
+/// A run's output as the daemon journaled it; `Dropped` marks a transcript
+/// given up for space, its entry kept.
+type OperationRun = {
+  ExitCode: int32; Generation: int64; SourceVersion: string
+  StandardOutput: string; StandardError: string
+  Dropped: bool
+}
+
+/// One settled Composer operation from any caller, as the daemon journaled it.
+/// `Caller` is the adapter's report of who asked ("mcp:<transport>", "http",
+/// "browser"): a label, never an authenticated identity.
+type OperationEntry = {
+  Sequence: int64; AtMs: int64
+  CallerLabel: string; Operation: string; Session: string; Project: string
+  Ok: bool; Code: string; Message: string
+  Run: OperationRun option
+}
+
+/// The daemon's journal of settled operations, newest first, bounded by the
+/// daemon; stamped per publication, a page keeps the newest.
+type OperationsBoard = { Revision: int64; Incarnation: string; Entries: OperationEntry array }
+
 /// What the backend pushes to the UI. Events fold into the UI's model.
 type Event =
   | Welcome of BridgeWelcome
@@ -397,3 +419,4 @@ type Event =
   | Uptime of UptimeTick
   | Resources of HostResources
   | AgentWork of AgentWorkBoard
+  | Operations of OperationsBoard

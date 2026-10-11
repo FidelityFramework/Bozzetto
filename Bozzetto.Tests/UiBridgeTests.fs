@@ -320,6 +320,40 @@ module private Ui =
              ProcessCount = count; UnreadableCount = unreadable; OmittedCount = omitted; Note = note; Metrics = metrics; Processes = processes }
   }
 
+  let private operationRun o = decode {
+    let! exitCode = whole "exitCode" o
+    let! generation = wide "generation" o
+    let! sourceVersion = text "sourceVersion" o
+    let! standardOutput = text "standardOutput" o
+    let! standardError = text "standardError" o
+    let! dropped = flag "dropped" o
+    return { OperationRun.ExitCode = exitCode; Generation = generation; SourceVersion = sourceVersion; StandardOutput = standardOutput; StandardError = standardError; Dropped = dropped }
+  }
+
+  let private operations o = decode {
+    let! revision = wide "revision" o
+    let! incarnation = text "incarnation" o
+    let! entries =
+      items "entries" (fun e -> decode {
+        let! sequence = wide "sequence" e
+        let! atMs = wide "atMs" e
+        let! caller = text "callerLabel" e
+        let! operation = text "operation" e
+        let! session = text "session" e
+        let! project = text "project" e
+        let! ok = flag "ok" e
+        let! code = text "code" e
+        let! message = text "message" e
+        let! run =
+          match field "run" e with
+          | Some JsonValue.Null -> Ok None
+          | Some(JsonValue.Object _ as value) -> operationRun value |> Result.map Some
+          | _ -> Error "run: expected an object or null"
+        return { OperationEntry.Sequence = sequence; AtMs = atMs; CallerLabel = caller; Operation = operation; Session = session; Project = project; Ok = ok; Code = code; Message = message; Run = run }
+      }) o
+    return { OperationsBoard.Revision = revision; Incarnation = incarnation; Entries = entries }
+  }
+
   let private agentWork o = decode {
     let! incarnation = text "incarnation" o
     let! sequence = wide "sequence" o
@@ -428,6 +462,7 @@ module private Ui =
             }
           }
         | "agent_work" -> agentWork o |> Result.map AgentWork
+        | "operations" -> operations o |> Result.map Operations
         | "resources" -> resources o |> Result.map Resources
         | "health" -> health o |> Result.map Health
         | "leases" -> leases o |> Result.map Leases
@@ -588,6 +623,17 @@ let private events = [
     |]
     Queued = [| { LeaseWait.Kind = "test_suite_run"; Holder = "agent-ü"; RequestedAtMs = -1L } |]
   }
+  Operations { OperationsBoard.Revision = 0L; Incarnation = ""; Entries = [||] }
+  Operations {
+    OperationsBoard.Revision = 9007199254740993L
+    Incarnation = "daemon-ü"
+    Entries = [|
+      { OperationEntry.Sequence = Int64.MaxValue; AtMs = -1L; CallerLabel = "mcp:3f9c 🎼"; Operation = "run"; Session = "s"; Project = "/p/Ü.fidproj"
+        Ok = true; Code = ""; Message = ""
+        Run = Some { OperationRun.ExitCode = -2147483648; Generation = 7L; SourceVersion = "src"; StandardOutput = "[cut: 5 characters omitted]\nout\u0000"; StandardError = "err — 日本"; Dropped = false } }
+      { OperationEntry.Sequence = 1L; AtMs = 0L; CallerLabel = "http"; Operation = "build"; Session = ""; Project = ""; Ok = false; Code = "invalid_reservation"; Message = "⚠"; Run = None }
+      { OperationEntry.Sequence = 2L; AtMs = 1L; CallerLabel = "browser"; Operation = "run"; Session = "s"; Project = "p"; Ok = true; Code = ""; Message = ""
+        Run = Some { OperationRun.ExitCode = 0; Generation = 0L; SourceVersion = ""; StandardOutput = ""; StandardError = ""; Dropped = true } } |] }
   Uptime { UptimeTick.UptimeMs = 0L }
   Uptime { UptimeTick.UptimeMs = 93784005L }
   Uptime { UptimeTick.UptimeMs = Int64.MaxValue }
@@ -618,7 +664,7 @@ let private commandWires = [
 ]
 
 let private eventWires = [
-  """{"event":"welcome","protocolVersion":7,"daemonVersion":"0.6.834","startedAtMs":"1759420800123"}"""
+  """{"event":"welcome","protocolVersion":8,"daemonVersion":"0.6.834","startedAtMs":"1759420800123"}"""
   """{"event":"welcome","protocolVersion":2147483647,"daemonVersion":"","startedAtMs":"-9223372036854775808"}"""
   """{"event":"snapshot","revision":"0","worker":{"state":"unconfigured"},"sessions":[]}"""
   """{"event":"snapshot","revision":"1","worker":{"state":"idle"},"sessions":[{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼","generation":"-9223372036854775808","project":"/home/ü/Ünïcode.fidproj","closed":false,"busy":false,"statusFresh":true,"revocationPending":false,"cleanupPending":false,"formatterCleanupPending":false,"current":null,"backendError":null,"formatterError":null,"cleanupError":null,"workerRetirementRequired":null,"statusError":null,"workerError":null}]}"""
@@ -639,6 +685,8 @@ let private eventWires = [
   """{"event":"health","revision":"2","sampledAtMs":"9223372036854775807","recordAtMs":"-1","version":"v","processId":1,"mcpPort":47759,"overall":"Degraded","memoryPressure":"Critical","memoryPressureNote":"7.0% of RAM available — critical is entered at or below 8% and clears at 15%; expensive work is queued until pressure eases","residentBytes":"55000000000","machineAvailableBytes":"1","machineTotalBytes":"2","cpuPercent":99.5,"processes":[{"processId":1,"role":"daemon","residentBytes":"1","cpuPercent":0},{"processId":2,"role":"composer-worker","residentBytes":"9223372036854775807","cpuPercent":12.5}],"alarms":[{"signal":"WorkerRss","state":"Broken","message":"RSS ↑"}]}"""
   """{"event":"leases","revision":"0","active":[],"queued":[]}"""
   """{"event":"leases","revision":"9007199254740993","active":[{"id":"lease-1","kind":"full_build","holder":"gate-command-1","grantedAtMs":"1759420800000","expiresAtMs":"9223372036854775807"}],"queued":[{"kind":"test_suite_run","holder":"agent-ü","requestedAtMs":"-1"}]}"""
+  """{"event":"operations","revision":"0","incarnation":"","entries":[]}"""
+  """{"event":"operations","revision":"9007199254740993","incarnation":"daemon-ü","entries":[{"sequence":"9223372036854775807","atMs":"-1","callerLabel":"mcp:3f9c 🎼","operation":"run","session":"s","project":"/p/Ü.fidproj","ok":true,"code":"","message":"","run":{"exitCode":-2147483648,"generation":"7","sourceVersion":"src","standardOutput":"[cut: 5 characters omitted]\nout\u0000","standardError":"err — 日本","dropped":false}},{"sequence":"1","atMs":"0","callerLabel":"http","operation":"build","session":"","project":"","ok":false,"code":"invalid_reservation","message":"⚠","run":null},{"sequence":"2","atMs":"1","callerLabel":"browser","operation":"run","session":"s","project":"p","ok":true,"code":"","message":"","run":{"exitCode":0,"generation":"0","sourceVersion":"","standardOutput":"","standardError":"","dropped":true}}]}"""
   """{"event":"uptime","uptimeMs":"0"}"""
   """{"event":"uptime","uptimeMs":"93784005"}"""
   """{"event":"uptime","uptimeMs":"9223372036854775807"}"""

@@ -30,11 +30,18 @@ let toolResult (response: JsonValue) =
   | _ -> ()
   result
 
+/// The MCP adapter's caller label: the transport binding when the call carries
+/// one, as the cohort tools use it. A report of who asked, never an identity.
+let callerLabel (transport: string option) =
+  match transport with
+  | Some t when not (System.String.IsNullOrWhiteSpace t) -> "mcp:" + t
+  | _ -> "mcp"
+
 type ComposerTools(supervisor: ComposerSupervisor) =
   let address host session epoch: SessionAddress =
     { Worker = { Host = host; Epoch = epoch; Provider = ProviderIdentity.ClefComposer }; Session = session }
   let execute request cancellation = task {
-    let! response = supervisor.ExecuteAsync(request, cancellation)
+    let! response = supervisor.ExecuteAsync(request, callerLabel Bozzetto.McpTools.currentTransportSessionId.Value, cancellation)
     return toolResult (ComposerClientJson.reply response)
   }
 

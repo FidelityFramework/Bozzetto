@@ -88,6 +88,9 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
   let mutable retirement: Task option = None
   let mutable stopped = false
   let mutable revision = 0L
+  /// The journal of settled operations, this supervisor's own; published whole.
+  let mutable journal = ComposerJournal.empty (Guid.NewGuid().ToString("N"))
+  let journalChanged = Event<unit>()
 
   let changed () =
     lock gate (fun () -> revision <- revision + 1L)
@@ -325,7 +328,50 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
   member _.Changed = changedEvent.Publish
   member _.WorkerPid = lock gate (fun () -> worker |> Option.filter _.IsProcessAlive |> Option.map _.ProcessId)
 
-  member _.ExecuteAsync(request: RequestBody, cancellation: CancellationToken): Task<ComposerResponse> = task {
+  /// Journal one settled operation: the caller's label, the operation, the
+  /// session and its project, the outcome, and a run's bounded output. Status
+  /// reads are observation, not operations, and are not journaled.
+  member private _.Record(caller: string, request: RequestBody, before: ComposerResponse option, settled: Result<ComposerResponse, exn>) =
+    let operation = BAREWireCodec.requestOperation request
+    if operation <> Operation.Status then
+      let session =
+        match settled with
+        | Result.Ok response when response.Reply.Authority.Session <> "" -> response.Reply.Authority.Session
+        | _ -> ComposerWire.session request
+      let project =
+        match request, settled with
+        | Open(_, project), _ -> project
+        | _, Result.Ok { Reply = { Outcome = Result.Ok(Observed status) } } -> status.Project
+        | _ ->
+          match before |> Option.map (fun b -> b.Reply.Outcome) with
+          | Some(Result.Ok(Observed status)) -> status.Project
+          | _ -> ""
+      let entry =
+        ComposerJournal.settle caller operation session project (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+          (settled |> Result.map (fun response -> response.Reply.Outcome))
+      lock gate (fun () -> journal <- ComposerJournal.append entry journal)
+      try journalChanged.Trigger() with _ -> ()
+
+  /// The journal as last published, and its change signal (one firing per entry).
+  member _.Journal : ComposerJournal.Journal = lock gate (fun () -> journal)
+  member _.JournalChanged : IObservable<unit> = journalChanged.Publish
+
+  /// Run one operation for `caller` (the adapter's label for who asked) and journal how it settled.
+  member this.ExecuteAsync(request: RequestBody, caller: string, cancellation: CancellationToken): Task<ComposerResponse> = task {
+    let before = cached (ComposerWire.session request)
+    try
+      let! response = this.ExecuteCore(request, cancellation)
+      this.Record(caller, request, before, Result.Ok response)
+      return response
+    with error ->
+      this.Record(caller, request, before, Result.Error error)
+      return raise error
+  }
+
+  member this.ExecuteAsync(request: RequestBody, cancellation: CancellationToken): Task<ComposerResponse> =
+    this.ExecuteAsync(request, "unknown", cancellation)
+
+  member private _.ExecuteCore(request: RequestBody, cancellation: CancellationToken): Task<ComposerResponse> = task {
     let operation = BAREWireCodec.requestOperation request
     let target = ComposerWire.target request
     if target |> Option.exists (fun value -> value.Provider <> ProviderIdentity.ClefComposer) then

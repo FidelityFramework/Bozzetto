@@ -101,6 +101,15 @@ type WaitView = {| id: string; kind: string; holder: string; requestedAt: float 
 /// One command outcome, as the activity log and a session card show it.
 type OutcomeView = {| id: int; at: float; ok: bool; scope: string; text: string |}
 
+/// One settled Composer operation from the daemon's journal: every caller's,
+/// with the adapter's label for who asked (a label, not an identity).
+type OperationView =
+  {|
+    id: string; sequence: float; at: float; caller: string; operation: string; session: string; project: string
+    ok: bool; code: string; message: string
+    hasRun: bool; exitCode: int; generation: string; sourceVersion: string; stdout: string; stderr: string; dropped: bool
+  |}
+
 type RunView =
   {|
     id: int
@@ -140,6 +149,9 @@ type ModelView =
     queue: WaitView array
     /// The lease board's stamp as last applied: a page keeps the newest.
     leaseRevision: float
+    /// The daemon's operations journal, newest first, and its stamp as last applied.
+    operations: OperationView array
+    operationsRevision: float
     activity: OutcomeView array
     runs: RunView array
   |}
@@ -225,6 +237,8 @@ let create () : Stores =
         leases = Array.empty<LeaseView>
         queue = Array.empty<WaitView>
         leaseRevision = 0.0
+        operations = Array.empty<OperationView>
+        operationsRevision = 0.0
         activity = Array.empty<OutcomeView>
         runs = Array.empty<RunView>
       |}
@@ -511,6 +525,8 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       // and show health only once the new daemon has published it.
       setSlice stores "healthSeen" (box false)
       setSlice stores "leaseRevision" (box 0.0)
+      setSlice stores "operationsRevision" (box 0.0)
+      reconcileSlice stores "operations" (box Array.empty<OperationView>)
       setSlice stores "welcomed" (box true)
       setSlice stores "daemonVersion" (box w.DaemonVersion)
       setSlice stores "startedAt" (box (float w.StartedAtMs))
@@ -559,6 +575,23 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
           stderr = run.StandardError
         |}
       setSlice stores "runs" (box (Array.append [| view |] (Array.truncate 19 stores.Model.runs)))
+    | Operations board ->
+      // Stamped per publication; an older journal arriving after a newer one is kept out.
+      if float board.Revision >= stores.Model.operationsRevision then
+        setSlice stores "operationsRevision" (box (float board.Revision))
+        reconcileSlice stores "operations" (box (board.Entries |> Array.map (fun e ->
+          let run = e.Run
+          {|
+            id = string e.Sequence; sequence = float e.Sequence; at = float e.AtMs; caller = e.CallerLabel; operation = e.Operation
+            session = e.Session; project = fileName e.Project; ok = e.Ok; code = e.Code; message = e.Message
+            hasRun = run.IsSome
+            exitCode = run |> Option.map (fun r -> r.ExitCode) |> Option.defaultValue 0
+            generation = run |> Option.map (fun r -> string r.Generation) |> Option.defaultValue ""
+            sourceVersion = run |> Option.map (fun r -> r.SourceVersion) |> Option.defaultValue ""
+            stdout = run |> Option.map (fun r -> r.StandardOutput) |> Option.defaultValue ""
+            stderr = run |> Option.map (fun r -> r.StandardError) |> Option.defaultValue ""
+            dropped = run |> Option.map (fun r -> r.Dropped) |> Option.defaultValue false
+          |} : OperationView)))
     | AgentWork board ->
       if stores.Model.agentIncarnation <> board.Incarnation || stores.Model.agentSequence = "" || board.Sequence >= int64 stores.Model.agentSequence then
         setSlice stores "agentIncarnation" (box board.Incarnation)

@@ -373,6 +373,41 @@ let private agentPresence o = decode {
   let! since = wide o "sinceMs"
   return { AgentPresence.Name = name; Source = source; Member = member'; Project = project; Detail = detail; SinceMs = since }
 }
+let private operationRun (o: obj) = decode {
+  let! exitCode = whole o "exitCode"
+  let! generation = wide o "generation"
+  let! sourceVersion = text o "sourceVersion"
+  let! standardOutput = text o "standardOutput"
+  let! standardError = text o "standardError"
+  let! dropped = flag o "dropped"
+  return
+    { OperationRun.ExitCode = exitCode; Generation = generation; SourceVersion = sourceVersion
+      StandardOutput = standardOutput; StandardError = standardError; Dropped = dropped }
+}
+
+let private operationEntry (o: obj) = decode {
+  let! sequence = wide o "sequence"
+  let! atMs = wide o "atMs"
+  let! caller = text o "callerLabel"
+  let! operation = text o "operation"
+  let! session = text o "session"
+  let! project = text o "project"
+  let! ok = flag o "ok"
+  let! code = text o "code"
+  let! message = text o "message"
+  let! run = optionalChild o "run" operationRun
+  return
+    { OperationEntry.Sequence = sequence; AtMs = atMs; CallerLabel = caller; Operation = operation; Session = session; Project = project
+      Ok = ok; Code = code; Message = message; Run = run }
+}
+
+let private operations (o: obj) = decode {
+  let! revision = wide o "revision"
+  let! incarnation = text o "incarnation"
+  let! entries = items o "entries" operationEntry
+  return { OperationsBoard.Revision = revision; Incarnation = incarnation; Entries = entries }
+}
+
 let private agentWork o = decode {
   let! incarnation = text o "incarnation"
   let! sequence = wide o "sequence"
@@ -436,6 +471,7 @@ let private eventOf (o: obj) : Result<Event, string> =
         }
       }
     | "agent_work" -> agentWork o |> Result.map AgentWork
+    | "operations" -> operations o |> Result.map Operations
     | "resources" -> resources o |> Result.map Resources
     | "health" -> health o |> Result.map Health
     | "leases" ->

@@ -124,6 +124,29 @@ module Project =
       Presence = [||]
       Runs = agentWorkRuns state }
 
+  /// The daemon's journal of settled Composer operations as a page shows it,
+  /// stamped by the publication that produced it. The caller travels as the
+  /// adapter's label, which is all it is.
+  let operations (revision: int64) (journal: ComposerJournal.Journal) : OperationsBoard =
+    { OperationsBoard.Revision = revision
+      Incarnation = journal.Incarnation
+      Entries =
+        journal.Entries
+        |> List.map (fun entry ->
+          let ok, code, message =
+            match entry.Outcome with
+            | ComposerJournal.Outcome.Succeeded -> true, "", ""
+            | ComposerJournal.Outcome.Refused(code, message) -> false, ComposerClientJson.refusalCode code, message
+            | ComposerJournal.Outcome.Failed message -> false, "exception", message
+          { OperationEntry.Sequence = entry.Sequence; AtMs = entry.AtMs; CallerLabel = entry.Caller
+            Operation = ComposerClientJson.operationName entry.Operation; Session = entry.Session; Project = entry.Project
+            Ok = ok; Code = code; Message = message
+            Run =
+              entry.Run |> Option.map (fun run ->
+                { OperationRun.ExitCode = run.ExitCode; Generation = run.Generation; SourceVersion = run.SourceVersion
+                  StandardOutput = run.StandardOutput; StandardError = run.StandardError; Dropped = run.Dropped }) })
+        |> List.toArray }
+
   let targetOf (authority: Authority) : SessionTarget =
     { SessionTarget.Worker = { WorkerTarget.Host = authority.Host; Epoch = authority.Epoch }; Session = authority.Session }
 
@@ -470,6 +493,7 @@ type Push =
   | Uptime
   | Resources
   | AgentWork
+  | Operations
 
 [<RequireQualifiedAccess>]
 type Inbound =
@@ -499,7 +523,7 @@ type private Write =
 /// still runs.
 type internal Outbox(socket: IBridgeSocket, sendTimeout: TimeSpan, closeTimeout: TimeSpan) =
   let gate = obj ()
-  let pushes: Outbound option array = Array.create 6 None
+  let pushes: Outbound option array = Array.create 7 None
   let mutable closed = false
   let mutable wakePending = false
   // Owned by the writer agent.
@@ -515,6 +539,7 @@ type internal Outbox(socket: IBridgeSocket, sendTimeout: TimeSpan, closeTimeout:
     | Push.Uptime -> 3
     | Push.Resources -> 4
     | Push.AgentWork -> 5
+    | Push.Operations -> 6
 
   let send (frame: Outbound) = async {
     return!
@@ -763,6 +788,7 @@ module Facts =
     Pool: IObservable<Bozzetto.Features.LeaseWatch.Pool> * (unit -> Bozzetto.Features.LeaseWatch.Pool)
     Agents: (IObservable<unit> * (unit -> Bozzetto.AgentWork.State)) option
     Membership: (IObservable<unit> * (unit -> Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTable.MemberId>)) option
+    Journal: IObservable<unit> * (unit -> ComposerJournal.Journal)
   }
 
   /// Why a publication was not admitted. `Conflict` and `ForeignIncarnation`
@@ -783,6 +809,7 @@ module Facts =
     | Pool of Bozzetto.Features.LeaseWatch.Pool
     | Agents of Bozzetto.AgentWork.State
     | Membership of Membership
+    | Journal of ComposerJournal.Journal
 
   /// What a value token names: an admitted fact, or a settled projection.
   [<RequireQualifiedAccess>]
@@ -790,8 +817,8 @@ module Facts =
     | Fact of Fact
     | Value of Event
 
-  let private tickInput, poolInput, agentsInput, membershipInput = InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL
-  let private healthWork, leasesWork, boardWork = WorkId 1UL, WorkId 2UL, WorkId 3UL
+  let private tickInput, poolInput, agentsInput, membershipInput, journalInput = InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL, InputId 5UL
+  let private healthWork, leasesWork, boardWork, operationsWork = WorkId 1UL, WorkId 2UL, WorkId 3UL, WorkId 4UL
   let private scope = ScopeId 1UL
 
   /// Sets admitted per epoch before the plane retires it and starts the next:
@@ -801,7 +828,7 @@ module Facts =
   /// The plane of one daemon. `incarnation` is the agent board owner's, bound
   /// at start: a publication from any other incarnation is refused, so a
   /// retired owner can never roll the board back.
-  type Graph(constants: Constants, incarnation: string) =
+  type Graph(constants: Constants, incarnation: string, journalIncarnation: string) =
     let gate = obj ()
     let mutable epoch = 1UL
     let mutable core = Core.init (EpochId epoch)
@@ -820,7 +847,11 @@ module Facts =
     let sinks = System.Collections.Generic.Dictionary<int64, Push -> Event -> unit>()
     let mutable nextSink = 0L
 
-    let pushOf (work: WorkId) = if work = healthWork then Push.Health elif work = leasesWork then Push.Leases else Push.AgentWork
+    let pushOf (work: WorkId) =
+      if work = healthWork then Push.Health
+      elif work = leasesWork then Push.Leases
+      elif work = operationsWork then Push.Operations
+      else Push.AgentWork
 
     /// The projection of one work over the facts its frozen reads name, with
     /// the publication serial the result carries on the wire.
@@ -840,6 +871,10 @@ module Facts =
         match fact 1UL with
         | Some(Fact.Pool pool) -> Leases(Project.leaseBoard stamp pool.Active pool.Queue)
         | other -> invalidOp (sprintf "Bridge facts: Leases read %A" other)
+      elif work = operationsWork then
+        match fact 1UL with
+        | Some(Fact.Journal journal) -> Operations(Project.operations stamp journal)
+        | other -> invalidOp (sprintf "Bridge facts: Operations read %A" other)
       else
         match fact 1UL, fact 2UL, fact 3UL with
         | Some(Fact.Agents state), Some(Fact.Pool pool), Some(Fact.Membership membership) ->
@@ -909,10 +944,12 @@ module Facts =
           Work = boardWork; Stamp = DefinitionStamp 1UL
           Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input agentsInput }
                     { Slot = ReadSlotId 2UL; Source = ReadSource.Input poolInput }
-                    { Slot = ReadSlotId 3UL; Source = ReadSource.Input membershipInput } ] } ]))
+                    { Slot = ReadSlotId 3UL; Source = ReadSource.Input membershipInput } ] }
+        ScopeEntry.Define { Work = operationsWork; Stamp = DefinitionStamp 1UL; Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input journalInput } ] } ]))
       apply (Action.Demand(DemandId 1UL, healthWork))
       apply (Action.Demand(DemandId 2UL, leasesWork))
       apply (Action.Demand(DemandId 3UL, boardWork))
+      apply (Action.Demand(DemandId 4UL, operationsWork))
 
     /// Retire the epoch and start the next with the same inputs, in one
     /// section. The recomputations are an artifact of the handover, not news:
@@ -965,9 +1002,9 @@ module Facts =
           if sets >= recycleBound then recycle ()
           Ok())
 
-    /// The eligible value of each work, in wire order: Health, Leases, the board.
+    /// The eligible value of each work, in wire order: Health, Leases, the board, the operations.
     let current () : Event list =
-      [ healthWork; leasesWork; boardWork ]
+      [ healthWork; leasesWork; boardWork; operationsWork ]
       |> List.choose (fun work ->
         Core.tryResult work core
         |> Option.bind (fun handle ->
@@ -976,6 +1013,8 @@ module Facts =
           | _ -> None))
 
     do define ()
+
+    new(constants: Constants, incarnation: string) = Graph(constants, incarnation, "")
 
     /// Registers a page's sink and returns the current values in the same
     /// critical section: every publication settled after it reaches the sink,
@@ -1019,6 +1058,14 @@ module Facts =
     member _.Membership(frame: Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTable.MemberId>) =
       let membership = membershipOf frame
       admit membershipInput membership.Version (Fact.Membership membership)
+    /// The operations journal names its owner's incarnation; the plane binds to
+    /// the one it started with and refuses any other.
+    member _.Journal(journal: ComposerJournal.Journal) =
+      if journal.Incarnation <> journalIncarnation then
+        lock gate (fun () -> faults <- faults + 1)
+        Log.warn "[ui-bridge] operations journal from incarnation %s refused; the plane is bound to %s" journal.Incarnation journalIncarnation
+        Error Refusal.ForeignIncarnation
+      else admit journalInput journal.Sequence (Fact.Journal journal)
 
     /// Subscribe to every owner and take its current value in one critical
     /// section, so a publication between the two is applied after it, by serial.
@@ -1026,13 +1073,16 @@ module Facts =
       lock gate (fun () ->
         let tickChanged, tickNow = owners.Tick
         let poolChanged, poolNow = owners.Pool
+        let journalChanged, journalNow = owners.Journal
         let subscriptions =
           [ yield tickChanged.Subscribe(fun tick -> this.Tick tick |> ignore)
             yield poolChanged.Subscribe(fun pool -> this.Pool pool |> ignore)
+            yield journalChanged.Subscribe(fun () -> this.Journal(journalNow ()) |> ignore)
             yield! owners.Agents |> Option.map (fun (changed, read) -> changed.Subscribe(fun () -> this.Agents(read ()) |> ignore)) |> Option.toList
             yield! owners.Membership |> Option.map (fun (changed, read) -> changed.Subscribe(fun () -> this.Membership(read ()) |> ignore)) |> Option.toList ]
         tickNow () |> Option.iter (fun tick -> this.Tick tick |> ignore)
         this.Pool(poolNow ()) |> ignore
+        this.Journal(journalNow ()) |> ignore
         owners.Agents |> Option.iter (fun (_, read) -> this.Agents(read ()) |> ignore)
         owners.Membership |> Option.iter (fun (_, read) -> this.Membership(read ()) |> ignore)
         { new IDisposable with member _.Dispose() = for subscription in subscriptions do subscription.Dispose() })
@@ -1280,7 +1330,7 @@ module BridgeSources =
   let ofSupervisor (supervisor: ComposerSupervisor) (version: string) (startedAtMs: int64) (facts: BridgeFacts) =
     { DaemonVersion = version
       StartedAtMs = startedAtMs
-      Execute = fun request cancellation -> supervisor.ExecuteAsync(request, cancellation)
+      Execute = fun request cancellation -> supervisor.ExecuteAsync(request, "browser", cancellation)
       Directory = fun cancellation -> supervisor.SessionsAsync cancellation
       CachedDirectory = supervisor.CachedDirectory
       WorkerPid = fun () -> supervisor.WorkerPid
@@ -1302,13 +1352,15 @@ let create (supervisor: ComposerSupervisor) (mcpPort: int) (getHealth: unit -> B
   let graph =
     Facts.Graph(
       { Facts.Constants.McpPort = mcpPort; Version = DaemonInfo.version; ProcessId = Environment.ProcessId },
-      owner |> Option.map (fun o -> o.ReadWork().Incarnation) |> Option.defaultValue "")
+      owner |> Option.map (fun o -> o.ReadWork().Incarnation) |> Option.defaultValue "",
+      supervisor.Journal.Incarnation)
   let subscriptions =
     graph.Start
       { Facts.Owners.Tick = Bozzetto.Server.HealthTick.Changed, Bozzetto.Server.HealthTick.current
         Pool = Bozzetto.Features.LeaseWatch.changed, Bozzetto.Features.LeaseWatch.current
         Agents = owner |> Option.map (fun o -> o.WorkChanged, (fun () -> o.ReadWork()))
-        Membership = owner |> Option.map (fun o -> (o.Events |> Observable.map ignore), (fun () -> o.ReadFrame())) }
+        Membership = owner |> Option.map (fun o -> (o.Events |> Observable.map ignore), (fun () -> o.ReadFrame()))
+        Journal = supervisor.JournalChanged, (fun () -> supervisor.Journal) }
   stopping.Register(fun () ->
     subscriptions.Dispose()
     graph.Stop()) |> ignore

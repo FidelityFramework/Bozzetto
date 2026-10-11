@@ -358,6 +358,39 @@ let private eventJson (event: Event) =
           JsonValue.Object [ "kind", str wait.Kind; "holder", str wait.Holder; "requestedAtMs", wide wait.RequestedAtMs ]
       ]
     ]
+  | Operations board ->
+    JsonValue.Object [
+      tag "operations"
+      "revision", wide board.Revision
+      "incarnation", str board.Incarnation
+      "entries",
+      JsonValue.Array [
+        for e in board.Entries ->
+          JsonValue.Object [
+            "sequence", wide e.Sequence
+            "atMs", wide e.AtMs
+            "callerLabel", str e.CallerLabel
+            "operation", str e.Operation
+            "session", str e.Session
+            "project", str e.Project
+            "ok", JsonValue.Bool e.Ok
+            "code", str e.Code
+            "message", str e.Message
+            "run",
+            (match e.Run with
+             | None -> JsonValue.Null
+             | Some run ->
+               JsonValue.Object [
+                 "exitCode", whole run.ExitCode
+                 "generation", wide run.Generation
+                 "sourceVersion", str run.SourceVersion
+                 "standardOutput", str run.StandardOutput
+                 "standardError", str run.StandardError
+                 "dropped", JsonValue.Bool run.Dropped
+               ])
+          ]
+      ]
+    ]
   | Resources r ->
     let optional value = value |> Option.map real |> Option.defaultValue JsonValue.Null
     JsonValue.Object [
