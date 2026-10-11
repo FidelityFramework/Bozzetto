@@ -76,6 +76,7 @@ type HealthView =
     port: int
     overall: string
     pressure: string
+    note: string
     rss: float
     available: float
     total: float
@@ -176,6 +177,7 @@ let private noHealth () : HealthView =
     port = 0
     overall = ""
     pressure = ""
+    note = ""
     rss = 0.0
     available = 0.0
     total = 0.0
@@ -356,6 +358,7 @@ let private healthView (h: DaemonHealth) : HealthView =
     port = h.McpPort
     overall = h.Overall
     pressure = h.MemoryPressure
+    note = h.MemoryPressureNote
     rss = float h.ResidentBytes
     available = float h.MachineAvailableBytes
     total = float h.MachineTotalBytes

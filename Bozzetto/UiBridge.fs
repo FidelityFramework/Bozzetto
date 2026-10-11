@@ -222,6 +222,12 @@ module Project =
         |> Option.map (fun h -> Bozzetto.Features.DaemonHealth.healthLabel (Bozzetto.Features.DaemonHealth.overallStatus h))
         |> Option.defaultValue "Unknown"
       MemoryPressure = observed |> Option.map _.MemoryPressure |> Option.defaultValue Bozzetto.MemoryPressure.Normal |> pressureName
+      MemoryPressureNote =
+        let level = observed |> Option.map _.MemoryPressure |> Option.defaultValue Bozzetto.MemoryPressure.Normal
+        let availableFrac =
+          if sources.Machine.TotalBytes > 0L then float sources.Machine.AvailableBytes / float sources.Machine.TotalBytes else 0.0
+        let thresholds = Bozzetto.MemorySupervisor.pressureThresholds Bozzetto.MemorySupervisor.defaultThresholds
+        Bozzetto.MemoryPressure.explainAt thresholds availableFrac level
       ResidentBytes = observed |> Option.map (fun h -> int64 h.MemoryMB * 1_048_576L) |> Option.defaultValue 0L
       MachineAvailableBytes = sources.Machine.AvailableBytes
       MachineTotalBytes = sources.Machine.TotalBytes

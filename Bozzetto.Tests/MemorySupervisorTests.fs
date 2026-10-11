@@ -130,3 +130,24 @@ let refusalReasonTests =
       | None -> failtest "expected a refusal at this pressure"
       | Some reason -> (reason.Length > 0) |> Expect.isTrue "the reason must actually say something"
   ]
+
+[<Tests>]
+let explainAtTests =
+  let thresholds = pressureThresholds defaultThresholds
+  testList "MemoryPressure.explainAt" [
+    testCase "a tight note states the observed fraction, the entry threshold and the exit threshold" <| fun () ->
+      let note = MemoryPressure.explainAt thresholds 0.256 MemoryPressure.Tight
+      note |> Expect.stringContains "the observed fraction" "25.6% of RAM available"
+      note |> Expect.stringContains "the entry threshold" "at or below 20%"
+      note |> Expect.stringContains "the exit threshold, which is why tight persists above the entry" "clears at 30%"
+    testCase "a normal note promises no serialization and names the entry threshold" <| fun () ->
+      let note = MemoryPressure.explainAt thresholds 0.60 MemoryPressure.Normal
+      note |> Expect.stringContains "the observed fraction" "60.0% of RAM available"
+      note |> Expect.stringContains "the entry threshold" "20%"
+      note.Contains "serialized" |> Expect.isFalse "normal must not claim serialization"
+    testProperty "every non-normal note states its exit threshold" <| fun (raw: float) ->
+      let frac = if Double.IsFinite raw then abs raw % 1.0 else 0.0
+      let tight = MemoryPressure.explainAt thresholds frac MemoryPressure.Tight
+      let critical = MemoryPressure.explainAt thresholds frac MemoryPressure.Critical
+      tight.Contains "clears at 30%" && critical.Contains "clears at 15%"
+  ]

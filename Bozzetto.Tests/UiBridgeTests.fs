@@ -219,6 +219,7 @@ module private Ui =
     let! mcpPort = whole "mcpPort" o
     let! overall = text "overall" o
     let! pressure = text "memoryPressure" o
+    let! note = text "memoryPressureNote" o
     let! resident = wide "residentBytes" o
     let! available = wide "machineAvailableBytes" o
     let! total = wide "machineTotalBytes" o
@@ -244,6 +245,7 @@ module private Ui =
       McpPort = mcpPort
       Overall = overall
       MemoryPressure = pressure
+      MemoryPressureNote = note
       ResidentBytes = resident
       MachineAvailableBytes = available
       MachineTotalBytes = total
@@ -529,6 +531,7 @@ let private events = [
     McpPort = 47749
     Overall = "Healthy"
     MemoryPressure = "Normal"
+    MemoryPressureNote = "60.0% of RAM available — the machine has room; tight at or below 20%"
     ResidentBytes = 0L
     MachineAvailableBytes = Int64.MaxValue
     MachineTotalBytes = 66571993088L
@@ -542,6 +545,7 @@ let private events = [
     McpPort = 47759
     Overall = "Degraded"
     MemoryPressure = "Critical"
+    MemoryPressureNote = "7.0% of RAM available — critical is entered at or below 8% and clears at 15%; expensive work is queued until pressure eases"
     ResidentBytes = 55_000_000_000L
     MachineAvailableBytes = 1L
     MachineTotalBytes = 2L
@@ -587,7 +591,7 @@ let private commandWires = [
 ]
 
 let private eventWires = [
-  """{"event":"welcome","protocolVersion":3,"daemonVersion":"0.6.834","startedAtMs":"1759420800123"}"""
+  """{"event":"welcome","protocolVersion":4,"daemonVersion":"0.6.834","startedAtMs":"1759420800123"}"""
   """{"event":"welcome","protocolVersion":2147483647,"daemonVersion":"","startedAtMs":"-9223372036854775808"}"""
   """{"event":"snapshot","revision":"0","worker":{"state":"unconfigured"},"sessions":[]}"""
   """{"event":"snapshot","revision":"1","worker":{"state":"idle"},"sessions":[{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼","generation":"-9223372036854775808","project":"/home/ü/Ünïcode.fidproj","closed":false,"busy":false,"statusFresh":true,"revocationPending":false,"cleanupPending":false,"formatterCleanupPending":false,"current":null,"backendError":null,"formatterError":null,"cleanupError":null,"workerRetirementRequired":null,"statusError":null,"workerError":null}]}"""
@@ -604,8 +608,8 @@ let private eventWires = [
   """{"event":"refused","correlation":0,"target":{"host":"","epoch":"","session":""},"code":"invalid_request","message":"Frame is not JSON."}"""
   """{"event":"refused","correlation":2147483647,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"code":"busy","message":"ünïcode ⚠"}"""
   """{"event":"run_output","correlation":7,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"generation":"-9223372036854775808","sourceVersion":"src-2","exitCode":-2147483648,"standardOutput":"line one\r\nline two\ttab — 日本語 🎼\u0000nul","standardError":""}"""
-  """{"event":"health","version":"0.6.834","processId":4242,"mcpPort":47749,"overall":"Healthy","memoryPressure":"Normal","residentBytes":"0","machineAvailableBytes":"9223372036854775807","machineTotalBytes":"66571993088","cpuPercent":1e-7,"processes":[],"alarms":[]}"""
-  """{"event":"health","version":"v","processId":1,"mcpPort":47759,"overall":"Degraded","memoryPressure":"Critical","residentBytes":"55000000000","machineAvailableBytes":"1","machineTotalBytes":"2","cpuPercent":99.5,"processes":[{"processId":1,"role":"daemon","residentBytes":"1","cpuPercent":0},{"processId":2,"role":"composer-worker","residentBytes":"9223372036854775807","cpuPercent":12.5}],"alarms":[{"signal":"WorkerRss","state":"Broken","message":"RSS ↑"}]}"""
+  """{"event":"health","version":"0.6.834","processId":4242,"mcpPort":47749,"overall":"Healthy","memoryPressure":"Normal","memoryPressureNote":"60.0% of RAM available — the machine has room; tight at or below 20%","residentBytes":"0","machineAvailableBytes":"9223372036854775807","machineTotalBytes":"66571993088","cpuPercent":1e-7,"processes":[],"alarms":[]}"""
+  """{"event":"health","version":"v","processId":1,"mcpPort":47759,"overall":"Degraded","memoryPressure":"Critical","memoryPressureNote":"7.0% of RAM available — critical is entered at or below 8% and clears at 15%; expensive work is queued until pressure eases","residentBytes":"55000000000","machineAvailableBytes":"1","machineTotalBytes":"2","cpuPercent":99.5,"processes":[{"processId":1,"role":"daemon","residentBytes":"1","cpuPercent":0},{"processId":2,"role":"composer-worker","residentBytes":"9223372036854775807","cpuPercent":12.5}],"alarms":[{"signal":"WorkerRss","state":"Broken","message":"RSS ↑"}]}"""
   """{"event":"leases","active":[],"queued":[]}"""
   """{"event":"leases","active":[{"id":"lease-1","kind":"full_build","holder":"gate-command-1","grantedAtMs":"1759420800000","expiresAtMs":"9223372036854775807"}],"queued":[{"kind":"test_suite_run","holder":"agent-ü","requestedAtMs":"-1"}]}"""
   """{"event":"uptime","uptimeMs":"0"}"""
@@ -711,6 +715,7 @@ let private sampleHealth = {
   McpPort = 47759
   Overall = "Healthy"
   MemoryPressure = "Normal"
+  MemoryPressureNote = ""
   ResidentBytes = 1L
   MachineAvailableBytes = 2L
   MachineTotalBytes = 3L
@@ -1305,7 +1310,7 @@ let tests =
         | Welcome welcome ->
           welcome
           |> Expect.equal "protocol, daemon version and start time, once" {
-            BridgeWelcome.ProtocolVersion = 3
+            BridgeWelcome.ProtocolVersion = ProtocolVersion
             DaemonVersion = "0.6.834-test"
             StartedAtMs = 1759420800123L
           }

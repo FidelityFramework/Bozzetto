@@ -227,6 +227,7 @@ let encodeEvent (event: Event) : string =
         "mcpPort" ==> h.McpPort
         "overall" ==> h.Overall
         "memoryPressure" ==> h.MemoryPressure
+        "memoryPressureNote" ==> h.MemoryPressureNote
         "residentBytes" ==> wide h.ResidentBytes
         "machineAvailableBytes" ==> wide h.MachineAvailableBytes
         "machineTotalBytes" ==> wide h.MachineTotalBytes

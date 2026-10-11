@@ -87,6 +87,7 @@ let private healthValue () : DaemonHealth =
     McpPort = 47759
     Overall = (if alarms.Length > 0 then "Degraded" else "Healthy")
     MemoryPressure = "Normal"
+    MemoryPressureNote = "60.0% of RAM available — the machine has room; tight at or below 20%"
     ResidentBytes = 186_000_000L + int64 (random () * 12_000_000.0)
     MachineAvailableBytes = 38_500_000_000L + int64 (random () * 400_000_000.0)
     MachineTotalBytes = 66_571_993_088L

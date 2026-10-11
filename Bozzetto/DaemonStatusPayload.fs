@@ -44,7 +44,10 @@ let serialize
     memoryPressure =
       health |> Option.map (fun h -> Bozzetto.MemoryPressure.describe h.MemoryPressure) |> Option.defaultValue (Bozzetto.MemoryPressure.describe Bozzetto.MemoryPressure.Normal)
     memoryPressureNote =
-      health |> Option.map (fun h -> Bozzetto.MemoryPressure.explain h.MemoryPressure) |> Option.defaultValue ""
+      let availableFrac =
+        if machineMemory.TotalBytes > 0L then float machineMemory.AvailableBytes / float machineMemory.TotalBytes else 0.0
+      let thresholds = Bozzetto.MemorySupervisor.pressureThresholds Bozzetto.MemorySupervisor.defaultThresholds
+      health |> Option.map (fun h -> Bozzetto.MemoryPressure.explainAt thresholds availableFrac h.MemoryPressure) |> Option.defaultValue ""
     machineMemory =
       {| totalBytes = machineMemory.TotalBytes
          availableBytes = machineMemory.AvailableBytes |}

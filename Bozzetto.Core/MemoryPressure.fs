@@ -79,6 +79,19 @@ module MemoryPressure =
     CriticalExitFrac = 0.15
   }
 
+  /// `explain` with the numbers behind the level: the fraction of RAM available now and
+  /// the thresholds in force. "Tight" at 25% available then reads as what it is — a level
+  /// entered at or below `TightEnterFrac` that clears only at `TightExitFrac`.
+  let explainAt (t: Thresholds) (availableFrac: float) (level: MemoryPressure) : string =
+    let pct (f: float) = sprintf "%.0f%%" (f * 100.0)
+    let observed = sprintf "%.1f%% of RAM available" (availableFrac * 100.0)
+    match level with
+    | MemoryPressure.Normal -> sprintf "%s — the machine has room; tight at or below %s" observed (pct t.TightEnterFrac)
+    | MemoryPressure.Tight ->
+      sprintf "%s — tight is entered at or below %s and clears at %s; expensive work is serialized, one at a time" observed (pct t.TightEnterFrac) (pct t.TightExitFrac)
+    | MemoryPressure.Critical ->
+      sprintf "%s — critical is entered at or below %s and clears at %s; expensive work is queued until pressure eases" observed (pct t.CriticalEnterFrac) (pct t.CriticalExitFrac)
+
   /// The next level given the current one and a fresh `availableFrac`
   /// reading — pure, and the SAME function `MemorySupervisor.step` folds on
   /// every tick.

@@ -191,7 +191,10 @@ let HealthStrip (model: ModelView) (uptime: unit -> float) =
         span (class' = "opacity-50 mr-1") { "owned cpu" }
         span (class' = "font-mono") { fixedPoint model.health.cpu 1 + "%" }
       }
-      span (class' = pressureBadge model.health.pressure) { "memory " + model.health.pressure }
+      span (class' = pressureBadge model.health.pressure, title = model.health.note) { "memory " + model.health.pressure }
+      Show (when' = (model.health.pressure <> "Normal" && model.health.note <> "")) {
+        span (class' = "opacity-60 text-xs") { model.health.note }
+      }
       For (each = model.health.processes) {
         yield fun p _ ->
           span (class' = "font-mono opacity-60") { p.role + " " + string p.pid + " " + bytes p.rss }

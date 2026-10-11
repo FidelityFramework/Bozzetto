@@ -312,6 +312,7 @@ let private eventJson (event: Event) =
       "mcpPort", whole health.McpPort
       "overall", str health.Overall
       "memoryPressure", str health.MemoryPressure
+      "memoryPressureNote", str health.MemoryPressureNote
       "residentBytes", wide health.ResidentBytes
       "machineAvailableBytes", wide health.MachineAvailableBytes
       "machineTotalBytes", wide health.MachineTotalBytes

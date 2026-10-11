@@ -80,14 +80,14 @@ module MemorySupervisor =
   /// instead of `TightEnterFrac`/`CriticalEnterFrac`) so this module's
   /// already-tuned, already-tested `Thresholds` record didn't need to change
   /// shape for the shared type underneath it to change name.
+  let pressureThresholds (t: Thresholds) : MemoryPressure.Thresholds =
+    { TightEnterFrac = t.ShedEnterFrac
+      TightExitFrac = t.ShedExitFrac
+      CriticalEnterFrac = t.RefuseEnterFrac
+      CriticalExitFrac = t.RefuseExitFrac }
+
   let nextLevel (t: Thresholds) (current: MemoryPressure) (availableFrac: float) : MemoryPressure =
-    MemoryPressure.nextFromAvailableFrac
-      { TightEnterFrac = t.ShedEnterFrac
-        TightExitFrac = t.ShedExitFrac
-        CriticalEnterFrac = t.RefuseEnterFrac
-        CriticalExitFrac = t.RefuseExitFrac }
-      current
-      availableFrac
+    MemoryPressure.nextFromAvailableFrac (pressureThresholds t) current availableFrac
 
   /// What a session is doing, for shedding purposes only — NOT the full
   /// `SessionLifecycleStatus`. `Dead` covers both `Faulted` and `Stopped`

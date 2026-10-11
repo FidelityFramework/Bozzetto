@@ -44,7 +44,7 @@
 ///     "retire_worker"   "worker":{"host","epoch"}
 ///
 ///   backend -> UI: {"event":<tag>,...}
-///     "welcome"     "protocolVersion":3, "daemonVersion", "startedAtMs":<int64>
+///     "welcome"     "protocolVersion":4, "daemonVersion", "startedAtMs":<int64>
 ///     "snapshot"    "revision":<int64>, "worker":W, "sessions":[S...]
 ///                   W = {"state":"unconfigured"} | {"state":"idle"}
 ///                     | {"state":"running","host","epoch","compilerVersion","processId":<int32>|null}
@@ -97,7 +97,7 @@ module Bozzetto.Web.Shared.Protocol
 /// 2: Welcome carries StartedAtMs; Health no longer carries an uptime.
 /// 3: the Uptime event, pushed by the backend's clock while a page is connected.
 [<Literal>]
-let ProtocolVersion = 3
+let ProtocolVersion = 4
 
 // ── Addresses ──────────────────────────────────────────────────────────────
 
@@ -268,6 +268,9 @@ type DaemonHealth = {
   Overall: string
   /// "Normal", "Tight" or "Critical" today; rendered as given.
   MemoryPressure: string
+  /// Why the level is what it is: the fraction of RAM available and the
+  /// thresholds in force, as the daemon words it.
+  MemoryPressureNote: string
   ResidentBytes: int64
   MachineAvailableBytes: int64
   MachineTotalBytes: int64
