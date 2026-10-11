@@ -41,12 +41,12 @@ integration. No build, test or transport acceptance is claimed here.
 ## Durable manifest: `.bozzettofm` v1
 
 The implemented codec is
-[`Bozzetto.Core/Features/ManifestPersistence.fs`](../Bozzetto.Core/Features/ManifestPersistence.fs).
+[`src/Bozzetto.Core/Features/ManifestPersistence.fs`](../src/Bozzetto.Core/Features/ManifestPersistence.fs).
 Its domain values are session ID, project list, working directory, creation time,
 optional stopped time and optional active session ID. The file is named
 `daemon.bozzettofm` within the directory supplied to `ManifestFile`.
 
-[`DaemonManifest.fs`](../Bozzetto.Core/Features/DaemonManifest.fs) owns the registry
+[`DaemonManifest.fs`](../src/Bozzetto.Core/Features/DaemonManifest.fs) owns the registry
 state and mutations. A registry entry is not evidence of a live process or
 permission to execute. In particular, persisted entries cannot restore the
 retired embedded F# provider. Current Composer work still requires an explicit
@@ -59,7 +59,7 @@ Manifest numeric fields are fixed-width little-endian values written with
 `BinaryWriter`. A string is `u32 byte_length` followed by that many UTF-8 bytes.
 An optional string uses `0xFFFFFFFF` for `None`; zero length means `Some ""`.
 These are manifest primitives, not BARE's variable-length string encoding.
-[`BinaryFormat.fs`](../Bozzetto.Core/BinaryFormat.fs) owns the primitives and CRC.
+[`BinaryFormat.fs`](../src/Bozzetto.Core/BinaryFormat.fs) owns the primitives and CRC.
 
 The writer emits a 64-byte header, one 16-byte directory entry and a SESS payload.
 
@@ -114,7 +114,7 @@ repeat entry_count times:
 There are no assembly blobs, captured bindings, interactions or evaluator
 outputs in this manifest. Retired FSI snapshot formats are not part of this
 specification. Retained test-cache helpers in
-[`DaemonPersistence.fs`](../Bozzetto.Core/Features/DaemonPersistence.fs) do not
+[`DaemonPersistence.fs`](../src/Bozzetto.Core/Features/DaemonPersistence.fs) do not
 make those caches a Composer interchange or acceptance contract.
 
 ## Manifest validation and its limits
@@ -177,7 +177,7 @@ current registry or a resumable project.
 
 ## Persistence ownership and recovery
 
-[`ManifestOwner.fs`](../Bozzetto.Core/Features/ManifestOwner.fs) holds one in-memory
+[`ManifestOwner.fs`](../src/Bozzetto.Core/Features/ManifestOwner.fs) holds one in-memory
 registry and serializes mutations. Its write path reports `WrittenTo` after a
 successful save, or `Unchanged` when the state is already on disk. A failed write
 is reported as `WriteFailed` and retained as pending state for a later commit.
@@ -208,10 +208,10 @@ policy rather than treating a backup as new execution authority.
 ### Implemented daemon-worker profile
 
 The shared closed contract lives in
-[`Protocol.fs`](../Bozzetto.Composer.Protocol/Protocol.fs),
-[`ProviderData.fs`](../Bozzetto.Composer.Protocol/ProviderData.fs),
-[`BAREWireCodec.fs`](../Bozzetto.Composer.Protocol/BAREWireCodec.fs) and
-[`WireSchema.txt`](../Bozzetto.Composer.Protocol/WireSchema.txt).
+[`Protocol.fs`](../src/Bozzetto.Composer.Protocol/Protocol.fs),
+[`ProviderData.fs`](../src/Bozzetto.Composer.Protocol/ProviderData.fs),
+[`BAREWireCodec.fs`](../src/Bozzetto.Composer.Protocol/BAREWireCodec.fs) and
+[`WireSchema.txt`](../src/Bozzetto.Composer.Protocol/WireSchema.txt).
 Consult those owner-maintained files for field order and union tags; this page
 does not reproduce their schema tables.
 
@@ -221,7 +221,7 @@ fixed-width declared integers. Request IDs retain their complete string values.
 Unsupported versions are checked before decoding the request/reply body; unknown
 closed tags and unconsumed trailing bytes are invalid payloads.
 
-[`StreamFrames.fs`](../Bozzetto.Composer.Protocol/StreamFrames.fs) uses the BAREWire
+[`StreamFrames.fs`](../src/Bozzetto.Composer.Protocol/StreamFrames.fs) uses the BAREWire
 stream envelope: a four-byte little-endian body length, then a kind byte,
 four-byte correlation and typed payload. This profile requires correlation zero;
 request correlation belongs to the full request ID in the payload.
@@ -239,7 +239,7 @@ These limits belong to the control profile, not to PSG images or manifest files.
 Text such as source buffers and diagnostics can be typed string fields inside a
 binary message; that is not permission to carry a JSON command envelope.
 
-[`ComposerWorkerClient.fs`](../Bozzetto/ComposerWorkerClient.fs) owns a socket-backed
+[`ComposerWorkerClient.fs`](../src/Bozzetto/ComposerWorkerClient.fs) owns a socket-backed
 connection and serializes writes. Framing functions explicitly leave transport
 lifetime and admitted I/O joining to their caller. A decoded `WorkerAddress` is
 an address, not artifact or run authority. Cancellation requested, cleanup pending
@@ -248,14 +248,14 @@ and actual retirement remain distinct states in `Protocol.fs`.
 ### Browser and direct-client drift
 
 The current browser vocabulary is shared source in
-[`bozzetto-web/src/Shared/Protocol.fs`](../bozzetto-web/src/Shared/Protocol.fs), but
-[`UiBridgeCodec.fs`](../Bozzetto/UiBridgeCodec.fs) still implements JSON commands
+[`src/bozzetto-web/src/Shared/Protocol.fs`](../src/bozzetto-web/src/Shared/Protocol.fs), but
+[`UiBridgeCodec.fs`](../src/Bozzetto/UiBridgeCodec.fs) still implements JSON commands
 and events on WebSocket text frames at `/ui/bridge`. This is **drift to remove**,
 not delivered binary transport. Its use of Fidelity.Data does not make it compliant.
 
-[`ComposerRoutes.fs`](../Bozzetto/ComposerRoutes.fs) likewise reads and writes JSON
+[`ComposerRoutes.fs`](../src/Bozzetto/ComposerRoutes.fs) likewise reads and writes JSON
 for `/api/composer/*`, using
-[`ComposerClientJson.fs`](../Bozzetto/ComposerClientJson.fs), and retains an SSE
+[`ComposerClientJson.fs`](../src/Bozzetto/ComposerClientJson.fs), and retains an SSE
 change-hint endpoint. Direct agent/client use of those JSON routes is also drift.
 SSE is not the forward UI pipeline. Binary browser and direct-client contracts
 must preserve identity, refusals, bounds and atomic reconnect reconciliation;
@@ -305,7 +305,7 @@ separately carries compiler assembly identity and PSG schema, assembly hash,
 format version and fingerprint. A compatible worker envelope does not prove that
 its loaded semantic contract is the intended one.
 
-[`build/ComposerContract.props`](../build/ComposerContract.props) selects shared
+[`tools/build/ComposerContract.props`](../tools/build/ComposerContract.props) selects shared
 PSG/BAREWire project references or assemblies from an absolute
 `ComposerDistribution` containing both DLLs. Matching daemon/worker deployment
 and actual loaded identity must be verified separately, as described in

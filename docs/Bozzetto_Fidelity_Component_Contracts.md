@@ -16,11 +16,11 @@ Implementation statements below are based on local source reads, not executed ac
 
 | Boundary | What the inspected code establishes | What it does not establish |
 | --- | --- | --- |
-| Worker control transport | Closed protocol, explicit BAREWire codecs and Unix-domain socket transport in `Bozzetto.Composer.Protocol/Protocol.fs`, `BAREWireCodec.fs`, `StreamFrames.fs` and `Bozzetto.Composer/Program.fs`. | Scoped PSG delivery or receiving proof/native acceptance. |
-| Foundation use | `Bozzetto.Composer/ProviderSession.fs` uses `AsyncMailbox`, explicit scopes, demands, release, eligibility checks and close joins. `Bozzetto.Composer/Bozzetto.Composer.fsproj` requires the selected distribution's core and Hosting assemblies. | Complete adoption across every owner, portable native conformance or installed assembly equality. |
-| Compiler handoff | `Bozzetto.Composer/ComposerAdapter.fs` delegates reserve/build/run to Composer's `ProjectSession` and copies accepted witness/object receipts. | Independent verification of Composer internals or arbitrary source-region execution. |
-| Browser/client wire | `Bozzetto/UiBridgeCodec.fs` uses Fidelity.Data JSON; `Bozzetto/ComposerRoutes.fs` accepts and returns JSON and retains an SSE change endpoint. | Compliance with typed-binary direct interchange. These paths are drift to remove. |
-| Worker compatibility | `Bozzetto.Composer/Worker.fs` checks the wire agreement and reports loaded compiler/PSG identities. `Bozzetto/ComposerWorkerClient.fs` also compares PSG against daemon-loaded constants. | D1 separation or manifest-bound distribution selection. The daemon comparison remains drift. |
+| Worker control transport | Closed protocol, explicit BAREWire codecs and Unix-domain socket transport in `src/Bozzetto.Composer.Protocol/Protocol.fs`, `BAREWireCodec.fs`, `StreamFrames.fs` and `src/Bozzetto.Composer/Program.fs`. | Scoped PSG delivery or receiving proof/native acceptance. |
+| Foundation use | `src/Bozzetto.Composer/ProviderSession.fs` uses `AsyncMailbox`, explicit scopes, demands, release, eligibility checks and close joins. `src/Bozzetto.Composer/Bozzetto.Composer.fsproj` requires the selected distribution's core and Hosting assemblies. | Complete adoption across every owner, portable native conformance or installed assembly equality. |
+| Compiler handoff | `src/Bozzetto.Composer/ComposerAdapter.fs` delegates reserve/build/run to Composer's `ProjectSession` and copies accepted witness/object receipts. | Independent verification of Composer internals or arbitrary source-region execution. |
+| Browser/client wire | `src/Bozzetto/UiBridgeCodec.fs` uses Fidelity.Data JSON; `src/Bozzetto/ComposerRoutes.fs` accepts and returns JSON and retains an SSE change endpoint. | Compliance with typed-binary direct interchange. These paths are drift to remove. |
+| Worker compatibility | `src/Bozzetto.Composer/Worker.fs` checks the wire agreement and reports loaded compiler/PSG identities. `src/Bozzetto/ComposerWorkerClient.fs` also compares PSG against daemon-loaded constants. | D1 separation or manifest-bound distribution selection. The daemon comparison remains drift. |
 | Native hosting and distribution | The inspected provider is a .NET host; worker and protocol projects target `net10.0`. | LLVM ORC JIT, a self-hosted Clef controller or authenticated distributed lab-node authority. These remain planned or required. |
 
 See [architecture](architecture.md) for process boundaries and [operations](operations.md) for installed identity and deployment. Historical package pins and gate counts are not current capability evidence.
@@ -57,7 +57,7 @@ The following distinctions are requirements for component handoffs, not a claim 
 | Execution/resource | Actual invocation, active artifact set, resource grant, device/reset incarnation and physical lifetime. |
 | Delivery | Exact resident base, proposed change, current authorization and verified installed base. |
 
-Today's `Authority` and `AcceptedArtifact` are defined in `Bozzetto.Composer.Protocol/ProviderData.fs`. The authority generation is explicitly distinct from compiler generations in artifact/run payloads. `SessionSnapshot.Observation` orders actual status captures; it grants no compiler permission. `Protocol.fs` likewise identifies a worker address as a host/epoch address, not artifact or run authority.
+Today's `Authority` and `AcceptedArtifact` are defined in `src/Bozzetto.Composer.Protocol/ProviderData.fs`. The authority generation is explicitly distinct from compiler generations in artifact/run payloads. `SessionSnapshot.Observation` orders actual status captures; it grants no compiler permission. `Protocol.fs` likewise identifies a worker address as a host/epoch address, not artifact or run authority.
 
 An `Offer` or eligible foundation result means only that declared dependency and lifecycle conditions hold. Compiler owners must still establish complete premises, current proof, accepted publication and lawful execution. A proposition, its discharge receipt, an Alex witness and an accepted object are different evidence. Equal source text, ABI shape, output value or content hash cannot substitute for those checks.
 
@@ -69,7 +69,7 @@ See [foundation adoption](Bozzetto_Incremental_Foundation_Adoption.md) for reads
 
 ## Source-authorized scoped PSG delivery
 
-This section is the required delivery contract. The current worker operation union in `Bozzetto.Composer.Protocol/Protocol.fs` contains project control and formatting operations, not scoped PSG attachment or delta subscriptions. Binary project control must not be described as delivery of this contract.
+This section is the required delivery contract. The current worker operation union in `src/Bozzetto.Composer.Protocol/Protocol.fs` contains project control and formatting operations, not scoped PSG attachment or delta subscriptions. Binary project control must not be described as delivery of this contract.
 
 ### Source selection and representation
 
@@ -114,11 +114,11 @@ Edits must not wait for arbitrary browser acknowledgements. Observation cancella
 
 The foundation carries cold work descriptions through explicit admission and start. Constructing or queueing work must not start compiler, filesystem, solver or device effects. Withdrawal removes eligibility before cancellation is requested. Releasing one consumer's demand must preserve a producer still needed by another.
 
-`Bozzetto.Composer/ProviderSession.fs` implements provider-local scopes and demands through `AsyncMailbox`. Build/run definitions use `Reads = []` because the provider delegates the compiler operation; this is not evidence that compiler proof dependencies are empty. Publication checks both provider generation and foundation eligibility. Reservation observes committed withdrawals before returning its token, and the invocation semaphore orders backend reserve against actual run invocation.
+`src/Bozzetto.Composer/ProviderSession.fs` implements provider-local scopes and demands through `AsyncMailbox`. Build/run definitions use `Reads = []` because the provider delegates the compiler operation; this is not evidence that compiler proof dependencies are empty. Publication checks both provider generation and foundation eligibility. Reservation observes committed withdrawals before returning its token, and the invocation semaphore orders backend reserve against actual run invocation.
 
-`Bozzetto.Composer/ProviderContracts.fs` keeps compiler tickets process-local and requires `RunCurrentAsync` to select and launch synchronously before returning its task. `ComposerAdapter.fs` delegates that boundary to Composer. Moving to a cold native host must preserve the actual start/commit fence, not merely recheck a queued description.
+`src/Bozzetto.Composer/ProviderContracts.fs` keeps compiler tickets process-local and requires `RunCurrentAsync` to select and launch synchronously before returning its task. `ComposerAdapter.fs` delegates that boundary to Composer. Moving to a cold native host must preserve the actual start/commit fence, not merely recheck a queued description.
 
-Provider close joins foundation close, owned controls/observations and formatting before backend disposal, retaining failures (`ProviderSession.fs`). Worker socket shutdown seals and retires native tools (`Program.fs`); daemon worker stop joins process exit, transport work and redirected output (`Bozzetto/ComposerWorkerClient.fs`). These are code-read mechanisms, not executed proof of every drain path.
+Provider close joins foundation close, owned controls/observations and formatting before backend disposal, retaining failures (`ProviderSession.fs`). Worker socket shutdown seals and retires native tools (`Program.fs`); daemon worker stop joins process exit, transport work and redirected output (`src/Bozzetto/ComposerWorkerClient.fs`). These are code-read mechanisms, not executed proof of every drain path.
 
 Ranvier's signal/memo/effect shape applies to the observation plane:
 
@@ -134,11 +134,11 @@ Ranvier adoption and reactive settlement require their own code and acceptance e
 
 | Boundary | Required contract | Current evidence or limit |
 | --- | --- | --- |
-| Daemon to worker | Closed versioned typed-binary requests/replies, exact agreement and authority fences; no JSON, stdio or anonymous-pipe fallback. | Implemented socket path in `ComposerWorkerClient.fs` and `Bozzetto.Composer/Program.fs`; explicit codec/framing in `Bozzetto.Composer.Protocol/`. |
-| Daemon to browser | Typed-binary pushed observations and commands over the bridge, with coherent reconnect reconciliation. | JSON remains in `Bozzetto/UiBridgeCodec.fs`. This is drift even though it uses Fidelity.Data. |
-| Agent-owned direct APIs | Typed-binary contracts and owner identities. | JSON Composer HTTP requests/replies remain in `Bozzetto/ComposerRoutes.fs`; its SSE endpoint is not the required UI pipeline. |
+| Daemon to worker | Closed versioned typed-binary requests/replies, exact agreement and authority fences; no JSON, stdio or anonymous-pipe fallback. | Implemented socket path in `ComposerWorkerClient.fs` and `src/Bozzetto.Composer/Program.fs`; explicit codec/framing in `src/Bozzetto.Composer.Protocol/`. |
+| Daemon to browser | Typed-binary pushed observations and commands over the bridge, with coherent reconnect reconciliation. | JSON remains in `src/Bozzetto/UiBridgeCodec.fs`. This is drift even though it uses Fidelity.Data. |
+| Agent-owned direct APIs | Typed-binary contracts and owner identities. | JSON Composer HTTP requests/replies remain in `src/Bozzetto/ComposerRoutes.fs`; its SSE endpoint is not the required UI pipeline. |
 | MCP external boundary | JSON-RPC as required by the external MCP standard; translate to typed owner operations. | The sole external interchange exception. It does not permit JSON between internal owners or agent-owned direct peers. |
-| Diagnostic capture/export | Binary source-owned PSG capture to an independent MailboxProcessor-driven sink process; Fidelity.Data JSON only as export. | `Bozzetto.Composer/DiagnosticCapture.fs` requests source-prepared occurrence capture and delegates to the diagnostic client. This read alone does not prove process isolation or sink conformance. |
+| Diagnostic capture/export | Binary source-owned PSG capture to an independent MailboxProcessor-driven sink process; Fidelity.Data JSON only as export. | `src/Bozzetto.Composer/DiagnosticCapture.fs` requests source-prepared occurrence capture and delegates to the diagnostic client. This read alone does not prove process isolation or sink conformance. |
 
 Strings representing source, arguments or output inside a typed binary envelope do not make the envelope a JSON wire. Conversely, wrapping JSON in binary bytes or changing its serializer does not establish a typed contract. Opaque metadata must retain its owner's schema rather than become an alternate authority.
 
@@ -153,9 +153,9 @@ D1 requires separation between what the daemon interprets and what the worker lo
 - The selected manifest binds the complete compiler/toolchain dependency closure. One compiler DLL hash or version string is not the closure.
 - A content hash identifies bytes. It does not identify who approved them. In an environment where agents can write the filesystem, an approval file is not human-only authorization.
 
-`Bozzetto.Composer/Worker.fs` already separates the wire `Agreement` from reported compiler and `PsgIdentity` data. However, `Bozzetto/ComposerWorkerClient.fs` still compares `hello.Psg.Schema`, `FormatVersion` and `ContractFingerprint` to daemon-loaded PSG constants. That coupling contradicts D1 and must be removed at its owner while replacing it with manifest-bound checks. Dropping checks without establishing the selected identity is not the repair.
+`src/Bozzetto.Composer/Worker.fs` already separates the wire `Agreement` from reported compiler and `PsgIdentity` data. However, `src/Bozzetto/ComposerWorkerClient.fs` still compares `hello.Psg.Schema`, `FormatVersion` and `ContractFingerprint` to daemon-loaded PSG constants. That coupling contradicts D1 and must be removed at its owner while replacing it with manifest-bound checks. Dropping checks without establishing the selected identity is not the repair.
 
-**Current deployment rule:** replace daemon and worker as a matching pair from one selected closure, verify the PSG contract fingerprint and perform a Composer open. The existing coupling in `Bozzetto/ComposerWorkerClient.fs` is not compatible worker-only replacement; see [operations](operations.md) for the current procedure.
+**Current deployment rule:** replace daemon and worker as a matching pair from one selected closure, verify the PSG contract fingerprint and perform a Composer open. The existing coupling in `src/Bozzetto/ComposerWorkerClient.fs` is not compatible worker-only replacement; see [operations](operations.md) for the current procedure.
 
 **Required D1 destination:** while the wire stays compatible, permit worker replacement without daemon replacement. Compiler sessions still end. Preserve the shared project list and reopen fresh sessions so clients return to the same projects under new authority; never carry old reservations or accepted-run permission into the new epoch. Project-list restoration is a requirement here, not a verified current implementation.
 
@@ -163,7 +163,7 @@ If the interpreted wire changes, validate and deploy a matching daemon-worker pa
 
 ## Distributed authority and native destination
 
-Distributed lab-node operation is a requirement, not delivered capability established by these source reads. `Bozzetto.Core/BozzettoConfig.fs` restricts configured binding to loopback. Its retained F# execution wording is stale; it does not restore embedded F# hosting. Changing a bind address or adding a tunnel does not implement federation.
+Distributed lab-node operation is a requirement, not delivered capability established by these source reads. `src/Bozzetto.Core/BozzettoConfig.fs` restricts configured binding to loopback. Its retained F# execution wording is stale; it does not restore embedded F# hosting. Changing a bind address or adding a tunnel does not implement federation.
 
 A distributed operation must distinguish workstation, compiler owner, build/package host, execution host, device and transport route. Required boundaries include:
 

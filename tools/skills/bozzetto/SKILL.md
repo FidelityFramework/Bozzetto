@@ -1,0 +1,56 @@
+---
+name: bozzetto
+description: Work on Bozzetto’s F# implementation or use its Clef/Composer development controller, with the shared daemon’s build and test leases.
+license: MIT
+---
+
+# Working with Bozzetto
+
+Read the checkout’s [agent guidelines](../../../AGENTS.md) first. They own the
+engineering principles, retrieval discipline, supported clients, validation
+posture and daemon lifecycle. Use this skill to select the current workflow.
+
+## Clef and Composer projects
+
+Use the shared daemon’s `composer_*` tools and `/composer` page on ports
+47749/47750. Open an explicit `.fidproj`, reserve before editing, build with
+that reservation, and execute through `composer_run_current`.
+
+Embedded F# session hosting is retired. Creating, resuming or rebuilding an
+inherited F# session is refused; do not retry it or substitute an F# REPL.
+LLVM ORC JIT remains a planned backend. See the
+[architecture](../../../docs/architecture.md).
+
+## Bozzetto’s own F# implementation
+
+No project session is needed. Use targeted owner/consumer checks during
+implementation and one unfiltered acceptance run under a work lease. Read the
+`TRUST` result as described in the agent guidelines.
+
+```bash
+dotnet fsi tools/build/lease.fsx full_build dotnet build
+dotnet fsi tools/build/lease.fsx test_suite_run dotnet src/Bozzetto.Tests/bin/Debug/net10.0/Bozzetto.Tests.dll --summary
+```
+
+With MCP, acquire `acquire_full_build_lease` or `acquire_test_suite_lease`,
+proceed only when granted, and release the exact `leaseId` with the same
+connection after the work finishes, including after failure. On a deferred or
+refused lease, follow the memory-pressure procedure in the agent guidelines.
+
+Set `BOZZETTO_AGENT` and `BOZZETTO_PROJECT` so `tools/build/lease.fsx` presents one stable
+holder per agent and project; the runner renews the lease on a heartbeat while
+the command runs and withdraws its ask when it is deferred. A command that
+outlives a lease without renewing is reclaimed as abandoned, never extended.
+
+Development daemon restarts are authorized as needed while working on
+Bozzetto; do not ask for permission on each update. Build and validate under
+leases, check active work, preserve unrelated compiler/worker binaries, replace
+and probe readiness. A newer checkout does not establish that the installed
+daemon is current. For connection, worker and deployment binding, read the
+[operations](../../../docs/operations.md).
+After replacement, browser tabs need a page reload to load a changed embedded
+bundle; a WebSocket reconnect alone only updates data in their existing bundle.
+
+When delegating F# work, include the governing source, retrieval sequence,
+direct-read exception where applicable, growth rule, matching lease procedure
+and acceptance requirement in the brief.

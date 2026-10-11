@@ -13,7 +13,7 @@ open System.IO
 open System.Runtime.InteropServices
 
 let rootDir = __SOURCE_DIRECTORY__
-let vscodeDir = Path.Combine(rootDir, "bozzetto-vscode")
+let vscodeDir = Path.Combine(rootDir, "src", "bozzetto-vscode")
 
 /// Run a command. On Windows, .cmd/.bat scripts (npm, npx, code, etc.)
 /// need to go through cmd.exe since FSI can't launch them directly.
@@ -67,13 +67,13 @@ printfn "  Build succeeded."
 if target = "test" || target = "all" then
   printfn "=== Test ==="
   // Expecto exit code 2 = no TTY (cosmetic), treat as success
-  runAllowCodes [2] "dotnet" "run --no-build --project Bozzetto.Tests -- --summary" rootDir
+  runAllowCodes [2] "dotnet" "run --no-build --project src/Bozzetto.Tests -- --summary" rootDir
   printfn "  Tests passed."
 
 // --- Step 3 (optional): Pack + Install ---
 if target = "install" || target = "all" then
   printfn "=== Pack CLI ==="
-  run "dotnet" "pack Bozzetto -c Release" rootDir
+  run "dotnet" "pack src/Bozzetto -c Release" rootDir
   printfn "  Packed Bozzetto CLI."
 
   printfn "=== Install CLI ==="

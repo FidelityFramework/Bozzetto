@@ -1,6 +1,6 @@
 # Development and acceptance
 
-Bozzetto controls development work; it does not decide compiler meaning, proof validity or artifact authority. Implement changes at the component that owns the fact, then validate the consumers of that fact. The governing engineering rules are in `AGENTS.md`, especially Working principles, Validation posture, Finding code and Architecture. Load `skills/bozzetto/SKILL.md` before changing F#.
+Bozzetto controls development work; it does not decide compiler meaning, proof validity or artifact authority. Implement changes at the component that owns the fact, then validate the consumers of that fact. The governing engineering rules are in `AGENTS.md`, especially Working principles, Validation posture, Finding code and Architecture. Load `tools/skills/bozzetto/SKILL.md` before changing F#.
 
 This procedure applies to controller, compiler integration, foundation and reactive-push increments. It replaces an FFI-specific handoff with one reusable rule ledger and binding review. It does not authorize a new feature, dependency or scheduling policy.
 
@@ -54,11 +54,11 @@ Bozzetto's own F# work needs no Composer project session. Every caller-owned bui
 ```bash
 export BOZZETTO_AGENT=<stable-agent-label>
 export BOZZETTO_PROJECT=<stable-project-label>
-scripts/work-lease run full_build dotnet build
-scripts/work-lease run test_suite_run dotnet Bozzetto.Tests/bin/Debug/net10.0/Bozzetto.Tests.dll --summary
+dotnet fsi tools/build/lease.fsx full_build dotnet build
+dotnet fsi tools/build/lease.fsx test_suite_run dotnet src/Bozzetto.Tests/bin/Debug/net10.0/Bozzetto.Tests.dll --summary
 ```
 
-Run the built test DLL locally; reserve `dotnet test` for CI. The labels are caller-reported context, not authenticated identity or acceptance proof (`scripts/work-lease`). MCP acquire/release tools bind ownership to the connection: proceed only on grant and release the exact lease through that connection, including after failure. **Lifecycle gap:** MCP exposes neither renewal nor withdrawal tools, so it does not currently provide the complete connection-bound lifecycle for long-lived work or abandoned asks. Do not imply MCP renewal or use an HTTP holder to renew a connection-owned grant. The complete HTTP lifecycle used by `scripts/work-lease` is `/api/lease/request`, `/api/lease/renew`, `/api/lease/withdraw` and `/api/lease/release`; use the wrapper for work needing that lifecycle. See [operations](operations.md#leases-admission-heartbeat-and-queues) and [MCP tools](mcp-tools.md).
+Run the built test DLL locally; reserve `dotnet test` for CI. The labels are caller-reported context, not authenticated identity or acceptance proof (`tools/build/WorkLease.fs`). MCP acquire/release tools bind ownership to the connection: proceed only on grant and release the exact lease through that connection, including after failure. **Lifecycle gap:** MCP exposes neither renewal nor withdrawal tools, so it does not currently provide the complete connection-bound lifecycle for long-lived work or abandoned asks. Do not imply MCP renewal or use an HTTP holder to renew a connection-owned grant. The complete HTTP lifecycle, used by `tools/build/WorkLease.fs`, is `/api/lease/request`, `/api/lease/renew`, `/api/lease/withdraw` and `/api/lease/release`; use `tools/build/lease.fsx` for work needing that lifecycle. See [operations](operations.md#leases-admission-heartbeat-and-queues) and [MCP tools](mcp-tools.md).
 
 A lease is a heartbeat, not a deadline for live work. Honor wait/refused decisions. Keep a stable holder per agent and project so a retry is the same queued ask; withdraw an abandoned ask. On memory deferral, investigate available RAM, swap, RSS with parents and cgroup usage rather than polling. Distinguish owned processes, unrelated builds and editor language servers. Ask before stopping processes not owned by the caller or changing admission policy.
 
@@ -76,9 +76,9 @@ Select tests for the changed owner and its direct consumers. Record the selectio
 | `--filter-test-list <substring>` | List names |
 | `--filter-test-case <substring>` | Leaf case names |
 
-Check what actually ran. A zero-match Expecto filter can otherwise look successful. `TrustSignal.scopeOf` also treats `--run` and `--stress` as narrowed (`Bozzetto.Tests/TestInfrastructure.fs`).
+Check what actually ran. A zero-match Expecto filter can otherwise look successful. `TrustSignal.scopeOf` also treats `--run` and `--stress` as narrowed (`src/Bozzetto.Tests/TestInfrastructure.fs`).
 
-Register new gates as ordinary `[<Tests>]` values or through the structural `Integration` registry, never solely through a name filter. `Integration.hostList` and `hostCase` register self-contained host tests; dedicated gates need a real runner and pipeline selection. The registry separates retired F# journeys from executable acceptance and removes retired nested leaves from active host lists (`Bozzetto.Tests/TestInfrastructure.fs`, `Integration`). Retired counts are not passed or ignored evidence.
+Register new gates as ordinary `[<Tests>]` values or through the structural `Integration` registry, never solely through a name filter. `Integration.hostList` and `hostCase` register self-contained host tests; dedicated gates need a real runner and pipeline selection. The registry separates retired F# journeys from executable acceptance and removes retired nested leaves from active host lists (`src/Bozzetto.Tests/TestInfrastructure.fs`, `Integration`). Retired counts are not passed or ignored evidence.
 
 At integration, the auditor reviews the focused owner and consumer evidence, shape matrix and discriminating mutations, then decides whether full regression is earned. Record the decision, the risk being tested, exact tiers and expected wall-clock cost before dispatch; record elapsed time with the result. No full sweep runs automatically per increment. A default unfiltered tier is not evidence for omitted host, Composer or consumer tiers. Repeat a run only for a recorded cause such as changed acceptance inputs, a binding mismatch or an unexplained result. The auditor normally verifies retained evidence instead of rerunning suites.
 
@@ -95,7 +95,7 @@ The script has its own lease acquisition; do not add nested leases to its tier c
 
 ## Read TRUST, not a green stage
 
-`TrustSignal.runObserved` compares Expecto's summary with the registered tree, prints a `TRUST` line and optionally records a row through `BOZZETTO_TRUST_LEDGER` (`Bozzetto.Tests/TestInfrastructure.fs`). Preserve the verbatim line and the underlying report.
+`TrustSignal.runObserved` compares Expecto's summary with the registered tree, prints a `TRUST` line and optionally records a row through `BOZZETTO_TRUST_LEDGER` (`src/Bozzetto.Tests/TestInfrastructure.fs`). Preserve the verbatim line and the underlying report.
 
 | Verdict | Meaning and acceptance action |
 |---|---|
@@ -106,7 +106,7 @@ The script has its own lease acquisition; do not add nested leases to its tier c
 | `CountMismatch` | Unfiltered registered/ran mismatch. Not acceptance; trust exit is 3. |
 | `SurvivorsUnderBar` | Mutation-score threshold met but mutants survived. Report survivors explicitly; this does not prove the increment's new rules. |
 
-The implementation counts ignored cases in `Ran` and does not make a nonzero ignored count reject `Trusted`. Do not translate that verdict into “every case passed.” Record ignored cases and reasons; the handoff's executable acceptance gates require `skipped=0`. Any proposed exception needs an owner decision (`Bozzetto.Tests/TestInfrastructure.fs`, `TrustSignal.Tally` and `judge`).
+The implementation counts ignored cases in `Ran` and does not make a nonzero ignored count reject `Trusted`. Do not translate that verdict into “every case passed.” Record ignored cases and reasons; the handoff's executable acceptance gates require `skipped=0`. Any proposed exception needs an owner decision (`src/Bozzetto.Tests/TestInfrastructure.fs`, `TrustSignal.Tally` and `judge`).
 
 The pipeline attempts every selected test tier despite another tier's failed exit, joins workers and merges their rows. Its trust report rejects missing rows (`NoReport`) and green verdicts paired with nonzero process exits (`ExitMismatch`). Earlier build or setup failure can still prevent the tier stage from being reached. Preserve that distinction (`ci-pipeline.fsx`, `runTiers` and `trustLines`).
 
@@ -140,10 +140,9 @@ Bind all changed paths to pushed, clean heads with a verifying digest manifest. 
 
 Current validation machinery contains drift that must not become the intended contract:
 
-- `scripts/work-lease` sends JSON HTTP lease requests and parses JSON replies. Its heartbeat code also retains a missing-renewal-route TTL branch. The target is typed-binary direct control and explicit installed-version mismatch handling, not serializer substitution or a compatibility fallback promoted into policy.
-- `ci-pipeline.fsx`, `withTestSuiteLease`, directly acquires a suite lease and caps work using the initial expiry minus one minute; it does not renew that lease. This differs from `scripts/work-lease run`'s heartbeat and the live-work requirement. Report a deadline-caused kill as such, not a test failure or completed acceptance.
+- `tools/build/WorkLease.fs` sends JSON HTTP lease requests and parses JSON replies. The target is typed-binary direct control and explicit installed-version mismatch handling, not serializer substitution or a compatibility fallback promoted into policy.
 - `TrustSignal.record` writes JSON rows using `System.Text.Json`; the pipeline directly reads/merges JSON ledgers and reads/writes JSON timing maps. These are current files, not an approved interchange contract. The required replacement keeps typed binary authoritative evidence and uses Fidelity.Data JSON only at export edges; exports read by a human or external tool need not pass through the independent diagnostic sink, while direct pipeline/agent messages cannot be recast as exports.
-- `DaemonIdentity.reportsPid` parses a JSON control reply, and `BozzettoBinary.path` selects the newest Debug/Release executable by timestamp (`Bozzetto.Tests/TestInfrastructure.fs`). Verify and record the actual selected binary digest; neither timestamp nor successful health response binds it to the claimed head.
+- `DaemonIdentity.reportsPid` parses a JSON control reply, and `BozzettoBinary.path` selects the newest Debug/Release executable by timestamp (`src/Bozzetto.Tests/TestInfrastructure.fs`). Verify and record the actual selected binary digest; neither timestamp nor successful health response binds it to the claimed head.
 
 Preserve existing receipts while removing these mechanisms at their owners. Do not hide failures or delete evidence to make the documentation agree with the remit. Binary transport, full foundation adoption, Ranvier-shaped settlement, native execution and authenticated distributed operation each need separate source and executed evidence before being called implemented. LLVM ORC JIT remains planned under `AGENTS.md`.
 

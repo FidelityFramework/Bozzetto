@@ -36,22 +36,22 @@ installed release or by an executed test in this audit.
 
 | Capability | Status and code evidence |
 |---|---|
-| Separate executable targeting `net10.0` | Implemented in `Bozzetto.Diagnostics/Bozzetto.Diagnostics.fsproj`. It imports the PSG/BAREWire closure selection in `build/ComposerContract.props` and references Fidelity.Data. It does not reference a compiler project. |
-| Source-owned occurrence capture and structural validation | Implemented in `Bozzetto.Diagnostics/Capture.fs` and `CaptureCodec.fs`, using Fidelity.PSG types and its occurrence codec. |
-| Binary local request and receipt transport | Implemented in `Bozzetto.Diagnostics/ManagedHost.fs` and `Client.fs`, using managed named pipes and BAREWire framing. |
-| Bounded binary persistence and Fidelity.Data JSON descriptor export | Implemented in `Bozzetto.Diagnostics/ManagedHost.fs`; CLI defaults are in `Program.fs`. |
-| Optional worker capture callback | Implemented in `Bozzetto.Composer/DiagnosticCapture.fs`, attached to `ProjectSession` by `ComposerAdapter.fs`. |
+| Separate executable targeting `net10.0` | Implemented in `src/Bozzetto.Diagnostics/Bozzetto.Diagnostics.fsproj`. It imports the PSG/BAREWire closure selection in `tools/build/ComposerContract.props` and references Fidelity.Data. It does not reference a compiler project. |
+| Source-owned occurrence capture and structural validation | Implemented in `src/Bozzetto.Diagnostics/Capture.fs` and `CaptureCodec.fs`, using Fidelity.PSG types and its occurrence codec. |
+| Binary local request and receipt transport | Implemented in `src/Bozzetto.Diagnostics/ManagedHost.fs` and `Client.fs`, using managed named pipes and BAREWire framing. |
+| Bounded binary persistence and Fidelity.Data JSON descriptor export | Implemented in `src/Bozzetto.Diagnostics/ManagedHost.fs`; CLI defaults are in `Program.fs`. |
+| Optional worker capture callback | Implemented in `src/Bozzetto.Composer/DiagnosticCapture.fs`, attached to `ProjectSession` by `ComposerAdapter.fs`. |
 | MailboxProcessor-driven sink process | **Required, not implemented in the inspected sink.** `ManagedHost.run` uses a serial async receive loop, not a `MailboxProcessor`. A separate executable alone does not satisfy this requirement. |
 | Complete semantic PSG capture, diagnostic deltas and proof transcripts | Planned integration, not capabilities established by this capture stage. |
 | Exact compiler handoff timing and joined compiler-close behavior | Not established by the worker adapter alone. These require compiler-owner source and execution evidence. |
 
 The inspected sink process is independent in its launch contract. The client
 connects to an existing endpoint; it neither starts nor stops the sink
-(`Bozzetto.Diagnostics/Client.fs`). The worker references the diagnostics project
-for the callback and client code (`Bozzetto.Composer/Bozzetto.Composer.fsproj`),
+(`src/Bozzetto.Diagnostics/Client.fs`). The worker references the diagnostics project
+for the callback and client code (`src/Bozzetto.Composer/Bozzetto.Composer.fsproj`),
 which is not evidence that it launches the sink executable.
 
-The similarly named `Bozzetto.Core/Features/Diagnostics.fs` and
+The similarly named `src/Bozzetto.Core/Features/Diagnostics.fs` and
 `DiagnosticsStore.fs` are not this sink. They contain retained FCS/FSI diagnostic
 extraction and an in-memory map keyed by a code hash. They supply neither PSG
 capture nor durable independent-process storage. Embedded F# hosting is retired;
@@ -93,7 +93,7 @@ has physically drained. See [architecture](architecture.md) and
 ## Capture scope and validation
 
 The implemented stage is `occurrence-structure-v1`
-(`Bozzetto.Diagnostics/Capture.fs`). An `OccurrenceCapture` contains demand and
+(`src/Bozzetto.Diagnostics/Capture.fs`). An `OccurrenceCapture` contains demand and
 source-version metadata, expected scope stamps, a PSG `OccurrenceDelivery`,
 sparse source-context headers and explicit context roots. The checked revision
 is carried by the delivery transaction.
@@ -132,7 +132,7 @@ The sink's implemented local transport uses one request and one reply per
 connection. A BAREWire `u32` length prefixes a bounded envelope. The receiver
 checks the length before allocating its body, then checks checksum, magic,
 schema, stage, complete decoding and capture structure
-(`Bozzetto.Diagnostics/ManagedHost.fs`, `CaptureCodec.fs`). Truncated or
+(`src/Bozzetto.Diagnostics/ManagedHost.fs`, `CaptureCodec.fs`). Truncated or
 trailing-byte envelopes are refused, not committed snapshots. The checksum is
 SHA-256; it detects content mismatch but does not authenticate compiler
 provenance or establish authority.
@@ -145,7 +145,7 @@ agents. General exports need not pass through the sink; sink isolation remains
 mandatory for diagnostic capture. Neither use permits direct JSON interchange.
 
 The current sink export is a small descriptor, not a JSON serialization of the
-complete PSG. `Bozzetto.Diagnostics/ManagedHost.fs`, `ManagedHost.descriptor`, uses
+complete PSG. `src/Bozzetto.Diagnostics/ManagedHost.fs`, `ManagedHost.descriptor`, uses
 `Fidelity.Data.JSON`, preserves integer identities with explicit integer values,
 and emits `compilerAuthority: false`. The complete received capture remains in
 the binary file. Neither the descriptor nor an exported report may be fed back
@@ -156,15 +156,15 @@ exception, documented in [MCP tools](mcp-tools.md). It does not permit JSON insi
 owned protocols or at this diagnostic pipe.
 
 Current direct-wire JSON is drift to remove. For example,
-`Bozzetto/UiBridgeCodec.fs` explicitly implements an interim JSON browser codec,
-and `Bozzetto/ComposerClientJson.fs` projects MCP/browser values. Its browser use
+`src/Bozzetto/UiBridgeCodec.fs` explicitly implements an interim JSON browser codec,
+and `src/Bozzetto/ComposerClientJson.fs` projects MCP/browser values. Its browser use
 is not legitimized by Fidelity.Data or by the MCP exception. Migration belongs
 at the owning wire seam, not in diagnostic storage. See
 [reactive push](reactive-push.md).
 
 ## Persistence, bounds and receipts
 
-`Bozzetto.Diagnostics/ManagedHost.fs` implements an exclusive open store lock
+`src/Bozzetto.Diagnostics/ManagedHost.fs` implements an exclusive open store lock
 and a single serial receiver. It writes `<SHA256>.bare`, then exports
 `<SHA256>.json`. Temporary files are flushed, closed and renamed; the descriptor
 is published last. Before a successful receipt, it rechecks the stored payload's
@@ -202,7 +202,7 @@ drain.
 These commands describe the current serial-loop implementation, not completion
 of the MailboxProcessor requirement. Publish the `net10.0` diagnostics project
 with the selected PSG/BAREWire closure used by the worker. Closure selection is
-in `build/ComposerContract.props`; a matching selection is not proof that two
+in `tools/build/ComposerContract.props`; a matching selection is not proof that two
 installed deployments contain identical bytes. Deployment and rollback checks
 belong in [operations](operations.md).
 

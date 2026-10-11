@@ -24,7 +24,7 @@ through the `composer_*` tools and the `/composer` browser page. Embedded
 production FSI hosting is retired by the [architecture](docs/architecture.md),
 and no separate F# REPL service is part of the workflow. Changes to Bozzetto's
 own F# code are validated with `dotnet build` and the unfiltered test suite.
-Follow [the implementation skill](skills/bozzetto/SKILL.md) and retain the
+Follow [the implementation skill](tools/skills/bozzetto/SKILL.md) and retain the
 unfiltered build/test gates below.
 
 ### Clone and Build
@@ -71,26 +71,25 @@ boz
 ## Project Structure
 
 ```
-Bozzetto.Core/       — Shared engine, session, testing, persistence, and protocol logic (start here!)
-Bozzetto/            — CLI tool, daemon, MCP server, plus retained deprecated TUI source
-Bozzetto.Tests/      — Expecto test project (thousands of tests; the README badge is auto-derived)
-bozzetto-vscode/     — VS Code extension (F# via Fable → JavaScript)
+src/Bozzetto.Core/       — Shared engine, session, testing, persistence, and protocol logic (start here!)
+src/Bozzetto/            — CLI tool, daemon, MCP server, plus retained deprecated TUI source
+src/Bozzetto.Tests/      — Expecto test project (thousands of tests; the README badge is auto-derived)
+src/bozzetto-vscode/     — VS Code extension (F# via Fable → JavaScript)
 docs/              — GitHub Pages documentation site
 ```
 
 The separate upstream Neovim plugin, [sagefs.nvim](https://github.com/WillEhrendreich/sagefs.nvim), is not part of this repository; it is a client of the inherited F# session contracts, whose embedded production hosting the [architecture](docs/architecture.md) retires in this checkout.
 
-The disconnected Raylib product frontend, Visual Studio extension and SageTUI
-proof of concept have been removed. Deprecated terminal rendering support is
-still compiled into the host and requires a separate dependency refactor.
-Raylib application and game demos remain valuable examples of Bozzetto
-game-project support and should be preserved.
+The disconnected Raylib product frontend, the Visual Studio extension, the
+SageTUI proof of concept, the demo recorder and the samples have been removed.
+Deprecated terminal rendering support is still compiled into the host and
+requires a separate dependency refactor.
 
 **Good starting points for reading code:**
-- `Bozzetto/DaemonMode.fs` — daemon composition and client routing
-- `Bozzetto/ComposerRoutes.fs` — the `/composer` browser page and `/api/composer/*` routes
-- `Bozzetto/McpServer.fs` and `Bozzetto/McpTools.fs` — MCP transport and tools
-- `Bozzetto.Tests/` — the test project shows how every module is exercised
+- `src/Bozzetto/DaemonMode.fs` — daemon composition and client routing
+- `src/Bozzetto/ComposerRoutes.fs` — the `/composer` browser page and `/api/composer/*` routes
+- `src/Bozzetto/McpServer.fs` and `src/Bozzetto/McpTools.fs` — MCP transport and tools
+- `src/Bozzetto.Tests/` — the test project shows how every module is exercised
 
 ## Branches, versions and packages
 
@@ -142,9 +141,9 @@ Bozzetto's daemon accounts for the machine memory that every contributor and age
 
 ### Step-by-Step: Your First Debugging Session
 
-**1. Connect to the shared daemon.** If none is running, start it with `scripts/start-shared-daemon`, which launches the reviewed installed `boz` from the dedicated external workspace (see [AGENTS.md](AGENTS.md) for the daemon lifecycle rules). Never stop or restart a daemon that other people or agents may be on. Bozzetto exposes an MCP server at `http://localhost:47749/sse`. If you're using VS Code with the Bozzetto extension, it auto-connects. For other editors, see the [README](Readme.md) for setup.
+**1. Connect to the shared daemon.** If none is running, start the reviewed installed `boz` from its dedicated external workspace as [AGENTS.md](AGENTS.md) shows, with the daemon lifecycle rules. Never stop or restart a daemon that other people or agents may be on. Bozzetto exposes an MCP server at `http://localhost:47749/sse`. If you're using VS Code with the Bozzetto extension, it auto-connects. For other editors, see the [README](README.md) for setup.
 
-**2. Write the test first.** Add the failing case to the right module under `Bozzetto.Tests/` (Expecto.Flip, message first), then make it pass in the `.fs` file.
+**2. Write the test first.** Add the failing case to the right module under `src/Bozzetto.Tests/` (Expecto.Flip, message first), then make it pass in the `.fs` file.
 
 **3. Build under a lease.** Call `acquire_full_build_lease`, run `dotnet build` (warnings are errors), then call `release_work_lease` with the `leaseId` it returned.
 
@@ -153,14 +152,14 @@ Bozzetto's daemon accounts for the machine memory that every contributor and age
 ```bash
 # acquire_test_suite_lease first; release_work_lease when it exits.
 # <cfg> is Debug after a plain `dotnet build`; CI uses Release.
-dotnet Bozzetto.Tests/bin/<cfg>/net10.0/Bozzetto.Tests.dll --summary
+dotnet src/Bozzetto.Tests/bin/<cfg>/net10.0/Bozzetto.Tests.dll --summary
 ```
 
 A filtered run (`--filter`, `--filter-test-list`, `--filter-test-case`) is fine while you iterate, but it narrows the run and is never the acceptance check. If a lease request answers `wait` or `refused`, the daemon is busy, not broken: wait the time it names and retry the identical request rather than building around its accounting.
 
 **5. Read the TRUST line.** Every tier prints one `TRUST tier=… registered=N ran=N … verdict=…` line. `Trusted` is the only accepted verdict; `NarrowedRun` means a filter was on, and `NothingRan` or `CountMismatch` exit 3. Exit code 0 only means that nothing which ran failed.
 
-The inherited F# session steps that used to live here — creating a session for `Bozzetto.Tests/Bozzetto.Tests.fsproj`, `#load`-based hot reload, and running `Expecto.Tests.runTestsWithCLIArgs` inside the session — describe retained host code that is not a product surface. This checkout refuses to create, resume or rebuild an inherited F# session at the retired provider boundary ([architecture](docs/architecture.md)).
+The inherited F# session steps that used to live here — creating a session for `src/Bozzetto.Tests/Bozzetto.Tests.fsproj`, `#load`-based hot reload, and running `Expecto.Tests.runTestsWithCLIArgs` inside the session — describe retained host code that is not a product surface. This checkout refuses to create, resume or rebuild an inherited F# session at the retired provider boundary ([architecture](docs/architecture.md)).
 
 ### Debugging with Breakpoints
 
@@ -200,7 +199,7 @@ under the matching work lease.
 
 ### The Pack/Reinstall Cycle
 
-When you change Bozzetto's own source code (anything in `Bozzetto/` or `Bozzetto.Core/`), you need to rebuild and reinstall:
+When you change Bozzetto's own source code (anything in `src/Bozzetto/` or `src/Bozzetto.Core/`), you need to rebuild and reinstall:
 
 ```bash
 # Stop the running instance, rebuild, repackage, reinstall
@@ -231,7 +230,7 @@ dotnet run --project Bozzetto.Tests -- --summary
 dotnet run --project Bozzetto.Tests -- --filter "CellGrid"
 ```
 
-For local development, run the built test DLL directly (`dotnet Bozzetto.Tests/bin/<cfg>/net10.0/Bozzetto.Tests.dll --summary`) under `acquire_test_suite_lease` / `release_work_lease`. Filters are for iterating only; the unfiltered run whose TRUST line says `Trusted` is the acceptance check.
+For local development, run the built test DLL directly (`dotnet src/Bozzetto.Tests/bin/<cfg>/net10.0/Bozzetto.Tests.dll --summary`) under `acquire_test_suite_lease` / `release_work_lease`. Filters are for iterating only; the unfiltered run whose TRUST line says `Trusted` is the acceptance check.
 
 ### Test Categories
 
@@ -326,7 +325,7 @@ Not sure where to start? Here are some areas where help is especially welcome:
 - **Snapshot tests** — add Verify snapshot tests for rendered output
 - **Bug fixes** — check the issue tracker for bugs labeled `good-first-issue`
 - **Error messages** — make diagnostics clearer and more helpful
-- **FSI quirks** — `Bozzetto.Core/FsiRewrite.fs` is ~25 lines and handles FSI edge cases — PRs welcome
+- **FSI quirks** — `src/Bozzetto.Core/FsiRewrite.fs` is ~25 lines and handles FSI edge cases — PRs welcome
 
 ## Architecture Overview
 
@@ -356,7 +355,7 @@ Bozzetto is **daemon-first** — one long-running server, many clients:
 
 Key architectural concepts:
 - **Thin clients** — editors and MCP clients use the same session-scoped daemon contracts
-- **Browser UI** — the plain-JS `/composer` page on 47749 uses `/api/composer/*` and SSE; a Partas.Solid UI in `bozzetto-web/` is in progress
+- **Browser UI** — the plain-JS `/composer` page on 47749 uses `/api/composer/*` and SSE; a Partas.Solid UI in `src/bozzetto-web/` is in progress
 - **Worker isolation** — Composer supervises an isolated compiler worker for native build and accepted-artifact execution
 - **SSE for reads** — all state changes push to clients via Server-Sent Events
 - **POST for commands** — write operations are POST-only, return acknowledgment only

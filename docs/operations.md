@@ -14,38 +14,33 @@ The governing lifecycle, lease and policy rules are in `AGENTS.md`. This documen
 
 The following evidence distinctions matter when operating or promoting a release:
 
-- **Code-backed today:** `scripts/start-shared-daemon` implements bounded startup and listener identity checks; `scripts/work-lease` implements command renewal and cleanup; `Bozzetto.Core/ExpensiveWorkLease.fs` implements queue, renewal and reclamation rules.
-- **Code-backed today:** `Bozzetto/HealthTick.fs` sequences immutable health observations using a lock and an observable event. It does not itself demonstrate Fidelity.FSharp.Incremental adoption or a delivered Ranvier engine.
-- **Code-backed protocol support:** `Bozzetto.Composer.Protocol/StreamFrames.fs` encodes typed BAREWire request/reply frames and rejects malformed framing. This establishes framing support, not acceptance of every deployed transport seam.
+- **Code-backed today:** `tools/build/WorkLease.fs` implements request, heartbeat renewal, release and withdrawal for `ci-pipeline.fsx` and `tools/build/lease.fsx`; `src/Bozzetto.Core/ExpensiveWorkLease.fs` implements queue, renewal and reclamation rules.
+- **Code-backed today:** `src/Bozzetto/HealthTick.fs` sequences immutable health observations using a lock and an observable event. It does not itself demonstrate Fidelity.FSharp.Incremental adoption or a delivered Ranvier engine.
+- **Code-backed protocol support:** `src/Bozzetto.Composer.Protocol/StreamFrames.fs` encodes typed BAREWire request/reply frames and rejects malformed framing. This establishes framing support, not acceptance of every deployed transport seam.
 - **Requirements still needing acceptance:** shared whole-host/device acquisition, UMA-aware attribution, calibrated findings, native/platform parity and approved recovery. A design document or a healthy listener cannot prove these gates passed.
 
 Direct daemon-worker, daemon-browser and agent-owned interchange must be typed binary. JSON is not a direct API contract, even if serialized with Fidelity.Data. MCP's external JSON-RPC standard is the sole external exception. Fidelity.Data JSON belongs only at export edges, including an independent MailboxProcessor-driven diagnostic sink process. See [mcp-tools.md](mcp-tools.md), [binary-format-spec.md](binary-format-spec.md) and [Bozzetto_Diagnostic_Sink.md](Bozzetto_Diagnostic_Sink.md).
 
-There is current wire drift: both operational scripts parse JSON responses, and `scripts/work-lease` sends JSON HTTP bodies. These are inspected implementation facts to remove, not a second permitted interchange contract. Do not copy their request shapes into new integrations or substitute a serializer and call the migration complete. Browser binary transport and reconnect acceptance require separate evidence in [reactive-push.md](reactive-push.md).
+There is current wire drift: `tools/build/WorkLease.fs` sends and parses JSON HTTP bodies. These are inspected implementation facts to remove, not a second permitted interchange contract. Do not copy their request shapes into new integrations or substitute a serializer and call the migration complete. Browser binary transport and reconnect acceptance require separate evidence in [reactive-push.md](reactive-push.md).
 
 ## Installed identity and bounded readiness
 
 A checkout is not the running release. Record the reviewed installed launcher, resolved release path, daemon PID/start identity, worker identity and selected compiler closure before diagnosing version skew or claiming delivery. A shared version number alone cannot distinguish builds with different bytes.
 
-Start from the repository using:
+Probe first and leave a running daemon in place. Otherwise launch the installed `boz` detached from the dedicated workspace, then probe once:
 
 ```bash
-scripts/start-shared-daemon
+ws=${XDG_DATA_HOME:-$HOME/.local/share}/bozzetto/workspace
+st=${XDG_STATE_HOME:-$HOME/.local/state}/bozzetto
+mkdir -p "$ws" "$st" && (cd "$ws" && setsid boz --no-resume </dev/null >>"$st/daemon.log" 2>&1 &)
 curl -s -m 3 http://127.0.0.1:47749/health
 ```
 
-The second command is the next action after startup: one bounded probe, then act on its result. Do not put the daemon in the foreground, wait for its lifetime or add an outer readiness retry loop.
+The probe is the next action after startup: one bounded probe, then act on its result. Do not put the daemon in the foreground, wait for its lifetime or add an outer readiness retry loop.
 
-The launcher implementation in `scripts/start-shared-daemon`:
+The command runs the installed `boz` with `--no-resume` from `$XDG_DATA_HOME/bozzetto/workspace` (default `~/.local/share/bozzetto/workspace`) and appends to `daemon.log` under `$XDG_STATE_HOME/bozzetto` (default `~/.local/state/bozzetto`). Keep both roots outside the repositories folder. After the probe, check control identity at `http://127.0.0.1:47750/api/daemon-info` and `/api/composer/sessions`, each once: the listener's PID must be the launched process, health must report no component failures, and Composer must be configured.
 
-- Resolves `BOZZETTO_BIN` when supplied, otherwise the installed `boz` on `PATH`, and requires an executable file.
-- Runs detached with `--no-resume` from `$XDG_DATA_HOME/bozzetto/workspace`, defaulting to `~/.local/share/bozzetto/workspace`.
-- Writes `daemon.log` and `daemon.pid` under `$XDG_STATE_HOME/bozzetto`, defaulting to `~/.local/state/bozzetto`.
-- Requires absolute configured data/state roots outside the repositories parent and refuses redirected workspace/log/PID paths.
-- Uses an internal startup window of 20 seconds with bounded individual requests. It checks control identity at `http://127.0.0.1:47750/api/daemon-info`, health and `/api/composer/sessions`.
-- Requires the new listener's reported PID to match the launched process, health to be healthy with no component failures, and Composer to be configured.
-
-If either port is already occupied, the launcher preserves the listener. Its output explicitly says `readinessChecked: false`; it succeeds in that branch only when both ports are occupied and identity can be read. That is not a readiness verdict. Check the existing identity, health and Composer state before using it. Do not kill an unidentified port occupant or launch another daemon to evade the conflict.
+If either port is already occupied, leave the listener in place and check its identity, health and Composer state before using it. Do not kill an unidentified port occupant or launch another daemon to evade the conflict.
 
 A health response proves only the facts it reports at their observation times. Composer configured is not proof that a project is open, its artifacts are current or native execution is admitted. Verify session/work state through the Composer surface and [composer-workflow.md](composer-workflow.md). A successful MCP initialization establishes a connection, not a compiler lease or project authority. These are the active connection checks intended to replace the dated live-provider checkpoint navigation; integration must update the still-governing `AGENTS.md` reference without deleting historical receipts.
 
@@ -58,12 +53,12 @@ Use this sequence:
 1. Identify the changed owner and validate it with its consumers. Retain the integration TRUST ledger and exact source/package identities; follow [development.md](development.md).
 2. Inspect active and queued leases, Composer operations and pending cleanup. Arrange an owner-directed drain without abandoning another caller's work. A queue entry is not a running process, and an empty queue is not proof of physical drain.
 3. Preserve the previous installed release and its matching worker/compiler closure. Record the intended new launcher, daemon, worker, protocol, PSG and foundation identities before switching.
-4. **Current rule:** replace the installed daemon and worker as a matching pair from one selected closure through the reviewed release procedure. Verify the PSG contract fingerprint and a Composer open against the serving pair (`Bozzetto/ComposerWorkerClient.fs`, `Bozzetto.Composer/Worker.fs`). Do not deploy compiler/worker changes merely because the Bozzetto checkout was rebuilt. **Required D1 destination:** compatible worker-only replacement, with wire compatibility checked separately from manifest-bound worker distribution identity; this is not today's operating path. See [component contracts](Bozzetto_Fidelity_Component_Contracts.md#wire-compatibility-and-distribution-identity).
-5. Start through `scripts/start-shared-daemon`, then perform the bounded health probe. Verify the actual process identity, worker epoch and selected closure, not just the files in the checkout.
+4. **Current rule:** replace the installed daemon and worker as a matching pair from one selected closure through the reviewed release procedure. Verify the PSG contract fingerprint and a Composer open against the serving pair (`src/Bozzetto/ComposerWorkerClient.fs`, `src/Bozzetto.Composer/Worker.fs`). Do not deploy compiler/worker changes merely because the Bozzetto checkout was rebuilt. **Required D1 destination:** compatible worker-only replacement, with wire compatibility checked separately from manifest-bound worker distribution identity; this is not today's operating path. See [component contracts](Bozzetto_Fidelity_Component_Contracts.md#wire-compatibility-and-distribution-identity).
+5. Start the installed pair from the dedicated workspace as shown above, then perform the bounded health probe. Verify the actual process identity, worker epoch and selected closure, not just the files in the checkout.
 6. Reconnect clients and verify served browser bytes and authoritative observations. Establish a fresh baseline for the new incarnation; do not present the predecessor's resource samples as current.
 7. If readiness or compatibility fails, report the exact failure and restore the previous matching release after accounting for new work. Repeat identity/readiness checks and reconnect reconciliation. Keep the failed release's logs and validation receipts.
 
-The protocol project targets `net10.0` and imports `build/ComposerContract.props`. That build owner selects PSG and BAREWire together, using local projects or an absolute `ComposerDistribution` containing both assemblies. It checks required files, not deployment provenance or live assembly equality. Confirm the selected closure and actual loaded identities separately.
+The protocol project targets `net10.0` and imports `tools/build/ComposerContract.props`. That build owner selects PSG and BAREWire together, using local projects or an absolute `ComposerDistribution` containing both assemblies. It checks required files, not deployment provenance or live assembly equality. Confirm the selected closure and actual loaded identities separately.
 
 Daemon wire compatibility and worker-loaded PSG/distribution identity are distinct checks. Do not solve a worker closure mismatch by ignoring its refusal or loading an arbitrary assembly that happens to satisfy a type name. Preserve compiler-owned authorization and epoch fencing during replacement. See [Bozzetto_Fidelity_Component_Contracts.md](Bozzetto_Fidelity_Component_Contracts.md).
 
@@ -71,11 +66,11 @@ Rollback restores executable compatibility, not authority from the previous epoc
 
 ## Leases: admission, heartbeat and queues
 
-Every caller-owned build or test suite requires a lease. The ordinary wrapper is:
+Every caller-owned build or test suite requires a lease. The ordinary client is:
 
 ```bash
-scripts/work-lease run full_build dotnet build
-scripts/work-lease run test_suite_run dotnet <testDll> --summary
+dotnet fsi tools/build/lease.fsx full_build dotnet build
+dotnet fsi tools/build/lease.fsx test_suite_run dotnet <testDll> --summary
 ```
 
 Run the built test DLL locally; `dotnet test` is for CI. MCP callers use the acquire/release tools described in [mcp-tools.md](mcp-tools.md). Renewal and withdrawal are not exposed as MCP tools; that connection-bound lifecycle gap must not be mistaken for HTTP holder compatibility. Do not nest a second lease under a held one or launch work before a grant.
@@ -86,7 +81,7 @@ Run the built test DLL locally; `dotnet test` is for CI. MCP callers use the acq
 | Wait | Do not start. Read the reason and retry-after. Retain the same holder/kind if continuing; withdraw if giving up. Investigate memory pressure before retrying. |
 | Refused | Do not start or blindly retry. Resolve the specific refusal at its owner. |
 
-`Bozzetto.Core/ExpensiveWorkLease.fs` owns the current pool rules:
+`src/Bozzetto.Core/ExpensiveWorkLease.fs` owns the current pool rules:
 
 - Admission capacity is four active leases at Normal pressure, one at Tight and zero new grants at Critical. A pressure rise does not revoke already granted work.
 - A holder may have one outstanding claim. A held lease or queued request for another kind causes refusal, not a second queued claim.
@@ -96,9 +91,9 @@ Run the built test DLL locally; `dotnet test` is for CI. MCP callers use the acq
 - Reclamation occurs on pool operations, including requests, renewal and observation. The pure pool has no reclamation timer of its own.
 - Observer grant views omit the lease ID because that ID is a release capability. MCP release ownership is supported by `releaseOwned`; possession of a display row is not a release authorization.
 
-A lease lifetime bounds abandonment, not the duration of a healthy renewing run. `scripts/work-lease run` derives a stable holder from `BOZZETTO_AGENT` and `BOZZETTO_PROJECT` (default project: cwd), renews on a heartbeat and releases during cleanup. Set distinct agent labels: these are caller-reported context, not authenticated identity or test proof. MCP identity instead belongs to the connection.
+A lease lifetime bounds abandonment, not the duration of a healthy renewing run. `tools/build/lease.fsx` derives a stable holder from `BOZZETTO_AGENT` and `BOZZETTO_PROJECT` (default project: cwd), renews on a heartbeat and releases during cleanup. Set distinct agent labels: these are caller-reported context, not authenticated identity or test proof. MCP identity instead belongs to the connection.
 
-The current `scripts/work-lease` run case exits 75 on Wait without starting work or withdrawing the deferred ask. The ask stays in the pool's line; retrying with the same holder/kind is the same ask and preserves its position. An ask nobody retries within two minutes is reaped. Follow the returned retry interval if continuing; only a caller that gives up explicitly withdraws with the same holder/kind (`scripts/work-lease withdraw <kind> <holder>`). Do not create fresh holder suffixes for each attempt. The helper uses `/api/lease/request`, `/api/lease/renew`, `/api/lease/withdraw` and `/api/lease/release` for the HTTP lifecycle; these holders are not the MCP connection binding.
+`tools/build/lease.fsx` keeps a deferred ask in line, retrying it as the same holder and kind every 15 seconds, and withdraws it after ten minutes; it exits 69 when the lease is refused or the ask is withdrawn. An ask nobody retries within two minutes is reaped. Do not create fresh holder suffixes for each attempt. The client uses `/api/lease/request`, `/api/lease/renew`, `/api/lease/withdraw` and `/api/lease/release`; these holders are not the MCP connection binding.
 
 If renewal reports the lease gone, the wrapper requests termination of its direct child. If renewal is unreachable it logs and retries; if the route is absent it warns that the old daemon leaves the TTL in charge. Neither case demonstrates current coordination. Fix installed skew rather than treating that compatibility behavior as the operating contract. Wrapper termination and release do not establish that all descendants or device work have physically drained.
 
@@ -119,13 +114,13 @@ Keep four answers separate:
 
 Low available RAM can reduce admission headroom without proving thrashing or a leak. A healthy daemon can coexist with sustained host pressure. Missing telemetry is unavailable, not healthy zero usage.
 
-`Bozzetto/DaemonTelemetry.fs` samples an explicit process list. Its owned-process helper includes the daemon and Composer worker, with a retained parameter for retired session workers. It does not discover leased builds, tests, editor servers or inference workloads. The dashboard CPU figure therefore covers the daemon-owned tree only, not total workstation activity.
+`src/Bozzetto/DaemonTelemetry.fs` samples an explicit process list. Its owned-process helper includes the daemon and Composer worker, with a retained parameter for retired session workers. It does not discover leased builds, tests, editor servers or inference workloads. The dashboard CPU figure therefore covers the daemon-owned tree only, not total workstation activity.
 
 The current CPU calculation divides processor-time delta by elapsed wall time and `Environment.ProcessorCount`. It is host-count-normalized, not the process-equivalent convention where 100% means one logical CPU. Its first sample returns zero; inaccessible processes are omitted; prior samples are keyed by PID. These are limitations to correct under the richer observation contract, not evidence of idle external work or incarnation-safe attribution.
 
-`Bozzetto/HealthTick.fs` publishes a serial, machine sample time and separate record time. Publications can be announced out of order outside its lock; consumers must respect the serial. A failed record refresh preserves the old record/time. Advancing uptime or a connected socket does not make those retained observations fresh. Its request-driven sampling is not a delivered whole-host acquisition service.
+`src/Bozzetto/HealthTick.fs` publishes a serial, machine sample time and separate record time. Publications can be announced out of order outside its lock; consumers must respect the serial. A failed record refresh preserves the old record/time. Advancing uptime or a connected socket does not make those retained observations fresh. Its request-driven sampling is not a delivered whole-host acquisition service.
 
-`Bozzetto.Core/MemorySupervisor.fs` uses shared memory-pressure hysteresis: Tight entry/exit at 20%/30% available, Critical entry/exit at 8%/15%. These are policy thresholds, not kernel pressure facts. The module is pure and returns actions; it does not execute them. Its retained idle-session shedding model must not be presented as a current F# session workflow or authorization to terminate unrelated processes. A zero total is treated as full availability by this module, another reason not to label unknown telemetry as measured headroom.
+`src/Bozzetto.Core/MemorySupervisor.fs` uses shared memory-pressure hysteresis: Tight entry/exit at 20%/30% available, Critical entry/exit at 8%/15%. These are policy thresholds, not kernel pressure facts. The module is pure and returns actions; it does not execute them. Its retained idle-session shedding model must not be presented as a current F# session workflow or authorization to terminate unrelated processes. A zero total is treated as full availability by this module, another reason not to label unknown telemetry as measured headroom.
 
 ## UMA accounting and shared acquisition requirements
 

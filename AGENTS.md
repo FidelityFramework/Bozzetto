@@ -41,10 +41,17 @@ this project real time or code.
 
 The daemon is long-running; intentional development restarts are normal.
 
-- **Start:** `scripts/start-shared-daemon`. It launches the reviewed installed
-  `boz` from the dedicated workspace (`$XDG_DATA_HOME/bozzetto/workspace`,
-  default `~/.local/share/bozzetto/workspace`) with bounded readiness checks.
-  Never launch from home or the repositories parent.
+- **Start:** probe first. If no daemon answers, launch the reviewed installed
+  `boz` detached from the dedicated workspace (`$XDG_DATA_HOME/bozzetto/workspace`,
+  default `~/.local/share/bozzetto/workspace`). Never launch from home or the
+  repositories parent.
+
+  ```bash
+  ws=${XDG_DATA_HOME:-$HOME/.local/share}/bozzetto/workspace
+  st=${XDG_STATE_HOME:-$HOME/.local/state}/bozzetto
+  mkdir -p "$ws" "$st" && (cd "$ws" && setsid boz --no-resume </dev/null >>"$st/daemon.log" 2>&1 &)
+  ```
+
 - **Check:** one bounded probe, then act on the result.
 
   ```bash
@@ -83,23 +90,23 @@ bug to work around.
 
 ## Building and testing Bozzetto
 
-Load [`skills/bozzetto/SKILL.md`](skills/bozzetto/SKILL.md) before changing F#.
+Load [`tools/skills/bozzetto/SKILL.md`](tools/skills/bozzetto/SKILL.md) before changing F#.
 
 ```bash
-scripts/work-lease run full_build dotnet build
-scripts/work-lease run test_suite_run dotnet <testDll> --summary
+dotnet fsi tools/build/lease.fsx full_build dotnet build
+dotnet fsi tools/build/lease.fsx test_suite_run dotnet <testDll> --summary
 dotnet fsi ci-pipeline.fsx     # full pipeline; `-- ci`, `-- composer`, `-- pack` add stages
 ```
 
 - **Leases.** Every caller-owned build or suite runs under a lease:
-  `scripts/work-lease`, or the MCP tools `acquire_full_build_lease`,
+  `tools/build/lease.fsx` (the client `ci-pipeline.fsx` uses), or the MCP tools `acquire_full_build_lease`,
   `acquire_test_suite_lease` and `release_work_lease`. Follow wait and refused
   decisions. Always release. Builds and suites over Clef/Composer code are
   Composer work, so granted and queued leases show on the `/composer` page
   beside the compiler worker; the Dashboard keeps agents and machine resources.
 - **A lease is a heartbeat, not a deadline.** A granted lease expires after
   its kind's lifetime only if the holder stops renewing (`/api/lease/renew`).
-  `work-lease run` renews while its command runs, so a long suite is never
+  `tools/build/lease.fsx` renews while its command runs, so a long suite is never
   cut off by the lifetime; a holder that crashes stops renewing and is
   reclaimed. One stable holder per agent and project: a retry after `wait`
   is the same queued ask, and a newer ask from that scope supersedes the
@@ -211,11 +218,11 @@ and trust ledgers that validation records cite before deleting artifacts.
 - **Target:** `net10.0`; `global.json` selects the stable .NET 10 SDK.
   Solution format is `.slnx`.
 - **Daemon HTTP:** ASP.NET Core minimal APIs.
-- **Browser UI:** Partas.Solid in `bozzetto-web/`, served at `/composer` and
-  `/dashboard` over `/ui/bridge`. `bozzetto-web/theme.js` is the only colour
+- **Browser UI:** Partas.Solid in `src/bozzetto-web/`, served at `/composer` and
+  `/dashboard` over `/ui/bridge`. `src/bozzetto-web/theme.js` is the only colour
   and font source. Change reusable treatments in
-  `bozzetto-web/src/Frontend/styles.css`, then rebuild, verify and weld the
-  bundle under a lease. Never edit generated `Bozzetto/WebAssets.fs` by hand.
+  `src/bozzetto-web/src/Frontend/styles.css`, then rebuild, verify and weld the
+  bundle under a lease. Never edit generated `src/Bozzetto/WebAssets.fs` by hand.
 - **Updates are pushed, not polled.** Owners publish Fidelity.FSharp.Incremental
   inputs and the bridge pushes on change. Do not add timers or polling loops.
 - **Daemon and worker wire:** the typed binary contract in
@@ -281,22 +288,24 @@ Composer is a **differential compiler**: it recompiles what a change affects.
 
 | Path | Role |
 | --- | --- |
-| `Bozzetto.Core/` | Shared engine, session, persistence and protocol logic |
-| `Bozzetto/` | CLI, daemon, MCP server and browser bridge |
-| `Bozzetto.Composer/` | Composer worker process |
-| `Bozzetto.Composer.Protocol/` | Typed binary daemon and worker contract |
-| `Bozzetto.Tests/`, `Bozzetto.Composer.Tests/` | Expecto suites |
-| `bozzetto-web/` | Partas.Solid browser UI |
-| `bozzetto-vscode/` | VS Code extension (Fable) |
+| `src/Bozzetto.Core/` | Shared engine, session, persistence and protocol logic |
+| `src/Bozzetto/` | CLI, daemon, MCP server and browser bridge |
+| `src/Bozzetto.Composer/` | Composer worker process |
+| `src/Bozzetto.Composer.Protocol/` | Typed binary daemon and worker contract |
+| `src/Bozzetto.Tests/`, `src/Bozzetto.Composer.Tests/` | Expecto suites |
+| `src/bozzetto-web/` | Partas.Solid browser UI |
+| `src/bozzetto-vscode/` | VS Code extension (Fable) |
+| `src/Bozzetto.Diagnostics/` | The separate diagnostic sink process |
+| `src/Bozzetto.Simulation/` | Deterministic simulations the suites drive |
+| `tools/build/` | Contract props, the pipeline's tier plan and its lease client (`lease.fsx`) |
+| `tools/quality/`, `tools/skills/`, `tools/agent-hooks/` | The definition-of-done matrix, the agent skill, agent hooks |
 | `docs/` | Design records, checkpoints and the documentation site |
 
-The disconnected `Bozzetto.Gui` Raylib frontend, Visual Studio extension
-(`bozzetto-vs/`) and SageTUI proof of concept (`samples/sagetui-poc/`) have been
-removed. Do not restore these retired clients. Deprecated terminal rendering
-support remains compiled into `Bozzetto/`; prune it at its owning dependency
-boundary and do not treat it as a current product surface. Keep the Raylib
-application and game demos; they show support for game projects and do not
-depend on the removed GUI.
+The disconnected `Bozzetto.Gui` Raylib frontend, the Visual Studio extension,
+the SageTUI proof of concept, the demo recorder and the samples have been
+removed. Do not restore them. Deprecated terminal rendering support remains
+compiled into `src/Bozzetto/`; prune it at its owning dependency boundary and do
+not treat it as a current product surface.
 
 Other top-level folders are supporting or retained code. Read their project
 file before treating one as a product surface.

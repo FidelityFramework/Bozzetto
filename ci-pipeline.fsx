@@ -16,22 +16,18 @@
 // Stage selection:
 //   * unconditional — build, format, samples, VS Code extension compile +
 //     client contract tests (npm run test:golden + every
-//     bozzetto-vscode/tests/*.fsx), then "test tiers": the default suite and
+//     src/bozzetto-vscode/tests/*.fsx), then "test tiers": the default suite and
 //     the integration-host suites.
 //   * `ci` adds to "test tiers" — the mutation-score gate.
 //   * `composer` builds the Composer provider worker and adds its tier; it
 //     needs BOZZETTO_COMPOSER_DISTRIBUTION and BOZZETTO_COMPOSER_FIXTURE.
 //   * "test tiers" runs every tier regardless of the others; concurrently, each
 //     in a private copy-on-write clone, where the machine supports it (see the
-//     tier scheduler section and build/TierPlan.fs).
+//     tier scheduler section and tools/build/TierPlan.fs).
 //   * always, after the tiers — the "trust report": one table of every tier's
 //     registered/ran/verdict; the one place a red test tier fails the run.
 //   * `pack` — after a trusted run, pack the CLI tool package into nupkg/ and
 //     check its payload. Nothing is published from this pipeline.
-//
-// Cross-platform packing: every per-RID tree-sitter native is committed under
-// runtimes/ and the fsproj includes them by Condition="Exists(...)", so the
-// single Linux pack produces a complete cross-platform nupkg.
 
 #r "nuget: Fun.Build, 1.2.0"
 
@@ -48,71 +44,37 @@ open Fun.Build.Github
 let rootDir = __SOURCE_DIRECTORY__
 /// Where `pack` writes the CLI tool package (gitignored).
 let packDir = Path.Combine(rootDir, "nupkg")
-let vscodeDir = Path.Combine(rootDir, "bozzetto-vscode")
+let vscodeDir = Path.Combine(rootDir, "src", "bozzetto-vscode")
 // Every downstream check runs against this ONE Release build (see "build" stage).
-let testBinDir = "Bozzetto.Tests/bin/Release/net10.0"
+let testBinDir = "src/Bozzetto.Tests/bin/Release/net10.0"
 let testDll = $"{testBinDir}/Bozzetto.Tests.dll"
-let leaseRunner = Path.Combine(rootDir, "scripts/work-lease")
-let leasedCommand kind command = $"\"{leaseRunner}\" run {kind} {command}"
+#load "tools/build/WorkLease.fs"
+open Bozzetto.Build
 
-type WorkLeaseScope = {
-  Deadline: DateTimeOffset
-  Cancellation: Threading.CancellationToken
-}
+let leaseHolder = WorkLease.holder rootDir
+
+/// Run one command under a `kind` lease, through the stage's own command runner.
+let leased kind (runCommand: string -> Async<Result<unit, string>>) (command: string) =
+  WorkLease.run kind leaseHolder (fun _ -> runCommand command)
+
+/// The test-suite lease the tier stage holds. Its token is cancelled when the daemon reports
+/// the lease gone, and execToLog kills every tier process tree it owns when that happens.
+type WorkLeaseScope = { Cancellation: Threading.CancellationToken }
 
 // Pipeline stages are serial. The whole parallel tier stage shares one test
 // lease; its children do not acquire nested leases or release their parent.
 let mutable activeWorkLease: WorkLeaseScope option = None
 
-let leaseControl arguments =
-  use child = new Diagnostics.Process()
-  child.StartInfo.FileName <- leaseRunner
-  arguments |> List.iter child.StartInfo.ArgumentList.Add
-  child.StartInfo.RedirectStandardOutput <- true
-  child.StartInfo.RedirectStandardError <- true
-  child.Start() |> ignore
-  let stdout = child.StandardOutput.ReadToEndAsync()
-  let stderr = child.StandardError.ReadToEndAsync()
-  child.WaitForExit()
-  child.ExitCode, stdout.GetAwaiter().GetResult(), stderr.GetAwaiter().GetResult()
-
 let withTestSuiteLease (work: unit -> Async<Result<unit, string>>) =
-  async {
-    let! callerCancellation = Async.CancellationToken
-    let code, response, diagnostic =
-      leaseControl [ "acquire"; "test_suite_run"; $"gate-tiers-{Environment.ProcessId}" ]
-    if code <> 0 then
-      return Result.Error $"Test-suite admission stopped the stage: {diagnostic.Trim()}"
-    else
-      use document = JsonDocument.Parse response
-      let id = document.RootElement.GetProperty("leaseId").GetString()
-      let expires = document.RootElement.GetProperty("expiresAt").GetDateTimeOffset()
-      use ownedCancellation = new Threading.CancellationTokenSource()
+  WorkLease.run "test_suite_run" leaseHolder (fun gone ->
+    async {
       let previous = activeWorkLease
-      activeWorkLease <- Some { Deadline = expires.AddMinutes(-1.); Cancellation = ownedCancellation.Token }
-      use registration = callerCancellation.Register(fun () -> ownedCancellation.Cancel())
-      // Independent observation retains the stage until every owned process
-      // has joined, including caller cancellation. Release follows that join.
-      let owned = Async.StartAsTask(work(), cancellationToken = Threading.CancellationToken.None)
-      let mutable releaseFailure = None
-      let! result =
-        async {
-          try
-            return! owned |> Async.AwaitTask
-          finally
-            ownedCancellation.Cancel()
-            try owned.GetAwaiter().GetResult() |> ignore with _ -> ()
-            activeWorkLease <- previous
-            let releaseCode, _, releaseDiagnostic = leaseControl [ "release"; id ]
-            if releaseCode <> 0 then
-              let message = $"Owned test-suite lease release failed: {releaseDiagnostic.Trim()}"
-              eprintfn "%s" message
-              releaseFailure <- Some message
-        }
-      match releaseFailure with
-      | Some message -> return Result.Error message
-      | None -> return result
-  }
+      activeWorkLease <- Some { Cancellation = gone }
+      try
+        return! work ()
+      finally
+        activeWorkLease <- previous
+    })
 
 // ---- packing ------------------------------------------------------------------
 
@@ -188,7 +150,7 @@ let verifyToolInstallable () =
 // the fast suite if a registered tier is not declared here, or if a test run
 // bypasses `testTier`.
 
-#load "build/TierPlan.fs"
+#load "tools/build/TierPlan.fs"
 open Bozzetto.Build
 
 let trustLedger = Path.Combine(rootDir, "test-results", "trust-ledger.jsonl")
@@ -254,12 +216,8 @@ let execToLog (timeout: TimeSpan) (workingDir: string) (env: (string * string) l
   async {
     let! ct = Async.CancellationToken
     let scope = activeWorkLease
-    let timeout =
-      match scope with
-      | Some lease -> min timeout (lease.Deadline - DateTimeOffset.UtcNow)
-      | None -> timeout
-    if timeout <= TimeSpan.Zero || (scope |> Option.exists (fun lease -> lease.Cancellation.IsCancellationRequested)) then
-      File.WriteAllText(log, "KILLED: the owning work lease has no admitted time remaining.\n")
+    if scope |> Option.exists (fun lease -> lease.Cancellation.IsCancellationRequested) then
+      File.WriteAllText(log, "KILLED: the owning work lease is gone.\n")
       return killedExitCode
     else
       let psi = Diagnostics.ProcessStartInfo(List.head argv)
@@ -556,7 +514,7 @@ pipeline "bozzetto" {
   stage "build" {
     // Build the whole solution ONCE, in Release. Every downstream stage runs
     // --no-build against this exact output.
-    run (leasedCommand "full_build" "dotnet build -c Release")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet build -c Release")
   }
 
   stage "build composer provider" {
@@ -571,35 +529,21 @@ pipeline "bozzetto" {
         elif String.IsNullOrWhiteSpace fixture || not (Path.IsPathFullyQualified fixture) || not (File.Exists fixture) then
           return Error "composer requires BOZZETTO_COMPOSER_FIXTURE pointing to IncrementalScalarRegions.fidproj"
         else
-          Environment.SetEnvironmentVariable("BOZZETTO_COMPOSER_WORKER", Path.Combine(rootDir, "Bozzetto.Composer/bin/Release/net10.0/Bozzetto.Composer.dll"))
-          return! ctx.RunCommand (leasedCommand "full_build" $"dotnet build Bozzetto.Composer/Bozzetto.Composer.fsproj -c Release -p:ComposerDistribution=\"{distribution}\"")
+          Environment.SetEnvironmentVariable("BOZZETTO_COMPOSER_WORKER", Path.Combine(rootDir, "src/Bozzetto.Composer/bin/Release/net10.0/Bozzetto.Composer.dll"))
+          return! leased "full_build" ctx.RunCommand $"dotnet build src/Bozzetto.Composer/Bozzetto.Composer.fsproj -c Release -p:ComposerDistribution=\"{distribution}\""
       })
   }
 
   stage "format" {
-    run (leasedCommand "full_build" "dotnet format --verify-no-changes --verbosity minimal")
-  }
-
-  stage "build samples for integration suites" {
-    // The HTTP API integration suites create real sessions on these samples.
-    //
-    // A session on an UNBUILT sample does not fail loudly — it warms up,
-    // cannot find the DLL, and faults, so the test reports "session should
-    // reach Ready ... Actual value was false". That is what a missing entry
-    // here looks like from the outside, and it cost a full CI cycle when
-    // McpAppRunOutcomeTests started sessioning on ConsoleTicker without one.
-    // `Architecture — every sample an integration suite sessions on is built
-    // by CI` now fails the fast local suite instead of waiting for CI.
-    run (leasedCommand "full_build" "dotnet build samples/from-csharp/Bozzetto.Samples.FromCSharp/Bozzetto.Samples.FromCSharp.fsproj -c Release --nologo")
-    run (leasedCommand "full_build" "dotnet build samples/demos/Bozzetto.Samples.ConsoleTicker/Bozzetto.Samples.ConsoleTicker.fsproj -c Release --nologo")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet format --verify-no-changes --verbosity minimal")
   }
 
   stage "vscode extension compile" {
     // Build the extension for the client contract tests.
     workingDir vscodeDir
-    run (leasedCommand "full_build" "dotnet tool restore")
-    run (leasedCommand "full_build" "npm ci --include=dev")
-    run (leasedCommand "full_build" "npm run compile")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet tool restore")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "npm ci --include=dev")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "npm run compile")
   }
 
   stage "vscode client contract tests" {
@@ -607,19 +551,19 @@ pipeline "bozzetto" {
     // B.4): the golden server->client SSE round trip (loads the REAL
     // fable-out/LiveTestingListener.js built by "vscode extension compile"
     // above and feeds it the committed fixtures) plus every standalone
-    // bozzetto-vscode/tests/*.fsx contract test. Structural, not an enumerated
+    // src/bozzetto-vscode/tests/*.fsx contract test. Structural, not an enumerated
     // list, so a new *.fsx contract test is picked up here by construction —
     // the same "join CI by construction" discipline TestInfrastructure.
     // Integration.hostList applies on the .NET side.
     workingDir vscodeDir
     timeoutForStep 300
-    run (leasedCommand "test_suite_run" "npm run test:golden")
+    run (fun ctx -> leased "test_suite_run" ctx.RunCommand "npm run test:golden")
     run (fun ctx ->
       async {
         let fsxFiles =
           Directory.GetFiles(Path.Combine(vscodeDir, "tests"), "*.fsx")
           |> Array.sort
-        return! runSteps ctx.RunCommand [ for f in fsxFiles -> leasedCommand "test_suite_run" $"dotnet fsi \"{f}\"" ]
+        return! runSteps (leased "test_suite_run" ctx.RunCommand) [ for f in fsxFiles -> $"dotnet fsi \"{f}\"" ]
       })
   }
 
@@ -695,7 +639,7 @@ pipeline "bozzetto" {
     // after the trust report, so it packs a trusted build. Nothing is
     // published from this pipeline.
     whenCmdArg "pack"
-    run (leasedCommand "full_build" "dotnet pack Bozzetto -c Release -o nupkg")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet pack src/Bozzetto -c Release -o nupkg")
     run (fun _ -> async { verifyToolInstallable (); return Ok() })
   }
 

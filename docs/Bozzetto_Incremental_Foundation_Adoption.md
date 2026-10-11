@@ -14,7 +14,7 @@ Three components have distinct responsibilities:
 
 This contract follows `AGENTS.md`, especially Architecture, Language and stack, and Validation posture. The owner's wire ruling is stricter than the existing general allowance for unavoidable JSON: direct interchange must be typed binary. See [component contracts](Bozzetto_Fidelity_Component_Contracts.md), [reactive push](reactive-push.md) and [architecture](architecture.md).
 
-The implementation claims below rest on direct local reads of `Bozzetto/ResourceGraph.fs`, `Bozzetto/UiBridge.fs`, and the foundation's `src/Fidelity.FSharp.Incremental/API.fs` and `Core.fs`. Foundation paths refer to the Fidelity.FSharp.Incremental repository. No fresh retrieval snapshot, revision pin, executed test result or installed-daemon identity was obtained for this rewrite. Code inspection establishes implementation shape, not integration acceptance or deployment.
+The implementation claims below rest on direct local reads of `src/Bozzetto/ResourceGraph.fs`, `src/Bozzetto/UiBridge.fs`, and the foundation's `src/Fidelity.FSharp.Incremental/API.fs` and `Core.fs`. Foundation paths refer to the Fidelity.FSharp.Incremental repository. No fresh retrieval snapshot, revision pin, executed test result or installed-daemon identity was obtained for this rewrite. Code inspection establishes implementation shape, not integration acceptance or deployment.
 
 ## Shared machinery, explicit owners
 
@@ -103,7 +103,7 @@ For scoped suspension, `AwaitingResume` holds one logical attempt with frozen or
 
 ## Implemented use: ResourceGraph
 
-`Bozzetto/ResourceGraph.fs` contains two direct-core consumers. They demonstrate bounded synchronous derivation, not the complete asynchronous workspace/worker contract.
+`src/Bozzetto/ResourceGraph.fs` contains two direct-core consumers. They demonstrate bounded synchronous derivation, not the complete asynchronous workspace/worker contract.
 
 - The RAM graph declares separate reads for used and total RAM, establishes one scope and demand, and batches changed inputs with `SetInputs`. Its evaluator reads frozen tokens and computes occupied percentage without I/O. It settles `Finished` and `Drained` synchronously and retains only current input payloads.
 - `AgentPublication` establishes a demanded identity projection for the cohort-owned work state. It swaps the published state on `Offer`, emits a unit change signal and starts a new local epoch every 256 writes.
@@ -114,7 +114,7 @@ The RAM state's acquisition-window bound depends on its caller; this file alone 
 
 ## Implemented use: the bridge fact plane
 
-`Facts.Graph` in `Bozzetto/UiBridge.fs` is a fuller synchronous fact adapter. It declares stable projections once per epoch:
+`Facts.Graph` in `src/Bozzetto/UiBridge.fs` is a fuller synchronous fact adapter. It declares stable projections once per epoch:
 
 | Work | Declared inputs |
 | --- | --- |
@@ -130,7 +130,7 @@ Health, leases and the board retain daemon-lifetime demand. `Register` captures 
 
 After 4096 admitted sets, the graph retires the old epoch, checks `Core.isDrained`, and rebuilds from current inputs in the same critical section. Handover suppresses delivery and preserves work publication stamps. This bounds epoch history for these synchronous projections, not all daemon memory or arbitrary asynchronous workloads.
 
-Remaining seams are explicit. Sink callbacks run under the graph gate; extensions must prevent reentrant mutation and keep callbacks short. In `Bozzetto/UiBridge.fs`, the stopping callback in `UiBridge.create` disposes owner subscriptions and calls `Facts.Graph.Stop()`. Stop seals admission, suppresses delivery, interprets `Action.Retire` and clears page sinks under the gate; Withdraw releases offered results, and late serial admission returns `Refusal.Retired`. Stop is idempotent and `Drained` exposes `Core.isDrained`. Immediate final-epoch drain is justified only by the current synchronous, resource-free projections. A future asynchronous evaluator must join its actual work and resources before reporting drain; this retirement path is not proof of arbitrary external cleanup.
+Remaining seams are explicit. Sink callbacks run under the graph gate; extensions must prevent reentrant mutation and keep callbacks short. In `src/Bozzetto/UiBridge.fs`, the stopping callback in `UiBridge.create` disposes owner subscriptions and calls `Facts.Graph.Stop()`. Stop seals admission, suppresses delivery, interprets `Action.Retire` and clears page sinks under the gate; Withdraw releases offered results, and late serial admission returns `Refusal.Retired`. Stop is idempotent and `Drained` exposes `Core.isDrained`. Immediate final-epoch drain is justified only by the current synchronous, resource-free projections. A future asynchronous evaluator must join its actual work and resources before reporting drain; this retirement path is not proof of arbitrary external cleanup.
 
 ## Ranvier boundary and wire drift
 
@@ -140,7 +140,7 @@ Neither inspected Bozzetto file establishes a Ranvier-backed implementation. The
 
 The required daemon-worker, daemon-browser and agent-owned interchange is typed binary. MCP JSON-RPC is the sole external-standard exception. Fidelity.Data belongs at export edges and the independent, MailboxProcessor-driven diagnostic sink, not as a replacement serializer on direct wires. See [binary formats](binary-format-spec.md), [MCP tools](mcp-tools.md) and [diagnostic sink](Bozzetto_Diagnostic_Sink.md).
 
-Current browser transport is drift: `Bozzetto/UiBridge.fs` stores string frames, sends WebSocket text, and explicitly refuses binary frames while asking for JSON text. Its `/api/resources` response also uses `application/json`. Typed in-process events and foundation adoption do not make that wire binary. Binary replacement remains required, independently of the implemented fact-plane settlement.
+Current browser transport is drift: `src/Bozzetto/UiBridge.fs` stores string frames, sends WebSocket text, and explicitly refuses binary frames while asking for JSON text. Its `/api/resources` response also uses `application/json`. Typed in-process events and foundation adoption do not make that wire binary. Binary replacement remains required, independently of the implemented fact-plane settlement.
 
 ## Capacity, coordination and self-hosting conformance
 

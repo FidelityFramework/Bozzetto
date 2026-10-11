@@ -24,7 +24,7 @@ Use the shared installed daemon, independently of any individual client's lifeti
    curl --fail --max-time 3 http://127.0.0.1:47749/health
    ```
 
-2. If the daemon is absent, use `scripts/start-shared-daemon`, then make the bounded probe. Do not launch it in the foreground, wait for its lifetime or loop on health checks.
+2. If the daemon is absent, start it as [operations.md](operations.md#installed-identity-and-bounded-readiness) shows, then make the bounded probe. Do not launch it in the foreground, wait for its lifetime or loop on health checks.
 3. Confirm a live MCP connection exposes `get_daemon_status`, `composer_list_sessions` and `composer_open_project`. A configured server entry is not evidence of connection or availability.
 4. Inspect the installed daemon and worker identities and their readiness. A checkout change does not replace a loaded compiler distribution. Report exact version, type and protocol errors.
 5. Use `/composer` for the human view and `composer://sessions` for the MCP session directory. Subscribe to supported resources rather than adding status polling.
@@ -46,7 +46,7 @@ Development restarts are authorized by `AGENTS.md`, but check active leases and 
 
 `AGENTS.md` specifies checkout-aware session routing and a `Gone` refusal with a create hint for a worktree without a session. That rule does not revive retained F# session creation. For Clef work, open the explicit `.fidproj` through Composer and retain its returned handles. If a client route still requires a retired session provider, report the refusal as a boundary defect rather than creating a REPL or falling back to another checkout.
 
-For strict agent-work reporting, `Bozzetto/McpCohortIntegration.fs` requires a nonempty bound MCP transport identity and has no name fallback. The cohort owner then requires that member to be present. Changing the report's name or session label cannot transfer a run to another connection.
+For strict agent-work reporting, `src/Bozzetto/McpCohortIntegration.fs` requires a nonempty bound MCP transport identity and has no name fallback. The cohort owner then requires that member to be present. Changing the report's name or session label cannot transfer a run to another connection.
 
 ## The agent Composer loop
 
@@ -71,14 +71,14 @@ No embedded F# session hosting, REPL, FSI warmup or runtime patching belongs in 
 
 The current MCP reference describes one implicit cohort per daemon, with the first joiner becoming conductor. Members join with `join_cohort`, inspect `get_cohort_status` or subscribe to `cohort://status`, and leave with `leave_cohort`. Connection identity, not `agentName`, owns membership.
 
-The implementation owner is `Bozzetto.Core/Features/CohortOwner.fs`:
+The implementation owner is `src/Bozzetto.Core/Features/CohortOwner.fs`:
 
 - Commands are serialized through one mailbox and applied through `Cohort.decide`.
 - Successful cohort transitions append their ledger entry before the reply. The ledger is replayed to recover cohort state.
 - Published frames and state are read without posting a new mailbox command. Events are emitted after publication.
 - Landing effects run outside the mailbox and return typed completion commands to the same owner. An unavailable affected-test set or verifier result becomes inconclusive, not an empty passing result.
 
-The implemented claim vocabulary in `Bozzetto.Core/Cohort.fs` is file or project scope, exclusive only. Project overlap is directory-based: the project file's containing directory defines its scope, including nested paths. Normalize and agree repository-relative paths before claiming work; do not imply symbol-level coordination or filesystem enforcement.
+The implemented claim vocabulary in `src/Bozzetto.Core/Cohort.fs` is file or project scope, exclusive only. Project overlap is directory-based: the project file's containing directory defines its scope, including nested paths. Normalize and agree repository-relative paths before claiming work; do not imply symbol-level coordination or filesystem enforcement.
 
 | Operation | Coordination rule |
 | --- | --- |
@@ -87,13 +87,13 @@ The implemented claim vocabulary in `Bozzetto.Core/Cohort.fs` is file or project
 | `leave_cohort` | Remaining held claims become orphaned. Departure does not silently transfer ownership. |
 | `reassign_claim` | The conductor reassigns an orphaned claim to a present member. Reconcile the new fence before continuing. |
 
-These tool rules are described in [mcp-tools.md](mcp-tools.md); claim state and fence types are in `Bozzetto.Core/Cohort.fs`. Claims coordinate people and agents, not compiler proofs, work admission or physical process lifetime.
+These tool rules are described in [mcp-tools.md](mcp-tools.md); claim state and fence types are in `src/Bozzetto.Core/Cohort.fs`. Claims coordinate people and agents, not compiler proofs, work admission or physical process lifetime.
 
-The landing state machine and effect-dispatch seam exist, but do not advertise an available Composer landing verifier. `Bozzetto/McpCohortIntegration.fs` refuses `set_integration_ref` before changing worktrees, cohort heads or builds because its F# integration provider is retired. Its status text explicitly says Composer integration is not implemented. `CohortOwner.start` also supplies a nonperforming default landing performer. A queue entry is not evidence that a verification journey can complete.
+The landing state machine and effect-dispatch seam exist, but do not advertise an available Composer landing verifier. `src/Bozzetto/McpCohortIntegration.fs` refuses `set_integration_ref` before changing worktrees, cohort heads or builds because its F# integration provider is retired. Its status text explicitly says Composer integration is not implemented. `CohortOwner.start` also supplies a nonperforming default landing performer. A queue entry is not evidence that a verification journey can complete.
 
 ## Agent-work board
 
-The board holds bounded client-reported facts, not transcripts, tool payloads, process supervision or a durable execution journal. Its pure rules live in `Bozzetto.Core/AgentWork.fs`; admission and publication belong to `Bozzetto.Core/Features/CohortOwner.fs`. MCP reporting and reconciliation are in `Bozzetto/McpCohortIntegration.fs`.
+The board holds bounded client-reported facts, not transcripts, tool payloads, process supervision or a durable execution journal. Its pure rules live in `src/Bozzetto.Core/AgentWork.fs`; admission and publication belong to `src/Bozzetto.Core/Features/CohortOwner.fs`. MCP reporting and reconciliation are in `src/Bozzetto/McpCohortIntegration.fs`.
 
 A report identifies a run, client session label, increasing report sequence, name, model, endpoint, project, focus, operation and status, with optional cumulative usage. Status is one of `running`, `completed`, `failed`, `aborted`, `disconnected` or `unknown`. Every status other than `running` is terminal in the current implementation.
 
@@ -116,16 +116,16 @@ Reports and board reads on a bound connection record participant activity in `Mc
 
 ## Leased caller-owned work
 
-Every caller-owned build and suite requires a lease. Composer operations own their internal accounting; do not add a second external grant around them without an owner-defined reason. For Bozzetto implementation work, use the existing helper:
+Every caller-owned build and suite requires a lease. Composer operations own their internal accounting; do not add a second external grant around them without an owner-defined reason. For Bozzetto implementation work, use the lease client:
 
 ```sh
 BOZZETTO_AGENT=implementer BOZZETTO_PROJECT="$PWD" \
-  scripts/work-lease run full_build dotnet build
+  dotnet fsi tools/build/lease.fsx full_build dotnet build
 BOZZETTO_AGENT=implementer BOZZETTO_PROJECT="$PWD" \
-  scripts/work-lease run test_suite_run dotnet <testDll> --summary
+  dotnet fsi tools/build/lease.fsx test_suite_run dotnet <testDll> --summary
 ```
 
-Use a stable, distinct holder per agent/project; start only on grant, honor Wait/refusal, renew owned work, release on every terminal path and explicitly withdraw only when abandoning a queued ask. The detailed pool, wrapper and HTTP lifecycle contract belongs in [operations.md, Leases: admission, heartbeat and queues](operations.md#leases-admission-heartbeat-and-queues), with MCP lifecycle limits in [mcp-tools.md](mcp-tools.md). The current `scripts/work-lease` run case leaves a deferred ask queued on exit 75; the previous `set -e` withdrawal warning is obsolete, not a remaining helper gap.
+Use a stable, distinct holder per agent/project; start only on grant, honor Wait/refusal, renew owned work, release on every terminal path and explicitly withdraw only when abandoning a queued ask. The detailed pool, wrapper and HTTP lifecycle contract belongs in [operations.md, Leases: admission, heartbeat and queues](operations.md#leases-admission-heartbeat-and-queues), with MCP lifecycle limits in [mcp-tools.md](mcp-tools.md). `tools/build/lease.fsx` keeps a deferred ask in line as the same ask and withdraws it after ten minutes.
 
 If memory defers work, investigate available RAM and swap, process RSS with parents, and cgroup usage. Separate daemon and worker usage from leased builds, unrelated work and language servers. Ask before stopping processes you do not own or changing scheduling policy. Granted and queued compiler-related leases belong beside the worker on `/composer`; the Dashboard keeps agents and machine resources, and its CPU figure covers only daemon and worker (`AGENTS.md`).
 
@@ -160,9 +160,9 @@ The inspected source still exposes drift:
 
 | Source evidence | Classification |
 | --- | --- |
-| `scripts/work-lease` constructs and parses JSON HTTP request/reply bodies using `jq`. | Current direct agent/daemon wire drift. Preserve lease semantics while replacing the wire with a typed binary boundary. |
-| `Bozzetto.Core/AgentWork.fs` builds a Fidelity.Data JSON projection explicitly shared by MCP and the bridge. | The shared browser/direct-interchange projection violates the forward contract. Keep MCP adaptation at its external boundary and remove JSON from direct delivery. |
-| `Bozzetto/McpCohortIntegration.fs` returns JSON text for reporting and board reads. | Acceptable only as external MCP adaptation, not a reusable internal protocol authority. |
+| `tools/build/WorkLease.fs`, the lease client of `ci-pipeline.fsx` and `tools/build/lease.fsx`, sends and parses JSON HTTP bodies. | Current direct agent/daemon wire drift. Preserve lease semantics while replacing the wire with a typed binary boundary. |
+| `src/Bozzetto.Core/AgentWork.fs` builds a Fidelity.Data JSON projection explicitly shared by MCP and the bridge. | The shared browser/direct-interchange projection violates the forward contract. Keep MCP adaptation at its external boundary and remove JSON from direct delivery. |
+| `src/Bozzetto/McpCohortIntegration.fs` returns JSON text for reporting and board reads. | Acceptable only as external MCP adaptation, not a reusable internal protocol authority. |
 | `CohortOwner.fs` contains inherited SSE-oriented event comments. | A local typed event exists; the comments do not establish the required binary browser pipeline. SSE is not the current UI contract. |
 
 Changing these serializers would not satisfy the remit. Binary agent transport, atomic reconnect reconciliation, complete foundation lifetime adoption and distributed agent authority require separate implementation and acceptance evidence. Do not describe native hosting, distributed lab-node execution or Composer landing verification as implemented on the strength of these coordination seams.

@@ -62,4 +62,4 @@ coverage-report/
 /bozzetto-roast-4.md
 
 # Scratch copies the hot-reload state tests build per runtime (HotReloadStateHarness).
-Bozzetto.Tests/fixtures/HotReloadStateFixture/.runs/
+src/Bozzetto.Tests/fixtures/HotReloadStateFixture/.runs/
