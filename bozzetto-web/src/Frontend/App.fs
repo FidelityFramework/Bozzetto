@@ -610,7 +610,7 @@ let LeasesPanel (model: ModelView) =
                   td (class' = "font-mono") { l.kind }
                   td (class' = "font-mono break-all max-w-[24rem]", title = l.holder + " · " + l.id) { l.holder }
                   td () {
-                    span (class' = "badge badge-xs badge-info mr-1") { "held" }
+                    span (class' = "badge badge-xs badge-info mr-1") { "granted" }
                     span (class' = "opacity-70", title = "granted " + dateTime l.grantedAt) { "until " + clockTime l.expiresAt }
                   }
                 }
@@ -770,7 +770,6 @@ let App () =
         fallback = (div (class' = "flex flex-col gap-4 p-4") {
           HealthStrip model stores.Uptime
           AgentsPanel model
-          LeasesPanel model
           HostPanel model local stores.Uptime connected dispatch
           details () {
             summary (class' = "cursor-pointer text-xs opacity-60") { "Daemon snapshot" }
@@ -788,6 +787,9 @@ let App () =
           }
           div (class' = "flex flex-col gap-3 min-w-0") {
             WorkerPanel model local connected dispatch
+            // Builds and test suites over Clef/Composer code are Composer work, so
+            // their leases sit beside the worker rather than on the Dashboard.
+            LeasesPanel model
           }
         }
       }

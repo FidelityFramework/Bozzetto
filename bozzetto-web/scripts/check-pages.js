@@ -113,7 +113,7 @@ async function check() {
   await writeFile(join(evidence, 'views.json'), JSON.stringify({dashboard: d, composer: c}, null, 2));
   assert.equal(d.title, 'Dashboard · Bozzetto');
   assert.equal(c.title, 'Composer · Bozzetto');
-  for (const text of ['Whole-machine resources', 'Work leases', 'Observe for 2 minutes', 'Agent work', 'Healthy', 'memory Normal']) assert.ok(d.text.toLowerCase().includes(text.toLowerCase()), text);
+  for (const text of ['Whole-machine resources', 'Observe for 2 minutes', 'Agent work', 'Healthy', 'memory Normal']) assert.ok(d.text.toLowerCase().includes(text.toLowerCase()), text);
   const agentPanel = "[...document.querySelectorAll('h2')].find(h => h.textContent === 'Agent work').closest('.card-body')";
   const historyDetails = `${agentPanel}.querySelector(':scope > details')`;
   const historyNames = () => evaluate(dashboard, `[...${historyDetails}.querySelectorAll(':scope > details > summary')].map(s => s.textContent.split(' · ')[0])`);
@@ -125,8 +125,10 @@ async function check() {
   assert.deepEqual(await historyNames(), ['Mock observer', 'Mock verifier'], 'earlier passes are newest first, not input/id order');
   assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'earlier passes start collapsed');
   assert.equal(await evaluate(dashboard, `${agentPanel}.querySelectorAll('details[open]').length`), 0, 'per-pass details start collapsed too');
-  assert.equal(await evaluate(dashboard, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); return cards.indexOf('Agent work') < cards.indexOf('Work leases') && cards.indexOf('Work leases') < cards.indexOf('Whole-machine resources'); })()`), true, 'work and leases precede resources');
-  assert.equal(await evaluate(dashboard, "[...document.querySelectorAll('h2')].find(h => h.textContent === 'Work leases').getBoundingClientRect().bottom < innerHeight"), true, 'leases are visible without scrolling past history');
+  assert.equal(await evaluate(dashboard, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); return cards.indexOf('Agent work') < cards.indexOf('Whole-machine resources'); })()`), true, 'agent work precedes resources');
+  // Builds and suites are Composer work: their leases sit beside the compiler worker.
+  assert.equal(await evaluate(composer, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); const worker = cards.indexOf('Compiler worker'), leases = cards.indexOf('Work leases'); return worker >= 0 && leases > worker; })()`), true, 'leases follow the compiler worker on Composer');
+  assert.equal(await evaluate(composer, "[...document.querySelectorAll('h2')].find(h => h.textContent === 'Work leases').getBoundingClientRect().bottom < innerHeight"), true, 'leases are visible on Composer without scrolling');
   // Native disclosures retain every supplied detail without dumping them into
   // the default view. Opening them must not fetch or issue bridge commands.
   await evaluate(dashboard, `${historyDetails}.querySelector(':scope > summary').click()`);
@@ -145,9 +147,9 @@ async function check() {
   await evaluate(dashboard, `(() => { const d = ${historyDetails}; d.append(...[...d.querySelectorAll(':scope > details')].reverse()); })()`);
   await assertHistoryOrder();
   await writeFile(join(evidence, 'agent-accordion.json'), JSON.stringify({current:await currentNames(), earlier:await historyNames(), initiallyCollapsed:true, fullDetailsRetained:true, noExpansionTraffic:true, reverseOrderMutationCaught:true}, null, 2));
-  for (const text of ['Open project', 'Compiler worker', 'Run output', 'Composer sessions']) assert.ok(!d.text.toLowerCase().includes(text.toLowerCase()), `dashboard excludes ${text}`);
-  for (const text of ['Composer sessions', 'Compiler worker', 'Run output', 'Open project', 'No open projects.']) assert.ok(c.text.toLowerCase().includes(text.toLowerCase()), text);
-  for (const text of ['Whole-machine resources', 'Observe for 2 minutes', 'Work leases', 'Agent work']) assert.ok(!c.text.toLowerCase().includes(text.toLowerCase()), `composer excludes ${text}`);
+  for (const text of ['Open project', 'Compiler worker', 'Run output', 'Composer sessions', 'Work leases']) assert.ok(!d.text.toLowerCase().includes(text.toLowerCase()), `dashboard excludes ${text}`);
+  for (const text of ['Composer sessions', 'Compiler worker', 'Run output', 'Open project', 'No open projects.', 'Work leases']) assert.ok(c.text.toLowerCase().includes(text.toLowerCase()), text);
+  for (const text of ['Whole-machine resources', 'Observe for 2 minutes', 'Agent work']) assert.ok(!c.text.toLowerCase().includes(text.toLowerCase()), `composer excludes ${text}`);
   for (const [name, page] of [['dashboard', dashboard], ['composer', composer]]) {
     const visible = (await inspect(page)).text;
     for (const editorial of ['Agent-driven view:', 'Live admission, not build/test results.', 'Explicit Linux counter window:', 'No live worker; an agent', 'Runs appear here:', 'CPU is normalized by processor count.']) {

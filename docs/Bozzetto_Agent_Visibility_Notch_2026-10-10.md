@@ -43,6 +43,13 @@ unchanged; resume the recovery checkpoint with normal live reporting.
 
 ## What the owner can now see
 
+> Superseded on 2026-10-11 by the owner's ruling that builds and test suites over
+> Clef/Composer code are Composer work: Work leases now render on the Composer
+> page beside the compiler worker, and the Dashboard keeps agents and machine
+> resources. The page checks (`bozzetto-web/scripts/check-pages.js`) and the
+> agent guidelines state the current placement; the lines below record the
+> October 10 installation as it was.
+
 - **Dashboard alone owns Work leases**, agents and machine resources.
   **Composer owns sessions/projects, compiler worker and run output.**
 - Actual installed Chromium confirmed no Work leases element in Composer's DOM,
@@ -380,7 +387,8 @@ The Dashboard candidate is now **built, browser-tested and welded, not deployed*
   visible, while accounting and activity sit behind Details.
 - Earlier passes start collapsed, each with its own complete expandable details,
   newest first. Progress and completion do not force history open.
-- Work leases immediately follow work, before machine resources.
+- Work leases immediately follow work, before machine resources (moved to the
+  Composer page on 2026-10-11; see the note under "What the owner can now see").
 - No new protocol, polling, backend owner, dependency or Composer redesign.
 
 Existing source owners were located through generation12 retrieval at

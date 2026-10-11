@@ -94,7 +94,9 @@ dotnet fsi ci-pipeline.fsx     # full pipeline; `-- ci`, `-- composer`, `-- pack
 - **Leases.** Every caller-owned build or suite runs under a lease:
   `scripts/work-lease`, or the MCP tools `acquire_full_build_lease`,
   `acquire_test_suite_lease` and `release_work_lease`. Follow wait and refused
-  decisions. Always release.
+  decisions. Always release. Builds and suites over Clef/Composer code are
+  Composer work, so granted and queued leases show on the `/composer` page
+  beside the compiler worker; the Dashboard keeps agents and machine resources.
 - **A lease is a heartbeat, not a deadline.** A granted lease expires after
   its kind's lifetime only if the holder stops renewing (`/api/lease/renew`).
   `work-lease run` renews while its command runs, so a long suite is never
