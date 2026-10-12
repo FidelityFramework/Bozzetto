@@ -29,7 +29,8 @@ async function attach(server) {
         if (ws.readyState === ws.OPEN) ws.send(frame);
       });
       ws.on('message', (data, isBinary) => {
-        if (!isBinary) connection.receive(data.toString('utf8'));
+        if (isBinary) connection.receive(new Uint8Array(data));
+        else ws.close(1003, 'binary frames required');
       });
       ws.on('close', () => connection.close());
     });

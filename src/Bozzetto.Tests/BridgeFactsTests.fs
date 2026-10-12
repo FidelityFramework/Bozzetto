@@ -248,13 +248,14 @@ let factsTests =
     testCase "the operations projection spells operations and refusals as the wire does and carries a run" <| fun () ->
       // Mutation caught: spell the refusal code with the F# case name and the page would show PascalCase codes beside the wire's snake_case.
       let run : ComposerIntegration.ComposerJournal.Transcript =
-        { ExitCode = 3; Generation = 9L; SourceVersion = "src"; StandardOutput = "out"; StandardError = ""; Dropped = false }
+        { ExitCode = 3; Generation = 9L; SourceVersion = "src"; StandardOutput = "out"; StandardError = ""
+          OutputTruncated = false; ErrorTruncated = false; Dropped = false }
       let entries : ComposerIntegration.ComposerJournal.Entry list =
         [ { Sequence = 2L; AtMs = 2L; Caller = "http"; Operation = Composer.Protocol.Operation.Build; Session = "s"; Project = "/p"
             Outcome = ComposerIntegration.ComposerJournal.Outcome.Refused(Composer.Protocol.RefusalCode.InvalidReservation, "superseded"); Run = None }
           { Sequence = 1L; AtMs = 1L; Caller = "browser"; Operation = Composer.Protocol.Operation.Run; Session = "s"; Project = "/p"
             Outcome = ComposerIntegration.ComposerJournal.Outcome.Succeeded; Run = Some run } ]
-      let board = Project.operations 7L { Incarnation = "j"; Sequence = 2L; Entries = entries }
+      let board = Project.operations 7L { Incarnation = "j"; Sequence = 2L; Entries = entries; StorageError = None }
       (board.Revision, board.Incarnation) |> Expect.equal "stamped by the publication; the owner's incarnation carried" (7L, "j")
       board.Entries |> Array.map (fun e -> e.Operation, e.Ok, e.Code, e.Message, e.Run |> Option.map _.ExitCode)
       |> Expect.equal "the wire spellings" [| "build", false, "invalid_reservation", "superseded", None; "run", true, "", "", Some 3 |]

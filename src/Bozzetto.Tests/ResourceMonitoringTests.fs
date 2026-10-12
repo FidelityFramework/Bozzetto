@@ -69,15 +69,22 @@ let tests = testList "Resource monitoring" [
     final.Value |> Expect.equal "unchanged other input remains retained" (Some 20.)
     ResourceGraph.evaluations d |> Expect.equal "only changed sources triggered work" 17
 
-  testCase "resource command bounds and resource JSON encode explicitly" <| fun _ ->
-    UiBridgeCodec.decodeCommand "{\"correlation\":1,\"command\":\"observe_resources\",\"seconds\":120}"
-    |> Expect.equal "bounded request accepted" (Ok { Correlation = 1; Command = ObserveResources 120 })
-    match UiBridgeCodec.decodeCommand "{\"correlation\":1,\"command\":\"observe_resources\",\"seconds\":121}" with
-    | Error r -> r.Message |> Expect.stringContains "specific bounds refusal" "0 to 120"
+  testCase "resource command bounds and binary absence encode explicitly" <| fun _ ->
+    let frame = { CommandFrame.Correlation = 1; Command = ObserveResources 120 }
+    let wire = Bozzetto.Web.Shared.BinaryCodec.encodeCommand frame
+    UiBridgeCodec.decodeCommand wire |> Expect.equal "bounded request accepted" (Ok frame)
+    let invalid = Array.copy wire
+    invalid[invalid.Length - 4] <- 121uy
+    match UiBridgeCodec.decodeCommand invalid with
+    | Error r -> r.Message |> Expect.stringContains "specific bounds refusal" "0 through 120"
     | Ok _ -> failtest "unbounded request accepted"
-    let json = UiBridgeCodec.encodeEvent(Resources(LinuxResources.project None (raw())))
-    json |> Expect.stringContains "missing CPU survives transport" "\"cpuPercent\":null"
-    json |> Expect.stringContains "event identity" "\"event\":\"resources\""
+    let sample = LinuxResources.project None (raw())
+    let encoded = UiBridgeCodec.encodeEvent(Resources sample)
+    match Bozzetto.Web.Shared.BinaryCodec.decodeEvent encoded with
+    | Ok(Resources decoded) ->
+      decoded |> Expect.equal "entire typed resource fact survives" sample
+      decoded.Processes[0].CpuPercent |> Expect.isNone "missing CPU survives transport, never zero"
+    | other -> failtestf "resource event identity lost: %A" other
 
   testCaseAsync "acquisition is cold, shared, and stops after final subscriber leaves" <| async {
     let mutable reads = 0

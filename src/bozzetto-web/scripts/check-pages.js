@@ -8,6 +8,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import WebSocket from 'ws';
+import { encodeCommand, decodeCommand, decodeEvent } from '../output-test/src/Shared/BinaryCodec.js';
+import { Command, CommandFrame } from '../output-test/src/Shared/Protocol.js';
 
 const cache = join(process.env.XDG_CACHE_HOME ?? join(homedir(), '.cache'), 'bozzetto', 'page-checks');
 await mkdir(cache, { recursive: true });
@@ -20,6 +22,7 @@ const pending = new Map();
 const browserErrors = [];
 const pageRequests = [];
 const pageFrames = [];
+const pageReplies = [];
 
 function launch(command, args) {
   const child = spawn(command, args, { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -64,6 +67,7 @@ async function waitFor(session, expression) {
     if (await evaluate(session, expression)) return;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
+  await writeFile(join(evidence, 'wait-timeout.json'), JSON.stringify({expression, text:await evaluate(session, 'document.body.innerText'), buttons:await evaluate(session, '[...document.querySelectorAll("h3")].filter(x=>["one","two","three"].includes(x.textContent)).map(x=>({name:x.textContent,button:x.closest(".card").querySelector("button").outerHTML}))'), sent:pageFrames, errors:browserErrors},null,2));
   throw new Error(`Page did not become ready: ${expression}`);
 }
 async function tab(origin, route, width) {
@@ -92,7 +96,16 @@ async function check() {
     const reply = JSON.parse(data.toString());
     if (reply.method === 'Runtime.exceptionThrown') browserErrors.push(reply.params.exceptionDetails);
     if (reply.method === 'Network.requestWillBeSent' && ['Fetch', 'XHR'].includes(reply.params.type)) pageRequests.push({session: reply.sessionId, type: reply.params.type});
-    if (reply.method === 'Network.webSocketFrameSent') pageFrames.push({session: reply.sessionId});
+    if (reply.method === 'Network.webSocketFrameSent') {
+      const wire = reply.params.response;
+      const decoded = wire.opcode === 2 ? decodeCommand(new Uint8Array(Buffer.from(wire.payloadData, 'base64'))) : undefined;
+      pageFrames.push({session: reply.sessionId, opcode:wire.opcode, correlation:decoded?.tag === 0 ? decoded.fields[0].Correlation : null, command:decoded?.tag === 0 ? decoded.fields[0].Command.tag : null});
+    }
+    if (reply.method === 'Network.webSocketFrameReceived' && reply.params.response.opcode === 2) {
+      const decoded = decodeEvent(new Uint8Array(Buffer.from(reply.params.response.payloadData, 'base64')));
+      if (decoded.tag === 0 && decoded.fields[0].tag === 2)
+        pageReplies.push({session:reply.sessionId, correlation:decoded.fields[0].fields[0].Correlation});
+    }
     const waiter = pending.get(reply.id);
     if (waiter) {
       pending.delete(reply.id);
@@ -133,7 +146,7 @@ async function check() {
   assert.equal(await evaluate(dashboard, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); return cards.indexOf('Agent work') < cards.indexOf('Whole-machine resources'); })()`), true, 'agent work precedes resources');
   // Builds and suites appear on Work: their leases sit beside the compiler worker.
   assert.equal(await evaluate(work, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); const worker = cards.indexOf('Compiler worker'), leases = cards.indexOf('Work leases'); return worker >= 0 && leases > worker; })()`), true, 'leases follow the compiler worker on Work');
-  assert.equal(await evaluate(work, "[...document.querySelectorAll('h2')].find(h => h.textContent === 'Work leases').getBoundingClientRect().bottom < innerHeight"), true, 'leases are visible on Work without scrolling');
+  assert.equal(await evaluate(work, "[...document.querySelectorAll('p')].find(p => p.textContent.includes('fixture ONE build')).getBoundingClientRect().bottom < innerHeight"), true, 'consolidated remote active lease is visible on Work without scrolling');
   // Native disclosures retain every supplied detail without dumping them into
   // the default view. Opening them must not fetch or issue bridge commands.
   await evaluate(dashboard, `${historyDetails}.querySelector(':scope > summary').click()`);
@@ -220,15 +233,17 @@ async function check() {
     await new Promise((resolve, reject) => { agent.once('open', resolve); agent.once('error', reject); });
     const openProject = (name, correlation) => new Promise((resolve, reject) => {
       const receive = data => {
-        const frame = JSON.parse(data);
-        if (frame.correlation !== correlation) return;
-        if (frame.event === 'accepted' || frame.event === 'refused') {
-          agent.off('message', receive);
-          frame.event === 'accepted' ? resolve() : reject(new Error(frame.message));
-        }
+        const decoded = decodeEvent(new Uint8Array(data));
+        if (decoded.tag !== 0) return reject(new Error(decoded.fields[0]));
+        const event = decoded.fields[0];
+        if (event.tag !== 2 && event.tag !== 3) return;
+        const frame = event.fields[0];
+        if (frame.Correlation !== correlation) return;
+        agent.off('message', receive);
+        event.tag === 2 ? resolve() : reject(new Error(frame.Message));
       };
       agent.on('message', receive);
-      agent.send(JSON.stringify({correlation, command:'open_project', project:`/mock/${name}.fidproj`}));
+      agent.send(encodeCommand(new CommandFrame(correlation, new Command(3, [`/mock/${name}.fidproj`]))));
     });
     await openProject('SideBySide', 101);
     await waitFor(dashboard, "document.body.innerText.includes('mock read progressed')");
@@ -262,6 +277,66 @@ async function check() {
   assert.deepEqual({fetches: pageRequests.length, commands: pageFrames.length}, trafficBeforePush, 'owner push and expanding details require no frontend fetch or command');
   await evaluate(dashboard, `${snapshotDetails}.querySelector(':scope > summary').click()`);
   await writeFile(join(evidence, 'collapsed-store.json'), JSON.stringify({initial:initialCollapsed, pushedWhileCollapsed, headingsWithWorker:dashboardWithWorker.headings, visibleOnOpen:true, fetchedOnOpen:false, commandOnOpen:false}, null, 2));
+  // Controller Work renders authoritative node-scoped observations; agent labels
+  // never manufacture leases or make unavailable observations look idle.
+  const nodeCard = name => `[...document.querySelectorAll('h3')].find(h => h.textContent === '${name}').closest('.card')`;
+  for (const name of ['one', 'two', 'three']) {
+    assert.ok(await evaluate(work, `${nodeCard(name)}.innerText.includes('remote · read-only')`), name + ': remote scope is explicit');
+    assert.deepEqual(await evaluate(work, `[...${nodeCard(name)}.querySelectorAll('button')].map(b=>b.textContent)`), name === 'one' ? ['Load stdout','Load stderr','Observe resources'] : ['Observe resources'], name + ': only remote observation/readback actions');
+  }
+  assert.ok(await evaluate(work, `${nodeCard('one')}.innerText.includes('fixture ONE build')`), 'remote active lease is shown');
+  assert.ok(await evaluate(work, `${nodeCard('two')}.innerText.includes('0 active leases')`), 'observed zero is shown');
+  assert.ok(await evaluate(work, `${nodeCard('three')}.innerText.includes('Work state unavailable; no idle state inferred.')`), 'unobserved state is not zero');
+  const resourceMetric = "[...document.querySelectorAll('div')].find(e=>e.className === 'text-xs opacity-70' && e.textContent === 'Host CPU busy')?.nextElementSibling?.textContent";
+  const resourceStatus = "[...document.querySelectorAll('h2')].find(e=>e.textContent === 'Whole-machine resources').parentElement.querySelector('.badge').textContent";
+  async function resourceAction(label, expression) {
+    const before = pageFrames.length;
+    await evaluate(work, expression);
+    const end = Date.now() + 3000;
+    while (Date.now() < end) {
+      const frame = pageFrames.slice(before).filter(f=>f.session === work).at(-1);
+      if (frame && pageReplies.some(r=>r.session === work && r.correlation === frame.correlation)) {
+        assert.equal(frame.opcode, 2, 'browser commands must be binary WebSocket frames');
+        // The mock acknowledgement follows every adversarial frame. Let the
+        // browser finish that event batch before examining the rendered fact.
+        await call('Runtime.evaluate', {expression:'new Promise(requestAnimationFrame)', awaitPromise:true}, work);
+        return;
+      }
+      await new Promise(resolve=>setTimeout(resolve, 20));
+    }
+    throw new Error('Binary resource observation acknowledgement missing: ' + label);
+  }
+  const observe = name => resourceAction(name, `[...${nodeCard(name)}.querySelectorAll('button')].find(b=>b.textContent === 'Observe resources').click()`);
+  await observe('one');
+  assert.equal(await evaluate(work, resourceMetric), '17.0%', 'foreign incarnation/node and older sequence cannot overwrite selected node');
+  await observe('two');
+  assert.equal(await evaluate(work, resourceMetric), '23.0%', 'second node has its own resource fact');
+  assert.ok((await inspect(work)).text.includes('Resources · two'), 'focus switches to the requested node');
+  await observe('one');
+  assert.equal(await evaluate(work, resourceMetric), '17.0%', 'A→B→A rejects the old A observation correlation with the same source and newer sequence');
+  assert.equal(await evaluate(work, resourceStatus), 'observing', 'an accepted observation start is not a stop acknowledgement');
+  await resourceAction('stop', "[...document.querySelectorAll('button')].find(b=>b.textContent === 'Stop').click()");
+  assert.equal(await evaluate(work, resourceStatus), 'stopped', 'only the exact typed stop acknowledgement changes view status');
+  assert.equal(await evaluate(work, resourceMetric), '17.0%', 'stop acknowledgement preserves the last resource values without requiring a new sample');
+  const readback = "document.querySelector('.transcript-readback')";
+  const readsBefore = pageFrames.filter(f=>f.session === work && f.command === 10).length;
+  await evaluate(work, `${nodeCard('one')}.querySelector('details').open = true; [...${nodeCard('one')}.querySelectorAll('button')].find(b=>b.textContent === 'Load stdout').click()`);
+  await waitFor(work, `${readback}?.innerText.includes('more available')`);
+  assert.ok((await evaluate(work, `${readback}.innerText`)).includes('32768 stored bytes loaded'), 'first page byte cursor is exact');
+  assert.equal(await evaluate(work, `${readback}.querySelector('pre') === null`), true, 'incomplete UTF8 is not independently decoded or displayed');
+  assert.equal(pageFrames.filter(f=>f.session === work && f.command === 10).length, readsBefore + 1, 'next page is not fetched without selection');
+  await evaluate(work, `${readback}.querySelector('button').click()`);
+  await waitFor(work, `${readback}.querySelector('pre')?.textContent.endsWith('🎼 stored tail')`);
+  const stored = await evaluate(work, `${readback}.querySelector('pre').textContent`);
+  assert.equal(stored, 'x'.repeat(32767) + '🎼 stored tail', 'split UTF8 pages reconstruct the exact stored stream');
+  assert.ok((await evaluate(work, `${readback}.innerText`)).includes('Truncated at the source'), 'stored source truncation is distinct from live summary omission');
+  assert.ok(!(await evaluate(work, `${readback}.innerText`)).includes('must be ignored'), 'foreign daemon incarnation cannot replace selected readback');
+  await evaluate(work, `[...${nodeCard('one')}.querySelectorAll('button')].find(b=>b.textContent === 'Load stderr').click()`);
+  await waitFor(work, `${readback}.innerText.includes('storage_failure: Synthetic transcript store refusal.')`);
+  assert.equal(await evaluate(work, `${readback}.querySelector('pre') === null`), true, 'failed new selection never shows the previous stream as its transcript');
+  const { data: nodeImage } = await call('Page.captureScreenshot', { format: 'png' }, work);
+  await writeFile(join(evidence, 'work-nodes.png'), Buffer.from(nodeImage, 'base64'));
+  await writeFile(join(evidence, 'node-controls.json'), JSON.stringify({remoteReadOnly:true, knownZeroSeparateFromUnavailable:true, activeLeaseShown:true, focusSwitched:true, foreignNodeIncarnationAndOlderSequenceRejected:true, previousSameSourceCorrelationRejected:true, stoppedObservationAccepted:true, browserCommandsBinary:true, selectedTranscriptReadback:true, exactSplitUtf8Bytes:true, explicitSourceTruncation:true, foreignTranscriptIncarnationRejected:true, storageRefusalVisible:true},null,2));
   // Reload and trailing-slash bookmarks select the right view as well.
   await call('Page.navigate', { url: origin + '/work/' }, work);
   await waitFor(work, "document.title === 'Work · Bozzetto' && document.body.innerText.includes('SideBySide.fidproj')");

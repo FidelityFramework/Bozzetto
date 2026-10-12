@@ -7,13 +7,31 @@ open Expecto
 open Expecto.Flip
 open Bozzetto.Composer.Protocol
 open Bozzetto.ComposerIntegration
+open System
+open System.IO
+open System.Text
+open System.Threading
+open System.Threading.Tasks
 
 let private entry (caller: string) (operation: Operation) (run: ComposerJournal.Transcript option) : ComposerJournal.Entry =
   { Sequence = 0L; AtMs = 1L; Caller = caller; Operation = operation; Session = "s"; Project = "/p/P.fidproj"
     Outcome = ComposerJournal.Outcome.Succeeded; Run = run }
 
 let private transcriptOf (chars: int) : ComposerJournal.Transcript =
-  { ExitCode = 0; Generation = 1L; SourceVersion = "v"; StandardOutput = System.String('o', chars); StandardError = ""; Dropped = false }
+  { ExitCode = 0; Generation = 1L; SourceVersion = "v"; StandardOutput = System.String('o', chars); StandardError = ""
+    OutputTruncated = false; ErrorTruncated = false; Dropped = false }
+
+let private ok = function Ok value -> value | Error reason -> failtestf "Expected success: %A" reason
+
+let private withStore action =
+  let directory = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../../nupkg/journal-controls", Guid.NewGuid().ToString("N")))
+  Directory.CreateDirectory directory |> ignore
+  let path = Path.Combine(directory, "operations.db")
+  try action path (ComposerJournal.openStore path |> ok)
+  finally Directory.Delete(directory, true)
+
+let private request (journal: ComposerJournal.Journal) sequence : ComposerJournal.TranscriptRequest =
+  { Incarnation = journal.Incarnation; Sequence = sequence; Stream = ComposerJournal.TranscriptStream.Stdout; Offset = 0L; MaxBytes = 32768 }
 
 [<Tests>]
 let composerJournalTests =
@@ -74,7 +92,8 @@ let composerJournalTests =
       let e : ComposerJournal.Entry =
         { Sequence = 0L; AtMs = 1L; Caller = huge; Operation = Operation.Build; Session = huge; Project = huge
           Outcome = ComposerJournal.Outcome.Refused(RefusalCode.InvalidReservation, huge)
-          Run = Some { ExitCode = 0; Generation = 1L; SourceVersion = huge; StandardOutput = wide; StandardError = wide; Dropped = false } }
+          Run = Some { ExitCode = 0; Generation = 1L; SourceVersion = huge; StandardOutput = wide; StandardError = wide
+                       OutputTruncated = false; ErrorTruncated = false; Dropped = false } }
       let kept = (ComposerJournal.append e (ComposerJournal.empty "j")).Entries.Head
       (kept.Caller.Length, kept.Session.Length, kept.Project.Length) |> Expect.equal "labels and texts clipped" (ComposerJournal.labelLimit, ComposerJournal.labelLimit, ComposerJournal.textLimit)
       (match kept.Outcome with ComposerJournal.Outcome.Refused(_, m) -> m.Length | _ -> -1) |> Expect.equal "the refusal message clipped" ComposerJournal.textLimit
@@ -100,4 +119,87 @@ let composerJournalTests =
       (settle (Result.Error(System.InvalidOperationException "boom" :> exn))).Outcome |> Expect.equal "an escaped exception is Failed" (ComposerJournal.Outcome.Failed "boom")
       let ran = settle (Result.Ok(Result.Ok(Ran { Generation = 2L; SourceVersion = "v"; ExitCode = 1; StandardOutput = "o"; StandardError = "e" })))
       (ran.Run |> Option.map (fun t -> t.ExitCode, t.StandardOutput)) |> Expect.equal "a run carries its transcript" (Some(1, "o"))
+
+    testCase "SQLite restart retains journal identity sequence immutable entries and byte cursors" <| fun () ->
+      withStore (fun path store ->
+        let text = "xλ🙂z"
+        let transcript = { transcriptOf 0 with StandardOutput = text }
+        let first = store.Append(entry "one" Operation.Run (Some transcript)) |> ok
+        let page = store.ReadTranscript { request first 1L with MaxBytes = 2 } |> ok
+        (page.Offset, page.NextOffset, page.TotalBytes, page.Truncated) |> Expect.equal "cursor describes exact UTF8 bytes" (0L, Some 2L, int64 (Encoding.UTF8.GetByteCount text), false)
+        let rest = store.ReadTranscript { request first 1L with Offset = page.NextOffset.Value } |> ok
+        Encoding.UTF8.GetString(Array.append page.Bytes rest.Bytes) |> Expect.equal "split codepoints are reconstructed from typed bytes" text
+        let reopened = ComposerJournal.openStore path |> ok
+        reopened.Read() |> ok |> Expect.equal "restart keeps the same incarnation and contents" first
+        let next = reopened.Append(entry "two" Operation.Build None) |> ok
+        (next.Incarnation, next.Sequence) |> Expect.equal "persistent owner allocates the next identity" (first.Incarnation, 2L)
+        reopened.ReadTranscript { request first 1L with MaxBytes = 2 } |> Expect.equal "later entries never rewrite earlier transcript bytes" (Ok page))
+
+    testCase "SQLite readback refuses foreign missing absent and invalid bounded requests specifically" <| fun () ->
+      withStore (fun _ store ->
+        let first = store.Append(entry "run" Operation.Run (Some(transcriptOf 3))) |> ok
+        let query = request first 1L
+        store.ReadTranscript { query with Incarnation = "foreign" } |> Expect.equal "no other journal alias" (Error ComposerJournal.TranscriptRefusal.ForeignIncarnation)
+        store.ReadTranscript { query with Sequence = 999L } |> Expect.equal "missing is not empty output" (Error ComposerJournal.TranscriptRefusal.MissingEntry)
+        let _ = store.Append(entry "build" Operation.Build None) |> ok
+        store.ReadTranscript { query with Sequence = 2L } |> Expect.equal "an operation without a run has no transcript" (Error ComposerJournal.TranscriptRefusal.NoTranscript)
+        for offset in [ -1L; 4L ] do
+          store.ReadTranscript { query with Offset = offset } |> Expect.equal "out-of-range cursor refused" (Error ComposerJournal.TranscriptRefusal.InvalidCursor)
+        for size in [ 0; Bozzetto.Web.Shared.Protocol.MaxTranscriptPageBytes + 1 ] do
+          store.ReadTranscript { query with MaxBytes = size } |> Expect.equal "invalid page budget refused" (Error ComposerJournal.TranscriptRefusal.InvalidLimit)
+        let eof = store.ReadTranscript { query with Offset = 3L; MaxBytes = 1 } |> ok
+        (eof.Bytes, eof.NextOffset) |> Expect.equal "exact end is a valid empty final page" ([||], None)
+        let empty = store.ReadTranscript { query with Stream = ComposerJournal.TranscriptStream.Stderr } |> ok
+        empty.TotalBytes |> Expect.equal "present empty stderr differs from no transcript" 0L)
+
+    testCase "SQLite retains source-cut output after live aggregate eviction and prunes oldest whole entries" <| fun () ->
+      withStore (fun path store ->
+        let run = { transcriptOf (ComposerJournal.streamLimit + 1) with StandardError = "small" }
+        let first = store.Append(entry "first" Operation.Run (Some run)) |> ok
+        for i in 2 .. ComposerJournal.aggregateLimit / ComposerJournal.streamLimit + 2 do
+          store.Append(entry (string i) Operation.Run (Some(transcriptOf ComposerJournal.streamLimit))) |> ok |> ignore
+        let current = store.Read() |> ok
+        current.Entries |> List.find (fun e -> e.Sequence = 1L) |> _.Run |> Option.get |> _.Dropped
+        |> Expect.isTrue "the live aggregate budget still evicts its oldest transcript"
+        let stored = store.ReadTranscript(request first 1L) |> ok
+        stored.Truncated |> Expect.isTrue "per-stream source cut is explicit"
+        Encoding.UTF8.GetString stored.Bytes |> Expect.equal "live eviction never rewrites the persisted bounded source" (ComposerJournal.cut run.StandardOutput)
+        let error = store.ReadTranscript { request first 1L with Stream = ComposerJournal.TranscriptStream.Stderr } |> ok
+        error.Truncated |> Expect.isFalse "truncation belongs to the selected stream"
+        for i in current.Sequence + 1L .. int64 ComposerJournal.maxEntries + 1L do
+          store.Append(entry (string i) Operation.Build None) |> ok |> ignore
+        let reopened = ComposerJournal.openStore path |> ok
+        let retained = reopened.Read() |> ok
+        (retained.Sequence, retained.Entries.Length, retained.Entries |> List.last |> _.Sequence)
+        |> Expect.equal "restart restores newest200 only" (201L, ComposerJournal.maxEntries, 2L)
+        reopened.ReadTranscript(request first 1L) |> Expect.equal "pruned output is explicitly missing" (Error ComposerJournal.TranscriptRefusal.MissingEntry))
+
+    testCase "SQLite clearing never recycles a retained entry identity" <| fun () ->
+      withStore (fun _ store ->
+        let first = store.Append(entry "first" Operation.Run (Some(transcriptOf 3))) |> ok
+        store.Clear() |> ok |> Expect.equal "one settled entry cleared" 1L
+        (store.Usage() |> ok).Rows |> Expect.equal "usage sees the same store" 0L
+        let second = store.Append(entry "second" Operation.Run (Some(transcriptOf 4))) |> ok
+        (second.Incarnation, second.Sequence) |> Expect.equal "clear preserves identity high-water" (first.Incarnation, 2L)
+        store.ReadTranscript(request first 1L) |> Expect.equal "old identity cannot read the replacement" (Error ComposerJournal.TranscriptRefusal.MissingEntry))
+
+    testCase "storage failure remains visible without changing compiler outcomes or retrying durable publication" <| fun () ->
+      withStore (fun _ actual ->
+        let seed = actual.Append(entry "stored" Operation.Build None) |> ok
+        let mutable attempts = 0
+        let broken = { actual with Append = fun _ -> attempts <- attempts + 1; Error "disk refused" }
+        let supervisor = ComposerSupervisor((fun () -> Task.FromException<IComposerWorker>(InvalidOperationException "unused")), false,
+          (fun () -> Task.CompletedTask), journalStore = Ok broken)
+        let target = { WorkerAddress.Host = ""; Epoch = ""; Provider = Bozzetto.Providers.ProviderIdentity.ClefComposer }
+        for _ in 1 .. 2 do
+          let result = supervisor.ExecuteAsync(Open(target, "/project.fidproj"), "test", CancellationToken.None).GetAwaiter().GetResult()
+          match result.Reply.Outcome with
+          | Error refusal -> refusal.Code |> Expect.equal "the actual compiler refusal is unchanged" RefusalCode.ProviderUnavailable
+          | _ -> failtest "disabled compiler must remain refused"
+        attempts |> Expect.equal "failed storage is latched until restart" 1
+        let observed = supervisor.Journal
+        (observed.StorageError, observed.Sequence, observed.Entries.Length) |> Expect.equal "newest settled operations remain visible as non-durable" (Some "disk refused", seed.Sequence + 2L, 3)
+        supervisor.ReadTranscript(request seed 1L) |> Expect.equal "readback cannot imply durable success after the failure" (Error(ComposerJournal.TranscriptRefusal.StorageFailure "disk refused"))
+        (actual.Read() |> ok).Sequence |> Expect.equal "failed appends never changed durable authority" seed.Sequence
+        supervisor.StopAsync().GetAwaiter().GetResult())
   ]

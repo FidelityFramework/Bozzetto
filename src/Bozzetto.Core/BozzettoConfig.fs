@@ -154,3 +154,13 @@ let OtelConfigured : bool =
 /// Most code should use the resolved port from Program.parseMcpPort, not this value directly.
 let McpPortFromEnv : int =
   envInt "BOZZETTO_MCP_PORT" DefaultMcpPort
+
+/// Stable configured node name. A process incarnation is issued separately by
+/// the observation owner; this label alone conveys no remote authority.
+let WorkNodeId : string =
+  envString "BOZZETTO_NODE_ID" Environment.MachineName
+
+/// Optional existing Pi lab configuration. Only worker ids, base URLs and
+/// token-file references are consumed; no second credential registry is kept.
+let WorkPeersFile : string =
+  envString "BOZZETTO_WORK_PEERS_FILE" ""

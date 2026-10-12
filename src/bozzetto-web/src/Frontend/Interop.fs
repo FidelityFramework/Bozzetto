@@ -5,7 +5,7 @@
 /// WrenHello posts to a WebKit script-message handler and installs
 /// window.wrenDispatch. Bozzetto runs in an ordinary browser, so its bridge
 /// is the WREN roadmap transport already: one WebSocket on the page's own
-/// origin (text frames today, BAREWire binary frames later).
+/// origin (typed binary frames).
 module Bozzetto.Web.Frontend.Interop
 
 open Fable.Core
@@ -18,22 +18,22 @@ type Socket = interface end
 [<Emit("(location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ui/bridge'")>]
 let bridgeUrl () : string = jsNative
 
-[<Emit("new WebSocket($0)")>]
+[<Emit("(function(u){const s=new WebSocket(u);s.binaryType='arraybuffer';return s})($0)")>]
 let openSocket (url: string) : Socket = jsNative
 
 [<Emit("$0.onopen = (() => $1())")>]
 let onOpen (socket: Socket) (handler: unit -> unit) : unit = jsNative
 
-/// backend -> UI: every text frame is handed to the dispatch handler.
-[<Emit("$0.onmessage = (e => { if (typeof e.data === 'string') $1(e.data) })")>]
-let onMessage (socket: Socket) (handler: string -> unit) : unit = jsNative
+/// Binary-only: an unexpected text frame closes the incompatible connection.
+[<Emit("$0.onmessage = (e => { if (e.data instanceof ArrayBuffer) $1(new Uint8Array(e.data)); else $0.close(1003, 'binary frames required') })")>]
+let onMessage (socket: Socket) (handler: byte array -> unit) : unit = jsNative
 
 [<Emit("$0.onclose = (() => $1())")>]
 let onClose (socket: Socket) (handler: unit -> unit) : unit = jsNative
 
-/// UI -> backend: send one text frame; false unless the socket is open.
-[<Emit("($0.readyState === 1 ? ($0.send($1), true) : false)")>]
-let trySend (socket: Socket) (payload: string) : bool = jsNative
+/// UI -> backend: send one binary frame; false unless the socket is open.
+[<Emit("($0.readyState === 1 ? ($0.send(new Uint8Array($1)), true) : false)")>]
+let trySend (socket: Socket) (payload: byte array) : bool = jsNative
 
 /// One deferred call. Its only use is the bridge's reconnect backoff after a
 /// socket drop, which waits to retry the connection and polls nothing.
@@ -64,6 +64,10 @@ let followColorScheme () : unit = jsNative
 /// Run arguments are typed as a JSON array of strings; null unless valid.
 [<Emit("(function(t){try{const v=JSON.parse(t);return Array.isArray(v)&&v.every(x=>typeof x==='string')?v:null}catch(e){return null}})($0)")>]
 let parseArguments (text: string) : string array option = jsNative
+
+/// Decode only an assembled, complete bounded byte stream; malformed UTF-8 is loud.
+[<Emit("(function(b){try{return new TextDecoder('utf-8',{fatal:true}).decode(new Uint8Array(b))}catch(e){return undefined}})($0)")>]
+let transcriptText (bytes: byte array) : string option = jsNative
 
 [<Emit("$0.target.value")>]
 let inputValue (event: obj) : string = jsNative

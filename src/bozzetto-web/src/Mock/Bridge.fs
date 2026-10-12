@@ -40,11 +40,14 @@ let private random () : float = jsNative
 [<Emit("Math.floor(Math.random() * 0x100000000).toString(16).padStart(8, '0')")>]
 let private token () : string = jsNative
 
+[<Emit("new TextEncoder().encode($0)")>]
+let private transcriptBytes (text: string) : byte array = jsNative
+
 type private MockSession = { mutable Status: SessionStatus; mutable Reservation: string option }
 
 let private daemonVersion = "0.6.834-mock"
 let private startedAt = nowMs ()
-let private clients = Dictionary<int, string -> unit>()
+let private clients = Dictionary<int, byte array -> unit>()
 let private sessions = ResizeArray<MockSession>()
 let mutable private nextClient = 0
 let mutable private nextSession = 0
@@ -162,9 +165,40 @@ let private leases () =
     Queued = queued |> Seq.map (fun (wait, _, _) -> wait) |> Seq.toArray
   }
 
+let mutable private workRevision = 0L
+let private workNodes () =
+  workRevision <- workRevision + 1L
+  let snapshot : WorkSnapshot = {
+    TranscriptsOmitted = true
+    Sequence = workRevision; SampledAtMs = int64 (nowMs ())
+    Snapshot = { Revision = revision; Worker = worker; Sessions = sessions |> Seq.map _.Status |> Seq.toArray }
+    Leases = { Revision = leaseRevision; Active = active.ToArray(); Queued = queued |> Seq.map (fun (wait, _, _) -> wait) |> Seq.toArray }
+    Operations = { Revision = 0L; Incarnation = "mock-journal"; StorageError = None; Entries = [||] }
+  }
+  let remote = { snapshot with Snapshot = { Revision = 0L; Worker = Idle; Sessions = [||] }; Leases = { Revision = 0L; Active = [||]; Queued = [||] } }
+  let run = {
+    OperationEntry.Sequence = 7L; AtMs = int64 startedAt; CallerLabel = "fixture"; Operation = "run"; Session = "fixture-run"
+    Project = "/mock/Remote.fidproj"; Ok = true; Code = ""; Message = ""
+    Run = Some { ExitCode = 0; Generation = 2L; SourceVersion = "fixture-source"; StandardOutput = ""; StandardError = ""; Dropped = false }
+  }
+  let busy = { remote with
+                Operations = { remote.Operations with Entries = [| run |] }
+                Leases = { remote.Leases with Active = [| { Id = "fixture-lease"; Kind = "full_build"; Holder = "fixture ONE build"; GrantedAtMs = int64 startedAt; ExpiresAtMs = int64 startedAt + 120000L } |] } }
+  WorkNodes { Revision = workRevision; Nodes = [|
+    { Source = { Node = "controller"; Incarnation = "mock-controller" }; Local = true; Status = "available"; Note = "Synthetic controller fixture"; Value = Some snapshot }
+    { Source = { Node = "one"; Incarnation = "mock-one" }; Local = false; Status = "available"; Note = "Synthetic remote build fixture"; Value = Some busy }
+    { Source = { Node = "two"; Incarnation = "mock-two" }; Local = false; Status = "available"; Note = "Synthetic observed idle fixture"; Value = Some remote }
+    { Source = { Node = "three"; Incarnation = "mock-three" }; Local = false; Status = "unavailable"; Note = "Synthetic disconnected fixture"; Value = None }
+  |] }
+
 let private broadcast (event: Event) =
   let frame = Codec.encodeEvent event
   for send in clients.Values |> Seq.toArray do send frame
+  match event with
+  | Snapshot _ | Leases _ ->
+    let nodes = Codec.encodeEvent (workNodes ())
+    for send in clients.Values |> Seq.toArray do send nodes
+  | _ -> ()
 
 /// The mock's one clock, as the daemon's: a clock-owned push, not a poll. Each
 /// tick pushes the uptime it measures and reads nothing else. It runs only
@@ -226,7 +260,7 @@ let private release (id: string) =
       start granted
     | None -> broadcast (leases ())
 
-let private reply (send: string -> unit) (event: Event) = send (Codec.encodeEvent event)
+let private reply (send: byte array -> unit) (event: Event) = send (Codec.encodeEvent event)
 
 let private refuse send correlation target code message =
   reply send (Refused { CommandRefusal.Correlation = correlation; Target = target; Code = code; Message = message })
@@ -269,11 +303,51 @@ let private artifactFor (session: MockSession) =
          { RegionRow.Identity = "callable:Demo:first"; Witness = "retained"; Visits = 0; Object = "reused" }
          { RegionRow.Identity = "callable:Demo:second"; Witness = (if secondChanged then "changed" else "retained"); Visits = (if secondChanged then 9 else 0); Object = (if secondChanged then "compiled" else "reused") } |] }
 
-let private handle (send: string -> unit) (frame: CommandFrame) =
+let private resourceCorrelations = Dictionary<string, int>()
+
+let private handle (send: byte array -> unit) (frame: CommandFrame) =
   let correlation = frame.Correlation
   match frame.Command with
   | ObserveResources _ ->
     refuse send correlation noTarget "unsupported" "Host resource acquisition is available only on the Linux daemon, not the mock."
+  | ReadNodeTranscript request ->
+    let outcome =
+      if request.Journal <> "mock-journal" || request.Sequence <> 7L then TranscriptRefused("missing_entry", "The selected stored entry is unavailable.")
+      elif request.Stream = Stderr then TranscriptRefused("storage_failure", "Synthetic transcript store refusal.")
+      else
+        // The first page splits a four-byte symbol; decoding waits for exact byte assembly.
+        let bytes = transcriptBytes (String.replicate 32767 "x" + "🎼 stored tail")
+        let offset = int request.Offset
+        let count = min request.MaxBytes (bytes.Length - offset)
+        if offset < 0 || offset > bytes.Length then TranscriptRefused("invalid_cursor", "Outside stored stream.")
+        else TranscriptPage {
+          Journal = request.Journal; Sequence = request.Sequence; Stream = request.Stream; Offset = request.Offset
+          NextOffset = (if offset + count < bytes.Length then Some(int64 (offset + count)) else None)
+          TotalBytes = int64 bytes.Length; Bytes = bytes[offset .. offset + count - 1]; Truncated = true }
+    reply send (NodeTranscript { Source = { request.Source with Incarnation = "retired-source" }; Correlation = correlation; Outcome = TranscriptRefused("stale_source", "must be ignored") })
+    reply send (NodeTranscript { Source = request.Source; Correlation = correlation; Outcome = outcome })
+  | ObserveNodeResources request when request.Seconds = 0 ->
+    // A stopped demand acknowledges physical observation cleanup; it does not
+    // manufacture another shared node sample or change its sample timestamp.
+    accept send correlation noTarget SnapshotSent
+  | ObserveNodeResources request ->
+    let resource scope node incarnation sequence value = NodeResources {
+      Source = { Node = node; Incarnation = incarnation }
+      Correlation = scope
+      Value = { Sequence = sequence; Status = "observing"; SampledAtMs = int64 (nowMs ())
+                IntervalMs = 2000.; SampleCostMs = 1.; Metrics = [| { Name = "Host CPU busy"; Value = Some value; Unit = "percent" } |]
+                Processes = [||]; ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = "Synthetic resource fixture" }
+    }
+    reply send (resource correlation request.Node ("mock-" + request.Node) 10L (if request.Node = "one" then 17. else 23.))
+    // Deliberately adversarial fixture frames prove the UI's node/incarnation/sequence boundary.
+    reply send (resource correlation request.Node ("mock-" + request.Node) 9L 91.)
+    reply send (resource correlation request.Node "retired-incarnation" 999L 92.)
+    reply send (resource correlation "foreign-node" "mock-foreign-node" 999L 93.)
+    match resourceCorrelations.TryGetValue request.Node with
+    | true, previous -> reply send (resource previous request.Node ("mock-" + request.Node) 999L 94.)
+    | _ -> ()
+    resourceCorrelations[request.Node] <- correlation
+    accept send correlation noTarget SnapshotSent
   | RequestSnapshot ->
     reply send (snapshot ())
     reply send (health ())
@@ -391,6 +465,7 @@ let private operations () =
   operationsRevision <- operationsRevision + 1L
   let at = int64 (nowMs ())
   Operations {
+    StorageError = None
     OperationsBoard.Revision = operationsRevision
     Incarnation = "mock-journal"
     Entries = [|
@@ -402,7 +477,7 @@ let private operations () =
       { OperationEntry.Sequence = 1L; AtMs = at - 120_000L; CallerLabel = "browser"; Operation = "open"; Session = "s-1"; Project = "/home/mock/Hello/Hello.fidproj"
         Ok = true; Code = ""; Message = ""; Run = None } |] }
 
-let connect (send: string -> unit) : obj =
+let connect (send: byte array -> unit) : obj =
   nextClient <- nextClient + 1
   let id = nextClient
   reply send (Welcome { BridgeWelcome.ProtocolVersion = ProtocolVersion; DaemonVersion = daemonVersion; StartedAtMs = int64 startedAt })
@@ -411,13 +486,14 @@ let connect (send: string -> unit) : obj =
   reply send (leases ())
   reply send (agentWork ())
   reply send (operations ())
+  reply send (workNodes ())
   // Pushes (snapshots, leases, health, uptime) follow the prologue.
   clients[id] <- send
   attachClock ()
-  let receive (payload: string) =
+  let receive (payload: byte array) =
     match Codec.decodeCommand payload with
     | Ok frame -> handle send frame
-    | Error message -> refuse send (Codec.correlationOf payload) noTarget "invalid_request" message
+    | Error message -> refuse send (0) noTarget "invalid_request" message
   let close () =
     clients.Remove id |> ignore
     detachClock ()

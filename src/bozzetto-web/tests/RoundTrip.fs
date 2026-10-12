@@ -93,6 +93,8 @@ let private bareSession = {
 let private commands = [
   ObserveResources 120
   ObserveResources 0
+  ObserveNodeResources { Node = "one"; Seconds = 120 }
+  ReadNodeTranscript { Source = { Node = "one"; Incarnation = "epoch-one" }; Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; MaxBytes = MaxTranscriptPageBytes }
   RequestSnapshot
   OpenProject "/abs/Ünï 🎼.fidproj"
   OpenProject ""
@@ -116,7 +118,7 @@ let private completions = [
   SnapshotSent
 ]
 
-let private events = [
+let private baseEvents = [
   AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Capacity = 256; Runs = [||]; Presence = [||] }
   AgentWork { Incarnation = "daemon-b"; Sequence = 9007199254740993L; ExecutionHost = "local"; Capacity = 256
               Presence = [| { Name = "pi ü"; Source = "lease"; Member = "pi ü · /repo/clef"; Project = "/repo/clef"; Detail = "holds full_build"; SinceMs = 9007199254740993L }
@@ -207,8 +209,9 @@ let private events = [
     |]
     Queued = [| { LeaseWait.Kind = "test_suite_run"; Holder = "agent-ü"; RequestedAtMs = -1L } |]
   }
-  Operations { OperationsBoard.Revision = 0L; Incarnation = ""; Entries = [||] }
+  Operations { OperationsBoard.Revision = 0L; Incarnation = ""; StorageError = None; Entries = [||] }
   Operations {
+    StorageError = None
     OperationsBoard.Revision = 9007199254740993L
     Incarnation = "daemon-ü"
     Entries = [|
@@ -224,6 +227,29 @@ let private events = [
 ]
 
 // ── Malformed frames ───────────────────────────────────────────────────────
+
+let private source = { NodeIdentity.Node = "three"; Incarnation = "epoch-3" }
+let private peerWork : WorkSnapshot = {
+  TranscriptsOmitted = false
+  Sequence = 9007199254740993L
+  SampledAtMs = -1L
+  Snapshot = { Revision = 1L; Worker = Idle; Sessions = [| fullSession |] }
+  Leases = { Revision = 2L; Active = [||]; Queued = [||] }
+  Operations = { Revision = 3L; Incarnation = "journal"; StorageError = None; Entries = [||] }
+}
+let private peerResources : HostResources = {
+  Sequence = 8L; Status = "unavailable"; SampledAtMs = 0L; IntervalMs = 0.; SampleCostMs = 0.
+  Metrics = [||]; Processes = [||]; ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = "not sampled"
+}
+let private events = baseEvents @ [
+  WorkNodes { Revision = 5L; Nodes = [|
+    { Source = source; Local = false; Status = "unavailable"; Note = "disconnected"; Value = Some peerWork }
+    { Source = { source with Node = "one" }; Local = false; Status = "unavailable"; Note = "never observed"; Value = None }
+  |] }
+  NodeResources { Source = source; Correlation = 7; Value = peerResources }
+  NodeTranscript { Source = source; Correlation = 8; Outcome = TranscriptPage { Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; NextOffset = None; TotalBytes = 3L; Bytes = [| 0uy; 128uy; 255uy |]; Truncated = true } }
+  NodeTranscript { Source = source; Correlation = 9; Outcome = TranscriptRefused("missing_entry", "Unavailable") }
+]
 
 let private badEvents = [
   """{"event":"agent_work","incarnation":"d","sequence":1,"executionHost":"local","capacity":256,"runs":[]}"""
@@ -298,15 +324,15 @@ let private run () =
     let frame = { CommandFrame.Correlation = (if i = 0 then System.Int32.MaxValue else i + 1); Command = command }
     let wire = FrontendCodec.encodeCommand frame
     match BackendCodec.decodeCommand wire with
-    | Ok decoded -> check ("command round trip " + wire) (decoded = frame)
-    | Error message -> check ("command decodes " + wire + " (" + message + ")") false)
+    | Ok decoded -> check (sprintf "command round trip %A" command) (decoded = frame)
+    | Error message -> check ("command decodes (" + message + ")") false)
   covers "Command" typeof<Command> (commands |> List.map (fun c -> caseName (box c) typeof<Command>))
 
   for event in events do
     let wire = BackendCodec.encodeEvent event
     match FrontendCodec.decodeEvent wire with
-    | Ok decoded -> check ("event round trip " + wire) (decoded = event)
-    | Error message -> check ("event decodes " + wire + " (" + message + ")") false
+    | Ok decoded -> check (sprintf "event round trip %A" event) (decoded = event)
+    | Error message -> check ("event decodes (" + message + ")") false
   covers "Event" typeof<Event> (events |> List.map (fun e -> caseName (box e) typeof<Event>))
   covers "Completion" typeof<Completion> (completions |> List.map (fun c -> caseName (box c) typeof<Completion>))
   covers "WorkerState" typeof<WorkerState> [
@@ -317,11 +343,30 @@ let private run () =
   ]
 
   for wire in badEvents do
-    check ("malformed event refused " + wire) (FrontendCodec.decodeEvent wire |> Result.isError)
+    check ("malformed event refused " + wire) (FrontendCodec.decodeEvent (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
   for wire in badCommands do
-    check ("malformed command refused " + wire) (BackendCodec.decodeCommand wire |> Result.isError)
-  check "correlation echoed from an undecodable command" (BackendCodec.correlationOf """{"correlation":12,"command":"explode"}""" = 12)
-  check "no correlation from non-JSON" (BackendCodec.correlationOf "nope" = 0)
+    check ("malformed command refused " + wire) (BackendCodec.decodeCommand (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
+  let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 9uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+  let frame = { CommandFrame.Correlation = 1; Command = RequestSnapshot }
+  check "independent binary golden" (FrontendCodec.encodeCommand frame = golden)
+  check "golden decode" (BackendCodec.decodeCommand golden = Ok frame)
+  check "trailing byte refused" (BackendCodec.decodeCommand (Array.append golden [|0uy|]) |> Result.isError)
+  for length in 0 .. golden.Length - 1 do
+    check "every truncated golden prefix refused" (BackendCodec.decodeCommand golden[..length-1] |> Result.isError)
+  let peers = [ PeerHello source; PeerWork peerWork; PeerResources peerResources; PeerUnavailable "closed"; PeerHeartbeat { UptimeMs = 33L } ]
+  for value in peers do
+    check "peer case round trip" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value) = Ok value)
+  covers "PeerFrame" typeof<PeerFrame> (peers |> List.map (fun value -> caseName (box value) typeof<PeerFrame>))
+  let request = { PeerObserveRequest.ProtocolVersion = ProtocolVersion; Node = "three"; Topic = "resources"; Seconds = 120 }
+  check "peer request round trip" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest request) = Ok request)
+  check "request cap" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Array.zeroCreate 4097) = Error "binary: frame too large")
+  let read = { PeerTranscriptRequest.ProtocolVersion = ProtocolVersion; Request = { Source = source; Journal = "journal"; Sequence = 7L; Stream = Stderr; Offset = 32768L; MaxBytes = MaxTranscriptPageBytes } }
+  check "typed transcript request" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest read) = Ok read)
+  let page = { Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; NextOffset = Some 32768L; TotalBytes = 32770L; Bytes = Array.create MaxTranscriptPageBytes 255uy; Truncated = false }
+  let reply = { PeerTranscriptReply.Source = source; Outcome = TranscriptPage page }
+  check "exact maximum byte page" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply (Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptReply reply) = Ok reply)
+  check "read request cannot be an observation" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest read) = Error "binary: wrong message family")
+  check "transcript read request cap" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest (Array.zeroCreate 4097) = Error "binary: frame too large")
 
   printfn "codec round trip: %d checks, %d failures (%d commands, %d events, %d malformed)" checks failures commands.Length events.Length (badEvents.Length + badCommands.Length)
   setExitCode (if failures = 0 && checks > 0 then 0 else 1)

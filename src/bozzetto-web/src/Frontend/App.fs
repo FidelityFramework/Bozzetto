@@ -791,6 +791,75 @@ let OutputPane (model: ModelView) =
   }
 
 [<SolidComponent>]
+let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -> bool) (focus: NodeWorkView -> unit) (read: NodeWorkView -> NodeOperationView -> TranscriptStream -> unit) =
+  div (class' = "flex flex-col gap-3") {
+    h2 (class' = "text-lg font-bold") { "Work across nodes" }
+    Show (when' = (model.nodes.Length = 0)) {
+      p (class' = "text-sm opacity-70") { "No node work observation has arrived. Availability is unknown." }
+    }
+    div (class' = "grid grid-cols-1 lg:grid-cols-2 gap-3") {
+      For (each = model.nodes) {
+        yield fun node _ ->
+          div (class' = "card card-compact panel") {
+            div (class' = "card-body gap-2") {
+              div (class' = "flex flex-wrap gap-2 items-center") {
+                h3 (class' = "font-bold flex-1") { node.id }
+                span (class' = "badge badge-outline") { if node.local then "controller" else "remote · read-only" }
+                span (class' = "badge badge-outline") { if connected () then node.status else "controller disconnected" }
+              }
+              p (class' = "text-xs opacity-70") { node.note }
+              Show (when' = node.hasValue, fallback = (p (class' = "text-sm opacity-70") { "Work state unavailable; no idle state inferred." })) {
+                p (class' = "text-xs opacity-60 font-mono") {
+                  "Work sample " + clockTime node.sampledAt + " · " + duration (max 0. (model.startedAt + uptime () - node.sampledAt)) + " ago"
+                }
+                p (class' = "text-sm") {
+                  string node.sessions.Length + " sessions · " + string node.leases.Length + " active leases · " + string node.queue.Length + " queued"
+                }
+                For (each = node.leases) {
+                  yield fun lease _ -> p (class' = "text-xs font-mono") { lease.holder + " · " + lease.kind + " · active" }
+                }
+                For (each = node.queue) {
+                  yield fun ask _ -> p (class' = "text-xs font-mono opacity-70") { ask.holder + " · " + ask.kind + " · queued" }
+                }
+                For (each = node.sessions) {
+                  yield fun session _ ->
+                    p (class' = "text-xs font-mono") {
+                      session.project + " · " + (if session.closed then "closed" elif session.busy then "busy" else "not busy")
+                    }
+                }
+                details () {
+                  summary (class' = "cursor-pointer text-xs") { "Recent operations" }
+                  Show (when' = (node.storageError <> "")) {
+                    p (class' = "text-xs text-warning") { "Transcript store unavailable: " + node.storageError }
+                  }
+                  Show (when' = node.transcriptsOmitted) {
+                    p (class' = "text-xs opacity-70") { "Transcript bytes are omitted from live updates. Load a stream to check stored availability." }
+                  }
+                  For (each = node.operations) {
+                    yield fun operation _ ->
+                      div (class' = "py-2 border-t border-base-300") {
+                        p (class' = "text-xs font-mono break-words") { operation.label }
+                        Show (when' = operation.dropped) { p (class' = "text-xs text-warning") { "Source transcript was not retained." } }
+                        Show (when' = operation.hasRun) {
+                          div (class' = "flex gap-2 mt-1") {
+                            button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stdout) { "Load stdout" }
+                            button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stderr) { "Load stderr" }
+                          }
+                        }
+                      }
+                  }
+                }
+              }
+              button (class' = "btn btn-sm btn-outline self-start", disabled = not (connected ()), onClick = fun _ -> focus node) {
+                if model.nodeFocus = node.id then "Restart resource observation" else "Observe resources"
+              }
+            }
+          }
+      }
+    }
+  }
+
+[<SolidComponent>]
 let App () =
   let workPage = isWorkPage ()
   Browser.Dom.document.title <- (if workPage then "Work · Bozzetto" else "Dashboard · Bozzetto")
@@ -828,23 +897,42 @@ let App () =
   let dispatch (command: Command) =
     let frame = Model.begin' stores commands command
     let wire = Codec.encodeCommand frame
-    if Bridge.send wire then Interop.consoleLog ("→ " + wire)
+    if Bridge.send wire then Interop.consoleLog (sprintf "→ binary frame (%d bytes)" wire.Length)
     else Model.abandon stores commands frame
 
-  let receive (payload: string) =
+  let receive (payload: byte array) =
     match Codec.decodeEvent payload with
     | Ok event ->
       match event with
-      | Health _ | Leases _ | Uptime _ | Resources _ | AgentWork _ -> ()
-      | _ -> Interop.consoleLog ("← " + payload)
+      | Health _ | Leases _ | Uptime _ | Resources _ | AgentWork _ | WorkNodes _ | NodeResources _ | NodeTranscript _ -> ()
+      | _ -> Interop.consoleLog (sprintf "← binary frame (%d bytes)" payload.Length)
       Model.apply stores commands event
-    | Error message -> Interop.consoleLog ("← undecodable (" + message + "): " + payload)
+    | Error message -> Interop.consoleLog ("← undecodable binary frame: " + message)
 
   Bridge.start receive (fun next ->
     match next with
     | Bridge.Retrying _ -> Model.abandonAll stores commands
     | Bridge.Connecting | Bridge.Connected -> ()
     setLink next)
+
+  let focus (node: NodeWorkView) =
+    if model.nodeFocus <> "" && model.nodeFocus <> node.id then
+      dispatch (ObserveNodeResources { Node = model.nodeFocus; Seconds = 0 })
+    Model.focusNode stores node.id node.incarnation
+    dispatch (ObserveNodeResources { Node = node.id; Seconds = 120 })
+  let resourceDispatch = function
+    | ObserveResources seconds -> dispatch (ObserveNodeResources { Node = model.nodeFocus; Seconds = seconds })
+    | command -> dispatch command
+  let readTranscript (node: NodeWorkView) (operation: NodeOperationView) stream =
+    dispatch (ReadNodeTranscript {
+      Source = { Node = node.id; Incarnation = node.incarnation }; Journal = node.journal
+      Sequence = int64 operation.sequence; Stream = stream; Offset = 0L; MaxBytes = MaxTranscriptPageBytes })
+  let readNextTranscript () =
+    let value = model.transcript
+    if value.next <> "" then
+      dispatch (ReadNodeTranscript {
+        Source = { Node = value.node; Incarnation = value.incarnation }; Journal = value.journal
+        Sequence = int64 value.sequence; Stream = value.stream; Offset = int64 value.next; MaxBytes = MaxTranscriptPageBytes })
 
   // ── View ─────────────────────────────────────────────────────────────────
   div (class' = "flex flex-col h-screen bg-base-100 text-base-content text-sm") {
@@ -873,7 +961,32 @@ let App () =
         })
       ) {
         div (class' = "grid grid-cols-1 xl:grid-cols-3 gap-4 p-4") {
+          div (class' = "xl:col-span-3") { WorkNodesPanel model stores.Uptime connected focus readTranscript }
+          Show (when' = (model.transcript.node <> "")) {
+            div (class' = "xl:col-span-3 card card-compact panel transcript-readback") {
+              div (class' = "card-body gap-2") {
+                h2 (class' = "text-lg font-bold") { "Transcript · " + model.transcript.node + " · " + (if model.transcript.stream = Stdout then "stdout" else "stderr") }
+                p (class' = "text-xs font-mono break-words") { model.transcript.journal + " · entry " + model.transcript.sequence }
+                p (class' = "text-sm") { model.transcript.status }
+                p (class' = "text-xs opacity-70") { string model.transcript.bytes.Length + " stored bytes loaded" + (if model.transcript.total = "" then "" else " of " + model.transcript.total) }
+                Show (when' = model.transcript.truncated) { p (class' = "text-xs text-warning") { "Truncated at the source; this is the retained transcript, not complete process output." } }
+                Show (when' = (model.transcript.text <> "")) {
+                  pre (class' = "text-xs font-mono whitespace-pre-wrap break-words max-h-80 overflow-auto") { model.transcript.text }
+                }
+                Show (when' = (model.transcript.next <> "")) {
+                  button (class' = "btn btn-sm btn-outline self-start", disabled = (not (connected ()) || model.transcript.status = "reading transcript"), onClick = fun _ -> readNextTranscript ()) { "Next transcript page" }
+                }
+              }
+            }
+          }
+          div (class' = "xl:col-span-3") {
+            Show (when' = (model.nodeFocus <> "")) {
+              h2 (class' = "text-lg font-bold mb-2") { "Resources · " + model.nodeFocus }
+              HostPanel model local stores.Uptime connected resourceDispatch
+            }
+          }
           div (class' = "xl:col-span-2 flex flex-col gap-3 min-w-0") {
+            h2 (class' = "text-lg font-bold") { "Controller projects" }
             SessionsPanel model local connected dispatch
             details () {
               summary (class' = "cursor-pointer text-xs opacity-60") { "Open project" }

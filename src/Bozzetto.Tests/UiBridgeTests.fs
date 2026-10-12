@@ -26,450 +26,15 @@ open Bozzetto.Server.UiBridge
 open Bozzetto.Web.Shared.Protocol
 
 module Codec = Bozzetto.Server.UiBridgeCodec
+module Observe = Bozzetto.Server.WorkObservation
 
 // ── The UI side, in .NET ───────────────────────────────────────────────────
 
-/// The .NET twin of bozzetto-web/src/Frontend/Codec.fs, as Mock/Codec.fs is
-/// the Fable twin of the backend codec: encodes commands and strictly decodes
-/// events, so every case can make the round trip inside this suite.
+/// CLR and Fable consume this exact codec owner. Independent golden bytes and
+/// malformed raw frames below prevent two copies from agreeing on a mistake.
 module private Ui =
-
-  type private Decoder() =
-    member _.Bind(result: Result<'a, string>, next: 'a -> Result<'b, string>) = Result.bind next result
-    member _.Return(value: 'a) : Result<'a, string> = Ok value
-
-  let private decode = Decoder()
-
-  let private targetFields (t: SessionTarget) =
-    [ "host", JsonValue.String t.Worker.Host; "epoch", JsonValue.String t.Worker.Epoch; "session", JsonValue.String t.Session ]
-
-  let encodeCommand (frame: CommandFrame) : string =
-    let fields =
-      match frame.Command with
-      | ObserveResources seconds -> [ "command", JsonValue.String "observe_resources"; "seconds", JsonValue.ofInt64 (int64 seconds) ]
-      | RequestSnapshot -> [ "command", JsonValue.String "request_snapshot" ]
-      | OpenProject project -> [ "command", JsonValue.String "open_project"; "project", JsonValue.String project ]
-      | Reserve edit ->
-        [ "command", JsonValue.String "reserve"; "target", JsonValue.Object(targetFields edit.Target); "label", JsonValue.String edit.Label ]
-      | Build build ->
-        [ "command", JsonValue.String "build"; "target", JsonValue.Object(targetFields build.Target)
-          "reservation", JsonValue.String build.Reservation ]
-      | Run run ->
-        [ "command", JsonValue.String "run"; "target", JsonValue.Object(targetFields run.Target)
-          "arguments", JsonValue.Array(run.Arguments |> Array.toList |> List.map JsonValue.String) ]
-      | Cancel target -> [ "command", JsonValue.String "cancel"; "target", JsonValue.Object(targetFields target) ]
-      | CloseSession target -> [ "command", JsonValue.String "close_session"; "target", JsonValue.Object(targetFields target) ]
-      | RetireWorker worker ->
-        [ "command", JsonValue.String "retire_worker"
-          "worker", JsonValue.Object [ "host", JsonValue.String worker.Host; "epoch", JsonValue.String worker.Epoch ] ]
-    JsonValue.Object(("correlation", JsonValue.ofInt64 (int64 frame.Correlation)) :: fields) |> Json.serialize
-
-  let private field name o = JsonValue.prop name o
-
-  let private text name o =
-    match field name o with
-    | Some(JsonValue.String value) -> Ok value
-    | _ -> Error(name + ": expected a string")
-
-  let private optionalText name o =
-    match field name o with
-    | Some JsonValue.Null -> Ok None
-    | Some(JsonValue.String value) -> Ok(Some value)
-    | _ -> Error(name + ": expected a string or null")
-
-  let private flag name o =
-    match field name o with
-    | Some(JsonValue.Bool value) -> Ok value
-    | _ -> Error(name + ": expected a boolean")
-
-  let private whole name o =
-    match field name o |> Option.bind JsonValue.tryAsInt64 with
-    | Some value when value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue -> Ok(int32 value)
-    | _ -> Error(name + ": expected an int32")
-
-  let private real name o =
-    match field name o |> Option.bind JsonValue.asNumber with
-    | Some value when Double.IsFinite value -> Ok value
-    | _ -> Error(name + ": expected a finite number")
-
-  let private wide name o =
-    match field name o with
-    | Some(JsonValue.String raw) ->
-      let digits = if raw.StartsWith '-' then raw.Substring 1 else raw
-      match Int64.TryParse(raw, Globalization.NumberStyles.AllowLeadingSign, Globalization.CultureInfo.InvariantCulture) with
-      | true, value when digits.Length > 0 && digits |> Seq.forall Char.IsAsciiDigit && not (raw.StartsWith '+') -> Ok value
-      | _ -> Error(name + ": expected an int64 decimal string")
-    | _ -> Error(name + ": expected an int64 decimal string")
-
-  let private items name (item: JsonValue -> Result<'a, string>) o =
-    match field name o with
-    | Some(JsonValue.Array values) ->
-      List.foldBack (fun value acc -> Result.bind (fun rest -> item value |> Result.map (fun head -> head :: rest)) acc) values (Ok [])
-      |> Result.map List.toArray
-    | _ -> Error(name + ": expected an array")
-
-  let private nested name (inner: JsonValue -> Result<'a, string>) o =
-    match field name o with
-    | Some(JsonValue.Object _ as child) -> inner child
-    | _ -> Error(name + ": expected an object")
-
-  let private sessionTarget o = decode {
-    let! host = text "host" o
-    let! epoch = text "epoch" o
-    let! session = text "session" o
-    return { SessionTarget.Worker = { WorkerTarget.Host = host; Epoch = epoch }; Session = session }
-  }
-
-  let private artifact o = decode {
-    let! generation = wide "generation" o
-    let! sourceVersion = text "sourceVersion" o
-    let! artifactPath = text "artifactPath" o
-    let! artifactSha256 = text "artifactSha256" o
-    let! regions =
-      items "regions" (fun r -> decode {
-        let! identity = text "identity" r
-        let! witness = text "witness" r
-        let! visits = whole "visits" r
-        let! object = text "object" r
-        return { RegionRow.Identity = identity; Witness = witness; Visits = visits; Object = object } }) o
-    return {
-      ArtifactSummary.Generation = generation
-      SourceVersion = sourceVersion
-      ArtifactPath = artifactPath
-      ArtifactSha256 = artifactSha256
-      Regions = regions
-    }
-  }
-
-  let private session o = decode {
-    let! target = sessionTarget o
-    let! generation = wide "generation" o
-    let! project = text "project" o
-    let! closed = flag "closed" o
-    let! busy = flag "busy" o
-    let! statusFresh = flag "statusFresh" o
-    let! revocationPending = flag "revocationPending" o
-    let! cleanupPending = flag "cleanupPending" o
-    let! formatterCleanupPending = flag "formatterCleanupPending" o
-    let! current =
-      match field "current" o with
-      | Some JsonValue.Null -> Ok None
-      | Some(JsonValue.Object _ as value) -> artifact value |> Result.map Some
-      | _ -> Error "current: expected an object or null"
-    let! backendError = optionalText "backendError" o
-    let! formatterError = optionalText "formatterError" o
-    let! cleanupError = optionalText "cleanupError" o
-    let! workerRetirementRequired = optionalText "workerRetirementRequired" o
-    let! statusError = optionalText "statusError" o
-    let! workerError = optionalText "workerError" o
-    return {
-      SessionStatus.Target = target
-      Generation = generation
-      Project = project
-      Closed = closed
-      Busy = busy
-      StatusFresh = statusFresh
-      RevocationPending = revocationPending
-      CleanupPending = cleanupPending
-      FormatterCleanupPending = formatterCleanupPending
-      Current = current
-      BackendError = backendError
-      FormatterError = formatterError
-      CleanupError = cleanupError
-      WorkerRetirementRequired = workerRetirementRequired
-      StatusError = statusError
-      WorkerError = workerError
-    }
-  }
-
-  let private worker o =
-    text "state" o
-    |> Result.bind (function
-      | "unconfigured" -> Ok Unconfigured
-      | "idle" -> Ok Idle
-      | "running" ->
-        decode {
-          let! host = text "host" o
-          let! epoch = text "epoch" o
-          let! compilerVersion = text "compilerVersion" o
-          let! pid =
-            match field "processId" o with
-            | Some JsonValue.Null -> Ok None
-            | _ -> whole "processId" o |> Result.map Some
-          return Running { WorkerInfo.Target = { WorkerTarget.Host = host; Epoch = epoch }; CompilerVersion = compilerVersion; ProcessId = pid }
-        }
-      | other -> Error("state: unknown " + other))
-
-  let private completion o =
-    text "kind" o
-    |> Result.bind (function
-      | "session_opened" -> Ok SessionOpened
-      | "edit_reserved" -> text "reservation" o |> Result.map EditReserved
-      | "reservation_built" -> nested "artifact" artifact o |> Result.map ReservationBuilt
-      | "run_finished" -> whole "exitCode" o |> Result.map RunFinished
-      | "work_canceled" -> Ok WorkCanceled
-      | "session_closed" -> Ok SessionClosed
-      | "worker_retired" -> Ok WorkerRetired
-      | "snapshot_sent" -> Ok SnapshotSent
-      | other -> Error("kind: unknown " + other))
-
-  let private health o = decode {
-    let! revision = wide "revision" o
-    let! sampledAt = wide "sampledAtMs" o
-    let! recordAt = wide "recordAtMs" o
-    let! version = text "version" o
-    let! processId = whole "processId" o
-    let! mcpPort = whole "mcpPort" o
-    let! overall = text "overall" o
-    let! pressure = text "memoryPressure" o
-    let! note = text "memoryPressureNote" o
-    let! resident = wide "residentBytes" o
-    let! available = wide "machineAvailableBytes" o
-    let! total = wide "machineTotalBytes" o
-    let! cpu = real "cpuPercent" o
-    let! processes =
-      items "processes" (fun p -> decode {
-        let! pid = whole "processId" p
-        let! role = text "role" p
-        let! rss = wide "residentBytes" p
-        let! cpu = real "cpuPercent" p
-        return { ProcessSample.ProcessId = pid; Role = role; ResidentBytes = rss; CpuPercent = cpu }
-      }) o
-    let! alarms =
-      items "alarms" (fun a -> decode {
-        let! signal = text "signal" a
-        let! state = text "state" a
-        let! message = text "message" a
-        return { HealthAlarm.Signal = signal; State = state; Message = message }
-      }) o
-    return {
-      DaemonHealth.Revision = revision
-      Version = version
-      ProcessId = processId
-      McpPort = mcpPort
-      Overall = overall
-      MemoryPressure = pressure
-      MemoryPressureNote = note
-      ResidentBytes = resident
-      MachineAvailableBytes = available
-      MachineTotalBytes = total
-      CpuPercent = cpu
-      Processes = processes
-      Alarms = alarms
-      SampledAtMs = sampledAt
-      RecordAtMs = recordAt
-    }
-  }
-
-  let private leases o = decode {
-    let! revision = wide "revision" o
-    let! active =
-      items "active" (fun l -> decode {
-        let! id = text "id" l
-        let! kind = text "kind" l
-        let! holder = text "holder" l
-        let! granted = wide "grantedAtMs" l
-        let! expires = wide "expiresAtMs" l
-        return { LeaseGrant.Id = id; Kind = kind; Holder = holder; GrantedAtMs = granted; ExpiresAtMs = expires }
-      }) o
-    let! queued =
-      items "queued" (fun q -> decode {
-        let! kind = text "kind" q
-        let! holder = text "holder" q
-        let! requested = wide "requestedAtMs" q
-        return { LeaseWait.Kind = kind; Holder = holder; RequestedAtMs = requested }
-      }) o
-    return { LeaseBoard.Revision = revision; Active = active; Queued = queued }
-  }
-
-  let private optionalReal name o =
-    match field name o with
-    | Some JsonValue.Null -> Ok None
-    | _ -> real name o |> Result.map Some
-
-  let private resources o = decode {
-    let! sequence = wide "sequence" o
-    let! status = text "status" o
-    let! at = wide "sampledAtMs" o
-    let! interval = real "intervalMs" o
-    let! cost = real "sampleCostMs" o
-    let! count = whole "processCount" o
-    let! unreadable = whole "unreadableCount" o
-    let! omitted = whole "omittedCount" o
-    let! note = text "note" o
-    let! metrics =
-      items "metrics" (fun m -> decode {
-        let! name = text "name" m
-        let! value = optionalReal "value" m
-        let! unit = text "unit" m
-        return { ResourceMetric.Name = name; Value = value; Unit = unit }
-      }) o
-    let! processes =
-      items "processes" (fun p -> decode {
-        let! pid = whole "processId" p
-        let! parent = whole "parentId" p
-        let! start = text "startTicks" p
-        let! name = text "name" p
-        let! context = text "context" p
-        let! cpu = optionalReal "cpuPercent" p
-        let! rss = real "residentBytes" p
-        let! threads = whole "threads" p
-        return { ResourceProcess.ProcessId = pid; ParentId = parent; StartTicks = start; Name = name; Context = context; CpuPercent = cpu; ResidentBytes = rss; Threads = threads }
-      }) o
-    return { HostResources.Sequence = sequence; Status = status; SampledAtMs = at; IntervalMs = interval; SampleCostMs = cost
-             ProcessCount = count; UnreadableCount = unreadable; OmittedCount = omitted; Note = note; Metrics = metrics; Processes = processes }
-  }
-
-  let private operationRun o = decode {
-    let! exitCode = whole "exitCode" o
-    let! generation = wide "generation" o
-    let! sourceVersion = text "sourceVersion" o
-    let! standardOutput = text "standardOutput" o
-    let! standardError = text "standardError" o
-    let! dropped = flag "dropped" o
-    return { OperationRun.ExitCode = exitCode; Generation = generation; SourceVersion = sourceVersion; StandardOutput = standardOutput; StandardError = standardError; Dropped = dropped }
-  }
-
-  let private operations o = decode {
-    let! revision = wide "revision" o
-    let! incarnation = text "incarnation" o
-    let! entries =
-      items "entries" (fun e -> decode {
-        let! sequence = wide "sequence" e
-        let! atMs = wide "atMs" e
-        let! caller = text "callerLabel" e
-        let! operation = text "operation" e
-        let! session = text "session" e
-        let! project = text "project" e
-        let! ok = flag "ok" e
-        let! code = text "code" e
-        let! message = text "message" e
-        let! run =
-          match field "run" e with
-          | Some JsonValue.Null -> Ok None
-          | Some(JsonValue.Object _ as value) -> operationRun value |> Result.map Some
-          | _ -> Error "run: expected an object or null"
-        return { OperationEntry.Sequence = sequence; AtMs = atMs; CallerLabel = caller; Operation = operation; Session = session; Project = project; Ok = ok; Code = code; Message = message; Run = run }
-      }) o
-    return { OperationsBoard.Revision = revision; Incarnation = incarnation; Entries = entries }
-  }
-
-  let private agentWork o = decode {
-    let! incarnation = text "incarnation" o
-    let! sequence = wide "sequence" o
-    let! host = text "executionHost" o
-    let! capacity = whole "capacity" o
-    let! runs =
-      items "runs" (fun r -> decode {
-        let! id = text "id" r
-        let! memberId = text "member" r
-        let! role = text "role" r
-        let! name = text "name" r
-        let! session = text "session" r
-        let! seq = wide "reportSequence" r
-        let! model = text "model" r
-        let! endpoint = text "endpoint" r
-        let! project = text "project" r
-        let! focus = text "focus" r
-        let! operation = text "operation" r
-        let! status = text "status" r
-        let! at = wide "updatedAtMs" r
-        let! omitted = wide "omittedActivity" r
-        let! activity = items "activity" (function JsonValue.String s -> Ok s | _ -> Error "expected string") r
-        let! usage =
-          match field "usage" r with
-          | Some JsonValue.Null -> Ok None
-          | Some u ->
-            decode {
-              let! input = wide "input" u
-              let! output = wide "output" u
-              let! cr = wide "cacheRead" u
-              let! cw = wide "cacheWrite" u
-              let! total = wide "total" u
-              let! estimate = optionalReal "estimateUsd" u
-              return Some { AgentUsage.Input = input; Output = output; CacheRead = cr; CacheWrite = cw; Total = total; EstimateUsd = estimate }
-            }
-          | None -> Error "usage missing"
-        return { AgentRun.Id = id; Member = memberId; Role = role; Name = name; Session = session; ReportSequence = seq
-                 Model = model; Endpoint = endpoint; Project = project; Focus = focus; Operation = operation; Status = status
-                 UpdatedAtMs = at; Activity = activity; OmittedActivity = omitted; Usage = usage }
-      }) o
-    let! presence =
-      items "presence" (fun p -> decode {
-        let! name = text "name" p
-        let! source = text "source" p
-        let! project = text "project" p
-        let! detail = text "detail" p
-        let! member' = text "member" p
-        let! since = wide "sinceMs" p
-        return { AgentPresence.Name = name; Source = source; Member = member'; Project = project; Detail = detail; SinceMs = since }
-      }) o
-    return { AgentWorkBoard.Incarnation = incarnation; Sequence = sequence; ExecutionHost = host; Capacity = capacity; Runs = runs; Presence = presence }
-  }
-
-  let decodeEvent (payload: string) : Result<Event, string> =
-    match Json.parse payload with
-    | Error reason -> Error reason
-    | Ok o ->
-      text "event" o
-      |> Result.bind (function
-        | "welcome" ->
-          decode {
-            let! version = whole "protocolVersion" o
-            let! daemon = text "daemonVersion" o
-            let! startedAt = wide "startedAtMs" o
-            return Welcome { BridgeWelcome.ProtocolVersion = version; DaemonVersion = daemon; StartedAtMs = startedAt }
-          }
-        | "snapshot" ->
-          decode {
-            let! revision = wide "revision" o
-            let! state = nested "worker" worker o
-            let! sessions = items "sessions" session o
-            return Snapshot { ComposerSnapshot.Revision = revision; Worker = state; Sessions = sessions }
-          }
-        | "accepted" ->
-          decode {
-            let! correlation = whole "correlation" o
-            let! target = nested "target" sessionTarget o
-            let! completed = nested "completion" completion o
-            return Accepted { CommandAcceptance.Correlation = correlation; Target = target; Completion = completed }
-          }
-        | "refused" ->
-          decode {
-            let! correlation = whole "correlation" o
-            let! target = nested "target" sessionTarget o
-            let! code = text "code" o
-            let! message = text "message" o
-            return Refused { CommandRefusal.Correlation = correlation; Target = target; Code = code; Message = message }
-          }
-        | "run_output" ->
-          decode {
-            let! correlation = whole "correlation" o
-            let! target = nested "target" sessionTarget o
-            let! generation = wide "generation" o
-            let! sourceVersion = text "sourceVersion" o
-            let! exitCode = whole "exitCode" o
-            let! stdout = text "standardOutput" o
-            let! stderr = text "standardError" o
-            return RunOutput {
-              RunTranscript.Correlation = correlation
-              Target = target
-              Generation = generation
-              SourceVersion = sourceVersion
-              ExitCode = exitCode
-              StandardOutput = stdout
-              StandardError = stderr
-            }
-          }
-        | "agent_work" -> agentWork o |> Result.map AgentWork
-        | "operations" -> operations o |> Result.map Operations
-        | "resources" -> resources o |> Result.map Resources
-        | "health" -> health o |> Result.map Health
-        | "leases" -> leases o |> Result.map Leases
-        | "uptime" -> wide "uptimeMs" o |> Result.map (fun uptimeMs -> Uptime { UptimeTick.UptimeMs = uptimeMs })
-        | other -> Error("event: unknown " + other))
-
-// ── The samples of bozzetto-web/tests/RoundTrip.fs ─────────────────────────
+  let encodeCommand = Bozzetto.Web.Shared.BinaryCodec.encodeCommand
+  let decodeEvent = Bozzetto.Web.Shared.BinaryCodec.decodeEvent
 
 let private worker = { WorkerTarget.Host = "host-α"; Epoch = "epoch-0001" }
 let private target = { SessionTarget.Worker = worker; Session = "session-日本-🎼" }
@@ -623,8 +188,9 @@ let private events = [
     |]
     Queued = [| { LeaseWait.Kind = "test_suite_run"; Holder = "agent-ü"; RequestedAtMs = -1L } |]
   }
-  Operations { OperationsBoard.Revision = 0L; Incarnation = ""; Entries = [||] }
+  Operations { OperationsBoard.Revision = 0L; Incarnation = ""; StorageError = None; Entries = [||] }
   Operations {
+    StorageError = None
     OperationsBoard.Revision = 9007199254740993L
     Incarnation = "daemon-ü"
     Entries = [|
@@ -646,55 +212,6 @@ let private events = [
 ]
 
 /// The frames bozzetto-web's Fable codecs produce for the samples above:
-/// Frontend.Codec.encodeCommand and Mock.Codec.encodeEvent, run under node
-/// from bozzetto-web/output-test. Regenerate them there if a sample changes.
-let private commandWires = [
-  """{"correlation":2147483647,"command":"request_snapshot"}"""
-  """{"correlation":2,"command":"open_project","project":"/abs/Ünï 🎼.fidproj"}"""
-  """{"correlation":3,"command":"open_project","project":""}"""
-  """{"correlation":4,"command":"reserve","target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"label":"edit: \"main\" — ✓"}"""
-  """{"correlation":5,"command":"build","target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"reservation":"rsv-0123"}"""
-  """{"correlation":6,"command":"run","target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"arguments":[]}"""
-  """{"correlation":7,"command":"run","target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"arguments":["a b","\"q\"","🎼","","\\"]}"""
-  """{"correlation":8,"command":"cancel","target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"}}"""
-  """{"correlation":9,"command":"close_session","target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"}}"""
-  """{"correlation":10,"command":"retire_worker","worker":{"host":"host-α","epoch":"epoch-0001"}}"""
-  """{"correlation":11,"command":"observe_resources","seconds":120}"""
-  """{"correlation":12,"command":"observe_resources","seconds":0}"""
-]
-
-let private eventWires = [
-  """{"event":"welcome","protocolVersion":8,"daemonVersion":"0.6.834","startedAtMs":"1759420800123"}"""
-  """{"event":"welcome","protocolVersion":2147483647,"daemonVersion":"","startedAtMs":"-9223372036854775808"}"""
-  """{"event":"snapshot","revision":"0","worker":{"state":"unconfigured"},"sessions":[]}"""
-  """{"event":"snapshot","revision":"1","worker":{"state":"idle"},"sessions":[{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼","generation":"-9223372036854775808","project":"/home/ü/Ünïcode.fidproj","closed":false,"busy":false,"statusFresh":true,"revocationPending":false,"cleanupPending":false,"formatterCleanupPending":false,"current":null,"backendError":null,"formatterError":null,"cleanupError":null,"workerRetirementRequired":null,"statusError":null,"workerError":null}]}"""
-  """{"event":"snapshot","revision":"9223372036854775807","worker":{"state":"running","host":"host-α","epoch":"epoch-0001","compilerVersion":"0.0.2+abc","processId":31337},"sessions":[{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼","generation":"9007199254740993","project":"/home/ü/Ünïcode.fidproj","closed":true,"busy":true,"statusFresh":false,"revocationPending":true,"cleanupPending":true,"formatterCleanupPending":true,"current":{"generation":"9223372036854775807","sourceVersion":"src \"quoted\" \\ back","artifactPath":"/tmp/a b/naïve.out","artifactSha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","regions":[{"identity":"common","witness":"changed","visits":2147483647,"object":"compiled"},{"identity":"callable:M:f \"q\"","witness":"retained","visits":0,"object":""},{"identity":"o-retired","witness":"","visits":-2147483648,"object":"retired"}]},"backendError":"backend\nline two","formatterError":"formatter","cleanupError":"cleanup","workerRetirementRequired":"retire","statusError":"stale","workerError":""},{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼","generation":"-9223372036854775808","project":"/home/ü/Ünïcode.fidproj","closed":false,"busy":false,"statusFresh":true,"revocationPending":false,"cleanupPending":false,"formatterCleanupPending":false,"current":null,"backendError":null,"formatterError":null,"cleanupError":null,"workerRetirementRequired":null,"statusError":null,"workerError":null}]}"""
-  """{"event":"snapshot","revision":"2","worker":{"state":"running","host":"host-α","epoch":"epoch-0001","compilerVersion":"","processId":null},"sessions":[]}"""
-  """{"event":"accepted","correlation":1,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"session_opened"}}"""
-  """{"event":"accepted","correlation":2,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"edit_reserved","reservation":"rsv-ü"}}"""
-  """{"event":"accepted","correlation":3,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"reservation_built","artifact":{"generation":"9223372036854775807","sourceVersion":"src \"quoted\" \\ back","artifactPath":"/tmp/a b/naïve.out","artifactSha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","regions":[{"identity":"common","witness":"changed","visits":2147483647,"object":"compiled"},{"identity":"callable:M:f \"q\"","witness":"retained","visits":0,"object":""},{"identity":"o-retired","witness":"","visits":-2147483648,"object":"retired"}]}}}"""
-  """{"event":"accepted","correlation":4,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"run_finished","exitCode":-1}}"""
-  """{"event":"accepted","correlation":5,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"work_canceled"}}"""
-  """{"event":"accepted","correlation":6,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"session_closed"}}"""
-  """{"event":"accepted","correlation":7,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"worker_retired"}}"""
-  """{"event":"accepted","correlation":8,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"completion":{"kind":"snapshot_sent"}}"""
-  """{"event":"refused","correlation":0,"target":{"host":"","epoch":"","session":""},"code":"invalid_request","message":"Frame is not JSON."}"""
-  """{"event":"refused","correlation":2147483647,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"code":"busy","message":"ünïcode ⚠"}"""
-  """{"event":"run_output","correlation":7,"target":{"host":"host-α","epoch":"epoch-0001","session":"session-日本-🎼"},"generation":"-9223372036854775808","sourceVersion":"src-2","exitCode":-2147483648,"standardOutput":"line one\r\nline two\ttab — 日本語 🎼\u0000nul","standardError":""}"""
-  """{"event":"health","revision":"1","sampledAtMs":"1759420800000","recordAtMs":"0","version":"0.6.834","processId":4242,"mcpPort":47749,"overall":"Healthy","memoryPressure":"Normal","memoryPressureNote":"60.0% of RAM available — the machine has room; tight at or below 20%","residentBytes":"0","machineAvailableBytes":"9223372036854775807","machineTotalBytes":"66571993088","cpuPercent":1e-7,"processes":[],"alarms":[]}"""
-  """{"event":"health","revision":"2","sampledAtMs":"9223372036854775807","recordAtMs":"-1","version":"v","processId":1,"mcpPort":47759,"overall":"Degraded","memoryPressure":"Critical","memoryPressureNote":"7.0% of RAM available — critical is entered at or below 8% and clears at 15%; expensive work is queued until pressure eases","residentBytes":"55000000000","machineAvailableBytes":"1","machineTotalBytes":"2","cpuPercent":99.5,"processes":[{"processId":1,"role":"daemon","residentBytes":"1","cpuPercent":0},{"processId":2,"role":"composer-worker","residentBytes":"9223372036854775807","cpuPercent":12.5}],"alarms":[{"signal":"WorkerRss","state":"Broken","message":"RSS ↑"}]}"""
-  """{"event":"leases","revision":"0","active":[],"queued":[]}"""
-  """{"event":"leases","revision":"9007199254740993","active":[{"id":"lease-1","kind":"full_build","holder":"gate-command-1","grantedAtMs":"1759420800000","expiresAtMs":"9223372036854775807"}],"queued":[{"kind":"test_suite_run","holder":"agent-ü","requestedAtMs":"-1"}]}"""
-  """{"event":"operations","revision":"0","incarnation":"","entries":[]}"""
-  """{"event":"operations","revision":"9007199254740993","incarnation":"daemon-ü","entries":[{"sequence":"9223372036854775807","atMs":"-1","callerLabel":"mcp:3f9c 🎼","operation":"run","session":"s","project":"/p/Ü.fidproj","ok":true,"code":"","message":"","run":{"exitCode":-2147483648,"generation":"7","sourceVersion":"src","standardOutput":"[cut: 5 characters omitted]\nout\u0000","standardError":"err — 日本","dropped":false}},{"sequence":"1","atMs":"0","callerLabel":"http","operation":"build","session":"","project":"","ok":false,"code":"invalid_reservation","message":"⚠","run":null},{"sequence":"2","atMs":"1","callerLabel":"browser","operation":"run","session":"s","project":"p","ok":true,"code":"","message":"","run":{"exitCode":0,"generation":"0","sourceVersion":"","standardOutput":"","standardError":"","dropped":true}}]}"""
-  """{"event":"uptime","uptimeMs":"0"}"""
-  """{"event":"uptime","uptimeMs":"93784005"}"""
-  """{"event":"uptime","uptimeMs":"9223372036854775807"}"""
-  """{"event":"resources","sequence":"1","status":"complete","sampledAtMs":"123","intervalMs":2000,"sampleCostMs":12.5,"processCount":0,"unreadableCount":0,"omittedCount":0,"note":"test","metrics":[],"processes":[]}"""
-  """{"event":"agent_work","incarnation":"daemon-a","sequence":"1","executionHost":"local","capacity":256,"runs":[],"presence":[]}"""
-  """{"event":"agent_work","incarnation":"daemon-b","sequence":"2","executionHost":"local","capacity":256,"runs":[],"presence":[{"name":"pi","source":"lease","member":"pi · /repo/clef","project":"/repo/clef","detail":"holds full_build","sinceMs":"1759420800000"}]}"""
-]
-
 let private caseName (value: obj) (unionType: Type) =
   let case, _ = FSharpValue.GetUnionFields(value, unionType)
   case.Name
@@ -813,10 +330,10 @@ let private sampleHealth = {
 /// whether anything was written after the bridge closed the socket.
 type private FakeSocket() =
   let inbound = Channel.CreateUnbounded<Inbound>()
-  let written = Channel.CreateUnbounded<string>()
+  let written = Channel.CreateUnbounded<byte array>()
   let mutable closed = 0
   let mutable lateWrites = 0
-  member _.Deliver(payload: string) = inbound.Writer.TryWrite(Inbound.Text payload) |> ignore
+  member _.Deliver(payload: byte array) = inbound.Writer.TryWrite(Inbound.Binary payload) |> ignore
   member _.DeliverUnusable(code: string, message: string) = inbound.Writer.TryWrite(Inbound.Unusable(code, message)) |> ignore
   member _.Hangup() = inbound.Writer.TryWrite Inbound.Closed |> ignore
   member _.LateWrites = Volatile.Read &lateWrites
@@ -829,7 +346,7 @@ type private FakeSocket() =
     return
       match Ui.decodeEvent text with
       | Ok event -> event
-      | Error message -> failtestf "the page cannot decode %s: %s" text message
+      | Error message -> failtestf "the page cannot decode the %d-byte frame: %s" text.Length message
   }
   interface IBridgeSocket with
     member _.Receive(cancellation) = inbound.Reader.ReadAsync(cancellation).AsTask()
@@ -1039,119 +556,75 @@ let private settle (running: Task) = running.WaitAsync(TimeSpan.FromSeconds 5.)
 let tests =
   testList "UI bridge" [
 
-    testList "golden frames shared with bozzetto-web's Fable codecs" [
-      for index, (command, wire) in List.zip commands commandWires |> List.indexed ->
-        test (sprintf "command %d (%s) decodes from the frontend's exact bytes" index (caseName (box command) typeof<Command>)) {
-          let expected = { CommandFrame.Correlation = (if index = 0 then Int32.MaxValue else index + 1); Command = command }
-          Codec.decodeCommand wire |> Expect.equal "the frontend's frame decodes to the sample" (Ok expected)
-        }
-      for index, (event, wire) in List.zip events eventWires |> List.indexed ->
-        test (sprintf "event %d (%s) encodes to the mock's exact bytes" index (caseName (box event) typeof<Event>)) {
-          Codec.encodeEvent event |> Expect.equal "byte-identical to Mock.Codec.encodeEvent" wire
-          Ui.decodeEvent wire |> Expect.equal "the page reads it back" (Ok event)
-        }
-      yield test "the samples cover every case of every wire union" {
-        let covered (unionType: Type) (seen: string list) =
-          for case in FSharpType.GetUnionCases unionType do
-            seen |> List.contains case.Name |> Expect.isTrue (unionType.Name + " sample covers " + case.Name)
-        covered typeof<Command> (commands |> List.map (fun c -> caseName (box c) typeof<Command>))
-        covered typeof<Event> (events |> List.map (fun e -> caseName (box e) typeof<Event>))
-        covered typeof<Completion> (completions |> List.map (fun c -> caseName (box c) typeof<Completion>))
-        covered typeof<WorkerState> [
-          for event in events do
-            match event with
-            | Snapshot s -> caseName (box s.Worker) typeof<WorkerState>
-            | _ -> ()
-        ]
+    testList "binary codec" [
+      test "fixed command golden binds envelope and primitive byte order" {
+        let frame = { CommandFrame.Correlation = 1; Command = RequestSnapshot }
+        let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 9uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+        Ui.encodeCommand frame |> Expect.equal "exact independently specified bytes" golden
+        Codec.decodeCommand golden |> Expect.equal "golden decoded" (Ok frame)
       }
-    ]
-
-    testList "codec" [
-      testPropertyWithConfig wireConfig "every command frame the page can send decodes to itself" <|
-        fun (seed: int32) (command: Command) ->
-          let correlation = if seed = Int32.MinValue then 1 else max 1 (abs seed)
-          let frame = { CommandFrame.Correlation = correlation; Command = command }
-          match command with
-          | ObserveResources seconds when seconds < 0 || seconds > 120 ->
-            match Codec.decodeCommand (Ui.encodeCommand frame) with
-            | Error refusal -> refusal.Message = "seconds: expected an integer from 0 to 120"
-            | Ok _ -> false
-          | _ -> Codec.decodeCommand (Ui.encodeCommand frame) = Ok frame
-
-      testPropertyWithConfig wireConfig "every event the backend can send reaches the page unchanged" <|
-        fun (event: Event) -> Ui.decodeEvent (Codec.encodeEvent event) = Ok event
-
-      testPropertyWithConfig wireConfig "a finite float travels as a JSON number that parses back to itself" <|
-        fun (value: float) ->
-          match Codec.jsNumberText value with
-          | Some spelling ->
-            Result.isOk (JsonNumberLiteral.tryCreate spelling)
-            && Double.Parse(spelling, Globalization.CultureInfo.InvariantCulture) = value
-          | None -> false
-
-      test "floats are spelled as JSON.stringify spells them" {
+      test "every command and event fixture round trips" {
+        for command in ObserveNodeResources { Node = "one"; Seconds = 120 } :: commands do
+          let frame = { CommandFrame.Correlation = 7; Command = command }
+          Codec.decodeCommand (Ui.encodeCommand frame) |> Expect.equal "command" (Ok frame)
+        for event in events do
+          Ui.decodeEvent (Codec.encodeEvent event) |> Expect.equal "event" (Ok event)
+      }
+      testPropertyWithConfig wireConfig "finite floats and exact int64 survive typed binary" <|
+        fun (value: float) (stamp: int64) ->
+          let event = Resources {
+            Sequence = stamp; Status = "observing"; SampledAtMs = stamp
+            IntervalMs = value; SampleCostMs = value; Metrics = [||]; Processes = [||]
+            ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = ""
+          }
+          Ui.decodeEvent (Codec.encodeEvent event) = Ok event
+      test "invalid envelopes and trailing data refuse with precise reasons" {
+        let golden = Ui.encodeCommand { Correlation = 1; Command = RequestSnapshot }
+        let change index value = let copy = Array.copy golden in copy[index] <- value; copy
         let cases = [
-          0.0, "0"; -0.0, "0"; 1.0, "1"; -1.0, "-1"; 0.1, "0.1"; 1.0 / 3.0, "0.3333333333333333"
-          2.0 / 3.0, "0.6666666666666666"; 100.0, "100"; 1e20, "100000000000000000000"; 1e21, "1e+21"
-          1.5e21, "1.5e+21"; 123456789012345680000.0, "123456789012345680000"; 1e-6, "0.000001"; 1e-7, "1e-7"
-          1.5e-7, "1.5e-7"; 0.000001234, "0.000001234"; 5e-324, "5e-324"; 1.7976931348623157e308, "1.7976931348623157e+308"
-          -2.5e-10, "-2.5e-10"; 4.35, "4.35"; 0.30000000000000004, "0.30000000000000004"; 9007199254740993.0, "9007199254740992"
-          1e15, "1000000000000000"; 1e16, "10000000000000000"; 12345600.0, "12345600" ]
-        for value, spelling in cases do
-          Codec.jsNumberText value |> Expect.equal (sprintf "spelling of %s" spelling) (Some spelling)
-        for value in [ nan; infinity; -infinity ] do
-          Codec.jsNumberText value |> Expect.isNone "JSON.stringify writes a non-finite number as null"
-      }
-
-      test "control characters travel escaped and arrive unchanged" {
-        let text = String [| for c in 0 .. 31 -> char c |] + "\u007f  "
-        let run = RunOutput { RunTranscript.Correlation = 1; Target = target; Generation = 0L; SourceVersion = ""; ExitCode = 0; StandardOutput = text; StandardError = "" }
-        let wire = Codec.encodeEvent run
-        wire |> Seq.exists (fun c -> c < ' ') |> Expect.isFalse "no raw control character on the wire"
-        Ui.decodeEvent wire |> Expect.equal "the page reads the same text" (Ok run)
-      }
-
-      test "a lone surrogate cannot reach the wire; it travels as U+FFFD" {
-        let run = RunOutput { RunTranscript.Correlation = 1; Target = target; Generation = 0L; SourceVersion = ""; ExitCode = 0; StandardOutput = "a\uD800b\uDC00"; StandardError = "🎼" }
-        match Ui.decodeEvent (Codec.encodeEvent run) with
-        | Ok(RunOutput transcript) ->
-          transcript.StandardOutput |> Expect.equal "lone halves replaced" "a�b�"
-          transcript.StandardError |> Expect.equal "a pair is kept" "🎼"
-        | other -> failtestf "unexpected %A" other
-      }
-
-      test "an undecodable frame is refused, echoing its correlation when it has one" {
-        let cases = [
-          "not json", 0, "frame"
-          """[]""", 0, "frame"
-          """{"command":"request_snapshot"}""", 0, "correlation"
-          """{"correlation":0,"command":"request_snapshot"}""", 0, "correlation"
-          """{"correlation":-4,"command":"request_snapshot"}""", 0, "correlation"
-          """{"correlation":1.5,"command":"request_snapshot"}""", 0, "correlation"
-          """{"correlation":2147483648,"command":"request_snapshot"}""", 0, "correlation"
-          """{"correlation":"1","command":"request_snapshot"}""", 0, "correlation"
-          """{"correlation":12,"command":"explode"}""", 12, "command: unknown command explode"
-          """{"correlation":1,"command":"open_project","project":5}""", 1, "project"
-          """{"correlation":1,"command":"run","target":{"host":"h","epoch":"e","session":"s"},"arguments":["a",1]}""", 1, "arguments[1]"
-          """{"correlation":1,"command":"reserve","target":{"host":"h","epoch":"e"},"label":"x"}""", 1, "target.session"
-          """{"correlation":1,"command":"retire_worker","worker":{"host":"h"}}""", 1, "worker.epoch"
-          """{"correlation":3,"command":"build","target":"h/e/s","reservation":"r"}""", 3, "target"
+          golden[..3], "truncated"
+          change 0 0uy, "magic"
+          change 4 8uy, "version"
+          change 5 2uy, "family"
+          change 10 127uy, "unknown Command tag"
+          Array.append golden [| 0uy |], "trailing"
+          Array.zeroCreate (Bozzetto.Web.Shared.BinaryCodec.MaxFrameBytes + 1), "too large"
         ]
-        for wire, correlation, names in cases do
-          match Codec.decodeCommand wire with
-          | Ok decoded -> failtestf "%s decoded to %A" wire decoded
-          | Error refusal ->
-            refusal.Correlation |> Expect.equal (wire + " echoes what can be read") correlation
-            refusal.Target |> Expect.equal "nothing in the frame is trusted as an address" Codec.noTarget
-            refusal.Code |> Expect.equal "Composer's spelling" "invalid_request"
-            refusal.Message |> Expect.stringContains "the message names the field" names
+        for bytes, reason in cases do
+          match Codec.decodeCommand bytes with
+          | Ok _ -> failtestf "accepted malformed %s" reason
+          | Error error -> error.Message |> Expect.stringContains "specific refusal" reason
       }
-
-      test "integers and duplicate keys read as JSON.parse reads them" {
-        Codec.decodeCommand """{"correlation":7.0,"command":"request_snapshot"}"""
-        |> Expect.equal "7.0 is the integer 7" (Ok { CommandFrame.Correlation = 7; Command = RequestSnapshot })
-        Codec.decodeCommand """{"correlation":1,"command":"explode","command":"request_snapshot"}"""
-        |> Expect.equal "the last duplicate wins" (Ok { CommandFrame.Correlation = 1; Command = RequestSnapshot })
+      test "UTF8 length and scalar validation never repairs malformed input" {
+        let prefix = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 9uy; 1uy; 1uy; 0uy; 0uy; 0uy; 3uy |]
+        for body, reason in [ [| 2uy; 0xC0uy; 0xAFuy |], "UTF-8"; [| 1uy; 0xC2uy |], "UTF-8"; [| 3uy; 0xEDuy; 0xA0uy; 0x80uy |], "UTF-8"; [| 127uy |], "length"; [| 0x80uy; 0uy |], "noncanonical" ] do
+          match Codec.decodeCommand (Array.append prefix body) with
+          | Error refusal -> refusal.Message |> Expect.stringContains "precise malformed string" reason
+          | Ok _ -> failtest "malformed UTF8 admitted"
+        let command = { Correlation = 1; Command = OpenProject "日本語 🎼\u0000" }
+        Codec.decodeCommand (Ui.encodeCommand command) |> Expect.equal "unicode scalar/control preserved" (Ok command)
+      }
+      test "peer identity work heartbeat and unavailability stay typed" {
+        let source = { NodeIdentity.Node = "one"; Incarnation = "epoch-1" }
+        let work : WorkSnapshot = {
+          TranscriptsOmitted = false
+          Sequence = 9007199254740993L; SampledAtMs = 123L
+          Snapshot = { Revision = 2L; Worker = Idle; Sessions = [||] }
+          Leases = { Revision = 3L; Active = [||]; Queued = [||] }
+          Operations = { Revision = 4L; Incarnation = "j"; StorageError = None; Entries = [||] }
+        }
+        let resources = { Sequence = 5L; Status = "unavailable"; SampledAtMs = 123L; IntervalMs = 0.; SampleCostMs = 0.
+                          Metrics = [||]; Processes = [||]; ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = "unsupported" }
+        for value in [ PeerHello source; PeerWork work; PeerResources resources; PeerUnavailable "disconnected"; PeerHeartbeat { UptimeMs = 77L } ] do
+          Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value)
+          |> Expect.equal "peer case preserved" (Ok value)
+        for value in [ WorkNodes { Revision = 8L; Nodes = [| { Source = source; Local = false; Status = "unavailable"; Note = "last observed"; Value = Some work } |] }; NodeResources { Source = source; Correlation = 7; Value = resources } ] do
+          Ui.decodeEvent (Codec.encodeEvent value) |> Expect.equal "scoped browser event" (Ok value)
+        let request = { PeerObserveRequest.ProtocolVersion = ProtocolVersion; Node = "one"; Topic = "work"; Seconds = 0 }
+        Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest request)
+        |> Expect.equal "bounded request" (Ok request)
+        Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Array.zeroCreate 4097)
+        |> Expect.equal "request cap before parsing" (Error "binary: frame too large")
       }
     ]
 
@@ -1275,7 +748,7 @@ let tests =
         let board = Project.leaseBoard 1L snapshot.Active snapshot.Queue
         let wire = Codec.encodeEvent (Leases board)
         for leaseId in leaseIds do
-          wire.Contains leaseId |> Expect.isFalse "the release capability never leaves the daemon"
+          Encoding.UTF8.GetString(wire).Contains leaseId |> Expect.isFalse "the release capability never leaves the daemon"
         board.Active |> Array.map _.Holder |> Expect.equal "grants" [| "agent-a"; "agent-b" |]
         board.Active |> Array.map _.GrantedAtMs |> Expect.equal "granted at" [| now.ToUnixTimeMilliseconds(); now.AddSeconds(1.).ToUnixTimeMilliseconds() |]
         board.Active |> Array.map _.Id |> Array.distinct |> Array.length |> Expect.equal "display ids are distinct" 2
@@ -1495,8 +968,8 @@ let tests =
         socket.Deliver(frame 5 RequestSnapshot)
         socket.Deliver(frame 6 (Build { BuildReserved.Target = target; Reservation = "rsv" }))
         socket.Deliver(frame 7 (CloseSession target))
-        socket.Deliver """{"correlation":8,"command":"explode"}"""
-        socket.Deliver "not json"
+        socket.Deliver(frame 8 (ObserveNodeResources { Node = "unknown"; Seconds = 1 }))
+        socket.Deliver(Encoding.UTF8.GetBytes """{"correlation":9,"command":"requestSnapshot"}""")
         socket.DeliverUnusable("frame_too_large", "frame: too large")
         let answered (seen: Event list) = seen |> List.choose correlationOf |> List.length
         let! (seen: Event list) = readUntil socket (fun seen -> answered seen = 10)
@@ -1510,7 +983,7 @@ let tests =
           seen |> List.tryPick (function Refused r when r.Correlation = correlation -> Some r.Code | _ -> None)
         refusedCode 4 |> Expect.equal "Composer's refusal keeps its code" (Some "busy")
         refusedCode 7 |> Expect.equal "a failing operation is refused, not dropped" (Some "provider_unavailable")
-        refusedCode 8 |> Expect.equal "an unknown command is refused with its correlation" (Some "invalid_request")
+        refusedCode 8 |> Expect.equal "an unavailable node observation keeps its correlation" (Some "observation_unavailable")
         let index predicate = seen |> List.findIndex predicate
         let runOutput = index (function RunOutput r -> r.Correlation = 3 | _ -> false)
         let runAccepted = index (function Accepted a -> a.Correlation = 3 | _ -> false)
@@ -1903,7 +1376,268 @@ let observationTests =
   let register (graph: Facts.Graph) source sink =
     graph.RegisterObservation(source, sink) |> Result.defaultWith (fun error -> failtestf "registration refused: %A" error)
   let sample sequence note = { Bozzetto.Server.ResourceMonitor.empty "observing" with Sequence = sequence; SampledAtMs = sequence * 1000L; Note = note }
+  let workGraph () =
+    Facts.Graph({ McpPort = 47759; Version = "test"; ProcessId = 99 }, "daemon-o", "",
+      observationOwners = [ pa ], localNode = a.Node, peerNodes = [ b.Node ])
+  let workValue sequence : WorkSnapshot =
+    { TranscriptsOmitted = false
+      Sequence = sequence; SampledAtMs = sequence * 1000L
+      Snapshot = { Revision = sequence; Worker = Unconfigured; Sessions = [||] }
+      Leases = { Revision = sequence; Active = [||]; Queued = [||] }
+      Operations = { Revision = sequence; Incarnation = "journal"; StorageError = None; Entries = [||] } }
+  let workNode (graph: Facts.Graph) node =
+    graph.Current() |> List.pick (function WorkNodes board -> board.Nodes |> Array.tryFind (fun value -> value.Source.Node = node) | _ -> None)
   testList "UiBridge.Facts scoped observation" [
+    testCase "configured work slots stay unavailable until authenticated source publication" <| fun () ->
+      let graph = workGraph ()
+      let absent = workNode graph b.Node
+      (absent.Source.Incarnation, absent.Local, absent.Status, absent.Value)
+      |> Expect.equal "configuration supplies neither incarnation nor a fabricated snapshot" ("", false, "unavailable", None)
+      (workNode graph a.Node).Local |> Expect.isTrue "locality comes from this controller"
+      graph.PeerConnectionUnavailable(b.Node, "Peer authentication failed.") |> Expect.equal "failed Hello is visible" (Ok())
+      (workNode graph b.Node).Note |> Expect.equal "sanitized failure is retained" "Peer authentication failed."
+      graph.PeerConnectionUnavailable("unknown", "missing") |> Expect.equal "failure cannot enroll a node" (Error Facts.Refusal.UnknownSource)
+      let peer = graph.BindPeer b
+      graph.PeerConnectionUnavailable(b.Node, "late Hello failure") |> Expect.equal "unbound report cannot overwrite a bound connection" (Error Facts.Refusal.ForeignProducer)
+      graph.PublishWork(peer, workValue 5L) |> Expect.equal "authenticated source is admitted" (Ok())
+      graph.PublishWork({ peer with Correlation = Guid.NewGuid() }, workValue 6L) |> Expect.equal "identity alone grants no publication" (Error Facts.Refusal.ForeignProducer)
+      (workNode graph b.Node).Value |> Expect.equal "the current snapshot names its real observation time" (Some(workValue 5L))
+      graph.Stop()
+
+    testCase "work sequence and unavailable status cannot overwrite or freshen a retained snapshot" <| fun () ->
+      let graph = workGraph ()
+      let peer = graph.BindPeer b
+      let value = workValue 5L
+      graph.PublishWork(peer, value) |> Expect.equal "first work snapshot admitted" (Ok())
+      graph.PublishWork(peer, value) |> Expect.equal "identical work is idempotent" (Error Facts.Refusal.Duplicate)
+      graph.PublishWork(peer, { value with SampledAtMs = 999L }) |> Expect.equal "same sequence with different facts is refused" (Error Facts.Refusal.Conflict)
+      graph.PublishWork(peer, workValue 4L) |> Expect.equal "older snapshot refused" (Error Facts.Refusal.Older)
+      for _ in 1 .. 7 do graph.PeerUnavailable(peer, "disconnected") |> Expect.equal "connection status has its own publication order" (Ok())
+      let unavailable = workNode graph b.Node
+      (unavailable.Status, unavailable.Value) |> Expect.equal "disconnect retains the exact old timestamp and facts" ("unavailable", Some value)
+      graph.PublishWork(peer, value) |> Expect.equal "same-incarnation retained snapshot can recover without inventing sequence" (Ok())
+      (workNode graph b.Node).Status |> Expect.equal "source is available again" "available"
+      graph.Stop()
+
+    testCase "same-incarnation reconnect fences the old connection and new incarnation clears retained work" <| fun () ->
+      let graph = workGraph ()
+      let first = graph.BindPeer b
+      graph.PublishWork(first, workValue 5L) |> ignore
+      let oldFocus, demand = register graph b ignore
+      graph.PublishPeerResources(first, sample 8L "old") |> ignore
+      let next = graph.BindPeer b
+      graph.ObservationDemanded b |> Expect.equal "replacement releases old scoped demand in Foundation" (Ok false)
+      graph.PublishWork(first, workValue 99L) |> Expect.equal "late same-incarnation connection refused" (Error Facts.Refusal.ForeignProducer)
+      graph.PublishPeerResources(first, sample 99L "late") |> Expect.equal "late resource callback refused too" (Error Facts.Refusal.ForeignProducer)
+      graph.PeerUnavailable(first, "late disconnect") |> Expect.equal "old connection cannot mark the replacement down" (Error Facts.Refusal.ForeignProducer)
+      graph.PublishWork(next, workValue 5L) |> Expect.equal "replacement can repeat the retained snapshot" (Ok())
+      let newestSource = { b with Incarnation = "B-next" }
+      let newest = graph.BindPeer newestSource
+      (workNode graph b.Node).Value |> Expect.equal "a new process owns no old process snapshot" None
+      graph.PublishWork(next, workValue 999L) |> Expect.equal "old incarnation remains fenced" (Error Facts.Refusal.ForeignIncarnation)
+      graph.PublishWork(newest, workValue 0L) |> Expect.equal "new process starts its own sequence" (Ok())
+      demand.Dispose()
+      graph.Stop()
+
+    testCase "resource availability has its own stamp and conflicting equal samples remain refused" <| fun () ->
+      let graph = workGraph ()
+      let peer = graph.BindPeer b
+      let pushed = ResizeArray<Facts.Observation>()
+      let _, demand = register graph b pushed.Add
+      use _demand = demand
+      let value = sample 5L "sample"
+      graph.PublishPeerResources(peer, value) |> Expect.equal "sample admitted" (Ok())
+      graph.PublishPeerResources(peer, value) |> Expect.equal "duplicate sample idempotent" (Error Facts.Refusal.Duplicate)
+      graph.PublishPeerResources(peer, { value with Note = "changed" }) |> Expect.equal "note-only change is not a new sample" (Error Facts.Refusal.Conflict)
+      graph.PublishPeerResources(peer, sample 4L "old") |> Expect.equal "older sample refused" (Error Facts.Refusal.Older)
+      graph.PeerResourcesUnavailable(peer, "stream unavailable") |> Expect.equal "unavailability does not fabricate a sample sequence" (Ok())
+      pushed[pushed.Count - 1].Sequence |> Expect.equal "last real sample sequence remains" (Some 5L)
+      graph.PublishPeerResources(peer, value) |> Expect.equal "same retained sample can recover after unavailable" (Ok())
+      (workNode graph b.Node).Value |> Expect.equal "resource observations never create work snapshots" None
+      graph.Stop()
+
+    testCase "work summaries explicitly omit run transcripts without changing the local journal projection" <| fun () ->
+      let operations = events |> List.pick (function Operations value when value.Entries |> Array.exists (fun entry -> entry.Run.IsSome) -> Some value | _ -> None)
+      let original = { workValue 1L with Operations = operations }
+      let summary = Project.workSummary original
+      summary.TranscriptsOmitted |> Expect.isTrue "omission belongs to the work projection"
+      summary.Operations.Entries |> Array.choose _.Run |> Array.forall (fun run -> run.StandardOutput = "" && run.StandardError = "")
+      |> Expect.isTrue "live summary excludes transcript bytes"
+      summary.Operations.Entries |> Array.choose _.Run |> Array.map _.Dropped
+      |> Expect.equal "source loss is unchanged by summary omission" (original.Operations.Entries |> Array.choose _.Run |> Array.map _.Dropped)
+      original.Operations |> Expect.equal "projection did not alter the source-owned local operations" operations
+      summary.Snapshot |> Expect.equal "session/work facts are preserved" original.Snapshot
+      summary.Leases |> Expect.equal "actual lease facts are preserved" original.Leases
+
+    testCase "encoded work budget admits its exact edge and refuses oversize with retained stale facts" <| fun () ->
+      let graph = workGraph ()
+      let peer = graph.BindPeer b
+      let withProject length =
+        let value = workValue 1L
+        { value with Snapshot = { value.Snapshot with Sessions = [| { bareSession with Project = String.replicate length "x" } |] } }
+      let initialLength = MaxWorkSnapshotBytes - 1024
+      let initial = withProject initialLength
+      let initialSize = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame(PeerWork initial) |> Array.length
+      let edge = withProject (initialLength + MaxWorkSnapshotBytes - initialSize)
+      Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame(PeerWork edge) |> Array.length |> Expect.equal "real encoded edge, including the peer envelope" MaxWorkSnapshotBytes
+      graph.PublishWork(peer, edge) |> Expect.equal "exact budget admitted" (Ok())
+      let oversized = { withProject (initialLength + MaxWorkSnapshotBytes - initialSize + 1) with Sequence = 2L }
+      graph.PublishWork(peer, oversized) |> Expect.equal "one byte over refused specifically" (Error Facts.Refusal.Oversized)
+      let current = workNode graph b.Node
+      (current.Status, current.Note, current.Value)
+      |> Expect.equal "oversize is visible and preserves the earlier timestamp and busy/lease facts"
+        ("unavailable", "Work snapshot exceeds the encoded observation budget.", Some edge)
+      graph.PublishWork(peer, edge) |> Expect.equal "a valid source can recover from the refused update" (Ok())
+      graph.PublishWork(peer, { oversized with Sequence = 0L }) |> Expect.equal "an older oversized payload stays an ordering refusal" (Error Facts.Refusal.Older)
+      (workNode graph b.Node).Status |> Expect.equal "late bad payload cannot invalidate the current source" "available"
+      graph.Stop()
+
+    testTask "one bounded resource window completing releases only its own focus and never a build" {
+      let stopping = new CancellationTokenSource()
+      let composer = FakeComposer(HoldBuilds = true)
+      let graph = workGraph ()
+      let peer = graph.BindPeer b
+      let requested = Channel.CreateUnbounded<(string -> unit) * TaskCompletionSource<unit>>()
+      let observePeer _ _ finished = async {
+        let disposed = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        requested.Writer.TryWrite(finished, disposed) |> ignore
+        return { new IDisposable with member _.Dispose() = disposed.TrySetResult() |> ignore }
+      }
+      let sources = { composer.Sources with Facts = { Register = graph.Register; Current = graph.Current; Refresh = ignore } }
+      let hub = Hub(sources, quiet, stopping.Token, unpaused, (ClockGate()).Tick, observation = (graph, pa, observePeer))
+      let first, second = FakeSocket(), FakeSocket()
+      let runningFirst = hub.RunAsync(first, CancellationToken.None)
+      let runningSecond = hub.RunAsync(second, CancellationToken.None)
+      try
+        let! _ = readUntil first (List.exists (function WorkNodes _ -> true | _ -> false))
+        let! _ = readUntil second (List.exists (function WorkNodes _ -> true | _ -> false))
+        first.Deliver(frame 1 (Build { Target = target; Reservation = "rsv" }))
+        let! (buildToken: CancellationToken) = composer.BuildEntered.WaitAsync(TimeSpan.FromSeconds 5.)
+        first.Deliver(frame 2 (ObserveNodeResources { Node = b.Node; Seconds = 1 }))
+        let! ((finishFirst, disposedFirst): (string -> unit) * TaskCompletionSource<unit>) = requested.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds 5.)
+        second.Deliver(frame 3 (ObserveNodeResources { Node = b.Node; Seconds = 120 }))
+        let! ((finishSecond, disposedSecond): (string -> unit) * TaskCompletionSource<unit>) = requested.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds 5.)
+        graph.PublishPeerResources(peer, sample 5L "both") |> Expect.equal "one source feeds independent demands" (Ok())
+        let hasSample correlation sequence = List.exists (function NodeResources value -> value.Correlation = correlation && value.Value.Sequence = sequence && value.Value.Status = "observing" | _ -> false)
+        let! _ = readUntil first (hasSample 2 5L)
+        let! _ = readUntil second (hasSample 3 5L)
+        finishFirst "complete"
+        do! disposedFirst.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+        let! _ = readUntil first (List.exists (function NodeResources value -> value.Correlation = 2 && value.Value.Status = "complete" && value.Value.SampledAtMs = 5000L | _ -> false))
+        graph.ObservationDemanded b |> Expect.equal "other window keeps its Foundation demand" (Ok true)
+        graph.PublishPeerResources(peer, sample 6L "remaining") |> Expect.equal "source stays live" (Ok())
+        let! _ = readUntil second (hasSample 3 6L)
+        first.Waiting |> Expect.equal "expired focus does not receive another window's sample" 0
+        buildToken.IsCancellationRequested |> Expect.isFalse "resource focus never cancels the held build"
+        second.Deliver(frame 4 (ObserveNodeResources { Node = b.Node; Seconds = 0 }))
+        let! stopFrames = readUntil second (List.exists (function Accepted value -> value.Correlation = 4 | _ -> false))
+        disposedSecond.Task.IsCompleted |> Expect.isTrue "stop acknowledgment follows the owned stream's disposal and join"
+        stopFrames |> List.exists (function NodeResources value -> value.Correlation = 4 | _ -> false)
+        |> Expect.isFalse "stop acknowledges the command without fabricating a source sample"
+        graph.ObservationDemanded b |> Expect.equal "last window releases the actual Foundation demand" (Ok false)
+        let current, retained = register graph b ignore
+        current.Value |> Expect.equal "one window stopping does not change the shared source fact" (Ok(sample 6L "remaining"))
+        retained.Dispose()
+        finishSecond "complete"
+        buildToken.IsCancellationRequested |> Expect.isFalse "stop only releases its observation demand"
+      finally
+        composer.ReleaseBuild()
+        first.Hangup()
+        second.Hangup()
+      do! settle runningFirst
+      do! settle runningSecond
+      stopping.Cancel()
+      graph.Stop()
+      stopping.Dispose()
+    }
+
+    testTask "headless HTTP work and transcript reads bind their node and join active streams on close" {
+      do! task {
+        use stopping = new CancellationTokenSource()
+        let composer = FakeComposer()
+        let workerGraph = Facts.Graph({ McpPort = 47759; Version = "test"; ProcessId = 99 }, "daemon-o", "", observationOwners = [pb], localNode = b.Node)
+        workerGraph.PublishWork(pb, workValue 7L) |> Expect.equal "worker has source-owned work before a subscriber" (Ok())
+        let transcriptReads = ResizeArray<TranscriptReadRequest>()
+        let readTranscript (request: TranscriptReadRequest) =
+          transcriptReads.Add request
+          TranscriptPage { Journal = (if request.Sequence = 8L then "wrong-journal" else request.Journal)
+                           Sequence = request.Sequence; Stream = request.Stream; Offset = request.Offset
+                           NextOffset = None; TotalBytes = 3L; Bytes = [|0uy;128uy;255uy|]; Truncated = false }
+        let makeHub (graph: Facts.Graph) (owner: Facts.ObservationProducer) (peers: string -> int -> (string -> unit) -> Async<IDisposable>) =
+          let sources = { composer.Sources with Facts = { Register = graph.Register; Current = graph.Current; Refresh = ignore } }
+          Hub(sources, quiet, stopping.Token, unpaused, (ClockGate()).Tick,
+            observation = (graph, owner, peers), localTranscript = readTranscript)
+        let noResources _ _ _ = async { return invalidOp "This control does not request resource acquisition." }
+        let workerHub = makeHub workerGraph pb noResources
+        let aborted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let! server, url = Hosting.start (fun app ->
+          Microsoft.AspNetCore.Builder.UseExtensions.Use(app,
+            Func<Microsoft.AspNetCore.Http.HttpContext, Func<Task>, Task>(fun ctx next -> task {
+              use _aborted = ctx.RequestAborted.Register(fun () -> aborted.TrySetResult() |> ignore)
+              do! next.Invoke()
+            })) |> ignore
+          mapRoutes true app (fun () -> failwith "headless must not map browser routes")
+          Observe.mapRoutes app workerHub)
+        let directory = System.IO.Path.GetFullPath(System.IO.Path.Combine(__SOURCE_DIRECTORY__, "../../nupkg/work-observation-controls", Guid.NewGuid().ToString("N")))
+        System.IO.Directory.CreateDirectory directory |> ignore
+        let tokenFile = System.IO.Path.Combine(directory, "test.token")
+        System.IO.File.WriteAllText(tokenFile, "fixture-token")
+        let graph = workGraph ()
+        let available = TaskCompletionSource<NodeWork>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let unavailable = TaskCompletionSource<NodeWork>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let disconnected = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let _, registration = graph.Register(fun _ event ->
+          match event with
+          | WorkNodes board ->
+            board.Nodes |> Array.tryFind (fun node -> node.Source.Node = b.Node) |> Option.iter (fun node ->
+              if node.Status = "available" then available.TrySetResult node |> ignore
+              elif node.Note = "Worker snapshot is unavailable." then unavailable.TrySetResult node |> ignore
+              elif node.Note = "Disconnected; retained work is not current." then disconnected.TrySetResult() |> ignore)
+          | _ -> ())
+        use _registration = registration
+        let hub = makeHub graph pa noResources
+        let controller = new Observe.Controller(hub, [ { Node = b.Node; Endpoint = Uri(url + "/api/work/observe"); TokenFile = tokenFile } ], stopping.Token)
+        try
+          use client = new Net.Http.HttpClient(Timeout = TimeSpan.FromSeconds 5.)
+          use! page = client.GetAsync(url + "/work")
+          int page.StatusCode |> Expect.equal "headless HTTP does not expose the browser" 404
+          let! (initial: NodeWork) = available.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+          (initial.Source, initial.Local, initial.Value) |> Expect.equal "binary Hello and atomic current work identify the actual worker" (b, false, Some(workValue 7L))
+          let read = { Source = b; Journal = "persisted-journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; MaxBytes = 3 }
+          let! transcript = controller.ReadTranscript(read, CancellationToken.None) |> Async.StartAsTask
+          transcript |> Expect.equal "selected output arrives as exact binary bytes from the named journal"
+            (TranscriptPage { Journal = read.Journal; Sequence = 7L; Stream = Stdout; Offset = 0L; NextOffset = None; TotalBytes = 3L; Bytes = [|0uy;128uy;255uy|]; Truncated = false })
+          let! wrongPage = controller.ReadTranscript({ read with Sequence = 8L }, CancellationToken.None) |> Async.StartAsTask
+          wrongPage |> Expect.equal "a node cannot substitute another journal's page"
+            (TranscriptRefused("invalid_transcript", "The node returned a mismatched transcript page."))
+          let! retired = controller.ReadTranscript({ read with Source = { b with Incarnation = "retired" } }, CancellationToken.None) |> Async.StartAsTask
+          retired |> Expect.equal "a retired browser reference cannot issue a node read"
+            (TranscriptRefused("node_unavailable", "Select a node with a current authenticated work connection."))
+          transcriptReads.Count |> Expect.equal "only the two admitted reads reached storage" 2
+          use forged = new Net.Http.ByteArrayContent(Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest
+            { ProtocolVersion = ProtocolVersion; Request = { read with Source = a } })
+          forged.Headers.ContentType <- Net.Http.Headers.MediaTypeHeaderValue Observe.MediaType
+          use! rejected = client.PostAsync(url + "/api/work/observe", forged)
+          int rejected.StatusCode |> Expect.equal "worker also rejects a crossed identity" 400
+          transcriptReads.Count |> Expect.equal "worker identity checked before storage" 2
+          workerGraph.PeerUnavailable(pb, "Worker snapshot is unavailable.") |> Expect.equal "source publishes unavailable without inventing work" (Ok())
+          let! (lost: NodeWork) = unavailable.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+          lost.Value |> Expect.equal "HTTP status propagation retains the old snapshot and timestamp" (Some(workValue 7L))
+          do! (controller.Close() |> Async.StartAsTask).WaitAsync(TimeSpan.FromSeconds 5.)
+          do! disconnected.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+          do! aborted.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+          (workNode graph b.Node).Status |> Expect.equal "a joined connection never leaves an available worker" "unavailable"
+        finally
+          stopping.Cancel()
+          try (controller.Close() |> Async.StartAsTask).WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult()
+          with _ -> () // Preserve the assertion failure while still attempting bounded owned cleanup.
+          workerGraph.Stop()
+          graph.Stop()
+          Hosting.stop server
+          System.IO.Directory.Delete(directory, true)
+      }
+    }
+
     testCase "consumer registration and sink correlations cannot publish as the source" <| fun () ->
       let graph = graph ()
       let pushed = ResizeArray<Facts.Observation>()

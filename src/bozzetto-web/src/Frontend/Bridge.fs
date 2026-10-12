@@ -16,7 +16,7 @@ let mutable private socket: Interop.Socket option = None
 
 /// Send one encoded frame; false when the link is down (nothing is queued:
 /// a command issued while disconnected is refused locally, not replayed).
-let send (payload: string) : bool =
+let send (payload: byte array) : bool =
   match socket with
   | Some open' -> Interop.trySend open' payload
   | None -> false
@@ -25,7 +25,7 @@ let send (payload: string) : bool =
 /// `onFrame` receives every backend frame; `onLink` every link change. The
 /// backend pushes current state on each new connection, so a reconnect
 /// needs no replay.
-let start (onFrame: string -> unit) (onLink: Link -> unit) : unit =
+let start (onFrame: byte array -> unit) (onLink: Link -> unit) : unit =
   let url = Interop.bridgeUrl ()
   let rec connect (attempt: int) =
     if attempt = 0 then onLink Connecting

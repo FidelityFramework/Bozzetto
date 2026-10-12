@@ -98,6 +98,24 @@ type LeaseView = {| id: string; kind: string; holder: string; grantedAt: float; 
 
 type WaitView = {| id: string; kind: string; holder: string; requestedAt: float |}
 
+type NodeOperationView = {| sequence: string; label: string; hasRun: bool; dropped: bool |}
+type TranscriptView = {|
+  node: string; incarnation: string; journal: string; sequence: string; stream: TranscriptStream
+  correlation: int; bytes: byte array; text: string; next: string; total: string; truncated: bool; status: string
+|}
+
+let private noTranscript () : TranscriptView =
+  {| node = ""; incarnation = ""; journal = ""; sequence = ""; stream = Stdout; correlation = 0
+     bytes = [||]; text = ""; next = ""; total = ""; truncated = false; status = "not loaded" |}
+
+/// Controller-admitted node facts. Availability is separate from a retained sample.
+type NodeWorkView = {|
+  id: string; incarnation: string; local: bool; status: string; note: string
+  hasValue: bool; sequence: string; sampledAt: float
+  sessions: SessionView array; leases: LeaseView array; queue: WaitView array
+  journal: string; storageError: string; transcriptsOmitted: bool; operations: NodeOperationView array
+|}
+
 /// One command outcome, as the activity log and a session card show it.
 type OutcomeView = {| id: int; at: float; ok: bool; scope: string; text: string |}
 
@@ -139,6 +157,12 @@ type ModelView =
     agentIncarnation: string
     agentSequence: string
     executionHost: string
+    nodes: NodeWorkView array
+    nodesRevision: string
+    nodeFocus: string
+    nodeIncarnation: string
+    nodeCorrelation: int
+    transcript: TranscriptView
     resources: ResourcesView
     resourceMetrics: ResourceMetricView array
     resourceProcesses: ResourceProcessView array
@@ -229,6 +253,12 @@ let create () : Stores =
         agentIncarnation = ""
         agentSequence = ""
         executionHost = ""
+        nodes = Array.empty<NodeWorkView>
+        nodesRevision = ""
+        nodeFocus = ""
+        nodeIncarnation = ""
+        nodeCorrelation = 0
+        transcript = noTranscript ()
         resources = noResources ()
         resourceMetrics = Array.empty<ResourceMetricView>
         resourceProcesses = Array.empty<ResourceProcessView>
@@ -263,7 +293,8 @@ let targetOf (session: SessionView) : SessionTarget =
 /// Which UI element a command's pending state and outcome belong to.
 let commandKey (command: Command) =
   match command with
-  | ObserveResources _ -> "resources"
+  | ObserveResources _ | ObserveNodeResources _ -> "resources"
+  | ReadNodeTranscript _ -> "transcript"
   | RequestSnapshot -> "snapshot"
   | OpenProject _ -> OpenKey
   | Reserve edit -> sessionKey edit.Target
@@ -275,7 +306,8 @@ let commandKey (command: Command) =
 
 let commandLabel (command: Command) =
   match command with
-  | ObserveResources _ -> "observe resources"
+  | ObserveResources _ | ObserveNodeResources _ -> "observe resources"
+  | ReadNodeTranscript _ -> "read transcript"
   | RequestSnapshot -> "refresh"
   | OpenProject _ -> "open"
   | Reserve _ -> "reserve"
@@ -412,6 +444,21 @@ let private leaseView (l: LeaseGrant) : LeaseView =
 let private waitView (w: LeaseWait) : WaitView =
   {| id = w.Holder + "|" + w.Kind; kind = w.Kind; holder = w.Holder; requestedAt = float w.RequestedAtMs |}
 
+let private nodeView (node: NodeWork) : NodeWorkView =
+  {| id = node.Source.Node; incarnation = node.Source.Incarnation; local = node.Local
+     status = node.Status; note = node.Note; hasValue = node.Value.IsSome
+     sequence = node.Value |> Option.map (fun v -> string v.Sequence) |> Option.defaultValue ""
+     sampledAt = node.Value |> Option.map (fun v -> float v.SampledAtMs) |> Option.defaultValue 0.
+     sessions = node.Value |> Option.map (fun v -> Array.map sessionView v.Snapshot.Sessions) |> Option.defaultValue [||]
+     leases = node.Value |> Option.map (fun v -> Array.map leaseView v.Leases.Active) |> Option.defaultValue [||]
+     queue = node.Value |> Option.map (fun v -> Array.map waitView v.Leases.Queued) |> Option.defaultValue [||]
+     journal = node.Value |> Option.map (fun v -> v.Operations.Incarnation) |> Option.defaultValue ""
+     storageError = node.Value |> Option.bind (fun v -> v.Operations.StorageError) |> Option.defaultValue ""
+     transcriptsOmitted = node.Value |> Option.exists _.TranscriptsOmitted
+     operations = node.Value |> Option.map (fun v -> v.Operations.Entries |> Array.map (fun e ->
+       {| sequence = string e.Sequence; hasRun = e.Run.IsSome; dropped = e.Run |> Option.exists _.Dropped
+          label = clockTime (float e.AtMs) + " · " + e.Operation + " · " + e.Project + " · " + (if e.Ok then "completed" else e.Code + ": " + e.Message) |})) |> Option.defaultValue [||] |}
+
 // ── Store writes ───────────────────────────────────────────────────────────
 
 /// Replace one top-level slice, diffing it against what is there.
@@ -420,6 +467,26 @@ let private reconcileSlice (stores: Stores) (slice: string) (value: obj) =
 
 let private setSlice (stores: Stores) (slice: string) (value: obj) =
   stores.SetModel.UpdatePath [| box slice; value |]
+
+/// A focus change withdraws only the view; the caller sends the matching stop/start.
+let focusNode (stores: Stores) node incarnation =
+  setSlice stores "nodeFocus" (box node)
+  setSlice stores "nodeIncarnation" (box incarnation)
+  setSlice stores "nodeCorrelation" (box 0)
+  setSlice stores "resources" (box (noResources ()))
+  reconcileSlice stores "resourceMetrics" (box Array.empty<ResourceMetricView>)
+  reconcileSlice stores "resourceProcesses" (box Array.empty<ResourceProcessView>)
+
+let private applyResources stores (r: HostResources) =
+  if stores.Model.resources.sequence = "" || r.Sequence >= int64 stores.Model.resources.sequence then
+    reconcileSlice stores "resources" (box {|
+      sequence = string r.Sequence; status = r.Status; sampledAt = float r.SampledAtMs; interval = r.IntervalMs; cost = r.SampleCostMs
+      count = r.ProcessCount; unreadable = r.UnreadableCount; omitted = r.OmittedCount; note = r.Note |})
+    reconcileSlice stores "resourceMetrics" (box (r.Metrics |> Array.map (fun m ->
+      {| id = m.Name; known = m.Value.IsSome; value = Option.defaultValue 0. m.Value; unit = m.Unit |})))
+    reconcileSlice stores "resourceProcesses" (box (r.Processes |> Array.map (fun p ->
+      {| id = string p.ProcessId + ":" + p.StartTicks; pid = p.ProcessId; parent = p.ParentId; name = p.Name; context = p.Context
+         cpuKnown = p.CpuPercent.IsSome; cpu = Option.defaultValue 0. p.CpuPercent; rss = p.ResidentBytes; threads = p.Threads |})))
 
 /// Set (Some) or delete (None) one key of a LocalView dictionary.
 let private setLocal (stores: Stores) (dict: string) (key: string) (value: obj option) =
@@ -449,9 +516,9 @@ let private log (stores: Stores) (keys: string list) (ok: bool) (text: string) =
   for key in keys do
     if key <> "" then setLocal stores "outcomes" key (Some(box (entry ())))
 
-/// Correlation -> (key, label) of every command still awaiting its outcome.
+/// Correlation -> (key, label, typed request) still awaiting its outcome.
 type Dispatcher =
-  { InFlight: Dictionary<int32, string * string>
+  { InFlight: Dictionary<int32, string * string * Command>
     mutable Next: int32 }
 
 let dispatcher () = { InFlight = Dictionary(); Next = 0 }
@@ -460,17 +527,26 @@ let dispatcher () = { InFlight = Dictionary(); Next = 0 }
 let begin' (stores: Stores) (d: Dispatcher) (command: Command) : CommandFrame =
   d.Next <- d.Next + 1
   let key, label = commandKey command, commandLabel command
-  d.InFlight[d.Next] <- (key, label)
+  d.InFlight[d.Next] <- (key, label, command)
   setLocal stores "pending" key (Some(box label))
   match command with
   | Build build -> setLocal stores "reservations" (sessionKey build.Target) None // single use
+  | ObserveNodeResources request when request.Node = stores.Model.nodeFocus ->
+    setSlice stores "nodeCorrelation" (box d.Next)
+  | ReadNodeTranscript request ->
+    let previous = if request.Offset = 0L then noTranscript () else stores.Model.transcript
+    let selected =
+      {| previous with
+          node = request.Source.Node; incarnation = request.Source.Incarnation; journal = request.Journal
+          sequence = string request.Sequence; stream = request.Stream; correlation = d.Next; status = "reading transcript" |}
+    setSlice stores "transcript" (box selected)
   | _ -> ()
   { CommandFrame.Correlation = d.Next; Command = command }
 
 /// The frame never left (link down): settle it locally as a refusal.
 let abandon (stores: Stores) (d: Dispatcher) (frame: CommandFrame) =
   match d.InFlight.TryGetValue frame.Correlation with
-  | true, (key, label) ->
+  | true, (key, label, _) ->
     d.InFlight.Remove frame.Correlation |> ignore
     setLocal stores "pending" key None
     log stores [ key ] false (label + " not sent: the bridge is disconnected.")
@@ -478,14 +554,14 @@ let abandon (stores: Stores) (d: Dispatcher) (frame: CommandFrame) =
 
 /// Every pending command is lost with the connection that carried it.
 let abandonAll (stores: Stores) (d: Dispatcher) =
-  for KeyValue(_, (key, label)) in d.InFlight |> Seq.toArray do
+  for KeyValue(_, (key, label, _)) in d.InFlight |> Seq.toArray do
     setLocal stores "pending" key None
     log stores [ key ] false (label + ": connection lost before its outcome arrived; check the session status.")
   d.InFlight.Clear()
 
 let private settle (stores: Stores) (d: Dispatcher) (correlation: int32) (fallbackKey: string) =
   match d.InFlight.TryGetValue correlation with
-  | true, (key, label) ->
+  | true, (key, label, _) ->
     d.InFlight.Remove correlation |> ignore
     setLocal stores "pending" key None
     key, label
@@ -518,6 +594,10 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       setSlice stores "agentIncarnation" (box "")
       setSlice stores "agentSequence" (box "")
       setSlice stores "executionHost" (box "")
+      reconcileSlice stores "nodes" (box Array.empty<NodeWorkView>)
+      setSlice stores "nodesRevision" (box "")
+      focusNode stores "" ""
+      setSlice stores "transcript" (box (noTranscript ()))
       setSlice stores "resources" (box (noResources ()))
       reconcileSlice stores "resourceMetrics" (box Array.empty<ResourceMetricView>)
       reconcileSlice stores "resourceProcesses" (box Array.empty<ResourceProcessView>)
@@ -541,6 +621,16 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
         let live = sessions |> Array.exists (fun s -> s.id = key && not s.closed)
         if not live then setLocal stores "reservations" key None
     | Accepted accepted ->
+      match d.InFlight.TryGetValue accepted.Correlation with
+      | true, (_, _, ObserveNodeResources request)
+          when request.Seconds = 0 && request.Node = stores.Model.nodeFocus
+               && accepted.Correlation = stores.Model.nodeCorrelation
+               && accepted.Completion = SnapshotSent ->
+        // This exact stop acknowledgement follows the owner's disposal/join.
+        // Retain the sampled values and timestamp; it is not a new host sample.
+        let stopped = {| stores.Model.resources with status = "stopped"; note = "Observation stopped; sampled values are retained." |}
+        setSlice stores "resources" (box stopped)
+      | _ -> ()
       let target = sessionKey accepted.Target
       let key, label = settle stores d accepted.Correlation target
       match accepted.Completion with
@@ -555,6 +645,9 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       elif key = OpenKey then log stores [ target; OpenKey ] true text
       else log stores [ key ] true text
     | Refused refused ->
+      if refused.Correlation = stores.Model.transcript.correlation then
+        let value = {| stores.Model.transcript with status = refused.Code + ": " + refused.Message |}
+        setSlice stores "transcript" (box value)
       let key, label = settle stores d refused.Correlation (sessionKey refused.Target)
       // An empty target ("||") is a frame-level refusal: no card owns it.
       let key = if key = "||" then "" else key
@@ -607,16 +700,60 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
         reconcileSlice stores "presence" (box (board.Presence |> Array.map (fun p ->
           {| id = p.Source + "|" + p.Member + "|" + p.Detail; name = p.Name; source = p.Source
              project = p.Project; detail = p.Detail; since = float p.SinceMs |})))
+    | WorkNodes board ->
+      if stores.Model.nodesRevision = "" || board.Revision >= int64 stores.Model.nodesRevision then
+        setSlice stores "nodesRevision" (box (string board.Revision))
+        reconcileSlice stores "nodes" (box (board.Nodes |> Array.map nodeView))
+        if stores.Model.nodeFocus <> "" then
+          match board.Nodes |> Array.tryFind (fun n -> n.Source.Node = stores.Model.nodeFocus) with
+          | Some node when node.Source.Incarnation = stores.Model.nodeIncarnation -> ()
+          | Some node -> focusNode stores node.Source.Node node.Source.Incarnation
+          | None -> focusNode stores "" ""
+    | NodeResources resource ->
+      if resource.Correlation = stores.Model.nodeCorrelation && resource.Correlation > 0
+         && resource.Source.Node = stores.Model.nodeFocus && resource.Source.Incarnation = stores.Model.nodeIncarnation then
+        applyResources stores resource.Value
+    | NodeTranscript response ->
+      let current = stores.Model.transcript
+      match d.InFlight.TryGetValue response.Correlation with
+      | true, (_, _, ReadNodeTranscript request)
+          when response.Correlation = current.correlation && response.Source = request.Source
+               && response.Source.Node = current.node && response.Source.Incarnation = current.incarnation
+               && request.Journal = current.journal && string request.Sequence = current.sequence && request.Stream = current.stream
+               && (stores.Model.nodes |> Array.exists (fun node -> node.id = current.node && node.incarnation = current.incarnation && node.journal = current.journal)) ->
+        let refuse message =
+          let value = {| current with status = message; next = "" |}
+          setSlice stores "transcript" (box value)
+        match response.Outcome with
+        | TranscriptRefused(code, message) -> refuse (code + ": " + message)
+        | TranscriptPage page ->
+          let endOffset = page.Offset + int64 page.Bytes.Length
+          let validNext =
+            match page.NextOffset with
+            | Some next -> next = endOffset && next < page.TotalBytes && page.Bytes.Length > 0
+            | None -> endOffset = page.TotalBytes
+          if page.Journal <> request.Journal || page.Sequence <> request.Sequence || page.Stream <> request.Stream
+             || page.Offset <> request.Offset || page.Offset <> int64 current.bytes.Length
+             || page.Bytes.Length > request.MaxBytes || page.TotalBytes < 0L || page.TotalBytes > int64 MaxTranscriptBytes
+             || endOffset > page.TotalBytes || not validNext
+             || (current.total <> "" && int64 current.total <> page.TotalBytes) then
+            refuse "invalid_transcript_page: identity, byte cursor or size mismatch"
+          else
+            let bytes = Array.append current.bytes page.Bytes
+            let decoded = if page.NextOffset.IsSome then Some "" else Interop.transcriptText bytes
+            match decoded with
+            | None -> refuse "invalid_transcript_utf8: stored bytes are not valid UTF-8"
+            | Some text ->
+              let value =
+                {| current with
+                    bytes = bytes; text = text; next = page.NextOffset |> Option.map string |> Option.defaultValue ""
+                    total = string page.TotalBytes; truncated = current.truncated || page.Truncated
+                    status = if page.NextOffset.IsSome then "more available" else "loaded" |}
+              setSlice stores "transcript" (box value)
+        settle stores d response.Correlation "transcript" |> ignore
+      | _ -> ()
     | Resources r ->
-      if stores.Model.resources.sequence = "" || r.Sequence >= int64 stores.Model.resources.sequence then
-        reconcileSlice stores "resources" (box {|
-          sequence = string r.Sequence; status = r.Status; sampledAt = float r.SampledAtMs; interval = r.IntervalMs; cost = r.SampleCostMs
-          count = r.ProcessCount; unreadable = r.UnreadableCount; omitted = r.OmittedCount; note = r.Note |})
-        reconcileSlice stores "resourceMetrics" (box (r.Metrics |> Array.map (fun m ->
-          {| id = m.Name; known = m.Value.IsSome; value = Option.defaultValue 0. m.Value; unit = m.Unit |})))
-        reconcileSlice stores "resourceProcesses" (box (r.Processes |> Array.map (fun p ->
-          {| id = string p.ProcessId + ":" + p.StartTicks; pid = p.ProcessId; parent = p.ParentId; name = p.Name; context = p.Context
-             cpuKnown = p.CpuPercent.IsSome; cpu = Option.defaultValue 0. p.CpuPercent; rss = p.ResidentBytes; threads = p.Threads |})))
+      if stores.Model.nodeFocus = "" then applyResources stores r
     | Health health ->
       // A connect or snapshot answer can arrive after a pushed change; the
       // revision stamped at the daemon's read keeps the newest.

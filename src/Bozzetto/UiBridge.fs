@@ -130,6 +130,7 @@ module Project =
   let operations (revision: int64) (journal: ComposerJournal.Journal) : OperationsBoard =
     { OperationsBoard.Revision = revision
       Incarnation = journal.Incarnation
+      StorageError = journal.StorageError
       Entries =
         journal.Entries
         |> List.map (fun entry ->
@@ -146,6 +147,35 @@ module Project =
                 { OperationRun.ExitCode = run.ExitCode; Generation = run.Generation; SourceVersion = run.SourceVersion
                   StandardOutput = run.StandardOutput; StandardError = run.StandardError; Dropped = run.Dropped }) })
         |> List.toArray }
+
+  let transcript (read: ComposerJournal.TranscriptRequest -> Result<ComposerJournal.TranscriptPage, ComposerJournal.TranscriptRefusal>) (request: TranscriptReadRequest) =
+    let stream =
+      match request.Stream with
+      | Stdout -> ComposerJournal.TranscriptStream.Stdout
+      | Stderr -> ComposerJournal.TranscriptStream.Stderr
+    match read { Incarnation = request.Journal; Sequence = request.Sequence; Stream = stream; Offset = request.Offset; MaxBytes = request.MaxBytes } with
+    | Ok page ->
+      TranscriptPage { Journal = page.Incarnation; Sequence = page.Sequence; Stream = request.Stream; Offset = page.Offset
+                       NextOffset = page.NextOffset; TotalBytes = page.TotalBytes; Bytes = page.Bytes; Truncated = page.Truncated }
+    | Error refusal ->
+      let code, message =
+        match refusal with
+        | ComposerJournal.TranscriptRefusal.ForeignIncarnation -> "journal_mismatch", "This transcript belongs to a different journal."
+        | ComposerJournal.TranscriptRefusal.MissingEntry -> "entry_missing", "This operation is no longer retained."
+        | ComposerJournal.TranscriptRefusal.NoTranscript -> "no_transcript", "This operation has no retained transcript."
+        | ComposerJournal.TranscriptRefusal.InvalidCursor -> "invalid_cursor", "The transcript cursor is outside the retained stream."
+        | ComposerJournal.TranscriptRefusal.InvalidLimit -> "invalid_limit", "The requested transcript page is outside the byte limit."
+        | ComposerJournal.TranscriptRefusal.StorageFailure _ -> "storage_unavailable", "The node could not read its operation store."
+      TranscriptRefused(code, message)
+
+  /// Consolidated work carries outcomes and references. Omission from this
+  /// projection is distinct from eviction in the source journal.
+  let workSummary (value: WorkSnapshot) =
+    let entries =
+      value.Operations.Entries |> Array.map (fun entry ->
+        let run = entry.Run |> Option.map (fun run -> { run with StandardOutput = ""; StandardError = "" })
+        { entry with Run = run })
+    { value with Operations = { value.Operations with Entries = entries }; TranscriptsOmitted = true }
 
   let targetOf (authority: Authority) : SessionTarget =
     { SessionTarget.Worker = { WorkerTarget.Host = authority.Host; Epoch = authority.Epoch }; Session = authority.Session }
@@ -247,7 +277,7 @@ module Project =
   /// which the bridge answers itself.
   let toRequest (command: Command) : RequestBody option =
     match command with
-    | RequestSnapshot | ObserveResources _ -> None
+    | RequestSnapshot | ObserveResources _ | ObserveNodeResources _ | ReadNodeTranscript _ -> None
     // The supervisor chooses the worker for an open; the address is empty,
     // as composer_open_project sends it.
     | OpenProject project -> Some(RequestBody.Open(workerAddress { WorkerTarget.Host = ""; Epoch = "" }, project))
@@ -474,11 +504,11 @@ module Icons =
 
 /// One encoded frame. A snapshot carries its revision, so the writer never
 /// lets a slower read overwrite a newer snapshot already on the page.
-type Outbound = { Text: string; Revision: int64 voption }
+type Outbound = { Bytes: byte array; Revision: int64 voption }
 
 module Outbound =
   let ofEvent (event: Event) : Outbound =
-    { Text = UiBridgeCodec.encodeEvent event
+    { Bytes = UiBridgeCodec.encodeEvent event
       Revision = match event with Snapshot snapshot -> ValueSome snapshot.Revision | _ -> ValueNone }
 
 /// Pushed state, where only the latest value matters to a slow page. Snapshot
@@ -494,10 +524,12 @@ type Push =
   | Resources
   | AgentWork
   | Operations
+  | WorkNodes
+  | NodeResources
 
 [<RequireQualifiedAccess>]
 type Inbound =
-  | Text of string
+  | Binary of byte array
   /// A frame that cannot carry a command; refused with correlation 0.
   | Unusable of code: string * message: string
   | Closed
@@ -506,7 +538,7 @@ type Inbound =
 /// the tests. One receiver and one writer use it, never concurrently.
 type IBridgeSocket =
   abstract Receive: CancellationToken -> Task<Inbound>
-  abstract Send: text: string * cancellation: CancellationToken -> Task
+  abstract Send: bytes: byte array * cancellation: CancellationToken -> Task
   abstract Close: CancellationToken -> Task
   abstract Abort: unit -> unit
 
@@ -523,7 +555,7 @@ type private Write =
 /// still runs.
 type internal Outbox(socket: IBridgeSocket, sendTimeout: TimeSpan, closeTimeout: TimeSpan) =
   let gate = obj ()
-  let pushes: Outbound option array = Array.create 7 None
+  let pushes: Outbound option array = Array.create 9 None
   let mutable closed = false
   let mutable wakePending = false
   // Owned by the writer agent.
@@ -540,13 +572,15 @@ type internal Outbox(socket: IBridgeSocket, sendTimeout: TimeSpan, closeTimeout:
     | Push.Resources -> 4
     | Push.AgentWork -> 5
     | Push.Operations -> 6
+    | Push.WorkNodes -> 7
+    | Push.NodeResources -> 8
 
   let send (frame: Outbound) = async {
     return!
       task {
         use timeout = new CancellationTokenSource(sendTimeout)
         try
-          do! socket.Send(frame.Text, timeout.Token)
+          do! socket.Send(frame.Bytes, timeout.Token)
           return true
         with _ -> return false
       }
@@ -781,9 +815,9 @@ module Facts =
   /// What the health projection cannot derive from a fact: the daemon's identity.
   type Constants = { McpPort: int; Version: string; ProcessId: int }
 
-  /// Trusted in-process owner bindings, fixed for the graph's lifetime. These
-  /// are not remote enrollment or authentication claims.
-  type ObservationSource = { Node: string; Incarnation: string }
+  /// The transport establishes identity before the graph admits a producer.
+  /// This type and its correlation do not provide remote authentication.
+  type ObservationSource = NodeIdentity
   /// Trusted setup supplies this correlation to the producer and graph only;
   /// it must not be included in consumer snapshots or subscription handles.
   type ObservationProducer = { Source: ObservationSource; Correlation: Guid }
@@ -813,6 +847,7 @@ module Facts =
     | ForeignIncarnation
     | UnknownSource
     | ForeignProducer
+    | Oversized
     /// The plane has retired its epoch at shutdown; nothing is admitted after.
     | Retired
 
@@ -824,16 +859,19 @@ module Facts =
     | Membership of Membership
     | Journal of ComposerJournal.Journal
     | Observation of int64 * Result<HostResources, string>
+    | PeerObservation of HostResources option * Result<HostResources, string>
+    | NodeWork of NodeWork
 
   /// What a value token names: an admitted fact, or a settled projection.
   [<RequireQualifiedAccess>]
   type private Payload =
     | Fact of Fact
     | Value of Event
-    | Observation of int64 * Result<HostResources, string>
+    | Observation of int64 option * Result<HostResources, string>
 
   let private tickInput, poolInput, agentsInput, membershipInput, journalInput = InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL, InputId 5UL
   let private healthWork, leasesWork, boardWork, operationsWork = WorkId 1UL, WorkId 2UL, WorkId 3UL, WorkId 4UL
+  let private workBoard = WorkId 5UL
   let private scope = ScopeId 1UL
 
   /// Sets admitted per epoch before the plane retires it and starts the next:
@@ -843,8 +881,9 @@ module Facts =
   /// The plane of one daemon. `incarnation` is the agent board owner's, bound
   /// at start: a publication from any other incarnation is refused, so a
   /// retired owner can never roll the board back.
-  type Graph(constants: Constants, incarnation: string, journalIncarnation: string, ?observationOwners: ObservationProducer list) =
+  type Graph(constants: Constants, incarnation: string, journalIncarnation: string, ?observationOwners: ObservationProducer list, ?localNode: string, ?peerNodes: string list) =
     let owners = defaultArg observationOwners []
+    let peers = defaultArg peerNodes []
     do
       if owners |> List.exists (fun owner -> String.IsNullOrWhiteSpace owner.Source.Node || String.IsNullOrWhiteSpace owner.Source.Incarnation) then
         invalidArg (nameof observationOwners) "Observation owners require a node and incarnation."
@@ -852,9 +891,24 @@ module Facts =
         invalidArg (nameof observationOwners) "Observation owners require distinct nodes."
       if owners |> List.exists (fun owner -> owner.Correlation = Guid.Empty) then
         invalidArg (nameof observationOwners) "Observation owners require a producer correlation."
-    let sourceSlots =
-      owners |> List.mapi (fun index owner -> owner.Source.Node, (owner, InputId(uint64 index + 6UL), WorkId(uint64 index + 5UL))) |> Map.ofList
+      let nodes = (owners |> List.map _.Source.Node) @ peers
+      if (nodes |> List.exists String.IsNullOrWhiteSpace) || List.distinct nodes <> nodes then
+        invalidArg (nameof peerNodes) "Work observation requires distinct, nonempty configured nodes."
+      if peers.Length > MaxObservedPeers then invalidArg (nameof peerNodes) "Too many configured work observation peers."
+      if nodes |> List.exists (fun node -> node.Length > 64) then invalidArg (nameof peerNodes) "Work observation node names exceed 64 characters."
+      if owners |> List.exists (fun owner -> owner.Source.Incarnation.Length > 128) then invalidArg (nameof observationOwners) "Work observation incarnations exceed 128 characters."
+      match localNode with
+      | Some node when owners.Length <> 1 || owners.Head.Source.Node <> node ->
+        invalidArg (nameof observationOwners) "A work board requires exactly its one local producer plus configured peers."
+      | _ -> ()
+    // Node slots are configured once. Only the authenticated connection capability
+    // changes; no transport registry or duplicate fact store lives here.
+    let mutable sourceSlots =
+      owners @ (peers |> List.map (fun node -> { Source = { Node = node; Incarnation = "" }; Correlation = Guid.Empty }))
+      |> List.mapi (fun index owner -> owner.Source.Node, (owner, InputId(uint64 index * 2UL + 6UL), WorkId(uint64 index + 6UL)))
+      |> Map.ofList
     let observationWorks = sourceSlots |> Map.toList |> List.map (fun (_, (_, input, work)) -> work, input) |> Map.ofList
+    let nodeInputs = sourceSlots |> Map.toList |> List.map (fun (node, (_, InputId input, _)) -> node, InputId(input + 1UL)) |> Map.ofList
     let gate = obj ()
     let mutable epoch = 1UL
     let mutable core = Core.init (EpochId epoch)
@@ -873,12 +927,13 @@ module Facts =
     let sinks = System.Collections.Generic.Dictionary<int64, Push -> Event -> unit>()
     let mutable nextSink = 0L
     let observers = System.Collections.Generic.Dictionary<Guid, ObservationBinding * DemandId * (Observation -> unit)>()
-    let mutable nextObserver = 4UL
+    let mutable nextObserver = 5UL
 
     let pushOf (work: WorkId) =
       if work = healthWork then Push.Health
       elif work = leasesWork then Push.Leases
       elif work = operationsWork then Push.Operations
+      elif work = workBoard then Push.WorkNodes
       else Push.AgentWork
 
     /// The projection of one work over the facts its frozen reads name, with
@@ -905,8 +960,13 @@ module Facts =
         | other -> invalidOp (sprintf "Bridge facts: Operations read %A" other)
       elif Map.containsKey work observationWorks then
         match fact 1UL with
-        | Some(Fact.Observation(sequence, value)) -> Payload.Observation(sequence, value)
+        | Some(Fact.Observation(sequence, value)) -> Payload.Observation(Some sequence, value)
+        | Some(Fact.PeerObservation(retained, value)) -> Payload.Observation(retained |> Option.map _.Sequence, value)
         | other -> invalidOp (sprintf "Bridge facts: Observation read %A" other)
+      elif work = workBoard then
+        let nodes = facts |> Map.toArray |> Array.map (fun (_, value) ->
+          match value with Fact.NodeWork node -> node | other -> invalidOp (sprintf "Bridge facts: Work node read %A" other))
+        Payload.Value(WorkNodes { Revision = stamp; Nodes = nodes })
       else
         match fact 1UL, fact 2UL, fact 3UL with
         | Some(Fact.Agents state), Some(Fact.Pool pool), Some(Fact.Membership membership) ->
@@ -917,8 +977,9 @@ module Facts =
       match payload with
       | Payload.Value event ->
         let kind = pushOf work
-        for sink in sinks.Values do
-          try sink kind event with _ -> () // A page's outbox never fails the plane.
+        for KeyValue(id, sink) in sinks |> Seq.toArray do
+          if sinks.ContainsKey id && (Core.tryResult work core |> Option.map _.Value) = Some token then
+            try sink kind event with _ -> () // Sinks enqueue; never block the plane.
       | Payload.Observation(sequence, value) ->
         for binding, _, sink in observers.Values |> Seq.toArray do
           let _, _, sourceWork = sourceSlots[binding.Source.Node]
@@ -927,7 +988,7 @@ module Facts =
           // decides whether this offer is still eligible.
           let current = Core.tryResult work core |> Option.map _.Value
           if work = sourceWork && observers.ContainsKey binding.Subscription && current = Some token then
-            try sink { Binding = binding; Sequence = Some sequence; Value = value } with _ -> ()
+            try sink { Binding = binding; Sequence = sequence; Value = value } with _ -> ()
       | Payload.Fact _ -> ()
 
     /// One command, its state committed, then its effects in their returned
@@ -990,12 +1051,16 @@ module Facts =
                     { Slot = ReadSlotId 2UL; Source = ReadSource.Input poolInput }
                     { Slot = ReadSlotId 3UL; Source = ReadSource.Input membershipInput } ] }
         ScopeEntry.Define { Work = operationsWork; Stamp = DefinitionStamp 1UL; Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input journalInput } ] }
+        if localNode.IsSome then
+          ScopeEntry.Define { Work = workBoard; Stamp = DefinitionStamp 1UL
+                              Reads = nodeInputs |> Map.toList |> List.mapi (fun i (_, input) -> { Slot = ReadSlotId(uint64 i + 1UL); Source = ReadSource.Input input }) }
         for KeyValue(work, input) in observationWorks do
           ScopeEntry.Define { Work = work; Stamp = DefinitionStamp 1UL; Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input input } ] } ]))
       apply (Action.Demand(DemandId 1UL, healthWork))
       apply (Action.Demand(DemandId 2UL, leasesWork))
       apply (Action.Demand(DemandId 3UL, boardWork))
       apply (Action.Demand(DemandId 4UL, operationsWork))
+      if localNode.IsSome then apply (Action.Demand(DemandId 5UL, workBoard))
       for binding, demand, _ in observers.Values do
         let _, _, work = sourceSlots[binding.Source.Node]
         apply (Action.Demand(demand, work))
@@ -1053,7 +1118,7 @@ module Facts =
 
     /// The eligible value of each work, in wire order: Health, Leases, the board, the operations.
     let current () : Event list =
-      [ healthWork; leasesWork; boardWork; operationsWork ]
+      [ healthWork; leasesWork; boardWork; operationsWork; if localNode.IsSome then workBoard ]
       |> List.choose (fun work ->
         Core.tryResult work core
         |> Option.bind (fun handle ->
@@ -1061,7 +1126,7 @@ module Facts =
           | Some(Payload.Value event) -> Some event
           | _ -> None))
 
-    let observationSource source =
+    let observationSource (source: ObservationSource) =
       if stopped then Error Refusal.Retired
       else
         match Map.tryFind source.Node sourceSlots with
@@ -1072,7 +1137,7 @@ module Facts =
     let observationCurrent binding work =
       let current = Core.tryResult work core |> Option.bind (fun handle -> Map.tryFind handle.Value store)
       match current with
-      | Some(Payload.Observation(sequence, value)) -> { Binding = binding; Sequence = Some sequence; Value = value }
+      | Some(Payload.Observation(sequence, value)) -> { Binding = binding; Sequence = sequence; Value = value }
       | _ -> { Binding = binding; Sequence = None; Value = Error "Source has not published an observation." }
 
     let publishObservation (producer: ObservationProducer) sequence value =
@@ -1087,7 +1152,37 @@ module Facts =
           Error Refusal.ForeignProducer
         | Ok(_, input, _) -> admit input sequence (Fact.Observation(sequence, value)))
 
-    do define ()
+    let producerSlot (producer: ObservationProducer) =
+      observationSource producer.Source |> Result.bind (fun (expected, input, work) ->
+        if expected.Correlation = Guid.Empty || producer.Correlation <> expected.Correlation then Error Refusal.ForeignProducer
+        else Ok(input, work))
+
+    let inputFact input =
+      Map.tryFind input inputs |> Option.bind (fun token ->
+        match Map.tryFind token store with Some(Payload.Fact fact) -> Some fact | _ -> None)
+
+    // Status publication is controller-owned. It must not advance or fabricate
+    // the remote sample/snapshot sequence, which stays inside the admitted fact.
+    let publishStatus input fact = admit input ((Map.tryFind input admitted |> Option.defaultValue -1L) + 1L) fact
+    let nodeValue node =
+      match inputFact nodeInputs[node] with Some(Fact.NodeWork value) -> Some value | _ -> None
+    let retainedResources input =
+      match inputFact input with
+      | Some(Fact.PeerObservation(retained, _)) -> retained
+      | Some(Fact.Observation(_, Ok value)) -> Some value
+      | _ -> None
+    let boundedReason (reason: string) = if reason.Length <= 512 then reason else reason.Substring(0, 512)
+    let withinWorkBudget value =
+      try Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame(PeerWork value).Length <= MaxWorkSnapshotBytes
+      with :? InvalidOperationException -> false
+
+    do
+      define ()
+      if localNode.IsSome then
+        for KeyValue(node, (producer, _, _)) in sourceSlots do
+          publishStatus nodeInputs[node] (Fact.NodeWork {
+            Source = producer.Source; Local = localNode = Some node; Status = "unavailable"
+            Note = "Source has not published work."; Value = None }) |> ignore
 
     new(constants: Constants, incarnation: string) = Graph(constants, incarnation, "")
 
@@ -1122,6 +1217,99 @@ module Facts =
     /// A bound producer can recover after unavailability with a newer serial,
     /// independently of whether any consumer currently demands its projection.
     member _.UnavailableObservation(producer: ObservationProducer, sequence, reason) = publishObservation producer sequence (Error reason)
+
+    /// Trusted transport setup replaces a configured connection. Even a reconnect
+    /// to the same incarnation gets a fresh capability; retired callbacks fail.
+    member _.BindPeer(source: NodeIdentity) =
+      lock gate (fun () ->
+        if stopped then invalidOp "Work observation graph is retired."
+        if String.IsNullOrWhiteSpace source.Incarnation || source.Incarnation.Length > 128 then invalidArg (nameof source) "An authenticated source requires an incarnation of at most 128 characters."
+        match Map.tryFind source.Node sourceSlots with
+        | None -> invalidArg (nameof source) "Work observation source is not configured."
+        | Some _ when localNode = Some source.Node -> invalidArg (nameof source) "The local source cannot be rebound by a peer."
+        | Some(previous, input, work) ->
+          let same = previous.Source = source
+          let retained = if same then retainedResources input else None
+          let value = if same then nodeValue source.Node |> Option.bind _.Value else None
+          let producer = { Source = source; Correlation = Guid.NewGuid() }
+          for binding, demand, sink in observers.Values |> Seq.toArray do
+            if binding.Source.Node = source.Node && observers.Remove binding.Subscription then
+              apply (Action.Release demand)
+              try sink { Binding = binding; Sequence = None; Value = Error "Source connection was replaced; select the node again." } with _ -> ()
+          sourceSlots <- Map.add source.Node (producer, input, work) sourceSlots
+          publishStatus input (Fact.PeerObservation(retained, Error "Source has not published resources on this connection.")) |> ignore
+          publishStatus nodeInputs[source.Node] (Fact.NodeWork {
+            Source = source; Local = false; Status = "unavailable"; Note = "Source has not published work on this connection."; Value = value }) |> ignore
+          producer)
+
+    member _.Source(node: string) =
+      lock gate (fun () ->
+        if stopped then Error Refusal.Retired
+        else Map.tryFind node sourceSlots |> Option.map (fun (producer, _, _) -> Ok producer.Source) |> Option.defaultValue (Error Refusal.UnknownSource))
+
+    member _.PublishWork(producer: ObservationProducer, value: WorkSnapshot) =
+      lock gate (fun () ->
+        producerSlot producer |> Result.bind (fun _ ->
+          let previous = nodeValue producer.Source.Node
+          match previous |> Option.bind _.Value with
+          | Some old when value.Sequence < old.Sequence -> Error Refusal.Older
+          | Some old when value.Sequence = old.Sequence && value <> old -> Error Refusal.Conflict
+          | _ when not (withinWorkBudget value) ->
+            publishStatus nodeInputs[producer.Source.Node] (Fact.NodeWork {
+              Source = producer.Source; Local = localNode = Some producer.Source.Node; Status = "unavailable"
+              Note = "Work snapshot exceeds the encoded observation budget."; Value = previous |> Option.bind _.Value }) |> ignore
+            Error Refusal.Oversized
+          | Some old when value = old && (previous |> Option.exists (fun node -> node.Status = "available")) -> Error Refusal.Duplicate
+          | _ -> publishStatus nodeInputs[producer.Source.Node] (Fact.NodeWork {
+              Source = producer.Source; Local = localNode = Some producer.Source.Node
+              Status = "available"; Note = ""; Value = Some value })))
+
+    member _.PeerUnavailable(producer: ObservationProducer, reason: string) =
+      lock gate (fun () ->
+        producerSlot producer |> Result.bind (fun _ ->
+          let value = nodeValue producer.Source.Node |> Option.bind _.Value
+          publishStatus nodeInputs[producer.Source.Node] (Fact.NodeWork {
+            Source = producer.Source; Local = localNode = Some producer.Source.Node; Status = "unavailable"; Note = boundedReason reason; Value = value })))
+
+    member _.PeerConnectionUnavailable(node: string, reason: string) =
+      lock gate (fun () ->
+        match Map.tryFind node sourceSlots with
+        | _ when stopped -> Error Refusal.Retired
+        | None -> Error Refusal.UnknownSource
+        | Some(producer, _, _) when producer.Correlation <> Guid.Empty -> Error Refusal.ForeignProducer
+        | Some(producer, _, _) -> publishStatus nodeInputs[node] (Fact.NodeWork {
+            Source = producer.Source; Local = false; Status = "unavailable"; Note = boundedReason reason; Value = None }))
+
+    member _.PublishPeerResources(producer: ObservationProducer, value: HostResources) =
+      lock gate (fun () ->
+        producerSlot producer |> Result.bind (fun (input, _) ->
+          match retainedResources input with
+          | Some old when value.Sequence < old.Sequence -> Error Refusal.Older
+          | Some old when value.Sequence = old.Sequence && value.Status = old.Status && value <> old -> Error Refusal.Conflict
+          | Some old when value.Sequence = old.Sequence && { old with Status = value.Status; Note = value.Note } <> value -> Error Refusal.Conflict
+          | _ ->
+            let fact = Fact.PeerObservation(Some value, Ok value)
+            if inputFact input = Some fact then Error Refusal.Duplicate else publishStatus input fact))
+
+    member _.PeerResourcesUnavailable(producer: ObservationProducer, reason: string) =
+      lock gate (fun () -> producerSlot producer |> Result.bind (fun (input, _) ->
+        publishStatus input (Fact.PeerObservation(retainedResources input, Error(boundedReason reason)))))
+
+    /// The local source composes the current owner facts under their graph gate.
+    /// The complete value is then admitted like a peer value; no second ledger.
+    member this.PublishLocalWork(producer: ObservationProducer, snapshot: ComposerSnapshot, sampledAtMs: int64) =
+      lock gate (fun () ->
+        let values = current ()
+        let leases = values |> List.tryPick (function Leases value -> Some value | _ -> None)
+        let operations = values |> List.tryPick (function Operations value -> Some value | _ -> None)
+        let previous = nodeValue producer.Source.Node |> Option.bind _.Value
+        match leases, operations with
+        | Some leases, Some operations when previous |> Option.exists (fun old -> snapshot.Revision < old.Snapshot.Revision) -> Error Refusal.Older
+        | Some leases, Some operations ->
+          this.PublishWork(producer, Project.workSummary {
+            Sequence = (previous |> Option.map _.Sequence |> Option.defaultValue -1L) + 1L
+            SampledAtMs = sampledAtMs; Snapshot = snapshot; Leases = leases; Operations = operations; TranscriptsOmitted = false })
+        | _ -> Error Refusal.UnknownSource)
 
     /// Effective demand is Foundation-owned and differs from retained cache.
     member _.ObservationDemanded(source) =
@@ -1229,7 +1417,7 @@ type BridgeOptions = {
 module BridgeOptions =
   let defaults = {
     SnapshotInterval = TimeSpan.FromMilliseconds 250.
-    MaxFrameBytes = 1024 * 1024
+    MaxFrameBytes = 4 * 1024 * 1024
     MaxInFlight = 32
     SendTimeout = TimeSpan.FromSeconds 30.
     CloseTimeout = TimeSpan.FromSeconds 5.
@@ -1283,9 +1471,10 @@ let private observeMachine (value: HostResources) =
     |> ignore
   | _ -> ()
 
-type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationToken, pause: TimeSpan -> Async<unit>, uptime: Async<int64>) =
+type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationToken, pause: TimeSpan -> Async<unit>, uptime: Async<int64>, ?observation: Facts.Graph * Facts.ObservationProducer * (string -> int -> (string -> unit) -> Async<IDisposable>), ?localTranscript: TranscriptReadRequest -> TranscriptReadOutcome, ?peerTranscript: TranscriptReadRequest -> CancellationToken -> Async<TranscriptReadOutcome>) =
   let resources = ResourceMonitor.create observeMachine
   let connections = ConcurrentDictionary<int64, Outbox>()
+  let heartbeatSinks = ConcurrentDictionary<int64, UptimeTick -> unit>()
   let changes = Channel.CreateBounded<unit>(BoundedChannelOptions(1, FullMode = BoundedChannelFullMode.DropOldest))
   let mutable nextConnection = 0L
 
@@ -1300,9 +1489,26 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
     for outbox in connections.Values do
       outbox.Push(kind, frame)
 
-  let clock = UptimeClock(uptime, fun uptimeMs -> broadcast Push.Uptime (Uptime { UptimeTick.UptimeMs = uptimeMs }))
+  let clock = UptimeClock(uptime, fun uptimeMs ->
+    let tick = { UptimeTick.UptimeMs = uptimeMs }
+    broadcast Push.Uptime (Uptime tick)
+    for sink in heartbeatSinks.Values do
+      try sink tick with _ -> ())
 
-  let execute (frame: CommandFrame) (connection: CancellationToken) : Async<Outbound list> = async {
+  let graphAndOwner () =
+    observation |> Option.map (fun (graph, producer, _) -> graph, producer)
+    |> Option.defaultWith (fun () -> invalidOp "This bridge has no work observation owner.")
+
+  let refreshLocalWork () =
+    observation |> Option.iter (fun (graph, producer, _) ->
+      attempt "local work" (fun () ->
+        graph.PublishLocalWork(producer, Project.snapshot (sources.CachedDirectory ()) (sources.WorkerPid ()), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) |> ignore)
+      |> ignore)
+
+  let unavailableResources sequence reason : HostResources =
+    { ResourceMonitor.empty "unavailable" with Sequence = defaultArg sequence 0L; Note = reason }
+
+  let executeCompiler (frame: CommandFrame) (connection: CancellationToken) : Async<Outbound list> = async {
     let refuse message =
       [ Refused(UiBridgeCodec.frameRefusal frame.Correlation "provider_unavailable" message) ]
     match Project.toRequest frame.Command with
@@ -1321,6 +1527,29 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
           Accepted { CommandAcceptance.Correlation = frame.Correlation; Target = UiBridgeCodec.noTarget; Completion = SnapshotSent }
         return stateEvents (fun () -> fresh) @ [ done' ] |> List.map Outbound.ofEvent
       | Error message -> return refuse message |> List.map Outbound.ofEvent
+  }
+
+  let readLocal (request: TranscriptReadRequest) =
+    let _, producer = graphAndOwner ()
+    if request.Source <> producer.Source then TranscriptRefused("node_mismatch", "Select the current node incarnation.")
+    else
+      localTranscript |> Option.map (fun read -> read request)
+      |> Option.defaultValue (TranscriptRefused("storage_unavailable", "Node operation history is unavailable."))
+
+  let execute (frame: CommandFrame) (connection: CancellationToken) : Async<Outbound list> = async {
+    match frame.Command with
+    | ReadNodeTranscript request ->
+      let! outcome = async {
+        match observation with
+        | None -> return TranscriptRefused("storage_unavailable", "Node operation history is unavailable.")
+        | Some(_, producer, _) when request.Source.Node = producer.Source.Node -> return readLocal request
+        | Some _ ->
+          match peerTranscript with
+          | Some read -> return! read request connection
+          | None -> return TranscriptRefused("node_unavailable", "Node operation history is unavailable.")
+      }
+      return [ Outbound.ofEvent(NodeTranscript { Source = request.Source; Correlation = frame.Correlation; Outcome = outcome }) ]
+    | _ -> return! executeCompiler frame connection
   }
 
   /// Waits on the supervisor's Changed signal, never on a clock: each wakeup
@@ -1351,13 +1580,42 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
   member _.Options = options
   member _.ConnectionCount = connections.Count
   member _.Resources = resources.Current
+  member _.LocalNode = let _, producer = graphAndOwner () in producer.Source
+  member _.ReadLocalTranscript(request: TranscriptReadRequest) = readLocal request
+  member _.BindPeer(source) = let graph, _ = graphAndOwner () in graph.BindPeer source
+  member _.PublishPeerWork(producer, value) = let graph, _ = graphAndOwner () in graph.PublishWork(producer, value)
+  member _.PublishPeerResources(producer, value) = let graph, _ = graphAndOwner () in graph.PublishPeerResources(producer, value)
+  member _.PeerUnavailable(producer, reason) = let graph, _ = graphAndOwner () in graph.PeerUnavailable(producer, reason)
+  member _.PeerResourcesUnavailable(producer, reason) = let graph, _ = graphAndOwner () in graph.PeerResourcesUnavailable(producer, reason)
+  member _.PeerConnectionUnavailable(node, reason) = let graph, _ = graphAndOwner () in graph.PeerConnectionUnavailable(node, reason)
+  member _.ObserveLocalResources(id, seconds, send) : Task = resources.Observe(id, seconds, send) |> Async.StartAsTask :> Task
+  member _.RemoveLocalResources(id) : Task = resources.Remove id |> Async.StartAsTask :> Task
+  member _.RegisterLocalWork(send: NodeWork -> unit) =
+    let graph, producer = graphAndOwner ()
+    let local = function
+      | WorkNodes board -> board.Nodes |> Array.tryFind (fun node -> node.Source = producer.Source)
+      | _ -> None
+    let current, registration = graph.Register(fun _ event -> local event |> Option.iter send)
+    current |> List.tryPick local, registration
+  member _.RegisterHeartbeat(send: UptimeTick -> unit) =
+    let id = Interlocked.Increment &nextConnection
+    heartbeatSinks[id] <- send
+    clock.Attach()
+    { new IDisposable with member _.Dispose() = if heartbeatSinks.TryRemove id |> fst then clock.Detach() }
 
   /// Begin the snapshot pushes. Status reads never raise Changed, so a push
   /// cannot feed back into another one. The daemon's facts need no loop here:
   /// their owners' publications reach every registered page through the plane.
   member _.Start() =
-    let subscription = sources.Changed.Subscribe(fun () -> changes.Writer.TryWrite(()) |> ignore)
+    let subscription = sources.Changed.Subscribe(fun () ->
+      refreshLocalWork ()
+      changes.Writer.TryWrite(()) |> ignore)
     stopping.Register(fun () -> subscription.Dispose()) |> ignore
+    observation |> Option.iter (fun (graph, _, _) ->
+      let _, changed = graph.Register(fun kind _ ->
+        if kind = Push.Leases || kind = Push.Operations then refreshLocalWork ())
+      stopping.Register(fun () -> changed.Dispose()) |> ignore
+      refreshLocalWork ())
     Async.Start(snapshotPushes (), stopping)
 
   /// Serve one connection until the page or the daemon closes it.
@@ -1367,6 +1625,77 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
     let inflight = new SemaphoreSlim(options.MaxInFlight)
     let release () = try inflight.Release() |> ignore with _ -> ()
     let id = Interlocked.Increment &nextConnection
+    let focusGate = new SemaphoreSlim(1, 1)
+    let mutable focused: (Guid * IDisposable) option = None
+    let mutable focusClosed = false
+    let disposeFocus () =
+      let previous = focused
+      focused <- None
+      previous |> Option.iter (fun (_, subscription) -> subscription.Dispose())
+    let focus correlation (request: NodeObservationRequest) = async {
+      do! focusGate.WaitAsync() |> Async.AwaitTask
+      try
+        disposeFocus ()
+        do! resources.Remove id
+        if not focusClosed && request.Seconds > 0 then
+          match observation with
+          | None -> return Error "This bridge has no node observation owner."
+          | Some(graph, producer, observePeer) ->
+            match graph.Source request.Node with
+            | Error reason -> return Error(sprintf "Node observation refused: %A." reason)
+            | Ok source ->
+              let generation = Guid.NewGuid()
+              let mutable latest = unavailableResources None "Source has not published resources."
+              let send (value: Facts.Observation) =
+                let resources = value.Value |> Result.defaultWith (unavailableResources value.Sequence)
+                latest <- resources
+                outbox.Push(Push.NodeResources, Outbound.ofEvent(NodeResources { Correlation = correlation; Source = value.Binding.Source; Value = resources }))
+              // A window's terminal status belongs to this focus, not the shared
+              // source fact. Join its stream outside the graph callback/gate.
+              let finished status =
+                Async.Start(async {
+                  do! focusGate.WaitAsync() |> Async.AwaitTask
+                  try
+                    match focused with
+                    | Some(live, _) when live = generation && not focusClosed ->
+                      disposeFocus ()
+                      outbox.Push(Push.NodeResources, Outbound.ofEvent(NodeResources { Correlation = correlation; Source = source; Value = { latest with Status = status } }))
+                      do! resources.Remove id
+                    | _ -> ()
+                  finally focusGate.Release() |> ignore
+                }, CancellationToken.None)
+              match graph.RegisterObservation(source, send) with
+              | Error reason -> return Error(sprintf "Node observation refused: %A." reason)
+              | Ok(current, registration) ->
+                send current
+                try
+                  let! stream =
+                    if source = producer.Source then async {
+                      do! resources.Observe(id, int request.Seconds, fun value ->
+                        match value.Status with
+                        | "complete" | "stopped" | "error" | "unavailable" -> finished value.Status
+                        | _ -> graph.PublishPeerResources(producer, value) |> ignore)
+                      return { new IDisposable with member _.Dispose() = () }
+                    }
+                    else observePeer request.Node (int request.Seconds) finished
+                  focused <- Some(generation, { new IDisposable with member _.Dispose() = registration.Dispose(); stream.Dispose() })
+                  return Ok()
+                with _ ->
+                  send { current with Value = Error "Selected node resource observation is unavailable." }
+                  registration.Dispose()
+                  return Error "Selected node resource observation is unavailable."
+        else return Ok()
+      finally focusGate.Release() |> ignore
+    }
+    let observeLocal seconds = async {
+      do! focusGate.WaitAsync() |> Async.AwaitTask
+      try
+        disposeFocus ()
+        do! resources.Remove id
+        if not focusClosed && seconds > 0 then
+          do! resources.Observe(id, seconds, fun value -> outbox.Push(Push.Resources, Outbound.ofEvent(Resources value)))
+      finally focusGate.Release() |> ignore
+    }
     connections[id] <- outbox
     // Uptime ticks reach this page through its outbox, after the prologue.
     clock.Attach()
@@ -1393,7 +1722,7 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
           | Inbound.Closed -> reading <- false
           | Inbound.Unusable(code, message) ->
             outbox.Answer([ Outbound.ofEvent (Refused(UiBridgeCodec.frameRefusal 0 code message)) ], ignore)
-          | Inbound.Text payload ->
+          | Inbound.Binary payload ->
             match UiBridgeCodec.decodeCommand payload with
             | Error refusal -> outbox.Answer([ Outbound.ofEvent (Refused refusal) ], ignore)
             | Ok frame ->
@@ -1406,10 +1735,15 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
                   | ObserveResources _ when not (OperatingSystem.IsLinux()) ->
                     outbox.Answer([ Outbound.ofEvent(Refused(UiBridgeCodec.frameRefusal frame.Correlation "unsupported" "Host resource acquisition is Linux-only in this build.")) ], release)
                   | ObserveResources seconds ->
-                    if seconds = 0 then do! resources.Remove id
-                    else
-                      do! resources.Observe(id, int seconds, fun value -> outbox.Push(Push.Resources, Outbound.ofEvent(Resources value)))
+                    do! observeLocal (int seconds)
                     outbox.Answer([ Outbound.ofEvent(Accepted { Correlation = frame.Correlation; Target = UiBridgeCodec.noTarget; Completion = SnapshotSent }) ], release)
+                  | ObserveNodeResources request ->
+                    let! result = focus frame.Correlation request
+                    let answer =
+                      match result with
+                      | Ok() -> Accepted { Correlation = frame.Correlation; Target = UiBridgeCodec.noTarget; Completion = SnapshotSent }
+                      | Error reason -> Refused(UiBridgeCodec.frameRefusal frame.Correlation "observation_unavailable" reason)
+                    outbox.Answer([ Outbound.ofEvent answer ], release)
                   | _ ->
                     let! frames = execute frame lifetime.Token
                     outbox.Answer(frames, release)
@@ -1424,6 +1758,11 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
       // Ends any RequestSnapshot read still running for this page; Composer
       // operations hold the daemon's token, not this one.
       lifetime.Cancel()
+    do! focusGate.WaitAsync()
+    try
+      focusClosed <- true
+      disposeFocus ()
+    finally focusGate.Release() |> ignore
     do! resources.Remove id |> Async.StartAsTask
     do! outbox.CloseAsync()
   }
@@ -1451,13 +1790,18 @@ let private processStartedAtMs () : int64 =
 /// when a cohort owner exists, the agent work publication and the cohort frame
 /// — and takes their current values in the same section. Without a cohort
 /// owner there is no agent board.
-let create (supervisor: ComposerSupervisor) (mcpPort: int) (getHealth: unit -> Bozzetto.Features.HealthSnapshot option) (stopping: CancellationToken) (owner: Bozzetto.Features.CohortOwner.Handle option) =
+let createObservedWithTranscripts (supervisor: ComposerSupervisor) (mcpPort: int) (getHealth: unit -> Bozzetto.Features.HealthSnapshot option) (stopping: CancellationToken) (owner: Bozzetto.Features.CohortOwner.Handle option) (localNode: string) (peerNodes: string list) (observePeer: string -> int -> (string -> unit) -> Async<IDisposable>)
+    (readLocalTranscript: TranscriptReadRequest -> TranscriptReadOutcome)
+    (readPeerTranscript: TranscriptReadRequest -> CancellationToken -> Async<TranscriptReadOutcome>) =
   Bozzetto.Server.HealthTick.install getHealth
+  let producer: Facts.ObservationProducer =
+    { Source = { Node = localNode; Incarnation = Guid.NewGuid().ToString("N") }; Correlation = Guid.NewGuid() }
   let graph =
     Facts.Graph(
       { Facts.Constants.McpPort = mcpPort; Version = DaemonInfo.version; ProcessId = Environment.ProcessId },
       owner |> Option.map (fun o -> o.ReadWork().Incarnation) |> Option.defaultValue "",
-      supervisor.Journal.Incarnation)
+      supervisor.Journal.Incarnation,
+      observationOwners = [producer], localNode = localNode, peerNodes = peerNodes)
   let subscriptions =
     graph.Start
       { Facts.Owners.Tick = Bozzetto.Server.HealthTick.Changed, Bozzetto.Server.HealthTick.current
@@ -1471,13 +1815,25 @@ let create (supervisor: ComposerSupervisor) (mcpPort: int) (getHealth: unit -> B
   // The first record: a page connecting later finds Health settled.
   Bozzetto.Server.HealthTick.refresh () |> ignore
   let facts = { BridgeFacts.Register = graph.Register; Current = graph.Current; Refresh = fun () -> Bozzetto.Server.HealthTick.refresh () |> ignore }
-  let hub = Hub(BridgeSources.ofSupervisor supervisor DaemonInfo.version (processStartedAtMs ()) facts, BridgeOptions.defaults, stopping)
+  let startedAtMs = processStartedAtMs ()
+  let hub = Hub(
+    BridgeSources.ofSupervisor supervisor DaemonInfo.version startedAtMs facts, BridgeOptions.defaults, stopping,
+    (fun interval -> Async.Sleep(int interval.TotalMilliseconds)), UptimeClock.system startedAtMs,
+    observation = (graph, producer, observePeer), localTranscript = readLocalTranscript, peerTranscript = readPeerTranscript)
   hub.Start()
   hub
 
-/// A WebSocket as the bridge's transport: UTF-8 text frames up to a size cap.
+let createObserved supervisor mcpPort getHealth stopping owner localNode peerNodes observePeer =
+  createObservedWithTranscripts supervisor mcpPort getHealth stopping owner localNode peerNodes observePeer
+    (fun _ -> TranscriptRefused("storage_unavailable", "Node operation history is unavailable."))
+    (fun _ _ -> async { return TranscriptRefused("node_unavailable", "Node operation history is unavailable.") })
+
+let create supervisor mcpPort getHealth stopping owner =
+  createObserved supervisor mcpPort getHealth stopping owner Environment.MachineName []
+    (fun _ _ _ -> async { return invalidOp "No peer observation transport is configured." })
+
+/// A WebSocket as the bridge's transport: typed binary frames up to a size cap.
 type private WebSocketTransport(socket: WebSocket, maxFrameBytes: int) =
-  let strict = UTF8Encoding(false, true)
   // One receiver per socket, so one buffer serves every frame.
   let buffer = Array.zeroCreate<byte> 16384
   interface IBridgeSocket with
@@ -1499,15 +1855,14 @@ type private WebSocketTransport(socket: WebSocket, maxFrameBytes: int) =
               ValueSome(
                 if oversized then
                   Inbound.Unusable("frame_too_large", sprintf "frame: exceeds %d bytes." maxFrameBytes)
-                elif received.MessageType = WebSocketMessageType.Binary then
-                  Inbound.Unusable("invalid_request", "frame: binary frames are not supported yet; send one JSON text frame.")
+                elif received.MessageType <> WebSocketMessageType.Binary then
+                  Inbound.Unusable("invalid_request", "frame: the UI bridge requires a typed binary frame.")
                 else
-                  try Inbound.Text(strict.GetString(content.GetBuffer(), 0, int content.Length))
-                  with :? DecoderFallbackException -> Inbound.Unusable("invalid_request", "frame: not valid UTF-8"))
+                  Inbound.Binary(content.ToArray()))
       return inbound.Value
     }
-    member _.Send(text, cancellation) =
-      socket.SendAsync(ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes text), WebSocketMessageType.Text, true, cancellation).AsTask()
+    member _.Send(bytes, cancellation) =
+      socket.SendAsync(ReadOnlyMemory<byte>(bytes), WebSocketMessageType.Binary, true, cancellation).AsTask()
     member _.Close(cancellation) =
       match socket.State with
       | WebSocketState.Open
@@ -1551,9 +1906,9 @@ let mapRoutes (headless: bool) (app: WebApplication) (createHub: unit -> Hub) =
 
     // Passive latest-observation API; reading it never starts acquisition.
     app.MapGet("/api/resources", RequestDelegate(fun ctx -> task {
-      ctx.Response.ContentType <- "application/json"
+      ctx.Response.ContentType <- "application/octet-stream"
       ctx.Response.Headers.CacheControl <- StringValues "no-store"
-      do! ctx.Response.WriteAsync(UiBridgeCodec.encodeEvent(Resources hub.Resources), ctx.RequestAborted)
+      do! ctx.Response.Body.WriteAsync(UiBridgeCodec.encodeEvent(Resources hub.Resources), ctx.RequestAborted)
     })) |> ignore
 
     app.MapGet("/ui/bridge", RequestDelegate(fun (ctx: HttpContext) -> task {

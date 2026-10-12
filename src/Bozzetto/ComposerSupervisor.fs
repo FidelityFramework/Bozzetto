@@ -70,7 +70,7 @@ module ComposerState =
     normalize left = normalize right
 
 /// Shared typed compiler owner. JSON exists only at external client adapters.
-type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, configured: bool, beforeMonitorExit: unit -> Task, ?monitorWindow: TimeSpan) =
+type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, configured: bool, beforeMonitorExit: unit -> Task, ?monitorWindow: TimeSpan, ?journalStore: Result<ComposerJournal.Store, string>) =
   let gate = obj ()
   let lifecycle = new SemaphoreSlim(1, 1)
   let lifetime = new CancellationTokenSource()
@@ -89,7 +89,12 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
   let mutable stopped = false
   let mutable revision = 0L
   /// The journal of settled operations, this supervisor's own; published whole.
-  let mutable journal = ComposerJournal.empty (Guid.NewGuid().ToString("N"))
+  let mutable journal =
+    let empty = ComposerJournal.empty (Guid.NewGuid().ToString("N"))
+    match journalStore |> Option.map (Result.bind (fun store -> store.Read())) with
+    | None -> empty
+    | Some(Ok stored) -> stored
+    | Some(Error reason) -> { empty with StorageError = Some reason }
   let journalChanged = Event<unit>()
 
   let changed () =
@@ -349,12 +354,25 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
       let entry =
         ComposerJournal.settle caller operation session project (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
           (settled |> Result.map (fun response -> response.Reply.Outcome))
-      lock gate (fun () -> journal <- ComposerJournal.append entry journal)
+      lock gate (fun () ->
+        match journalStore, journal.StorageError with
+        | Some(Ok store), None ->
+          match store.Append entry with
+          | Ok stored -> journal <- stored
+          | Error reason ->
+            journal <- { ComposerJournal.append entry journal with StorageError = Some reason }
+        | _ -> journal <- ComposerJournal.append entry journal)
       try journalChanged.Trigger() with _ -> ()
 
   /// The journal as last published, and its change signal (one firing per entry).
   member _.Journal : ComposerJournal.Journal = lock gate (fun () -> journal)
   member _.JournalChanged : IObservable<unit> = journalChanged.Publish
+  member _.ReadTranscript(request: ComposerJournal.TranscriptRequest) =
+    lock gate (fun () ->
+      match journal.StorageError, journalStore with
+      | Some reason, _ -> Error(ComposerJournal.TranscriptRefusal.StorageFailure reason)
+      | None, Some(Ok store) -> store.ReadTranscript request
+      | _ -> Error(ComposerJournal.TranscriptRefusal.StorageFailure "The operations journal has no durable store."))
 
   /// Run one operation for `caller` (the adapter's label for who asked) and journal how it settled.
   member this.ExecuteAsync(request: RequestBody, caller: string, cancellation: CancellationToken): Task<ComposerResponse> = task {
@@ -526,11 +544,17 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
 
 module ComposerSupervisor =
   let disabled () = ComposerSupervisor((fun () -> Task.FromException<IComposerWorker>(InvalidOperationException "Composer is not configured.")), false)
-  let fromEnvironment () =
+  let private createFromEnvironment journalStore =
     let environment name = Environment.GetEnvironmentVariable name |> Option.ofObj |> Option.defaultValue ""
     let worker = environment "BOZZETTO_COMPOSER_WORKER"
-    if String.IsNullOrWhiteSpace worker then disabled ()
+    if String.IsNullOrWhiteSpace worker then
+      ComposerSupervisor((fun () -> Task.FromException<IComposerWorker>(InvalidOperationException "Composer is not configured.")), false,
+        (fun () -> Task.CompletedTask), ?journalStore = journalStore)
     else
       let dotnet = match environment "DOTNET_HOST_PATH" with value when not (String.IsNullOrWhiteSpace value) -> value | _ -> "dotnet"
       let cache = match environment "XDG_CACHE_HOME" with value when not (String.IsNullOrWhiteSpace value) && Path.IsPathFullyQualified value -> value | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache")
-      ComposerSupervisor((fun () -> ComposerWorkerClient.start { WorkerPath = worker; DotnetPath = dotnet; EvidenceDirectory = Path.Combine(cache, "bozzetto", "composer-workers", Guid.NewGuid().ToString("N")) }), true)
+      ComposerSupervisor((fun () -> ComposerWorkerClient.start { WorkerPath = worker; DotnetPath = dotnet; EvidenceDirectory = Path.Combine(cache, "bozzetto", "composer-workers", Guid.NewGuid().ToString("N")) }), true,
+        (fun () -> Task.CompletedTask), ?journalStore = journalStore)
+
+  let fromEnvironment () = createFromEnvironment None
+  let fromEnvironmentWithJournal dbPath = createFromEnvironment (Some(ComposerJournal.openStore dbPath))

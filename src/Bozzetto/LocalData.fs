@@ -8,12 +8,15 @@ open System.IO
 open Bozzetto.Features
 open Fidelity.Data.JSON
 open Bozzetto.Features.FrictionSqlite
+open Bozzetto.ComposerIntegration
 
 let frictionFileName = "friction.db"
 let cohortLedgerFileName = "cohort.ledger.db"
+let operationsFileName = "operations.db"
 
 let frictionPath (dataDir: string) = Path.Combine(dataDir, frictionFileName)
 let cohortLedgerPath (dataDir: string) = Path.Combine(dataDir, cohortLedgerFileName)
+let operationsPath (dataDir: string) = Path.Combine(dataDir, operationsFileName)
 
 [<RequireQualifiedAccess>]
 type FrictionReport =
@@ -26,6 +29,7 @@ type Report = {
   DataDir: string
   Friction: FrictionReport
   CohortLedger: Result<CohortLedgerSqlite.Sqlite.LedgerUsage, string>
+  Operations: Result<ComposerJournal.StoreUsage, string>
   /// The live cohort, as the running owner sees it right now.
   Cohort: LocalDataRetention.CohortActivity
   Policy: LocalDataRetention.FrictionPolicy
@@ -47,6 +51,10 @@ let report (frictionStore: FrictionStore option) (cohort: LocalDataRetention.Coh
   { DataDir = dataDir
     Friction = friction
     CohortLedger = ledger
+    Operations =
+      if File.Exists(operationsPath dataDir) then
+        ComposerJournal.openStore (operationsPath dataDir) |> Result.bind (fun store -> store.Usage())
+      else Ok { Bytes = 0L; Rows = 0L; OldestMs = None }
     Cohort = cohort
     Policy = LocalDataRetention.defaultPolicy ()
     CohortLedgerRetention = DataRetention.cohortLedgerRetention
@@ -80,6 +88,9 @@ let render (r: Report) : string =
   match r.CohortLedger with
   | Ok usage -> lines.Add(sprintf "%s: %s, %d rows, %s (%s)" cohortLedgerFileName (kib usage.Bytes) usage.Rows (oldestText usage.Oldest) (cohortText r.Cohort))
   | Error reason -> lines.Add(sprintf "%s: couldn't read it: %s" cohortLedgerFileName reason)
+  match r.Operations with
+  | Ok usage -> lines.Add(sprintf "%s: %s, %d retained operations" operationsFileName (kib usage.Bytes) usage.Rows)
+  | Error reason -> lines.Add(sprintf "%s: couldn't read it: %s" operationsFileName reason)
   lines.Add ""
   lines.Add "Kept for:"
   lines.Add(sprintf "  friction: only the running Bozzetto version's rows (%s). Other versions are rolled into a count per kind." (FrictionTelemetryTypes.BozzettoVersion.current ()))
@@ -88,8 +99,9 @@ let render (r: Report) : string =
   lines.Add(sprintf "  friction: counts kept for the %d most recent versions (%s)" r.Policy.MaxAggregateVersions DataRetention.frictionMaxAggregateVersionsEnvVar)
   lines.Add(sprintf "  friction: pruned on daemon start and every %g minutes (%s)" r.PruneInterval.TotalMinutes DataRetention.pruneIntervalEnvVar)
   lines.Add(sprintf "  cohort ledger: cleared on daemon start once the cohort finished more than %g days ago; a running cohort is never touched (%s)" r.CohortLedgerRetention.TotalDays DataRetention.cohortLedgerRetentionEnvVar)
+  lines.Add(sprintf "  operations: newest %d settled entries; each output stream keeps at most %d UTF-16 units plus its truncation marker. Live transcript eviction does not delete stored output." ComposerJournal.maxEntries ComposerJournal.streamLimit)
   lines.Add ""
-  lines.Add "Clear it with manage_local_data action=clear store=friction|cohort|all."
+  lines.Add "Clear it with manage_local_data action=clear store=friction|cohort|operations|all."
   String.Join("\n", lines)
 
 /// The explicit JSON schema returned by /api/local-data.
@@ -119,10 +131,18 @@ let toJsonValue (report: Report) : JsonValue =
         "rows", WireJson.signed usage.Rows
         "oldest", oldest usage.Oldest
         "cohort", text (cohortText report.Cohort) ]
+  let operations =
+    match report.Operations with
+    | Error reason -> object [ "state", text "readFailed"; "reason", text reason ]
+    | Ok usage -> object [
+        "state", text "stored"; "path", text (operationsPath report.DataDir)
+        "bytes", WireJson.signed usage.Bytes; "rows", WireJson.signed usage.Rows
+        "oldestMs", usage.OldestMs |> Option.map WireJson.signed |> Option.defaultValue JsonValue.Null ]
   object [
     "dataDir", text report.DataDir
     "friction", friction
     "cohortLedger", ledger
+    "operations", operations
     "retention", object [
       "frictionCurrentVersionOnly", text (FrictionTelemetryTypes.BozzettoVersion.current ())
       "frictionMaxAgeDays", WireJson.number report.Policy.MaxAge.TotalDays
@@ -135,6 +155,7 @@ let toJsonValue (report: Report) : JsonValue =
 type ClearTarget =
   | Friction
   | CohortLedger
+  | Operations
   | All
 
 module ClearTarget =
@@ -143,7 +164,8 @@ module ClearTarget =
     | "" | "all" -> Ok ClearTarget.All
     | "friction" -> Ok ClearTarget.Friction
     | "cohort" | "cohort-ledger" -> Ok ClearTarget.CohortLedger
-    | other -> Error (sprintf "Unknown store '%s'. Use friction, cohort or all." other)
+    | "operations" -> Ok ClearTarget.Operations
+    | other -> Error (sprintf "Unknown store '%s'. Use friction, cohort, operations or all." other)
 
 [<RequireQualifiedAccess>]
 type ClearOutcome =
@@ -157,12 +179,14 @@ type ClearOutcome =
 type LocalStore =
   | Friction
   | CohortLedger
+  | Operations
 
 module LocalStore =
   let fileName (store: LocalStore) =
     match store with
     | LocalStore.Friction -> frictionFileName
     | LocalStore.CohortLedger -> cohortLedgerFileName
+    | LocalStore.Operations -> operationsFileName
 
 /// One line per store the clear touched.
 type ClearReport = (LocalStore * ClearOutcome) list
@@ -185,10 +209,17 @@ let clear (target: ClearTarget) (frictionStore: FrictionStore option) (cohort: L
       // from whatever gets appended after this, which is a fresh cohort.
       try ClearOutcome.Cleared (CohortLedgerSqlite.Sqlite.clear (cohortLedgerPath dataDir))
       with ex -> ClearOutcome.Failed ex.Message
+  let clearOperations () =
+    if not (File.Exists(operationsPath dataDir)) then ClearOutcome.Cleared 0L
+    else
+      match ComposerJournal.openStore (operationsPath dataDir) |> Result.bind (fun store -> store.Clear()) with
+      | Ok rows -> ClearOutcome.Cleared rows
+      | Error reason -> ClearOutcome.Failed reason
   match target with
   | ClearTarget.Friction -> [ LocalStore.Friction, clearFriction () ]
   | ClearTarget.CohortLedger -> [ LocalStore.CohortLedger, clearLedger () ]
-  | ClearTarget.All -> [ LocalStore.Friction, clearFriction (); LocalStore.CohortLedger, clearLedger () ]
+  | ClearTarget.Operations -> [ LocalStore.Operations, clearOperations () ]
+  | ClearTarget.All -> [ LocalStore.Friction, clearFriction (); LocalStore.CohortLedger, clearLedger (); LocalStore.Operations, clearOperations () ]
 
 let private outcomeText (store: LocalStore) (outcome: ClearOutcome) =
   let name = LocalStore.fileName store

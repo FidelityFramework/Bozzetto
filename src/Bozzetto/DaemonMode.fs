@@ -1525,7 +1525,9 @@ let run
   use manifestOwner = Features.ManifestOwner.start (Log.asILogger ()) DaemonState.BozzettoDir
 
   use cts = infra.Cts
-  let composer = Bozzetto.ComposerIntegration.ComposerSupervisor.fromEnvironment ()
+  let composer =
+    Bozzetto.ComposerIntegration.ComposerSupervisor.fromEnvironmentWithJournal
+      (LocalData.operationsPath DaemonState.BozzettoDir)
   // Cancellation starts cleanup; the final shutdown path joins that same work
   // and observes its failure instead of leaving a discarded faulted task.
   let composerShutdown = lazy (composer.StopAsync() :> Task)

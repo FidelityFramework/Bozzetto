@@ -1,103 +1,23 @@
-/// Bozzetto browser UI shared protocol: the single vocabulary of the bridge.
-///
-/// Compiled today by Fable (the frontend in src/Frontend, the mock bridge in
-/// src/Mock, and the codec round-trip tests) and by .NET Bozzetto, which is
-/// the backend-for-frontend until a Clef backend compiled by Composer takes
-/// its place. The destination is WrenHello's: this same file compiled by both
-/// Fable and Composer (see ../WrenHello/README.md, "The Bridge").
-///
-/// Types only, no behavior. Codecs are per-side module functions
-/// (src/Frontend/Codec.fs here; the backend codec lives inside Bozzetto), so
-/// each side stays inside its compiler's proven surface. When BAREWire's
-/// encoder/decoder compile under both Fable and Composer, the codecs swap to
-/// binary frames without touching this file or the UI.
-///
-/// Shape discipline, so Composer can compile this file later (BAREWire
-/// docs/12 Intersection Subset.md; WrenHello docs/composer-findings.md):
-///   - a union case carries at most one payload (`single-payload`); several
-///     fields travel as a record, never as a tuple or named case fields
-///   - every union has at least two cases (`two-cases`)
-///   - arrays, not lists (`arrays`); no Map or Set (`no-map`)
-///   - no recursive unions, generic records, interfaces, classes or members
-///   - integers that cross the wire are int32 or int64, never `int`, which is
-///     the platform word under Clef (`platform-word`)
-///   - open vocabularies (refusal codes, lease kinds, health labels) are
-///     strings, so a newer backend never makes an older page fail to decode
-///   - type names avoid BAREWire's record names and Bozzetto's provider
-///     names (Refusal, SessionAddress, ...) so the backend can open both
-///
-/// Wire format (interim: one JSON object per WebSocket text frame on the
-/// daemon's `/ui/bridge`, MCP port; the binary BAREWire frame replaces it).
-/// int64 values travel as decimal strings ("9223372036854775807"); int32
-/// and float as JSON numbers; `option` as null or the value; arrays as JSON
-/// arrays. A SessionTarget is flattened to {"host","epoch","session"} and a
-/// WorkerTarget to {"host","epoch"}.
-///
-///   UI -> backend, every frame: {"correlation":<int32 > 0>,"command":<tag>,...}
-///     "request_snapshot"
-///     "open_project"    "project":<absolute .fidproj path>
-///     "reserve"         "target":T, "label":<string>
-///     "build"           "target":T, "reservation":<string>
-///     "run"             "target":T, "arguments":[<string>...]
-///     "cancel"          "target":T
-///     "close_session"   "target":T
-///     "retire_worker"   "worker":{"host","epoch"}
-///
-///   backend -> UI: {"event":<tag>,...}
-///     "welcome"     "protocolVersion":5, "daemonVersion", "startedAtMs":<int64>
-///     "snapshot"    "revision":<int64>, "worker":W, "sessions":[S...]
-///                   W = {"state":"unconfigured"} | {"state":"idle"}
-///                     | {"state":"running","host","epoch","compilerVersion","processId":<int32>|null}
-///                   S = {"host","epoch","session","generation":<int64>,"project",
-///                        "closed","busy","statusFresh","revocationPending",
-///                        "cleanupPending","formatterCleanupPending",
-///                        "current":A|null,"backendError","formatterError",
-///                        "cleanupError","workerRetirementRequired",
-///                        "statusError","workerError"}   (the last six: string|null)
-///                   A = {"generation":<int64>,"sourceVersion","artifactPath",
-///                        "artifactSha256","regions":[{"identity","witness",
-///                        "visits":<int32>,"object"}]}
-///     "accepted"    "correlation", "target":T, "completion":C
-///                   C = {"kind":"session_opened"} | {"kind":"edit_reserved","reservation"}
-///                     | {"kind":"reservation_built","artifact":A}
-///                     | {"kind":"run_finished","exitCode"} | {"kind":"work_canceled"}
-///                     | {"kind":"session_closed"} | {"kind":"worker_retired"}
-///                     | {"kind":"snapshot_sent"}
-///     "refused"     "correlation", "target":T, "code", "message"
-///     "run_output"  "correlation", "target":T, "generation":<int64>,
-///                   "sourceVersion", "exitCode", "standardOutput", "standardError"
-///     "health"      "version", "processId", "mcpPort", "overall",
-///                   "memoryPressure", "residentBytes":<int64>,
-///                   "machineAvailableBytes":<int64>, "machineTotalBytes":<int64>,
-///                   "cpuPercent", "processes":[{"processId","role",
-///                   "residentBytes":<int64>,"cpuPercent"}],
-///                   "alarms":[{"signal","state","message"}]
-///     "leases"      "active":[{"id","kind","holder","grantedAtMs":<int64>,
-///                   "expiresAtMs":<int64>}], "queued":[{"kind","holder",
-///                   "requestedAtMs":<int64>}]
-///     "uptime"      "uptimeMs":<int64>
-///                   e.g. {"event":"uptime","uptimeMs":"<int64 decimal string>"}
-///
-/// Contract: every command frame is answered by exactly one "accepted" or
-/// "refused" carrying its correlation ("run" sends "run_output" first). A
-/// frame the backend cannot decode is refused with correlation 0 and an empty
-/// target. "welcome" opens every connection, once. "snapshot", "health" and
-/// "leases" are sent on connect and for the compatibility "request_snapshot"
-/// command. Snapshot and lease owner changes push; lease expiry has a one-shot
-/// owner deadline. Legacy Health remains a labelled snapshot, not a live feed.
-/// Explicit bounded counter observation uses Resources separately. The start
-/// time travels once, in "welcome". "uptime" is the one clock-owned push: the
-/// backend's clock ticks once a second while at least one page is connected
-/// and each tick is pushed as it is, so the page shows a live uptime without
-/// running a timer of its own. It is a push from the clock that owns the
-/// value, never a poll: nothing is re-read or diffed to produce it.
+/// Shared typed binary contract for browser and peer observations.
+/// BinaryCodec is the single CLR/Fable codec; no JSON compatibility path.
+/// Observations convey facts and never grant compiler execution authority.
 module Bozzetto.Web.Shared.Protocol
 
-/// Version of this vocabulary and its interim wire format, sent in Welcome.
-/// 2: Welcome carries StartedAtMs; Health no longer carries an uptime.
-/// 3: the Uptime event, pushed by the backend's clock while a page is connected.
+/// Binary envelope and vocabulary version, also carried in Welcome.
 [<Literal>]
-let ProtocolVersion = 8
+let ProtocolVersion = 9
+
+[<Literal>]
+let MaxObservedPeers = 16
+
+[<Literal>]
+let MaxWorkSnapshotBytes = 128 * 1024
+
+[<Literal>]
+let MaxTranscriptPageBytes = 32768
+
+[<Literal>]
+let MaxTranscriptBytes = 65536
 
 // ── Addresses ──────────────────────────────────────────────────────────────
 
@@ -120,12 +40,31 @@ type BuildReserved = { Target: SessionTarget; Reservation: string }
 /// Run the current accepted artifact with these arguments (composer_run_current).
 type RunCurrent = { Target: SessionTarget; Arguments: string array }
 
+type NodeIdentity = { Node: string; Incarnation: string }
+type NodeObservationRequest = { Node: string; Seconds: int32 }
+type TranscriptStream = Stdout | Stderr
+type TranscriptReadRequest = {
+  Source: NodeIdentity; Journal: string; Sequence: int64; Stream: TranscriptStream
+  Offset: int64; MaxBytes: int32
+}
+type TranscriptPage = {
+  Journal: string; Sequence: int64; Stream: TranscriptStream; Offset: int64
+  NextOffset: int64 option; TotalBytes: int64; Bytes: byte array; Truncated: bool
+}
+type TranscriptReadOutcome =
+  | TranscriptPage of TranscriptPage
+  | TranscriptRefused of code: string * message: string
+type NodeTranscript = { Source: NodeIdentity; Correlation: int32; Outcome: TranscriptReadOutcome }
+type PeerTranscriptRequest = { ProtocolVersion: int32; Request: TranscriptReadRequest }
+type PeerTranscriptReply = { Source: NodeIdentity; Outcome: TranscriptReadOutcome }
+
 /// What the UI asks of the backend. The backend is the update function.
 type Command =
   /// Push Snapshot, Health and Leases now.
   | RequestSnapshot
   /// Explicit counter-only acquisition: 1–120 seconds, 0 to unsubscribe.
   | ObserveResources of int32
+  | ObserveNodeResources of NodeObservationRequest
   /// Open an absolute Clef .fidproj (composer_open_project).
   | OpenProject of string
   | Reserve of ReserveEdit
@@ -138,6 +77,7 @@ type Command =
   /// Retire every session of a worker before compiler replacement
   /// (composer_retire_worker).
   | RetireWorker of WorkerTarget
+  | ReadNodeTranscript of TranscriptReadRequest
 
 /// One frame from the UI: a command and the correlation the UI chose for it
 /// (positive, unique per page lifetime). Its outcome echoes the correlation.
@@ -405,7 +345,28 @@ type OperationEntry = {
 
 /// The daemon's journal of settled operations, newest first, bounded by the
 /// daemon; stamped per publication, a page keeps the newest.
-type OperationsBoard = { Revision: int64; Incarnation: string; Entries: OperationEntry array }
+type OperationsBoard = { Revision: int64; Incarnation: string; Entries: OperationEntry array; StorageError: string option }
+
+/// The peer's own complete work observation. It carries no admission capability.
+type WorkSnapshot = {
+  Sequence: int64
+  SampledAtMs: int64
+  Snapshot: ComposerSnapshot
+  Leases: LeaseBoard
+  Operations: OperationsBoard
+  TranscriptsOmitted: bool
+}
+/// Local is assigned by the controller, never accepted from a peer.
+type NodeWork = { Source: NodeIdentity; Local: bool; Status: string; Note: string; Value: WorkSnapshot option }
+type WorkBoard = { Revision: int64; Nodes: NodeWork array }
+type NodeResources = { Source: NodeIdentity; Correlation: int32; Value: HostResources }
+type PeerObserveRequest = { ProtocolVersion: int32; Node: string; Topic: string; Seconds: int32 }
+type PeerFrame =
+  | PeerHello of NodeIdentity
+  | PeerWork of WorkSnapshot
+  | PeerResources of HostResources
+  | PeerUnavailable of string
+  | PeerHeartbeat of UptimeTick
 
 /// What the backend pushes to the UI. Events fold into the UI's model.
 type Event =
@@ -420,3 +381,6 @@ type Event =
   | Resources of HostResources
   | AgentWork of AgentWorkBoard
   | Operations of OperationsBoard
+  | WorkNodes of WorkBoard
+  | NodeResources of NodeResources
+  | NodeTranscript of NodeTranscript

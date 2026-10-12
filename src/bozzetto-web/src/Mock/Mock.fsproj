@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <Compile Include="../Shared/Protocol.fs" />
+    <Compile Include="../Shared/BinaryCodec.fs" />
     <Compile Include="Codec.fs" />
     <Compile Include="Bridge.fs" />
   </ItemGroup>

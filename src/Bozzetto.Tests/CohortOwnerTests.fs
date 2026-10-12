@@ -290,9 +290,20 @@ let agentWorkTests =
       board.Runs.[0].Usage.Value.Total |> Expect.equal "latest meter, not a sum of repeated snapshots" 10L
       let wire = Bozzetto.Server.UiBridgeCodec.encodeEvent (Bozzetto.Web.Shared.Protocol.AgentWork board)
       let sourceJson = AgentWork.json state |> Fidelity.Data.JSON.Json.parse |> function Ok v -> v | Error e -> failtest e
-      let bridgeJson = wire |> Fidelity.Data.JSON.Json.parse |> function Ok v -> v | Error e -> failtest e
-      for field in ["incarnation"; "sequence"; "executionHost"; "capacity"; "runs"] do
-        Fidelity.Data.JSON.JsonValue.prop field bridgeJson |> Expect.equal "MCP and typed bridge project identical owner facts" (Fidelity.Data.JSON.JsonValue.prop field sourceJson)
+      let decoded =
+        match Bozzetto.Web.Shared.BinaryCodec.decodeEvent wire with
+        | Ok(Bozzetto.Web.Shared.Protocol.AgentWork value) -> value
+        | other -> failtestf "typed agent board missing: %A" other
+      decoded |> Expect.equal "all owner facts survive the binary bridge" board
+      for field, expected in [
+        "incarnation", Fidelity.Data.JSON.JsonValue.String decoded.Incarnation
+        "sequence", Fidelity.Data.JSON.JsonValue.String (string decoded.Sequence)
+        "executionHost", Fidelity.Data.JSON.JsonValue.String decoded.ExecutionHost
+        "capacity", Fidelity.Data.JSON.JsonValue.ofInt64 (int64 decoded.Capacity)
+      ] do
+        Fidelity.Data.JSON.JsonValue.prop field sourceJson
+        |> Expect.equal "MCP and typed bridge expose the same owner identity" (Some expected)
+      decoded.Runs.Length |> Expect.equal "nonempty run projection retained" state.Runs.Count
     }
     testTask "publication failure is specific and exact retry reconciles without charging twice" {
       let ledger = InMemory.create<MemberId>()

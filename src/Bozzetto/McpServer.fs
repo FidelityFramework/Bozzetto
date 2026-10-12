@@ -3335,8 +3335,22 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       mapLiveTestingRoutes app rctx
       mapAnalysisRoutes app rctx
       Bozzetto.Server.ComposerRoutes.mapRoutes app composer
-      Bozzetto.Server.UiBridge.mapRoutes cfg.Headless app (fun () ->
-        Bozzetto.Server.UiBridge.create composer cfg.Port cfg.GetDaemonHealth app.Lifetime.ApplicationStopping cfg.CohortOwner)
+      let workPeers =
+        match WorkObservation.loadPeers Bozzetto.BozzettoConfig.WorkNodeId Bozzetto.BozzettoConfig.WorkPeersFile with
+        | Ok peers -> peers
+        | Error reason -> invalidOp reason
+      let mutable observePeer = fun (_: string) (_: int) (_: string -> unit) -> async { return raise (InvalidOperationException "Peer observations are starting.") }
+      let mutable readPeer = fun (_: Bozzetto.Web.Shared.Protocol.TranscriptReadRequest) (_: CancellationToken) -> async {
+        return Bozzetto.Web.Shared.Protocol.TranscriptRefused("node_unavailable", "Peer observations are starting.") }
+      let workHub =
+        Bozzetto.Server.UiBridge.createObservedWithTranscripts composer cfg.Port cfg.GetDaemonHealth app.Lifetime.ApplicationStopping cfg.CohortOwner
+          Bozzetto.BozzettoConfig.WorkNodeId (workPeers |> List.map _.Node) (fun node seconds finish -> observePeer node seconds finish)
+          (Bozzetto.Server.UiBridge.Project.transcript composer.ReadTranscript) (fun request cancellation -> readPeer request cancellation)
+      use workController = new WorkObservation.Controller(workHub, workPeers, app.Lifetime.ApplicationStopping)
+      observePeer <- fun node seconds finish -> workController.Observe(node, seconds, finish)
+      readPeer <- fun request cancellation -> workController.ReadTranscript(request, cancellation)
+      WorkObservation.mapRoutes app workHub
+      Bozzetto.Server.UiBridge.mapRoutes cfg.Headless app (fun () -> workHub)
 
       let _stateSub =
         cfg.StateChanged |> Option.map (fun evt ->

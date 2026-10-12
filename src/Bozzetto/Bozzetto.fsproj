@@ -48,6 +48,7 @@
         <Compile Include="DaemonState.fs" />
         <Compile Include="UpdateCheckService.fs" />
         <Compile Include="../bozzetto-web/src/Shared/Protocol.fs" Link="UiBridge/Protocol.fs" />
+        <Compile Include="../bozzetto-web/src/Shared/BinaryCodec.fs" Link="UiBridge/BinaryCodec.fs" />
         <Compile Include="LinuxResources.fs" />
         <Compile Include="ResourceGraph.fs" />
         <Compile Include="ResourceMonitor.fs" />
@@ -117,6 +118,7 @@
         <Compile Include="UiBridgeCodec.fs" />
         <Compile Include="WebAssets.fs" />
         <Compile Include="UiBridge.fs" />
+        <Compile Include="WorkObservation.fs" />
         <!-- The page's tab icons (the Clef logo), served from memory by both
              listeners; bozzetto-web/icons holds them, copied from
              clef-lang-site. -->

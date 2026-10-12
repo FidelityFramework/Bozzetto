@@ -42,7 +42,7 @@ let private feedback (version: string) (daysAgo: float) : ExplicitFeedback =
     BozzettoVersion = version }
 
 let private withTempDir (f: string -> unit) =
-  let dir = Path.Combine(Path.GetTempPath(), sprintf "bozzetto-local-data-%s" (Guid.NewGuid().ToString("N")))
+  let dir = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../../nupkg/local-data-controls", Guid.NewGuid().ToString("N")))
   Directory.CreateDirectory dir |> ignore
   try f dir
   finally
@@ -72,6 +72,23 @@ let private ledgerEntry (seq: int64) (clock: DateTime) (state: CohortState<Membe
 [<Tests>]
 let localDataSqliteTests =
   testList "Local data retention on real SQLite" [
+
+    testCase "operations storage participates in local usage and explicit clear without recycling identity" <| fun _ ->
+      withTempDir (fun dir ->
+        let store = ComposerIntegration.ComposerJournal.openStore (LocalData.operationsPath dir) |> ok
+        let entry: ComposerIntegration.ComposerJournal.Entry =
+          { Sequence = 0L; AtMs = 42L; Caller = "test"; Operation = Composer.Protocol.Operation.Build
+            Session = "s"; Project = "/project"; Outcome = ComposerIntegration.ComposerJournal.Outcome.Succeeded; Run = None }
+        let first = store.Append entry |> ok
+        let report = LocalData.report None LocalDataRetention.CohortActivity.Finished dir
+        let usage = report.Operations |> ok
+        (usage.Rows, usage.OldestMs) |> Expect.equal "local management reads the actual operations database" (1L, Some 42L)
+        (usage.Bytes > 0L) |> Expect.isTrue "SQLite footprint is reported"
+        LocalData.ClearTarget.parse "operations" |> Expect.equal "existing clear command selects this store" (Ok LocalData.ClearTarget.Operations)
+        LocalData.clear LocalData.ClearTarget.Operations None LocalDataRetention.CohortActivity.Finished dir
+        |> Expect.equal "explicit clear reports actual deleted rows" [ LocalData.LocalStore.Operations, LocalData.ClearOutcome.Cleared 1L ]
+        let next = store.Append entry |> ok
+        (next.Incarnation, next.Sequence) |> Expect.equal "management clear cannot recycle an entry key" (first.Incarnation, first.Sequence + 1L))
 
     testCase "a prune keeps only the running version's newest rows and counts the rest" <| fun _ ->
       withTempDir (fun dir ->
