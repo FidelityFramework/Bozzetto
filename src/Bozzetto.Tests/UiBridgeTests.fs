@@ -846,7 +846,7 @@ type private FakeSocket() =
 /// this fake's owners. A build is held until the test releases it, so a socket
 /// can close while the build is in flight. Asks of the health owner are
 /// counted: the bridge may ask only for a connect or a RequestSnapshot.
-type private FakeComposer() =
+type private FakeComposer(?observationOwners: Facts.ObservationProducer list) =
   let changed = Microsoft.FSharp.Control.Event<unit>()
   let buildEntered = TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously)
   let buildReleased = TaskCompletionSource<ComposerResponse>(TaskCreationOptions.RunContinuationsAsynchronously)
@@ -854,7 +854,7 @@ type private FakeComposer() =
   let mutable refreshes = 0
   let mutable tickSerial = 1L
   let mutable poolSerial = 1L
-  let graph = Facts.Graph({ Facts.Constants.McpPort = 47759; Version = "0.6.834-test"; ProcessId = 99 }, "daemon-o")
+  let graph = Facts.Graph({ Facts.Constants.McpPort = 47759; Version = "0.6.834-test"; ProcessId = 99 }, "daemon-o", "", ?observationOwners = observationOwners)
   do
     // The owners' first values, so a page's prologue carries Health and Leases.
     graph.Tick(Readings.tick tickSerial Bozzetto.MemoryPressure.Normal) |> ignore
@@ -1887,4 +1887,216 @@ let presenceTests =
       let m = Bozzetto.MemberTable.MemberId.Mcp "m"
       let rows = Project.presence [] [] [ present m 45 ] Map.empty
       rows[0].SinceMs |> Expect.equal "renewal time, not a join time the daemon does not keep" ((at 45).ToUnixTimeMilliseconds())
+  ]
+
+/// Source admission extends the existing fact plane; no remote enrollment or
+/// browser wire is involved in these controls.
+[<Tests>]
+let observationTests =
+  let a : Facts.ObservationSource = { Node = "A"; Incarnation = "A-current" }
+  let b : Facts.ObservationSource = { Node = "B"; Incarnation = "B-current" }
+  let producer source : Facts.ObservationProducer = { Source = source; Correlation = Guid.NewGuid() }
+  let pa, pb = producer a, producer b
+  let consumerProducer (binding: Facts.ObservationBinding) : Facts.ObservationProducer =
+    { Source = binding.Source; Correlation = binding.Subscription }
+  let graph () = Facts.Graph({ McpPort = 47759; Version = "test"; ProcessId = 99 }, "daemon-o", "", observationOwners = [ pa; pb ])
+  let register (graph: Facts.Graph) source sink =
+    graph.RegisterObservation(source, sink) |> Result.defaultWith (fun error -> failtestf "registration refused: %A" error)
+  let sample sequence note = { Bozzetto.Server.ResourceMonitor.empty "observing" with Sequence = sequence; SampledAtMs = sequence * 1000L; Note = note }
+  testList "UiBridge.Facts scoped observation" [
+    testCase "consumer registration and sink correlations cannot publish as the source" <| fun () ->
+      let graph = graph ()
+      let pushed = ResizeArray<Facts.Observation>()
+      let current, demand = register graph a pushed.Add
+      use _demand = demand
+      graph.PublishObservation(consumerProducer current.Binding, sample 99L "forged")
+      |> Expect.equal "a registered consumer has no producer correlation" (Error Facts.Refusal.ForeignProducer)
+      graph.PublishObservation(pa, sample 1L "owner") |> Expect.equal "the setup-bound producer can publish" (Ok())
+      let fromSink = consumerProducer pushed[0].Binding
+      graph.PublishObservation(fromSink, sample 100L "forged sink")
+      |> Expect.equal "a sink-derived correlation cannot publish" (Error Facts.Refusal.ForeignProducer)
+      graph.UnavailableObservation(fromSink, 101L, "forged unavailable")
+      |> Expect.equal "a consumer cannot mark the source unavailable either" (Error Facts.Refusal.ForeignProducer)
+      pushed |> Seq.map _.Value |> Seq.toList |> Expect.equal "only the producer's value arrived" [ Ok(sample 1L "owner") ]
+      graph.Stop()
+
+    testCase "producer publication before and after focus does not create observation demand" <| fun () ->
+      let graph = graph ()
+      graph.PublishObservation(pa, sample 1L "before focus") |> Expect.equal "a producer needs no consumer handle" (Ok())
+      graph.ObservationDemanded a |> Expect.equal "publication alone does not demand execution" (Ok false)
+      let pushed = ResizeArray<Facts.Observation>()
+      let current, demand = register graph a pushed.Add
+      current.Value |> Expect.equal "first focus sees the prior source fact" (Ok(sample 1L "before focus"))
+      graph.PublishObservation(pa, sample 2L "during focus") |> Expect.equal "live focus receives producer updates" (Ok())
+      demand.Dispose()
+      graph.PublishObservation(pa, sample 3L "after focus") |> Expect.equal "producer remains bound after the last focus detaches" (Ok())
+      graph.ObservationDemanded a |> Expect.equal "post-detach publication does not revive demand" (Ok false)
+      pushed |> Seq.map _.Sequence |> Seq.toList |> Expect.equal "the detached sink receives no later update" [ Some 2L ]
+      let next, nextDemand = register graph a ignore
+      use _nextDemand = nextDemand
+      next.Value |> Expect.equal "new focus sees the latest independently published source fact" (Ok(sample 3L "after focus"))
+      graph.Stop()
+
+    testCase "current and later delivery name the same subscription without replaying current" <| fun () ->
+      let graph = graph ()
+      let first, firstDemand = register graph a ignore
+      use _firstDemand = firstDemand
+      first.Sequence |> Expect.equal "no fabricated initial sequence" None
+      first.Value |> Expect.equal "absence is explicit" (Error "Source has not published an observation.")
+      graph.PublishObservation(pa, sample 1L "A") |> Expect.equal "source admitted" (Ok())
+      let pushed = ResizeArray<Facts.Observation>()
+      let current, demand = register graph a pushed.Add
+      use _demand = demand
+      current.Value |> Expect.equal "registration sees the existing fact" (Ok(sample 1L "A"))
+      pushed.Count |> Expect.equal "current was not also pushed" 0
+      graph.PublishObservation(pa, sample 2L "new A") |> Expect.equal "new source fact admitted" (Ok())
+      pushed |> Seq.toList |> Expect.equal "one later push bound to this subscriber"
+        [ { current with Sequence = Some 2L; Value = Ok(sample 2L "new A") } ]
+      graph.Stop()
+
+    testCase "A to B to A refuses a late old subscription and preserves current A" <| fun () ->
+      let graph = graph ()
+      let first, firstDemand = register graph a ignore
+      graph.PublishObservation(pa, sample 1L "current A") |> Expect.equal "first A admitted" (Ok())
+      graph.ObservationDemanded a |> Expect.equal "A is effectively demanded" (Ok true)
+      firstDemand.Dispose()
+      graph.ObservationDemanded a |> Expect.equal "last A subscription releases its Foundation demand" (Ok false)
+      (graph.StoredResults <= 1) |> Expect.isTrue "a retained cache is not a demand census"
+      let middle, middleDemand = register graph b ignore
+      graph.PublishObservation(pb, sample 1L "current B") |> Expect.equal "B has its own serial" (Ok())
+      middleDemand.Dispose()
+      graph.ObservationDemanded b |> Expect.equal "last B subscription also releases its Foundation demand" (Ok false)
+      let pushed = ResizeArray<Facts.Observation>()
+      let current, demand = register graph a pushed.Add
+      use _demand = demand
+      current.Value |> Expect.equal "new A subscription sees the retained A fact" (Ok(sample 1L "current A"))
+      (current.Binding.Subscription <> first.Binding.Subscription) |> Expect.isTrue "focus identity is new despite the same source"
+      graph.PublishObservation(consumerProducer first.Binding, sample 99L "late old A") |> Expect.equal "disposed focus has no producer correlation" (Error Facts.Refusal.ForeignProducer)
+      pushed.Count |> Expect.equal "late delivery did not reach the new focus" 0
+      graph.PublishObservation(pa, sample 2L "new A") |> Expect.equal "new A remains live" (Ok())
+      pushed.Count |> Expect.equal "only the new subscription's delivery arrived" 1
+      graph.Stop()
+
+    testCase "source incarnation differs from subscription and unknown nodes have no fallback" <| fun () ->
+      let graph = graph ()
+      let current, demand = register graph a ignore
+      use _demand = demand
+      let oldSource = { a with Incarnation = "A-old" }
+      graph.PublishObservation({ pa with Source = oldSource }, sample 999L "old owner")
+      |> Expect.equal "a larger serial cannot replace the bound incarnation" (Error Facts.Refusal.ForeignIncarnation)
+      graph.RegisterObservation(oldSource, ignore) |> Result.map ignore
+      |> Expect.equal "registration also refuses the old incarnation" (Error Facts.Refusal.ForeignIncarnation)
+      let unknown = { a with Node = "unknown" }
+      graph.RegisterObservation(unknown, ignore) |> Result.map ignore
+      |> Expect.equal "an unbound node does not become local" (Error Facts.Refusal.UnknownSource)
+      graph.UnavailableObservation({ pa with Source = unknown }, 1000L, "disconnected")
+      |> Expect.equal "unavailability cannot enroll a node" (Error Facts.Refusal.UnknownSource)
+      let faults = graph.Faults
+      graph.ObservationDemanded oldSource |> Expect.equal "query refuses a foreign incarnation" (Error Facts.Refusal.ForeignIncarnation)
+      graph.ObservationDemanded unknown |> Expect.equal "query refuses an unknown source" (Error Facts.Refusal.UnknownSource)
+      graph.Faults |> Expect.equal "read-only demand queries do not count protocol faults" faults
+      graph.PublishObservation(pa, sample 1L "current owner") |> Expect.equal "current source still works" (Ok())
+      graph.Stop()
+
+    testCase "duplicate conflicting and older source serials cannot change current" <| fun () ->
+      let graph = graph ()
+      let pushed = ResizeArray<Facts.Observation>()
+      let current, demand = register graph a pushed.Add
+      use _demand = demand
+      graph.PublishObservation(pa, sample 5L "current") |> Expect.equal "new serial admitted" (Ok())
+      graph.PublishObservation(pa, sample 5L "current") |> Expect.equal "exact duplicate is idempotent" (Error Facts.Refusal.Duplicate)
+      graph.PublishObservation(pa, sample 5L "conflict") |> Expect.equal "same serial cannot change content" (Error Facts.Refusal.Conflict)
+      graph.PublishObservation(pa, sample 4L "older") |> Expect.equal "older content refused" (Error Facts.Refusal.Older)
+      pushed |> Seq.map _.Value |> Seq.toList |> Expect.equal "no rejected fact was delivered" [ Ok(sample 5L "current") ]
+      graph.Stop()
+
+    testCase "unavailable is a current fact that the same live owner can recover" <| fun () ->
+      let graph = graph ()
+      let pushed = ResizeArray<Facts.Observation>()
+      let current, demand = register graph a pushed.Add
+      use _demand = demand
+      graph.UnavailableObservation(pa, 1L, "source disconnected") |> Expect.equal "known source can be unavailable" (Ok())
+      let unavailable, otherDemand = register graph a ignore
+      use _otherDemand = otherDemand
+      unavailable.Value |> Expect.equal "no local sample substitutes for unavailable" (Error "source disconnected")
+      unavailable.Sequence |> Expect.equal "unavailability retains the source serial" (Some 1L)
+      graph.PublishObservation(pa, sample 2L "recovered") |> Expect.equal "same binding can recover" (Ok())
+      pushed |> Seq.map _.Value |> Seq.toList |> Expect.equal "unavailability and recovery are both pushed"
+        [ Error "source disconnected"; Ok(sample 2L "recovered") ]
+      graph.Stop()
+
+    testTask "detaching one focus and recycling leaves another focus globals and held build intact" {
+      let stopping = new CancellationTokenSource()
+      let composer = FakeComposer(observationOwners = [ pa; pb ], HoldBuilds = true)
+      let graph = composer.Graph
+      let hub = hubOf composer stopping.Token unpaused (ClockGate())
+      let socket = FakeSocket()
+      let running = hub.RunAsync(socket, CancellationToken.None)
+      let! _ = readPrologue socket
+      socket.Deliver(frame 1 (Build { Target = target; Reservation = "rsv" }))
+      let! (token: CancellationToken) = composer.BuildEntered.WaitAsync(TimeSpan.FromSeconds 5.)
+      let globalBefore = graph.Current()
+      let first, firstDemand = register graph a ignore
+      let pushed = ResizeArray<Facts.Observation>()
+      let second, secondDemand = register graph a pushed.Add
+      firstDemand.Dispose()
+      graph.ObservationDemanded a |> Expect.equal "the independent subscription still demands A" (Ok true)
+      for sequence in 1L .. int64 Facts.recycleBound do
+        graph.PublishObservation(pa, sample sequence "A") |> Expect.equal "live demand remains admitted" (Ok())
+      (graph.Epoch > 1UL) |> Expect.isTrue "the real core epoch recycled"
+      pushed.Count |> Expect.equal "handover neither drops nor duplicates publications" Facts.recycleBound
+      graph.Current() |> Expect.equal "global facts and their stamps are unchanged" globalBefore
+      graph.StoredResults |> Expect.equal "only the two globals and one observation remain" 3
+      graph.PublishObservation(consumerProducer first.Binding, sample (int64 Facts.recycleBound + 1L) "late")
+      |> Expect.equal "epoch handover does not turn a disposed focus into a producer" (Error Facts.Refusal.ForeignProducer)
+      token.IsCancellationRequested |> Expect.isFalse "focus release did not cancel the held build"
+      composer.ReleaseBuild()
+      socket.Hangup()
+      do! settle running
+      stopping.Cancel()
+      secondDemand.Dispose()
+      graph.ObservationDemanded a |> Expect.equal "last subscription releases the restored epoch's demand" (Ok false)
+      graph.Stop()
+      stopping.Dispose()
+    }
+
+    testCase "a callback detaching another focus prevents its queued delivery" <| fun () ->
+      let graph = graph ()
+      let mutable detach = ignore
+      let first, firstDemand = register graph a (fun _ -> detach ())
+      use _firstDemand = firstDemand
+      let pushed = ResizeArray<Facts.Observation>()
+      let _, secondDemand = register graph a pushed.Add
+      detach <- secondDemand.Dispose
+      graph.PublishObservation(pa, sample 1L "A") |> Expect.equal "publication admitted" (Ok())
+      pushed.Count |> Expect.equal "a callback disposed before its turn is not invoked" 0
+      graph.Stop()
+
+    testCase "a reentrant newer publication prevents older delivery to remaining focuses" <| fun () ->
+      let graph = graph ()
+      let mutable publishNewer = ignore
+      let first, firstDemand = register graph a (fun observation -> if observation.Sequence = Some 1L then publishNewer ())
+      use _firstDemand = firstDemand
+      let pushed = ResizeArray<Facts.Observation>()
+      let _, secondDemand = register graph a pushed.Add
+      use _secondDemand = secondDemand
+      publishNewer <- fun () -> graph.PublishObservation(pa, sample 2L "newer") |> Expect.equal "nested publication admitted" (Ok())
+      graph.PublishObservation(pa, sample 1L "older") |> Expect.equal "original publication admitted" (Ok())
+      pushed |> Seq.map _.Sequence |> Seq.toList |> Expect.equal "remaining focus never rolls back after the newer value" [ Some 2L ]
+      graph.Stop()
+
+    testCase "graph shutdown permanently retires all source bindings" <| fun () ->
+      let graph = graph ()
+      let current, demand = register graph a ignore
+      graph.Stop()
+      demand.Dispose()
+      graph.Drained |> Expect.isTrue "shutdown drains the foundation epoch"
+      graph.PublishObservation(pa, sample 1L "late") |> Expect.equal "retired graph refuses publication" (Error Facts.Refusal.Retired)
+      graph.RegisterObservation(a, ignore) |> Result.map ignore |> Expect.equal "retired graph cannot create a new focus" (Error Facts.Refusal.Retired)
+
+    testCase "constructor bindings require one named incarnation per distinct node" <| fun () ->
+      let create owners = Facts.Graph({ McpPort = 47759; Version = "test"; ProcessId = 99 }, "daemon-o", "", observationOwners = owners) |> ignore
+      (fun () -> create [ pa; producer { a with Incarnation = "other" } ]) |> Expect.throwsT<ArgumentException> "two incarnations cannot be preadmitted for one node"
+      (fun () -> create [ producer { a with Incarnation = "" } ]) |> Expect.throwsT<ArgumentException> "an absent incarnation cannot be bound"
+      (fun () -> create [ { pa with Correlation = Guid.Empty } ]) |> Expect.throwsT<ArgumentException> "an absent producer correlation cannot be bound"
   ]

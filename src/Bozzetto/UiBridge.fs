@@ -781,6 +781,19 @@ module Facts =
   /// What the health projection cannot derive from a fact: the daemon's identity.
   type Constants = { McpPort: int; Version: string; ProcessId: int }
 
+  /// Trusted in-process owner bindings, fixed for the graph's lifetime. These
+  /// are not remote enrollment or authentication claims.
+  type ObservationSource = { Node: string; Incarnation: string }
+  /// Trusted setup supplies this correlation to the producer and graph only;
+  /// it must not be included in consumer snapshots or subscription handles.
+  type ObservationProducer = { Source: ObservationSource; Correlation: Guid }
+  type ObservationBinding = { Source: ObservationSource; Subscription: Guid }
+  type Observation = {
+    Binding: ObservationBinding
+    Sequence: int64 option
+    Value: Result<HostResources, string>
+  }
+
   /// The owners the plane subscribes to: each as its change signal and its
   /// current value.
   type Owners = {
@@ -791,15 +804,15 @@ module Facts =
     Journal: IObservable<unit> * (unit -> ComposerJournal.Journal)
   }
 
-  /// Why a publication was not admitted. `Conflict` and `ForeignIncarnation`
-  /// are owner protocol faults; the other two are the ordinary cost of owners
-  /// announcing outside their own gates.
+  /// Why a publication or subscription was not admitted.
   [<RequireQualifiedAccess>]
   type Refusal =
     | Older
     | Duplicate
     | Conflict
     | ForeignIncarnation
+    | UnknownSource
+    | ForeignProducer
     /// The plane has retired its epoch at shutdown; nothing is admitted after.
     | Retired
 
@@ -810,12 +823,14 @@ module Facts =
     | Agents of Bozzetto.AgentWork.State
     | Membership of Membership
     | Journal of ComposerJournal.Journal
+    | Observation of int64 * Result<HostResources, string>
 
   /// What a value token names: an admitted fact, or a settled projection.
   [<RequireQualifiedAccess>]
   type private Payload =
     | Fact of Fact
     | Value of Event
+    | Observation of int64 * Result<HostResources, string>
 
   let private tickInput, poolInput, agentsInput, membershipInput, journalInput = InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL, InputId 5UL
   let private healthWork, leasesWork, boardWork, operationsWork = WorkId 1UL, WorkId 2UL, WorkId 3UL, WorkId 4UL
@@ -828,7 +843,18 @@ module Facts =
   /// The plane of one daemon. `incarnation` is the agent board owner's, bound
   /// at start: a publication from any other incarnation is refused, so a
   /// retired owner can never roll the board back.
-  type Graph(constants: Constants, incarnation: string, journalIncarnation: string) =
+  type Graph(constants: Constants, incarnation: string, journalIncarnation: string, ?observationOwners: ObservationProducer list) =
+    let owners = defaultArg observationOwners []
+    do
+      if owners |> List.exists (fun owner -> String.IsNullOrWhiteSpace owner.Source.Node || String.IsNullOrWhiteSpace owner.Source.Incarnation) then
+        invalidArg (nameof observationOwners) "Observation owners require a node and incarnation."
+      if owners |> List.distinctBy _.Source.Node |> List.length <> owners.Length then
+        invalidArg (nameof observationOwners) "Observation owners require distinct nodes."
+      if owners |> List.exists (fun owner -> owner.Correlation = Guid.Empty) then
+        invalidArg (nameof observationOwners) "Observation owners require a producer correlation."
+    let sourceSlots =
+      owners |> List.mapi (fun index owner -> owner.Source.Node, (owner, InputId(uint64 index + 6UL), WorkId(uint64 index + 5UL))) |> Map.ofList
+    let observationWorks = sourceSlots |> Map.toList |> List.map (fun (_, (_, input, work)) -> work, input) |> Map.ofList
     let gate = obj ()
     let mutable epoch = 1UL
     let mutable core = Core.init (EpochId epoch)
@@ -846,6 +872,8 @@ module Facts =
     let mutable faults = 0
     let sinks = System.Collections.Generic.Dictionary<int64, Push -> Event -> unit>()
     let mutable nextSink = 0L
+    let observers = System.Collections.Generic.Dictionary<Guid, ObservationBinding * DemandId * (Observation -> unit)>()
+    let mutable nextObserver = 4UL
 
     let pushOf (work: WorkId) =
       if work = healthWork then Push.Health
@@ -855,36 +883,52 @@ module Facts =
 
     /// The projection of one work over the facts its frozen reads name, with
     /// the publication serial the result carries on the wire.
-    let project (work: WorkId) (stamp: int64) (facts: Map<ReadSlotId, Fact>) : Event =
+    let project (work: WorkId) (stamp: int64) (facts: Map<ReadSlotId, Fact>) : Payload =
       let fact slot = Map.tryFind (ReadSlotId slot) facts
       if work = healthWork then
         match fact 1UL with
         | Some(Fact.Tick tick) ->
-          Health
+          Payload.Value(Health
             { Project.health
                 { HealthSources.McpPort = constants.McpPort; Version = constants.Version; ProcessId = constants.ProcessId
                   Health = tick.Record; Telemetry = tick.Telemetry; Machine = tick.Machine; Level = tick.Level
                   SampledAtMs = tick.SampledAtMs; RecordAtMs = tick.RecordAtMs }
-              with Revision = stamp }
+              with Revision = stamp })
         | other -> invalidOp (sprintf "Bridge facts: Health read %A" other)
       elif work = leasesWork then
         match fact 1UL with
-        | Some(Fact.Pool pool) -> Leases(Project.leaseBoard stamp pool.Active pool.Queue)
+        | Some(Fact.Pool pool) -> Payload.Value(Leases(Project.leaseBoard stamp pool.Active pool.Queue))
         | other -> invalidOp (sprintf "Bridge facts: Leases read %A" other)
       elif work = operationsWork then
         match fact 1UL with
-        | Some(Fact.Journal journal) -> Operations(Project.operations stamp journal)
+        | Some(Fact.Journal journal) -> Payload.Value(Operations(Project.operations stamp journal))
         | other -> invalidOp (sprintf "Bridge facts: Operations read %A" other)
+      elif Map.containsKey work observationWorks then
+        match fact 1UL with
+        | Some(Fact.Observation(sequence, value)) -> Payload.Observation(sequence, value)
+        | other -> invalidOp (sprintf "Bridge facts: Observation read %A" other)
       else
         match fact 1UL, fact 2UL, fact 3UL with
         | Some(Fact.Agents state), Some(Fact.Pool pool), Some(Fact.Membership membership) ->
-          AgentWork(Project.agentBoard stamp state (Project.presence pool.Active pool.Queue membership.Members state.Runs))
+          Payload.Value(AgentWork(Project.agentBoard stamp state (Project.presence pool.Active pool.Queue membership.Members state.Runs)))
         | other -> invalidOp (sprintf "Bridge facts: Board read %A" other)
 
-    let deliver (work: WorkId) (event: Event) =
-      let kind = pushOf work
-      for sink in sinks.Values do
-        try sink kind event with _ -> () // A page's outbox never fails the plane.
+    let deliver (work: WorkId) (token: ValueToken) (payload: Payload) =
+      match payload with
+      | Payload.Value event ->
+        let kind = pushOf work
+        for sink in sinks.Values do
+          try sink kind event with _ -> () // A page's outbox never fails the plane.
+      | Payload.Observation(sequence, value) ->
+        for binding, _, sink in observers.Values |> Seq.toArray do
+          let _, _, sourceWork = sourceSlots[binding.Source.Node]
+          // A preceding callback may detach this focus or publish a newer
+          // source fact. Foundation's current receipt, not a delivery clock,
+          // decides whether this offer is still eligible.
+          let current = Core.tryResult work core |> Option.map _.Value
+          if work = sourceWork && observers.ContainsKey binding.Subscription && current = Some token then
+            try sink { Binding = binding; Sequence = Some sequence; Value = value } with _ -> ()
+      | Payload.Fact _ -> ()
 
     /// One command, its state committed, then its effects in their returned
     /// order. A projection runs here, synchronously, over frozen receipts:
@@ -911,10 +955,10 @@ module Facts =
           // A recomputation during an epoch handover is not news: it keeps its stamp.
           let stamp = (Map.tryFind work stamps |> Option.defaultValue 0L) + (if handover then 0L else 1L)
           match (try Ok(project work stamp facts) with error -> Error error) with
-          | Ok event ->
+          | Ok projection ->
             serial <- serial + 1UL
             let token = ValueToken serial
-            store <- Map.add token (Payload.Value event) store
+            store <- Map.add token projection store
             stamps <- Map.add work stamp stamps
             apply (Action.Finished(request.Attempt, Completion.Succeeded token))
             apply (Action.Drained request.Attempt)
@@ -926,7 +970,7 @@ module Facts =
             apply (Action.Drained request.Attempt)
         | EffectAction.Offer handle ->
           match Map.tryFind handle.Value store with
-          | Some(Payload.Value event) when not handover -> deliver handle.Work event
+          | Some payload when not handover -> deliver handle.Work handle.Value payload
           | _ -> ()
         | EffectAction.Withdraw handle -> store <- Map.remove handle.Value store
         | EffectAction.Cancel attempt ->
@@ -945,11 +989,16 @@ module Facts =
           Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input agentsInput }
                     { Slot = ReadSlotId 2UL; Source = ReadSource.Input poolInput }
                     { Slot = ReadSlotId 3UL; Source = ReadSource.Input membershipInput } ] }
-        ScopeEntry.Define { Work = operationsWork; Stamp = DefinitionStamp 1UL; Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input journalInput } ] } ]))
+        ScopeEntry.Define { Work = operationsWork; Stamp = DefinitionStamp 1UL; Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input journalInput } ] }
+        for KeyValue(work, input) in observationWorks do
+          ScopeEntry.Define { Work = work; Stamp = DefinitionStamp 1UL; Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input input } ] } ]))
       apply (Action.Demand(DemandId 1UL, healthWork))
       apply (Action.Demand(DemandId 2UL, leasesWork))
       apply (Action.Demand(DemandId 3UL, boardWork))
       apply (Action.Demand(DemandId 4UL, operationsWork))
+      for binding, demand, _ in observers.Values do
+        let _, _, work = sourceSlots[binding.Source.Node]
+        apply (Action.Demand(demand, work))
 
     /// Retire the epoch and start the next with the same inputs, in one
     /// section. The recomputations are an artifact of the handover, not news:
@@ -1012,6 +1061,32 @@ module Facts =
           | Some(Payload.Value event) -> Some event
           | _ -> None))
 
+    let observationSource source =
+      if stopped then Error Refusal.Retired
+      else
+        match Map.tryFind source.Node sourceSlots with
+        | None -> Error Refusal.UnknownSource
+        | Some(expected, _, _) when source <> expected.Source -> Error Refusal.ForeignIncarnation
+        | Some slot -> Ok slot
+
+    let observationCurrent binding work =
+      let current = Core.tryResult work core |> Option.bind (fun handle -> Map.tryFind handle.Value store)
+      match current with
+      | Some(Payload.Observation(sequence, value)) -> { Binding = binding; Sequence = Some sequence; Value = value }
+      | _ -> { Binding = binding; Sequence = None; Value = Error "Source has not published an observation." }
+
+    let publishObservation (producer: ObservationProducer) sequence value =
+      lock gate (fun () ->
+        match observationSource producer.Source with
+        | Error Refusal.ForeignIncarnation ->
+          faults <- faults + 1
+          Error Refusal.ForeignIncarnation
+        | Error reason -> Error reason
+        | Ok(expected, _, _) when producer.Correlation <> expected.Correlation ->
+          faults <- faults + 1
+          Error Refusal.ForeignProducer
+        | Ok(_, input, _) -> admit input sequence (Fact.Observation(sequence, value)))
+
     do define ()
 
     new(constants: Constants, incarnation: string) = Graph(constants, incarnation, "")
@@ -1026,15 +1101,43 @@ module Facts =
         sinks[id] <- sink
         current (), { new IDisposable with member _.Dispose() = lock gate (fun () -> sinks.Remove id |> ignore) })
 
+    /// Atomic current/register for one preadmitted source. Detach releases only
+    /// this observation demand; it neither retires the source nor affects work.
+    /// Sinks run under the graph gate: enqueue only, never block or wait here.
+    member _.RegisterObservation(source, sink: Observation -> unit) =
+      lock gate (fun () ->
+        observationSource source |> Result.map (fun (_, _, work) ->
+          let binding = { Source = source; Subscription = Guid.NewGuid() }
+          nextObserver <- nextObserver + 1UL
+          let demand = DemandId nextObserver
+          apply (Action.Demand(demand, work))
+          observers.Add(binding.Subscription, (binding, demand, sink))
+          observationCurrent binding work,
+          { new IDisposable with
+              member _.Dispose() =
+                lock gate (fun () ->
+                  if observers.Remove binding.Subscription && not stopped then apply (Action.Release demand)) }))
+
+    member _.PublishObservation(producer: ObservationProducer, value: HostResources) = publishObservation producer value.Sequence (Ok value)
+    /// A bound producer can recover after unavailability with a newer serial,
+    /// independently of whether any consumer currently demands its projection.
+    member _.UnavailableObservation(producer: ObservationProducer, sequence, reason) = publishObservation producer sequence (Error reason)
+
+    /// Effective demand is Foundation-owned and differs from retained cache.
+    member _.ObservationDemanded(source) =
+      lock gate (fun () ->
+        observationSource source |> Result.map (fun (_, _, work) ->
+          (Core.snapshot core).Works |> List.exists (fun view -> view.Work = work && view.Demanded)))
+
     member _.Current() : Event list = lock gate current
     /// Owner protocol faults seen: a serial republished with other content, a
-    /// foreign incarnation, a projection that threw.
+    /// foreign incarnation or producer, a projection that threw.
     member _.Faults = lock gate (fun () -> faults)
     member _.Epoch = lock gate (fun () -> epoch)
     /// Settled projections the store holds: one per work with a value, never
     /// a superseded one (Withdraw releases it in the same step sequence).
     member _.StoredResults =
-      lock gate (fun () -> store |> Map.toSeq |> Seq.filter (fun (_, payload) -> match payload with Payload.Value _ -> true | _ -> false) |> Seq.length)
+      lock gate (fun () -> store |> Map.toSeq |> Seq.filter (fun (_, payload) -> match payload with Payload.Value _ | Payload.Observation _ -> true | _ -> false) |> Seq.length)
     member _.Drained = lock gate (fun () -> Core.isDrained core)
 
     /// Shutdown: retire the epoch, interpret its effects, and forget the pages.
@@ -1045,7 +1148,8 @@ module Facts =
           stopped <- true
           handover <- true
           try apply Action.Retire finally handover <- false
-          sinks.Clear())
+          sinks.Clear()
+          observers.Clear())
 
     member _.Tick(tick: Bozzetto.Server.HealthTick.Tick) = admit tickInput tick.Serial (Fact.Tick tick)
     member _.Pool(pool: Bozzetto.Features.LeaseWatch.Pool) = admit poolInput pool.Serial (Fact.Pool pool)
