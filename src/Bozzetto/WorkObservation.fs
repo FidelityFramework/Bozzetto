@@ -18,6 +18,8 @@ open Bozzetto.Web.Shared.BinaryCodec
 [<Literal>]
 let MediaType = "application/vnd.bozzetto.observe"
 [<Literal>]
+let Route = "/api/work/observe"
+[<Literal>]
 let MaxRequestBytes = 4096
 [<Literal>]
 let MaxFrameBytes = 4 * 1024 * 1024
@@ -143,7 +145,7 @@ let private sendFrame stream ct frame = Frames.write stream (encodePeerFrame fra
 /// the native Pi gateway authenticates before relaying this one fixed route.
 let mapRoutes (app: WebApplication) (hub: UiBridge.Hub) =
   let mutable nextResource = 0L
-  app.MapPost("/api/work/observe", RequestDelegate(fun ctx ->
+  app.MapPost(Route, RequestDelegate(fun ctx ->
     Async.StartAsTask(async {
       ctx.Response.ContentType <- MediaType
       ctx.Response.Headers.CacheControl <- "no-store"

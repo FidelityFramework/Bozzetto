@@ -221,8 +221,12 @@ let private metricText (m: ResourceMetricView) =
   elif m.unit = "percent" then fixedPoint m.value 1 + "%"
   else fixedPoint m.value 0
 
+let private resourceNodeLabel (node: NodeWorkView) =
+  if node.local then "Workstation" else node.id.ToUpperInvariant()
+
 [<SolidComponent>]
-let HostPanel (model: ModelView) (local: LocalView) (uptime: unit -> float) (connected: unit -> bool) (dispatch: Command -> unit) =
+let HostPanel (model: ModelView) (local: LocalView) (uptime: unit -> float) (connected: unit -> bool)
+    (selectedNode: unit -> NodeWorkView option) (selectNode: string -> unit) (dispatch: Command -> unit) =
   let status () =
     if not (connected ()) then "disconnected — last reading only"
     elif model.resources.status = "observing" && model.startedAt + uptime () - model.resources.sampledAt > 6000. then "stale — no recent observation"
@@ -238,8 +242,22 @@ let HostPanel (model: ModelView) (local: LocalView) (uptime: unit -> float) (con
           model.resources.note
           "Sequence " + model.resources.sequence + " · interval " + fixedPoint (model.resources.interval / 1000.) 1 + "s · collection " + fixedPoint model.resources.cost 1 + "ms"
         |])
-        button (class' = "btn btn-sm btn-accent", disabled = not (connected ()), onClick = fun _ -> dispatch (ObserveResources 120)) { "Observe for 2 minutes" }
-        button (class' = "btn btn-sm btn-ghost", disabled = not (connected ()), onClick = fun _ -> dispatch (ObserveResources 0)) { "Stop" }
+        button (class' = "btn btn-sm btn-accent", disabled = (not (connected ()) || (selectedNode ()).IsNone), onClick = fun _ -> dispatch (ObserveResources 120)) { "Observe for 2 minutes" }
+        button (class' = "btn btn-sm btn-ghost", disabled = (not (connected ()) || (selectedNode ()).IsNone), onClick = fun _ -> dispatch (ObserveResources 0)) { "Stop" }
+      }
+      label (class' = "flex flex-wrap items-center gap-2 text-sm") {
+        span (class' = "font-semibold") { "Node" }
+        (``select``(class' = "select select-bordered select-sm", value = (selectedNode () |> Option.map _.id |> Option.defaultValue ""), disabled = (not (connected ()) || model.nodes.Length = 0), onChange = (fun event -> selectNode (Interop.inputValue event))).attr("aria-label", "Resource node")) {
+          Show (when' = (model.nodes.Length = 0)) { option'(value = "") { "Awaiting node observations" } }
+          For (each = model.nodes) {
+            yield fun node _ -> option'(value = node.id) { resourceNodeLabel node }
+          }
+        }
+      }
+      Show (when' = (selectedNode () |> Option.exists (fun node -> node.status <> "available"))) {
+        p (class' = "resource-node-availability text-xs opacity-70") {
+          selectedNode () |> Option.map (fun node -> resourceNodeLabel node + " work observation: " + node.status + ". " + node.note) |> Option.defaultValue ""
+        }
       }
       CommandOutcome (fun () -> Interop.dictTryGet local.outcomes "resources")
       Show (when' = (model.resources.sampledAt > 0.)) {
@@ -247,42 +265,44 @@ let HostPanel (model: ModelView) (local: LocalView) (uptime: unit -> float) (con
           "Updated " + clockTime model.resources.sampledAt
         }
       }
-      div (class' = "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2") {
-        For (each = (model.resourceMetrics |> Array.filter (fun m -> m.id = "Host CPU busy" || m.id = "RAM occupied" || m.id = "RAM available" || m.id = "RAM total (OS managed)" || m.id = "Swap used" || m.id.Contains "GPU busy"))) {
-          yield fun m _ ->
-            div (class' = "panel p-3") {
-              div (class' = "text-xs opacity-70") { m.id }
-              div (class' = "text-xl font-mono font-semibold") { metricText m }
-            }
+      Show (when' = (model.resources.sequence <> ""), fallback = (p (class' = "text-sm opacity-70") { "No measurements received for this node." })) {
+        div (class' = "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2") {
+          For (each = (model.resourceMetrics |> Array.filter (fun m -> m.id = "Host CPU busy" || m.id = "RAM occupied" || m.id = "RAM available" || m.id = "RAM total (OS managed)" || m.id = "Swap used" || m.id.Contains "GPU busy"))) {
+            yield fun m _ ->
+              div (class' = "panel p-3") {
+                div (class' = "text-xs opacity-70") { m.id }
+                div (class' = "text-xl font-mono font-semibold") { metricText m }
+              }
+          }
         }
-      }
-      details () {
-        summary (class' = "cursor-pointer text-sm font-semibold") { "More metrics" }
-        table (class' = "table table-xs") {
-          tbody () {
-            For (each = model.resourceMetrics) {
-              yield fun m _ -> tr () { td () { m.id }; td (class' = "font-mono") { metricText m } }
+        details () {
+          summary (class' = "cursor-pointer text-sm font-semibold") { "More metrics" }
+          table (class' = "table table-xs") {
+            tbody () {
+              For (each = model.resourceMetrics) {
+                yield fun m _ -> tr () { td () { m.id }; td (class' = "font-mono") { metricText m } }
+              }
             }
           }
         }
-      }
-      h3 (class' = "text-sm font-semibold") { "Processes" }
-      p (class' = "text-xs opacity-50") {
-        string model.resources.count + " processes · " + string model.resources.unreadable + " unreadable · " + string model.resources.omitted + " omitted"
-      }
-      div (class' = "overflow-x-auto") {
-        table (class' = "table table-xs") {
-          thead () { tr () { th () { "process" }; th () { "PID / parent" }; th () { "CPU" }; th () { "RSS" }; th () { "threads" } } }
-          tbody () {
-            For (each = model.resourceProcesses) {
-              yield fun p _ ->
-                tr () {
-                  td (class' = "font-mono", title = p.context + " · identity " + p.id) { p.name }
-                  td (class' = "font-mono") { string p.pid + " / " + string p.parent }
-                  td (class' = "font-mono") { if p.cpuKnown then fixedPoint p.cpu 1 + "%" else "—" }
-                  td (class' = "font-mono") { bytes p.rss }
-                  td (class' = "font-mono") { string p.threads }
-                }
+        h3 (class' = "text-sm font-semibold") { "Processes" }
+        p (class' = "text-xs opacity-50") {
+          string model.resources.count + " processes · " + string model.resources.unreadable + " unreadable · " + string model.resources.omitted + " omitted"
+        }
+        div (class' = "overflow-x-auto") {
+          table (class' = "table table-xs") {
+            thead () { tr () { th () { "process" }; th () { "PID / parent" }; th () { "CPU" }; th () { "RSS" }; th () { "threads" } } }
+            tbody () {
+              For (each = model.resourceProcesses) {
+                yield fun p _ ->
+                  tr () {
+                    td (class' = "font-mono", title = p.context + " · identity " + p.id) { p.name }
+                    td (class' = "font-mono") { string p.pid + " / " + string p.parent }
+                    td (class' = "font-mono") { if p.cpuKnown then fixedPoint p.cpu 1 + "%" else "—" }
+                    td (class' = "font-mono") { bytes p.rss }
+                    td (class' = "font-mono") { string p.threads }
+                  }
+              }
             }
           }
         }
@@ -809,8 +829,10 @@ let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -
               }
               p (class' = "text-xs opacity-70") { node.note }
               Show (when' = node.hasValue, fallback = (p (class' = "text-sm opacity-70") { "Work state unavailable; no idle state inferred." })) {
-                p (class' = "text-xs opacity-60 font-mono") {
-                  "Work sample " + clockTime node.sampledAt + " · " + duration (max 0. (model.startedAt + uptime () - node.sampledAt)) + " ago"
+                p (class' = "work-sample-age text-xs opacity-60 font-mono") {
+                  "Work sample " + clockTime node.sampledAt + " · "
+                  + (if uptime () < 0. then "age unavailable (awaiting clock)"
+                     else duration (max 0. (model.startedAt + uptime () - node.sampledAt)) + " ago")
                 }
                 p (class' = "text-sm") {
                   string node.sessions.Length + " sessions · " + string node.leases.Length + " active leases · " + string node.queue.Length + " queued"
@@ -920,8 +942,19 @@ let App () =
       dispatch (ObserveNodeResources { Node = model.nodeFocus; Seconds = 0 })
     Model.focusNode stores node.id node.incarnation
     dispatch (ObserveNodeResources { Node = node.id; Seconds = 120 })
+  let selectedResourceNode () =
+    model.nodes |> Array.tryFind (fun node -> node.id = model.nodeFocus)
+    |> Option.orElseWith (fun () -> model.nodes |> Array.tryFind _.local)
+  let selectResourceNode nodeId =
+    model.nodes |> Array.tryFind (fun node -> node.id = nodeId) |> Option.iter focus
   let resourceDispatch = function
-    | ObserveResources seconds -> dispatch (ObserveNodeResources { Node = model.nodeFocus; Seconds = seconds })
+    | ObserveResources seconds ->
+      match selectedResourceNode () with
+      | Some node ->
+        if model.nodeFocus <> node.id || model.nodeIncarnation <> node.incarnation then
+          Model.focusNode stores node.id node.incarnation
+        dispatch (ObserveNodeResources { Node = node.id; Seconds = seconds })
+      | None -> ()
     | command -> dispatch command
   let readTranscript (node: NodeWorkView) (operation: NodeOperationView) stream =
     dispatch (ReadNodeTranscript {
@@ -953,7 +986,7 @@ let App () =
         fallback = (div (class' = "flex flex-col gap-4 p-4") {
           HealthStrip model stores.Uptime
           AgentsPanel model
-          HostPanel model local stores.Uptime connected dispatch
+          HostPanel model local stores.Uptime connected selectedResourceNode selectResourceNode resourceDispatch
           details () {
             summary (class' = "cursor-pointer text-xs opacity-60") { "Daemon snapshot" }
             ResourcesPanel model
@@ -980,10 +1013,8 @@ let App () =
             }
           }
           div (class' = "xl:col-span-3") {
-            Show (when' = (model.nodeFocus <> "")) {
-              h2 (class' = "text-lg font-bold mb-2") { "Resources · " + model.nodeFocus }
-              HostPanel model local stores.Uptime connected resourceDispatch
-            }
+            h2 (class' = "text-lg font-bold mb-2") { "Resources · " + (selectedResourceNode () |> Option.map _.id |> Option.defaultValue "awaiting node") }
+            HostPanel model local stores.Uptime connected selectedResourceNode selectResourceNode resourceDispatch
           }
           div (class' = "xl:col-span-2 flex flex-col gap-3 min-w-0") {
             h2 (class' = "text-lg font-bold") { "Controller projects" }

@@ -330,6 +330,8 @@ let private handle (send: byte array -> unit) (frame: CommandFrame) =
     // A stopped demand acknowledges physical observation cleanup; it does not
     // manufacture another shared node sample or change its sample timestamp.
     accept send correlation noTarget SnapshotSent
+  | ObserveNodeResources request when request.Node = "three" ->
+    refuse send correlation noTarget "node_unavailable" "Synthetic disconnected fixture"
   | ObserveNodeResources request ->
     let resource scope node incarnation sequence value = NodeResources {
       Source = { Node = node; Incarnation = incarnation }

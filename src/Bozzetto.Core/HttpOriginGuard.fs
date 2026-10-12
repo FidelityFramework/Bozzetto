@@ -36,13 +36,14 @@ open System.Net
 ///     from reading the response) and rejected for cross-site. Unknown values
 ///     are rejected. (A page on the control port POSTing to the MCP port is
 ///     same-site AND carries an own Origin, so it passes.)
-///   - An unsafe method that carries a body must be Content-Type:
-///     application/json. text/plain, form-urlencoded and multipart are the
+///   - An unsafe method that carries a body must use the endpoint's declared
+///     media type (application/json by default). text/plain, form-urlencoded
+///     and multipart are the
 ///     CORS "simple" types a page may send cross-origin WITHOUT a preflight;
-///     requiring JSON forces a preflight, whose foreign Origin this gate
+///     requiring a non-simple media type forces a preflight, whose foreign Origin this gate
 ///     rejects, so the real request is never sent. This also covers browsers
 ///     that omit Origin / Sec-Fetch-* entirely — and it applies to every
-///     caller, so non-browser clients must label JSON bodies as JSON.
+///     caller, so non-browser clients must label bodies with the endpoint's type.
 [<RequireQualifiedAccess>]
 module HttpOriginGuard =
 
@@ -155,6 +156,8 @@ module HttpOriginGuard =
     | UnknownFetchSite of fetchSite: string
     /// An unsafe request whose body is not labelled application/json.
     | NonJsonBody of contentType: string
+    /// An endpoint with a typed body received another media type.
+    | WrongBodyType of expected: string * actual: string
 
   [<RequireQualifiedAccess>]
   module Rejection =
@@ -171,11 +174,14 @@ module HttpOriginGuard =
         sprintf "unrecognized Sec-Fetch-Site %s" s
       | Rejection.NonJsonBody ct ->
         sprintf "request body Content-Type %s is not application/json — send JSON with Content-Type: application/json" ct
+      | Rejection.WrongBodyType(expected, actual) ->
+        sprintf "request body Content-Type %s is not %s" actual expected
 
     /// 415 for a wrongly labelled body; 403 for everything browser-shaped.
     let statusCode (rejection: Rejection) : int =
       match rejection with
-      | Rejection.NonJsonBody _ -> 415
+      | Rejection.NonJsonBody _
+      | Rejection.WrongBodyType _ -> 415
       | Rejection.ForeignHost _
       | Rejection.ForeignOrigin _
       | Rejection.CrossSite _
@@ -226,8 +232,9 @@ module HttpOriginGuard =
       | "cross-site" -> FetchSite.CrossSite raw
       | _ -> FetchSite.Unknown raw
 
-  /// The gate decision for one request against the server's own origins.
-  let decide (own: OwnOrigins) (request: Request) : Verdict =
+  /// An owning endpoint may declare its non-simple body media type. Host and
+  /// browser-origin checks still run before media admission.
+  let decideWithBodyType (bodyType: string) (own: OwnOrigins) (request: Request) : Verdict =
     match request.Host with
     | Some h when not (isLoopbackHost h) -> Reject (Rejection.ForeignHost h)
     | _ ->
@@ -251,8 +258,14 @@ module HttpOriginGuard =
     match browserVerdict, kind, request.Body with
     | Reject r, _, _ -> Reject r
     | Allow, MethodKind.Unsafe, Body.Present ->
-      match request.ContentType with
-      | Some ct when isJsonContentType ct -> Allow
-      | Some ct -> Reject (Rejection.NonJsonBody ct)
-      | None -> Reject (Rejection.NonJsonBody "(none)")
+      let actual = request.ContentType |> Option.defaultValue "(none)"
+      if bodyType = "application/json" then
+        if isJsonContentType actual then Allow
+        else Reject (Rejection.NonJsonBody actual)
+      elif actual = bodyType then Allow
+      else Reject (Rejection.WrongBodyType(bodyType, actual))
     | Allow, _, _ -> Allow
+
+  /// All ordinary HTTP endpoints retain the JSON body requirement.
+  let decide (own: OwnOrigins) (request: Request) : Verdict =
+    decideWithBodyType "application/json" own request

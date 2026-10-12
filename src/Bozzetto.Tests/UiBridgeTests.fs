@@ -1571,9 +1571,14 @@ let observationTests =
         let workerHub = makeHub workerGraph pb noResources
         let aborted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
         let! server, url = Hosting.start (fun app ->
+          Bozzetto.Server.McpServer.useOriginGuard
+            (Bozzetto.Server.HttpOriginGuard.OwnOrigins.ofPorts [47749; 47750]) app
           Microsoft.AspNetCore.Builder.UseExtensions.Use(app,
             Func<Microsoft.AspNetCore.Http.HttpContext, Func<Task>, Task>(fun ctx next -> task {
-              use _aborted = ctx.RequestAborted.Register(fun () -> aborted.TrySetResult() |> ignore)
+              use _aborted =
+                if string ctx.Request.Headers.Authorization = "Bearer fixture-token" then
+                  ctx.RequestAborted.Register(fun () -> aborted.TrySetResult() |> ignore)
+                else Unchecked.defaultof<CancellationTokenRegistration>
               do! next.Invoke()
             })) |> ignore
           mapRoutes true app (fun () -> failwith "headless must not map browser routes")
@@ -1599,6 +1604,49 @@ let observationTests =
         let controller = new Observe.Controller(hub, [ { Node = b.Node; Endpoint = Uri(url + "/api/work/observe"); TokenFile = tokenFile } ], stopping.Token)
         try
           use client = new Net.Http.HttpClient(Timeout = TimeSpan.FromSeconds 5.)
+          let payload = Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest
+            { ProtocolVersion = ProtocolVersion; Node = b.Node; Topic = "work"; Seconds = 0 }
+          let request (methodName: string) (path: string) (mediaType: string) (origin: string option) (host: string option) =
+            let message = new Net.Http.HttpRequestMessage(Net.Http.HttpMethod(methodName), url + path)
+            message.Content <- new Net.Http.ByteArrayContent(payload)
+            message.Content.Headers.ContentType <- Net.Http.Headers.MediaTypeHeaderValue(mediaType)
+            origin |> Option.iter (fun value -> message.Headers.Add("Origin", value))
+            host |> Option.iter (fun value -> message.Headers.Host <- value)
+            message
+          use admitted = request "POST" Observe.Route Observe.MediaType None None
+          use! admittedResponse = client.SendAsync(admitted, Net.Http.HttpCompletionOption.ResponseHeadersRead)
+          int admittedResponse.StatusCode |> Expect.equal "real origin middleware admits the declared binary observation route" 200
+          string admittedResponse.Content.Headers.ContentType |> Expect.equal "successful observation stays binary" Observe.MediaType
+          use! admittedBody = admittedResponse.Content.ReadAsStreamAsync()
+          let! hello = Observe.Frames.read admittedBody CancellationToken.None |> Async.StartAsTask
+          hello |> Option.map Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame
+          |> Expect.equal "headless handler returns its actual node after origin admission" (Some(Ok(PeerHello b)))
+          admittedResponse.Dispose()
+          for methodName, path, mediaType, origin, host, status, reason in [
+            "POST", "/api/not-observe", Observe.MediaType, None, None, 415, "not application/json"
+            "PUT", Observe.Route, Observe.MediaType, None, None, 415, "not application/json"
+            "POST", Observe.Route, "text/plain", None, None, 415, "not " + Observe.MediaType
+            "POST", Observe.Route, "application/json", None, None, 415, "not " + Observe.MediaType
+            "POST", Observe.Route, Observe.MediaType, Some "https://outside.example", None, 403, "not one of this server's own origins"
+            "POST", Observe.Route, Observe.MediaType, None, Some "outside.example", 403, "not the loopback interface"
+            "POST", Observe.Route, Observe.MediaType, Some "http://localhost:47750", None, 200, "" ] do
+            use rejected = request methodName path mediaType origin host
+            use! response = client.SendAsync(rejected, Net.Http.HttpCompletionOption.ResponseHeadersRead)
+            int response.StatusCode |> Expect.equal (sprintf "specific origin/media verdict for %s %s %s" methodName path mediaType) status
+            if status <> 200 then
+              let! body = response.Content.ReadAsStringAsync()
+              body |> Expect.stringContains "the owning guard names the refusal" reason
+          use oversized = request "POST" Observe.Route Observe.MediaType None None
+          oversized.Content.Dispose()
+          oversized.Content <- new Net.Http.ByteArrayContent(Array.zeroCreate<byte> (Observe.MaxRequestBytes + 1))
+          oversized.Content.Headers.ContentType <- Net.Http.Headers.MediaTypeHeaderValue(Observe.MediaType)
+          use! oversizedResponse = client.SendAsync oversized
+          int oversizedResponse.StatusCode |> Expect.equal "origin admission does not bypass the observation body bound" 400
+          string oversizedResponse.Content.Headers.ContentType |> Expect.equal "handler refusal stays binary" Observe.MediaType
+          use! oversizedBody = oversizedResponse.Content.ReadAsStreamAsync()
+          let! oversize = Observe.Frames.read oversizedBody CancellationToken.None |> Async.StartAsTask
+          oversize |> Option.map Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame
+          |> Expect.equal "the route owns its exact bounded-body refusal" (Some(Ok(PeerUnavailable "request_too_large")))
           use! page = client.GetAsync(url + "/work")
           int page.StatusCode |> Expect.equal "headless HTTP does not expose the browser" 404
           let! (initial: NodeWork) = available.Task.WaitAsync(TimeSpan.FromSeconds 5.)

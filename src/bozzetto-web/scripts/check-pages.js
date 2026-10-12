@@ -75,6 +75,17 @@ async function tab(origin, route, width) {
   const { sessionId } = await call('Target.attachToTarget', { targetId, flatten: true });
   await call('Runtime.enable', {}, sessionId);
   await call('Network.enable', {}, sessionId);
+  await call('Page.enable', {}, sessionId);
+  await call('Page.addScriptToEvaluateOnNewDocument', {source: `
+    window.__firstWorkAges = {};
+    new MutationObserver(() => {
+      for (const sample of document.querySelectorAll('.work-sample-age')) {
+        const node = sample.closest('.card')?.querySelector('h3')?.textContent;
+        if (node && sample.textContent.includes('Work sample ') && !(node in window.__firstWorkAges))
+          window.__firstWorkAges[node] = sample.textContent;
+      }
+    }).observe(document, {childList:true, subtree:true, characterData:true});
+  `}, sessionId);
   await call('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
   await call('Page.navigate', { url: origin + route }, sessionId);
   const facts = route.startsWith('/dashboard')
@@ -99,11 +110,13 @@ async function check() {
     if (reply.method === 'Network.webSocketFrameSent') {
       const wire = reply.params.response;
       const decoded = wire.opcode === 2 ? decodeCommand(new Uint8Array(Buffer.from(wire.payloadData, 'base64'))) : undefined;
-      pageFrames.push({session: reply.sessionId, opcode:wire.opcode, correlation:decoded?.tag === 0 ? decoded.fields[0].Correlation : null, command:decoded?.tag === 0 ? decoded.fields[0].Command.tag : null});
+      const command = decoded?.tag === 0 ? decoded.fields[0].Command : undefined;
+      const resource = command?.tag === 2 ? command.fields[0] : undefined;
+      pageFrames.push({session: reply.sessionId, opcode:wire.opcode, correlation:decoded?.tag === 0 ? decoded.fields[0].Correlation : null, command:command?.tag ?? null, node:resource?.Node, seconds:resource?.Seconds});
     }
     if (reply.method === 'Network.webSocketFrameReceived' && reply.params.response.opcode === 2) {
       const decoded = decodeEvent(new Uint8Array(Buffer.from(reply.params.response.payloadData, 'base64')));
-      if (decoded.tag === 0 && decoded.fields[0].tag === 2)
+      if (decoded.tag === 0 && (decoded.fields[0].tag === 2 || decoded.fields[0].tag === 3))
         pageReplies.push({session:reply.sessionId, correlation:decoded.fields[0].fields[0].Correlation});
     }
     const waiter = pending.get(reply.id);
@@ -127,6 +140,19 @@ async function check() {
   await writeFile(join(evidence, 'views.json'), JSON.stringify({dashboard: d, work: c}, null, 2));
   assert.equal(d.title, 'Dashboard · Bozzetto');
   assert.equal(c.title, 'Work · Bozzetto');
+  const firstWorkAges = await evaluate(work, 'window.__firstWorkAges');
+  assert.ok(firstWorkAges.one.includes('age unavailable (awaiting clock)'), 'unknown initial clock must not manufacture a zero sample age');
+  const oneAge = "[...document.querySelectorAll('h3')].find(h=>h.textContent === 'one').closest('.card').querySelector('.work-sample-age').textContent";
+  await waitFor(work, `!(${oneAge}).includes('age unavailable')`);
+  const knownAge = await evaluate(work, oneAge);
+  assert.equal(knownAge.split(' · ')[0], firstWorkAges.one.split(' · ')[0], 'clock push changes age without changing the retained sample timestamp');
+  assert.match(knownAge, / · .*\d+s ago$/, 'known pushed clock supplies the relative age');
+  assert.equal(pageFrames.filter(f=>f.command === 2).length, 0, 'initial node selection does not silently start observation');
+  const resourcePicker = "document.querySelector('select[aria-label=\"Resource node\"]')";
+  for (const page of [work, dashboard]) {
+    assert.deepEqual((await evaluate(page, `[...${resourcePicker}.options].map(o=>o.textContent)`)).sort(), ['Workstation','ONE','TWO','THREE'].sort(), 'resource panel exposes every admitted node');
+    assert.equal(await evaluate(page, `${resourcePicker}.value`), 'controller', 'resource selection defaults to the observed controller identity');
+  }
   for (const text of ['Whole-machine resources', 'Observe for 2 minutes', 'Agent work', 'Healthy', 'memory Normal']) assert.ok(d.text.toLowerCase().includes(text.toLowerCase()), text);
   const agentPanel = "[...document.querySelectorAll('h2')].find(h => h.textContent === 'Agent work').closest('.card-body')";
   const historyDetails = `${agentPanel}.querySelector(':scope > details')`;
@@ -172,7 +198,8 @@ async function check() {
   };
   assertDashboardHeadings(d);
   for (const text of ['Composer sessions', 'Compiler worker', 'Run output', 'Open project', 'No open projects.', 'Work leases']) assert.ok(c.text.toLowerCase().includes(text.toLowerCase()), text);
-  for (const text of ['Whole-machine resources', 'Observe for 2 minutes', 'Agent work']) assert.ok(!c.text.toLowerCase().includes(text.toLowerCase()), `work excludes ${text}`);
+  for (const text of ['Whole-machine resources', 'Observe for 2 minutes']) assert.ok(c.text.includes(text), `Work exposes ${text} before a node is observed`);
+  assert.ok(!c.text.includes('Agent work'), 'Work keeps the separate Agent work panel on Dashboard');
   for (const [name, page] of [['dashboard', dashboard], ['work', work]]) {
     const visible = (await inspect(page)).text;
     for (const editorial of ['Agent-driven view:', 'Live admission, not build/test results.', 'Explicit Linux counter window:', 'No live worker; an agent', 'Runs appear here:', 'CPU is normalized by processor count.']) {
@@ -306,10 +333,13 @@ async function check() {
     }
     throw new Error('Binary resource observation acknowledgement missing: ' + label);
   }
-  const observe = name => resourceAction(name, `[...${nodeCard(name)}.querySelectorAll('button')].find(b=>b.textContent === 'Observe resources').click()`);
+  const observe = name => resourceAction(name, `${resourcePicker}.value = '${name}'; ${resourcePicker}.dispatchEvent(new Event('change', {bubbles:true}))`);
   await observe('one');
+  assert.equal(await evaluate(work, `${resourcePicker}.value`), 'one', 'native node picker displays its selected source');
   assert.equal(await evaluate(work, resourceMetric), '17.0%', 'foreign incarnation/node and older sequence cannot overwrite selected node');
+  const switchStart = pageFrames.length;
   await observe('two');
+  assert.deepEqual(pageFrames.slice(switchStart).filter(f=>f.session === work && f.command === 2).map(f=>[f.node,f.seconds]), [['one',0],['two',120]], 'node picker stops the previous scope before starting the selected scope');
   assert.equal(await evaluate(work, resourceMetric), '23.0%', 'second node has its own resource fact');
   assert.ok((await inspect(work)).text.includes('Resources · two'), 'focus switches to the requested node');
   await observe('one');
@@ -334,9 +364,13 @@ async function check() {
   await evaluate(work, `[...${nodeCard('one')}.querySelectorAll('button')].find(b=>b.textContent === 'Load stderr').click()`);
   await waitFor(work, `${readback}.innerText.includes('storage_failure: Synthetic transcript store refusal.')`);
   assert.equal(await evaluate(work, `${readback}.querySelector('pre') === null`), true, 'failed new selection never shows the previous stream as its transcript');
+  await observe('three');
+  assert.equal(await evaluate(work, `${resourcePicker}.value`), 'three', 'unavailable node remains an explicit selection');
+  assert.ok((await evaluate(work, "document.querySelector('.resource-node-availability').textContent")).includes('THREE work observation: unavailable'), 'unavailable source is not reported as idle');
+  assert.equal(await evaluate(work, resourceMetric), undefined, 'switching to an unavailable node never relabels another node’s measurements');
   const { data: nodeImage } = await call('Page.captureScreenshot', { format: 'png' }, work);
   await writeFile(join(evidence, 'work-nodes.png'), Buffer.from(nodeImage, 'base64'));
-  await writeFile(join(evidence, 'node-controls.json'), JSON.stringify({remoteReadOnly:true, knownZeroSeparateFromUnavailable:true, activeLeaseShown:true, focusSwitched:true, foreignNodeIncarnationAndOlderSequenceRejected:true, previousSameSourceCorrelationRejected:true, stoppedObservationAccepted:true, browserCommandsBinary:true, selectedTranscriptReadback:true, exactSplitUtf8Bytes:true, explicitSourceTruncation:true, foreignTranscriptIncarnationRejected:true, storageRefusalVisible:true},null,2));
+  await writeFile(join(evidence, 'node-controls.json'), JSON.stringify({remoteReadOnly:true, knownZeroSeparateFromUnavailable:true, activeLeaseShown:true, focusSwitched:true, resourceNodePicker:true, stopsPreviousSelection:true, unavailableSelectionExplicit:true, bootAgeUnknown:true, pushedClockUpdatesAge:true, foreignNodeIncarnationAndOlderSequenceRejected:true, previousSameSourceCorrelationRejected:true, stoppedObservationAccepted:true, browserCommandsBinary:true, selectedTranscriptReadback:true, exactSplitUtf8Bytes:true, explicitSourceTruncation:true, foreignTranscriptIncarnationRejected:true, storageRefusalVisible:true},null,2));
   // Reload and trailing-slash bookmarks select the right view as well.
   await call('Page.navigate', { url: origin + '/work/' }, work);
   await waitFor(work, "document.title === 'Work · Bozzetto' && document.body.innerText.includes('SideBySide.fidproj')");

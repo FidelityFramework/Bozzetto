@@ -636,13 +636,18 @@ let guardRequestOf (ctx: Microsoft.AspNetCore.Http.HttpContext) : Bozzetto.Serve
 /// Browser-origin/CSRF gate (see HttpOriginGuard for the threat model).
 /// Before any route runs it rejects requests from pages that are not this
 /// daemon's own (`own` — every loopback origin of the MCP and control
-/// listeners) and unsafe requests whose body is not labelled JSON. Local
+/// listeners) and unsafe requests whose body has the wrong endpoint media type. Local
 /// tooling (curl, MCP, editors, CLI — no browser headers) passes.
 let originGuardMiddleware
   (own: Bozzetto.Server.HttpOriginGuard.OwnOrigins)
   (ctx: Microsoft.AspNetCore.Http.HttpContext)
   (next: Func<Task>) = task {
-  match Bozzetto.Server.HttpOriginGuard.decide own (guardRequestOf ctx) with
+  let request = guardRequestOf ctx
+  let verdict =
+    if ctx.Request.Method = "POST" && ctx.Request.Path.Value = WorkObservation.Route then
+      Bozzetto.Server.HttpOriginGuard.decideWithBodyType WorkObservation.MediaType own request
+    else Bozzetto.Server.HttpOriginGuard.decide own request
+  match verdict with
   | Bozzetto.Server.HttpOriginGuard.Verdict.Allow ->
     do! next.Invoke()
   | Bozzetto.Server.HttpOriginGuard.Verdict.Reject rejection ->
