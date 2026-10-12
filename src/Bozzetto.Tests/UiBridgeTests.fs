@@ -1604,8 +1604,9 @@ let observationTests =
         let controller = new Observe.Controller(hub, [ { Node = b.Node; Endpoint = Uri(url + "/api/work/observe"); TokenFile = tokenFile } ], stopping.Token)
         try
           use client = new Net.Http.HttpClient(Timeout = TimeSpan.FromSeconds 5.)
-          let payload = Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest
-            { ProtocolVersion = ProtocolVersion; Node = b.Node; Topic = "work"; Seconds = 0 }
+          let payload =
+            Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest
+              { ProtocolVersion = ProtocolVersion; Node = b.Node; Topic = "work"; Seconds = 0 }
           let request (methodName: string) (path: string) (mediaType: string) (origin: string option) (host: string option) =
             let message = new Net.Http.HttpRequestMessage(Net.Http.HttpMethod(methodName), url + path)
             message.Content <- new Net.Http.ByteArrayContent(payload)
