@@ -811,7 +811,7 @@ let OutputPane (model: ModelView) =
   }
 
 [<SolidComponent>]
-let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -> bool) (focus: NodeWorkView -> unit) (read: NodeWorkView -> NodeOperationView -> TranscriptStream -> unit) =
+let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -> bool) (read: NodeWorkView -> NodeOperationView -> TranscriptStream -> unit) =
   div (class' = "flex flex-col gap-3") {
     h2 (class' = "text-lg font-bold") { "Work across nodes" }
     Show (when' = (model.nodes.Length = 0)) {
@@ -871,9 +871,6 @@ let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -
                       }
                   }
                 }
-              }
-              button (class' = "btn btn-sm btn-outline self-start", disabled = not (connected ()), onClick = fun _ -> focus node) {
-                if model.nodeFocus = node.id then "Restart resource observation" else "Observe resources"
               }
             }
           }
@@ -994,7 +991,7 @@ let App () =
         })
       ) {
         div (class' = "grid grid-cols-1 xl:grid-cols-3 gap-4 p-4") {
-          div (class' = "xl:col-span-3") { WorkNodesPanel model stores.Uptime connected focus readTranscript }
+          div (class' = "xl:col-span-3") { WorkNodesPanel model stores.Uptime connected readTranscript }
           Show (when' = (model.transcript.node <> "")) {
             div (class' = "xl:col-span-3 card card-compact panel transcript-readback") {
               div (class' = "card-body gap-2") {
@@ -1011,10 +1008,6 @@ let App () =
                 }
               }
             }
-          }
-          div (class' = "xl:col-span-3") {
-            h2 (class' = "text-lg font-bold mb-2") { "Resources · " + (selectedResourceNode () |> Option.map _.id |> Option.defaultValue "awaiting node") }
-            HostPanel model local stores.Uptime connected selectedResourceNode selectResourceNode resourceDispatch
           }
           div (class' = "xl:col-span-2 flex flex-col gap-3 min-w-0") {
             h2 (class' = "text-lg font-bold") { "Controller projects" }

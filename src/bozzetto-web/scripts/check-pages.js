@@ -149,7 +149,8 @@ async function check() {
   assert.match(knownAge, / · .*\d+s ago$/, 'known pushed clock supplies the relative age');
   assert.equal(pageFrames.filter(f=>f.command === 2).length, 0, 'initial node selection does not silently start observation');
   const resourcePicker = "document.querySelector('select[aria-label=\"Resource node\"]')";
-  for (const page of [work, dashboard]) {
+  assert.equal(await evaluate(work, `${resourcePicker} === null`), true, 'Work has no resource selector');
+  for (const page of [dashboard]) {
     assert.deepEqual((await evaluate(page, `[...${resourcePicker}.options].map(o=>o.textContent)`)).sort(), ['Workstation','ONE','TWO','THREE'].sort(), 'resource panel exposes every admitted node');
     assert.equal(await evaluate(page, `${resourcePicker}.value`), 'controller', 'resource selection defaults to the observed controller identity');
   }
@@ -198,7 +199,7 @@ async function check() {
   };
   assertDashboardHeadings(d);
   for (const text of ['Composer sessions', 'Compiler worker', 'Run output', 'Open project', 'No open projects.', 'Work leases']) assert.ok(c.text.toLowerCase().includes(text.toLowerCase()), text);
-  for (const text of ['Whole-machine resources', 'Observe for 2 minutes']) assert.ok(c.text.includes(text), `Work exposes ${text} before a node is observed`);
+  for (const text of ['Whole-machine resources', 'Observe for 2 minutes', 'Observe resources', 'Restart resource observation', 'Resources ·']) assert.ok(!c.text.includes(text), `Work excludes ${text}`);
   assert.ok(!c.text.includes('Agent work'), 'Work keeps the separate Agent work panel on Dashboard');
   for (const [name, page] of [['dashboard', dashboard], ['work', work]]) {
     const visible = (await inspect(page)).text;
@@ -309,7 +310,7 @@ async function check() {
   const nodeCard = name => `[...document.querySelectorAll('h3')].find(h => h.textContent === '${name}').closest('.card')`;
   for (const name of ['one', 'two', 'three']) {
     assert.ok(await evaluate(work, `${nodeCard(name)}.innerText.includes('remote · read-only')`), name + ': remote scope is explicit');
-    assert.deepEqual(await evaluate(work, `[...${nodeCard(name)}.querySelectorAll('button')].map(b=>b.textContent)`), name === 'one' ? ['Load stdout','Load stderr','Observe resources'] : ['Observe resources'], name + ': only remote observation/readback actions');
+    assert.deepEqual(await evaluate(work, `[...${nodeCard(name)}.querySelectorAll('button')].map(b=>b.textContent)`), name === 'one' ? ['Load stdout','Load stderr'] : [], name + ': only remote observation/readback actions');
   }
   assert.ok(await evaluate(work, `${nodeCard('one')}.innerText.includes('fixture ONE build')`), 'remote active lease is shown');
   assert.ok(await evaluate(work, `${nodeCard('two')}.innerText.includes('0 active leases')`), 'observed zero is shown');
@@ -318,15 +319,16 @@ async function check() {
   const resourceStatus = "[...document.querySelectorAll('h2')].find(e=>e.textContent === 'Whole-machine resources').parentElement.querySelector('.badge').textContent";
   async function resourceAction(label, expression) {
     const before = pageFrames.length;
-    await evaluate(work, expression);
+    await call('Page.bringToFront', {}, dashboard);
+    await evaluate(dashboard, expression);
     const end = Date.now() + 3000;
     while (Date.now() < end) {
-      const frame = pageFrames.slice(before).filter(f=>f.session === work).at(-1);
-      if (frame && pageReplies.some(r=>r.session === work && r.correlation === frame.correlation)) {
+      const frame = pageFrames.slice(before).filter(f=>f.session === dashboard).at(-1);
+      if (frame && pageReplies.some(r=>r.session === dashboard && r.correlation === frame.correlation)) {
         assert.equal(frame.opcode, 2, 'browser commands must be binary WebSocket frames');
         // The mock acknowledgement follows every adversarial frame. Let the
         // browser finish that event batch before examining the rendered fact.
-        await call('Runtime.evaluate', {expression:'new Promise(requestAnimationFrame)', awaitPromise:true}, work);
+        await call('Runtime.evaluate', {expression:'new Promise(requestAnimationFrame)', awaitPromise:true}, dashboard);
         return;
       }
       await new Promise(resolve=>setTimeout(resolve, 20));
@@ -335,19 +337,19 @@ async function check() {
   }
   const observe = name => resourceAction(name, `${resourcePicker}.value = '${name}'; ${resourcePicker}.dispatchEvent(new Event('change', {bubbles:true}))`);
   await observe('one');
-  assert.equal(await evaluate(work, `${resourcePicker}.value`), 'one', 'native node picker displays its selected source');
-  assert.equal(await evaluate(work, resourceMetric), '17.0%', 'foreign incarnation/node and older sequence cannot overwrite selected node');
+  assert.equal(await evaluate(dashboard, `${resourcePicker}.value`), 'one', 'native node picker displays its selected source');
+  assert.equal(await evaluate(dashboard, resourceMetric), '17.0%', 'foreign incarnation/node and older sequence cannot overwrite selected node');
   const switchStart = pageFrames.length;
   await observe('two');
-  assert.deepEqual(pageFrames.slice(switchStart).filter(f=>f.session === work && f.command === 2).map(f=>[f.node,f.seconds]), [['one',0],['two',120]], 'node picker stops the previous scope before starting the selected scope');
-  assert.equal(await evaluate(work, resourceMetric), '23.0%', 'second node has its own resource fact');
-  assert.ok((await inspect(work)).text.includes('Resources · two'), 'focus switches to the requested node');
+  assert.deepEqual(pageFrames.slice(switchStart).filter(f=>f.session === dashboard && f.command === 2).map(f=>[f.node,f.seconds]), [['one',0],['two',120]], 'node picker stops the previous scope before starting the selected scope');
+  assert.equal(await evaluate(dashboard, resourceMetric), '23.0%', 'second node has its own resource fact');
+  assert.equal(await evaluate(dashboard, `${resourcePicker}.value`), 'two', 'focus switches to the requested node');
   await observe('one');
-  assert.equal(await evaluate(work, resourceMetric), '17.0%', 'A→B→A rejects the old A observation correlation with the same source and newer sequence');
-  assert.equal(await evaluate(work, resourceStatus), 'observing', 'an accepted observation start is not a stop acknowledgement');
+  assert.equal(await evaluate(dashboard, resourceMetric), '17.0%', 'A→B→A rejects the old A observation correlation with the same source and newer sequence');
+  assert.equal(await evaluate(dashboard, resourceStatus), 'observing', 'an accepted observation start is not a stop acknowledgement');
   await resourceAction('stop', "[...document.querySelectorAll('button')].find(b=>b.textContent === 'Stop').click()");
-  assert.equal(await evaluate(work, resourceStatus), 'stopped', 'only the exact typed stop acknowledgement changes view status');
-  assert.equal(await evaluate(work, resourceMetric), '17.0%', 'stop acknowledgement preserves the last resource values without requiring a new sample');
+  assert.equal(await evaluate(dashboard, resourceStatus), 'stopped', 'only the exact typed stop acknowledgement changes view status');
+  assert.equal(await evaluate(dashboard, resourceMetric), '17.0%', 'stop acknowledgement preserves the last resource values without requiring a new sample');
   const readback = "document.querySelector('.transcript-readback')";
   const readsBefore = pageFrames.filter(f=>f.session === work && f.command === 10).length;
   await evaluate(work, `${nodeCard('one')}.querySelector('details').open = true; [...${nodeCard('one')}.querySelectorAll('button')].find(b=>b.textContent === 'Load stdout').click()`);
@@ -365,12 +367,25 @@ async function check() {
   await waitFor(work, `${readback}.innerText.includes('storage_failure: Synthetic transcript store refusal.')`);
   assert.equal(await evaluate(work, `${readback}.querySelector('pre') === null`), true, 'failed new selection never shows the previous stream as its transcript');
   await observe('three');
-  assert.equal(await evaluate(work, `${resourcePicker}.value`), 'three', 'unavailable node remains an explicit selection');
-  assert.ok((await evaluate(work, "document.querySelector('.resource-node-availability').textContent")).includes('THREE work observation: unavailable'), 'unavailable source is not reported as idle');
-  assert.equal(await evaluate(work, resourceMetric), undefined, 'switching to an unavailable node never relabels another node’s measurements');
+  assert.equal(await evaluate(dashboard, `${resourcePicker}.value`), 'three', 'unavailable node remains an explicit selection');
+  assert.ok((await evaluate(dashboard, "document.querySelector('.resource-node-availability').textContent")).includes('THREE work observation: unavailable'), 'unavailable source is not reported as idle');
+  assert.equal(await evaluate(dashboard, resourceMetric), undefined, 'switching to an unavailable node never relabels another node’s measurements');
+  const { data: resourceImage } = await call('Page.captureScreenshot', { format: 'png' }, dashboard);
+  await writeFile(join(evidence, 'dashboard-resources.png'), Buffer.from(resourceImage, 'base64'));
+  // Native page navigation leaves no resource UI or new observation on Work.
+  // Server disconnect cleanup remains source/accepted-gate-backed; CDP does
+  // not reliably report the retired socket across document replacement.
+  await observe('one');
+  const navigationStart = pageFrames.length;
+  await evaluate(dashboard, "document.querySelector('a[href=\"/work\"]').click()");
+  await waitFor(dashboard, "document.title === 'Work · Bozzetto' && document.body.innerText.includes('Work across nodes')");
+  assert.equal(await evaluate(dashboard, `${resourcePicker} === null`), true, 'navigation leaves no hidden resource selector on Work');
+  assert.equal(pageFrames.slice(navigationStart).some(f=>f.session === dashboard && f.command === 2), false, 'new Work page starts no resource observation');
+  await evaluate(dashboard, "document.querySelector('a[href=\"/dashboard\"]').click()");
+  await waitFor(dashboard, `document.title === 'Dashboard · Bozzetto' && ${resourcePicker}?.options.length === 4`);
   const { data: nodeImage } = await call('Page.captureScreenshot', { format: 'png' }, work);
   await writeFile(join(evidence, 'work-nodes.png'), Buffer.from(nodeImage, 'base64'));
-  await writeFile(join(evidence, 'node-controls.json'), JSON.stringify({remoteReadOnly:true, knownZeroSeparateFromUnavailable:true, activeLeaseShown:true, focusSwitched:true, resourceNodePicker:true, stopsPreviousSelection:true, unavailableSelectionExplicit:true, bootAgeUnknown:true, pushedClockUpdatesAge:true, foreignNodeIncarnationAndOlderSequenceRejected:true, previousSameSourceCorrelationRejected:true, stoppedObservationAccepted:true, browserCommandsBinary:true, selectedTranscriptReadback:true, exactSplitUtf8Bytes:true, explicitSourceTruncation:true, foreignTranscriptIncarnationRejected:true, storageRefusalVisible:true},null,2));
+  await writeFile(join(evidence, 'node-controls.json'), JSON.stringify({remoteReadOnly:true, knownZeroSeparateFromUnavailable:true, activeLeaseShown:true, focusSwitched:true, resourceNodePicker:true, resourcesDashboardOnly:true, navigationStartsNoResources:true, stopsPreviousSelection:true, unavailableSelectionExplicit:true, bootAgeUnknown:true, pushedClockUpdatesAge:true, foreignNodeIncarnationAndOlderSequenceRejected:true, previousSameSourceCorrelationRejected:true, stoppedObservationAccepted:true, browserCommandsBinary:true, selectedTranscriptReadback:true, exactSplitUtf8Bytes:true, explicitSourceTruncation:true, foreignTranscriptIncarnationRejected:true, storageRefusalVisible:true},null,2));
   // Reload and trailing-slash bookmarks select the right view as well.
   await call('Page.navigate', { url: origin + '/work/' }, work);
   await waitFor(work, "document.title === 'Work · Bozzetto' && document.body.innerText.includes('SideBySide.fidproj')");
