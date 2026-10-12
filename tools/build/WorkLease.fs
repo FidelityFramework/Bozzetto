@@ -13,6 +13,7 @@ open System.Net.Http
 open System.Text
 open System.Text.Json
 open System.Threading
+open System.Threading.Tasks
 
 type Admission =
   | Granted of leaseId: string * expiresAt: DateTimeOffset
@@ -97,59 +98,164 @@ let release leaseId =
 let withdraw kind holder =
   post "withdraw" [ "kind", kind; "holder", holder ] |> Async.Ignore
 
-/// Run `work` under a `kind` lease held by `holder`. A deferred ask keeps its place in line
-/// and is retried as the same ask every 15 seconds for at most ten minutes, then withdrawn.
-/// The heartbeat renews at a third of the remaining lifetime, never sooner than 30 seconds.
-/// `work` receives a token the heartbeat cancels when the daemon reports the lease gone.
-let run (kind: string) (holder: string) (work: CancellationToken -> Async<Result<unit, string>>) =
+/// Injectable effects of the existing lease client; admission remains daemon-owned.
+type Client = {
+  Acquire: string -> string -> Async<Admission>
+  Renew: string -> string -> Async<Renewal>
+  Release: string -> Async<Result<unit, string>>
+  Withdraw: string -> string -> Async<unit>
+  Delay: int -> CancellationToken -> Async<unit>
+  Now: unit -> DateTimeOffset
+}
+
+let private api = {
+  Acquire = acquire
+  Renew = renew
+  Release = release
+  Withdraw = withdraw
+  Delay = fun milliseconds token -> Task.Delay(milliseconds, token) |> Async.AwaitTask
+  Now = fun () -> DateTimeOffset.UtcNow
+}
+
+// A canceled child is an outcome to join, never cancellation of the cleanup owner.
+let private settle work =
+  Async.FromContinuations(fun (complete, _, _) ->
+    Async.StartWithContinuations(work, (Ok >> complete), (Error >> complete),
+      (fun error -> complete (Error error)), cancellationToken = CancellationToken.None))
+
+/// The callback owns its physical work and must return only after joining its cleanup.
+/// Cancellation requests that cleanup; it cannot release the lease ahead of the callback,
+/// cancellation callbacks, or heartbeat. The caller's ambient async cancellation follows
+/// the same ordering as the explicit token.
+let runWith (client: Client) (kind: string) (holder: string) (cancellation: CancellationToken)
+            (work: string -> CancellationToken -> Async<Result<'T, string>>) =
   async {
-    let patience = TimeSpan.FromMinutes 10.
-    let asked = DateTimeOffset.UtcNow
-    let rec admit () =
-      async {
-        match! acquire kind holder with
-        | Granted(id, expires) -> return Ok(id, expires)
-        | Deferred reply when DateTimeOffset.UtcNow - asked < patience ->
-          eprintfn "work-lease: %s deferred; waiting in line: %s" kind reply
-          do! Async.Sleep 15000
-          return! admit ()
-        | Deferred reply ->
-          do! withdraw kind holder
-          return Error $"work-lease: {kind} still deferred after {patience.TotalMinutes} minutes; ask withdrawn: {reply}"
-        | Refused reason -> return Error $"work-lease: {kind} refused: {reason}"
-      }
-    match! admit () with
-    | Error reason -> return Error reason
-    | Ok(leaseId, expires) ->
-      use gone = new CancellationTokenSource()
-      use stopBeat = new CancellationTokenSource()
-      let pause (until: DateTimeOffset) =
-        max 30000 (int ((until - DateTimeOffset.UtcNow).TotalMilliseconds / 3.))
-      let rec beat (until: DateTimeOffset) =
-        async {
-          do! Async.Sleep(pause until)
-          match! renew leaseId holder with
-          | Renewed next -> return! beat next
-          | Gone ->
-            eprintfn "work-lease: lease %s is gone; stopping its work" leaseId
-            gone.Cancel()
-          | Unanswered reason ->
-            eprintfn "work-lease: renewal unanswered (%s); retrying" reason
-            return! beat until
+    let! ambient = Async.CancellationToken
+    return! Async.FromContinuations(fun (complete, failed, _) ->
+      let owned = async {
+        use stopping = new CancellationTokenSource()
+        let cancelGate = obj ()
+        let mutable cancellationTask: Task option = None
+        let requestCancellation () =
+          lock cancelGate (fun () ->
+            if cancellationTask.IsNone then cancellationTask <- Some(stopping.CancelAsync()))
+        use explicitRegistration = cancellation.Register requestCancellation
+        use ambientRegistration = ambient.Register requestCancellation
+        let joinCancellation () = async {
+          // Dispose joins forwarding callbacks before observing their CancelAsync task.
+          explicitRegistration.Dispose()
+          ambientRegistration.Dispose()
+          match lock cancelGate (fun () -> cancellationTask) with
+          | Some running -> return! running |> Async.AwaitTask |> settle
+          | None -> return Ok()
         }
-      Async.Start(beat expires, stopBeat.Token)
-      use! _released = Async.OnCancel(fun () -> stopBeat.Cancel(); release leaseId |> Async.RunSynchronously |> ignore)
-      let! outcome = Async.Catch(work gone.Token)
-      stopBeat.Cancel()
-      let! released = release leaseId
-      match released with
-      | Error reason -> eprintfn "work-lease: release failed for owned lease %s: %s" leaseId reason
-      | Ok() -> ()
-      return
-        match outcome, released with
-        | Choice2Of2 e, _ -> Error $"work-lease: {kind} work failed: {e.Message}"
-        | Choice1Of2 _, _ when gone.IsCancellationRequested -> Error $"work-lease: lease {leaseId} was reported gone while its work ran"
-        | Choice1Of2 result, Ok() -> result
-        | Choice1Of2(Ok()), Error reason -> Error $"work-lease: {reason}"
-        | Choice1Of2(Error e), Error _ -> Error e
+        let canceled = $"work-lease: {kind} canceled; owned work and cleanup joined"
+        let! outcome = settle (async {
+          let patience = TimeSpan.FromMinutes 10.
+          let asked = client.Now()
+          let rec admit () =
+            async {
+              if stopping.IsCancellationRequested then
+                do! client.Withdraw kind holder
+                return Error canceled
+              else
+                match! client.Acquire kind holder with
+                | Granted(id, expires) -> return Ok(id, expires)
+                | Deferred _ when stopping.IsCancellationRequested ->
+                  do! client.Withdraw kind holder
+                  return Error canceled
+                | Deferred reply when client.Now() - asked < patience ->
+                  eprintfn "work-lease: %s deferred; waiting in line: %s" kind reply
+                  let! delayed = client.Delay 15000 stopping.Token |> settle
+                  match delayed with
+                  | Ok() -> return! admit ()
+                  | Error _ when stopping.IsCancellationRequested ->
+                    do! client.Withdraw kind holder
+                    return Error canceled
+                  | Error error ->
+                    do! client.Withdraw kind holder
+                    return Error $"work-lease: admission delay failed: {error.Message}"
+                | Deferred reply ->
+                  do! client.Withdraw kind holder
+                  return Error $"work-lease: {kind} still deferred after {patience.TotalMinutes} minutes; ask withdrawn: {reply}"
+                | Refused reason -> return Error $"work-lease: {kind} refused: {reason}"
+            }
+          match! admit () with
+          | Error reason -> return Error reason
+          | Ok(leaseId, expires) ->
+            use stopBeat = new CancellationTokenSource()
+            let mutable gone = false
+            let pause (until: DateTimeOffset) =
+              max 30000 (int ((until - client.Now()).TotalMilliseconds / 3.))
+            let rec beat (until: DateTimeOffset) =
+              async {
+                let! delayed = client.Delay (pause until) stopBeat.Token |> settle
+                match delayed with
+                | Error _ when stopBeat.IsCancellationRequested -> ()
+                | Error error -> return raise error
+                | Ok() when stopBeat.IsCancellationRequested -> ()
+                | Ok() ->
+                  match! client.Renew leaseId holder with
+                  | Renewed next -> return! beat next
+                  | Gone ->
+                    eprintfn "work-lease: lease %s is gone; stopping its work" leaseId
+                    gone <- true
+                    requestCancellation ()
+                  | Unanswered reason ->
+                    eprintfn "work-lease: renewal unanswered (%s); retrying" reason
+                    return! beat until
+              }
+            let heartbeat = Async.StartAsTask(async {
+              let! result = settle (beat expires)
+              if Result.isError result then requestCancellation ()
+              return result
+            }, cancellationToken = CancellationToken.None)
+            let! outcome =
+              if stopping.IsCancellationRequested then async.Return(Ok(Error canceled))
+              else async.Delay(fun () -> work leaseId stopping.Token) |> settle
+            // Renewal covers callback cleanup as well as the returned work: a
+            // retained lease must not expire while an owned callback is held.
+            let! firstCallbacks = joinCancellation ()
+            let! stoppedHeartbeat = stopBeat.CancelAsync() |> Async.AwaitTask |> settle
+            let! heartbeatResult = heartbeat |> Async.AwaitTask
+            // A renewal already in flight may report Gone/failure after the
+            // first join observed no cancellation task. Join that request too.
+            let! lastCallbacks = joinCancellation ()
+            let canceledCallbacks =
+              match firstCallbacks, lastCallbacks with
+              | Error error, _ | _, Error error -> Error error
+              | Ok(), Ok() -> Ok()
+            let! released = client.Release leaseId
+            match released with
+            | Error reason -> eprintfn "work-lease: release failed for owned lease %s: %s" leaseId reason
+            | Ok() -> ()
+            return
+              match outcome, heartbeatResult, stoppedHeartbeat, canceledCallbacks, released with
+              | _, _, _, _, _ when gone -> Error $"work-lease: lease {leaseId} was reported gone while its work ran"
+              | _, Error error, _, _, _ -> Error $"work-lease: heartbeat failed: {error.Message}"
+              | _, _, Error error, _, _
+              | _, _, _, Error error, _ -> Error $"work-lease: cancellation callback failed: {error.Message}"
+              | _, _, _, _, _ when stopping.IsCancellationRequested -> Error canceled
+              | Error error, _, _, _, _ -> Error $"work-lease: {kind} work failed: {error.Message}"
+              | Ok result, _, _, _, Ok() -> result
+              | Ok(Ok _), _, _, _, Error reason -> Error $"work-lease: {reason}"
+              | Ok(Error error), _, _, _, Error _ -> Error error
+        })
+        let! callbacks = joinCancellation ()
+        return
+          match outcome, callbacks with
+          | Error error, _ -> Error $"work-lease: {kind} failed: {error.Message}"
+          | _, Error error -> Error $"work-lease: cancellation callback failed: {error.Message}"
+          | Ok result, Ok() -> result
+      }
+      Async.StartWithContinuations(owned, complete, failed, (fun error -> failed error),
+        cancellationToken = CancellationToken.None))
   }
+
+/// Retry a deferred stable ask every 15 seconds for at most ten minutes. Renew a
+/// granted lease at a third of its remaining lifetime, never sooner than 30 seconds.
+let runWithCancellation kind holder cancellation work = runWith api kind holder cancellation work
+
+/// Compatibility wrapper for existing pipeline and command-runner callers.
+let run kind holder (work: CancellationToken -> Async<Result<unit, string>>) =
+  runWithCancellation kind holder CancellationToken.None (fun _ token -> work token)

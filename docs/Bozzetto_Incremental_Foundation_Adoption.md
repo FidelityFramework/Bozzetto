@@ -101,6 +101,36 @@ Withdrawal is immediate loss of publication authority, not completed cleanup. Re
 
 For scoped suspension, `AwaitingResume` holds one logical attempt with frozen original reads. The exact `SuspensionHandle` is consumed once. A step must release physical resources before yielding a resource-free checkpoint; stale, duplicate or foreign resumptions cannot execute another step (`API.fs`; `Core.fs`, `suspend`, `resume`). General resource-bearing migration is not established by this API.
 
+## Local managed builds (implementation contract)
+
+A local managed build composes the existing work-lease client with one
+Foundation Hosting evaluator. It is a host process operation, not a Composer
+project session, compiler proof, remote admission or native execution authority.
+The immutable request identifies its primary checkout, absolute managed tool,
+argument vector, source/toolchain file identities, output paths and deadline.
+These inputs are declared Foundation reads. A change detected during the run, or
+explicit caller invalidation, withdraws result eligibility rather than silently
+reusing an equal exit code; this owner provides no continuous file watcher.
+
+The evaluator acquires through `tools/build/WorkLease.fs` with one stable holder.
+Deferred and refused admission launch no child. Explicit cancellation withdraws
+a queued ask; after admission it requests process cleanup. The process, output
+streams, cancellation callbacks and heartbeat remain owned until joined, and
+only then may the lease be released. A deadline requests cancellation; it does
+not certify physical drain. Cancelling an observation never releases the lease
+or detaches the evaluator's cleanup. A joined deadline is reported as a timeout
+failure; Foundation cancellation retains its cancellation classification.
+Child-tree cleanup is limited to the host
+mechanism actually established by the implementation and its executed controls.
+
+The retained result binds the exact request, Foundation epoch/work/attempt,
+lease identity, process identity, exit or refusal, cancellation and cleanup
+outcomes, and hashes of stdout/stderr and declared artifacts. Success requires
+unchanged declared source/toolchain inputs and complete physical cleanup before
+Foundation may offer it. Failed or withdrawn attempts retain diagnostic evidence
+without acquiring an eligible success handle. This local contract provides no
+peer authentication, network dispatch, restart recovery or compiler acceptance.
+
 ## Implemented use: ResourceGraph
 
 `src/Bozzetto/ResourceGraph.fs` contains two direct-core consumers. They demonstrate bounded synchronous derivation, not the complete asynchronous workspace/worker contract.

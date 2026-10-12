@@ -8,10 +8,14 @@
 module Bozzetto.Tests.ExpensiveWorkLeaseTests
 
 open System
+open System.Threading
+open System.Threading.Tasks
 open Expecto
 open Expecto.Flip
 open Bozzetto
 open Bozzetto.ExpensiveWorkLease
+
+module LeaseClient = Bozzetto.Build.WorkLease
 
 let private epoch = DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)
 
@@ -316,4 +320,296 @@ let observationDeadlineTests =
       let latestInstead = active |> List.map _.ExpiresAt |> List.max
       latestInstead |> Expect.notEqual "latest-expiry mutant would miss the first removal" first
     }
+  ]
+
+// Deterministic effects exercise the real lease client owner without a daemon or timers.
+let private clientSignal () = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+let private clientBounded (work: Task<'T>) = work.WaitAsync(TimeSpan.FromSeconds 5.)
+let private clientTest name (work: unit -> Task<unit>) =
+  testCaseAsync name (async { do! work() |> Async.AwaitTask })
+let private leaseClient (released: TaskCompletionSource<unit>) : LeaseClient.Client = {
+  Acquire = fun _ _ -> async.Return(LeaseClient.Granted("owned-lease", epoch.AddMinutes 5.))
+  Renew = fun _ _ -> async.Return(LeaseClient.Renewed(epoch.AddMinutes 5.))
+  Release = fun id -> async {
+    id |> Expect.equal "Release addresses the admitted lease." "owned-lease"
+    released.TrySetResult() |> ignore
+    return Ok()
+  }
+  Withdraw = fun _ _ -> async.Return()
+  Delay = fun _ token -> Task.Delay(Timeout.Infinite, token) |> Async.AwaitTask
+  Now = fun () -> epoch
+}
+
+[<Tests>]
+let clientLifetimeTests =
+  testList "Work lease client lifetime" [
+    clientTest "a typed result retains the exact lease until the heartbeat has joined" (fun () -> task {
+      let released, beatEntered, beatStopped, finishBeat = clientSignal(), clientSignal(), clientSignal(), clientSignal()
+      let client = { leaseClient released with
+                       Delay = fun _ token -> async {
+                         use _registration = token.Register(fun () -> beatStopped.TrySetResult() |> ignore)
+                         beatEntered.TrySetResult() |> ignore
+                         do! finishBeat.Task |> Async.AwaitTask
+                       } }
+      let operation =
+        LeaseClient.runWith client "full_build" "stable" CancellationToken.None (fun id _ -> async {
+          id |> Expect.equal "The typed receipt receives the lease identity." "owned-lease"
+          do! beatEntered.Task |> Async.AwaitTask
+          return Ok 42
+        })
+      let running = Async.StartAsTask operation
+      try
+        do! clientBounded beatStopped.Task
+        released.Task.IsCompleted |> Expect.isFalse "A stopped but unjoined heartbeat retains the lease."
+        running.IsCompleted |> Expect.isFalse "The caller also waits for heartbeat cleanup."
+        finishBeat.TrySetResult() |> ignore
+        let! result = clientBounded running
+        result |> Expect.equal "The typed successful result survives cleanup." (Ok 42)
+        released.Task.IsCompleted |> Expect.isTrue "Release follows physical heartbeat completion."
+      finally finishBeat.TrySetResult() |> ignore
+    })
+
+    clientTest "refusal neither invokes work nor releases an unowned lease" (fun () -> task {
+      let released, invoked = clientSignal(), clientSignal()
+      let client = { leaseClient released with Acquire = fun _ _ -> async.Return(LeaseClient.Refused "memory refusal") }
+      let operation =
+        LeaseClient.runWith client "full_build" "stable" CancellationToken.None (fun _ _ -> async {
+          invoked.TrySetResult() |> ignore
+          return Ok()
+        })
+      let! result = operation |> Async.StartAsTask |> clientBounded
+      result |> Expect.equal "The actual admission reason stays loud." (Error "work-lease: full_build refused: memory refusal")
+      invoked.Task.IsCompleted |> Expect.isFalse "Refusal grants no callback."
+      released.Task.IsCompleted |> Expect.isFalse "There is no invented lease to release."
+    })
+
+    clientTest "canceling a queued ask withdraws the same holder without running work" (fun () -> task {
+      use cancellation = new CancellationTokenSource()
+      let released, waiting, withdrawn, invoked = clientSignal(), clientSignal(), clientSignal(), clientSignal()
+      let client = { leaseClient released with
+                       Acquire = fun kind holder -> async {
+                         (kind, holder) |> Expect.equal "Admission uses the stable scope." ("full_build", "stable")
+                         return LeaseClient.Deferred "held elsewhere"
+                       }
+                       Delay = fun _ token -> async {
+                         waiting.TrySetResult() |> ignore
+                         do! Task.Delay(Timeout.Infinite, token) |> Async.AwaitTask
+                       }
+                       Withdraw = fun kind holder -> async {
+                         (kind, holder) |> Expect.equal "Withdrawal addresses that same ask." ("full_build", "stable")
+                         withdrawn.TrySetResult() |> ignore
+                       } }
+      let operation =
+        LeaseClient.runWith client "full_build" "stable" cancellation.Token (fun _ _ -> async {
+          invoked.TrySetResult() |> ignore
+          return Ok()
+        })
+      let running = Async.StartAsTask operation
+      do! clientBounded waiting.Task
+      cancellation.Cancel()
+      let! result = clientBounded running
+      result |> Expect.equal "Queue cancellation returns after withdrawal." (Error "work-lease: full_build canceled; owned work and cleanup joined")
+      withdrawn.Task.IsCompleted |> Expect.isTrue "The stable queued ask was withdrawn."
+      invoked.Task.IsCompleted |> Expect.isFalse "Queued cancellation never starts work."
+      released.Task.IsCompleted |> Expect.isFalse "A queued ask is not a granted lease."
+    })
+
+    clientTest "cancellation racing a grant releases it without invoking work" (fun () -> task {
+      use cancellation = new CancellationTokenSource()
+      let released, invoked = clientSignal(), clientSignal()
+      let client = { leaseClient released with
+                       Acquire = fun _ _ -> async {
+                         cancellation.Cancel()
+                         return LeaseClient.Granted("owned-lease", epoch.AddMinutes 5.)
+                       } }
+      let operation =
+        LeaseClient.runWith client "full_build" "stable" cancellation.Token (fun _ _ -> async {
+          invoked.TrySetResult() |> ignore
+          return Ok()
+        })
+      let! result = operation |> Async.StartAsTask |> clientBounded
+      result |> Expect.equal "The race has an explicit cancellation result." (Error "work-lease: full_build canceled; owned work and cleanup joined")
+      invoked.Task.IsCompleted |> Expect.isFalse "A canceled grant admits no work."
+      released.Task.IsCompleted |> Expect.isTrue "The late grant is still owned and released."
+    })
+
+    for ambient in [ false; true ] do
+      let name = if ambient then "ambient cancellation joins work before releasing" else "explicit cancellation joins work before releasing"
+      clientTest name (fun () -> task {
+        use cancellation = new CancellationTokenSource()
+        let released, entered, observed, finish = clientSignal(), clientSignal(), clientSignal(), clientSignal()
+        let requested = if ambient then CancellationToken.None else cancellation.Token
+        let work =
+          LeaseClient.runWith (leaseClient released) "full_build" "stable" requested (fun _ token -> async {
+            use _registration = token.Register(fun () -> observed.TrySetResult() |> ignore)
+            entered.TrySetResult() |> ignore
+            do! finish.Task |> Async.AwaitTask
+            return Ok()
+          })
+        let running = Async.StartAsTask(work, cancellationToken = (if ambient then cancellation.Token else CancellationToken.None))
+        try
+          do! clientBounded entered.Task
+          cancellation.Cancel()
+          do! clientBounded observed.Task
+          released.Task.IsCompleted |> Expect.isFalse "Cancellation is a request, not lease release."
+          running.IsCompleted |> Expect.isFalse "The caller cannot abandon owned cleanup."
+          finish.TrySetResult() |> ignore
+          let! result = clientBounded running
+          result |> Expect.equal "Both token paths share the same explicit outcome." (Error "work-lease: full_build canceled; owned work and cleanup joined")
+          released.Task.IsCompleted |> Expect.isTrue "Physical work finished before release."
+        finally finish.TrySetResult() |> ignore
+      })
+
+    clientTest "lease loss cancels work and joins a held cancellation callback before release" (fun () -> task {
+      use finishCallback = new ManualResetEventSlim()
+      let released, entered, observed, returning = clientSignal(), clientSignal(), clientSignal(), clientSignal()
+      let client = { leaseClient released with
+                       Delay = fun _ _ -> entered.Task |> Async.AwaitTask
+                       Renew = fun _ _ -> async.Return LeaseClient.Gone }
+      let operation =
+        LeaseClient.runWith client "full_build" "stable" CancellationToken.None (fun _ token -> async {
+          // The registration deliberately outlives the work result; the lease owner
+          // still has to join the in-flight cancellation callback before release.
+          token.Register(fun () ->
+            observed.TrySetResult() |> ignore
+            if not (finishCallback.Wait(TimeSpan.FromSeconds 5.)) then failwith "Callback barrier was not released.") |> ignore
+          entered.TrySetResult() |> ignore
+          do! observed.Task |> Async.AwaitTask
+          returning.TrySetResult() |> ignore
+          return Ok()
+        })
+      let running = Async.StartAsTask operation
+      try
+        do! clientBounded observed.Task
+        do! clientBounded returning.Task
+        // Callback entry and the work's return boundary are established above.
+        // Observe release while that callback is held, instead of sampling before
+        // the lease owner has had an opportunity to process the completed work.
+        let heldWindow = Task.Delay(TimeSpan.FromMilliseconds 250.)
+        let! first = Task.WhenAny(released.Task :> Task, heldWindow)
+        obj.ReferenceEquals(first, heldWindow) |> Expect.isTrue "The lease cannot be released while the cancellation callback is held."
+        released.Task.IsCompleted |> Expect.isFalse "A completed work result does not join cancellation callbacks."
+        running.IsCompleted |> Expect.isFalse "Lease-loss cleanup remains owned."
+        finishCallback.Set()
+        let! result = clientBounded running
+        result |> Expect.equal "Lease loss is not a successful build." (Error "work-lease: lease owned-lease was reported gone while its work ran")
+        released.Task.IsCompleted |> Expect.isTrue "Release follows the callback join."
+      finally finishCallback.Set()
+    })
+
+    clientTest "heartbeat keeps renewing while cancellation cleanup is held" (fun () -> task {
+      use cancellation = new CancellationTokenSource()
+      use finishCallback = new ManualResetEventSlim()
+      let released, entered, observed, returning = clientSignal(), clientSignal(), clientSignal(), clientSignal()
+      let beatEntered, tick, renewed, stopped = clientSignal(), clientSignal(), clientSignal(), clientSignal()
+      let mutable delays = 0
+      let client = { leaseClient released with
+                       Delay = fun _ token -> async {
+                         use _registration = token.Register(fun () -> stopped.TrySetResult() |> ignore)
+                         if Interlocked.Increment(&delays) = 1 then
+                           beatEntered.TrySetResult() |> ignore
+                           do! tick.Task |> Async.AwaitTask
+                         else
+                           do! Task.Delay(Timeout.Infinite, token) |> Async.AwaitTask
+                       }
+                       Renew = fun id holder -> async {
+                         (id, holder) |> Expect.equal "Cleanup renews the same lease." ("owned-lease", "stable")
+                         finishCallback.IsSet |> Expect.isFalse "The injected renewal occurs during held cleanup."
+                         renewed.TrySetResult() |> ignore
+                         return LeaseClient.Renewed(epoch.AddMinutes 10.)
+                       } }
+      let operation =
+        LeaseClient.runWith client "full_build" "stable" cancellation.Token (fun _ token -> async {
+          token.Register(fun () ->
+            observed.TrySetResult() |> ignore
+            if not (finishCallback.Wait(TimeSpan.FromSeconds 5.)) then failwith "Cleanup barrier was not released.") |> ignore
+          entered.TrySetResult() |> ignore
+          do! observed.Task |> Async.AwaitTask
+          returning.TrySetResult() |> ignore
+          return Ok()
+        })
+      let running = Async.StartAsTask operation
+      try
+        do! clientBounded entered.Task
+        do! clientBounded beatEntered.Task
+        cancellation.Cancel()
+        do! clientBounded observed.Task
+        do! clientBounded returning.Task
+        // Drive an actual renewal through the injected clock; do not wait for TTL.
+        tick.TrySetResult() |> ignore
+        let! first = Task.WhenAny(renewed.Task, stopped.Task) |> clientBounded
+        obj.ReferenceEquals(first, renewed.Task) |> Expect.isTrue "Cleanup must renew its lease before heartbeat shutdown."
+        // Also catch shutdown scheduled immediately after that renewal while
+        // the work-return and callback-entry barriers remain established.
+        let heldWindow = Task.Delay(TimeSpan.FromMilliseconds 250.)
+        let! next = Task.WhenAny(stopped.Task :> Task, heldWindow)
+        obj.ReferenceEquals(next, heldWindow) |> Expect.isTrue "Heartbeat shutdown must wait for held cancellation cleanup."
+        released.Task.IsCompleted |> Expect.isFalse "Held cleanup retains lease ownership."
+        finishCallback.Set()
+        let! result = clientBounded running
+        result |> Expect.equal "Cleanup completes with the original cancellation reason." (Error "work-lease: full_build canceled; owned work and cleanup joined")
+        stopped.Task.IsCompleted |> Expect.isTrue "Heartbeat shutdown follows callback completion."
+        released.Task.IsCompleted |> Expect.isTrue "The renewed lease is released after all cleanup."
+      finally
+        finishCallback.Set()
+        tick.TrySetResult() |> ignore
+    })
+
+    clientTest "late lease loss joins cancellation callbacks after heartbeat shutdown" (fun () -> task {
+      use finishCallback = new ManualResetEventSlim()
+      let released, renewing, stopped, observed = clientSignal(), clientSignal(), clientSignal(), clientSignal()
+      let client = { leaseClient released with
+                       Delay = fun _ token -> async {
+                         // Retain this registration through the in-flight Renew;
+                         // the heartbeat's CTS owns it until shutdown is joined.
+                         token.Register(fun () -> stopped.TrySetResult() |> ignore) |> ignore
+                       }
+                       Renew = fun id holder -> async {
+                         (id, holder) |> Expect.equal "The late response addresses the owned lease." ("owned-lease", "stable")
+                         renewing.TrySetResult() |> ignore
+                         // Only heartbeat shutdown releases this response. Work
+                         // already returned and its first callback join saw none.
+                         do! stopped.Task |> Async.AwaitTask
+                         return LeaseClient.Gone
+                       } }
+      let operation =
+        LeaseClient.runWith client "full_build" "stable" CancellationToken.None (fun _ token -> async {
+          token.Register(fun () ->
+            observed.TrySetResult() |> ignore
+            if not (finishCallback.Wait(TimeSpan.FromSeconds 5.)) then failwith "Late callback barrier was not released.") |> ignore
+          do! renewing.Task |> Async.AwaitTask
+          token.IsCancellationRequested |> Expect.isFalse "No cancellation exists when work returns."
+          return Ok()
+        })
+      let running = Async.StartAsTask operation
+      try
+        do! clientBounded observed.Task
+        stopped.Task.IsCompleted |> Expect.isTrue "The lease loss arrived only after heartbeat shutdown began."
+        let heldWindow = Task.Delay(TimeSpan.FromMilliseconds 250.)
+        let! first = Task.WhenAny(released.Task :> Task, heldWindow)
+        obj.ReferenceEquals(first, heldWindow) |> Expect.isTrue "Late lease-loss callback cleanup must finish before release."
+        running.IsCompleted |> Expect.isFalse "Late cancellation remains physically owned."
+        finishCallback.Set()
+        let! result = clientBounded running
+        result |> Expect.equal "The late Gone response overrides the completed work result." (Error "work-lease: lease owned-lease was reported gone while its work ran")
+        released.Task.IsCompleted |> Expect.isTrue "Release follows the final callback join."
+      finally finishCallback.Set()
+    })
+
+    clientTest "a work exception still joins the heartbeat and releases the owned lease" (fun () -> task {
+      let released = clientSignal()
+      let operation =
+        LeaseClient.runWith (leaseClient released) "full_build" "stable" CancellationToken.None
+          (fun _ _ -> async { return (failwith "owned failure": Result<unit, string>) })
+      let! result = operation |> Async.StartAsTask |> clientBounded
+      result |> Expect.equal "Work failure remains precise." (Error "work-lease: full_build work failed: owned failure")
+      released.Task.IsCompleted |> Expect.isTrue "Exceptions do not leak the granted lease."
+    })
+
+    clientTest "release refusal cannot turn a completed typed result into success" (fun () -> task {
+      let client = { leaseClient (clientSignal()) with Release = fun _ -> async.Return(Error "release refused") }
+      let operation = LeaseClient.runWith client "full_build" "stable" CancellationToken.None (fun _ _ -> async.Return(Ok 42))
+      let! result = operation |> Async.StartAsTask |> clientBounded
+      result |> Expect.equal "Cleanup failure stays visible." (Error "work-lease: release refused")
+    })
   ]

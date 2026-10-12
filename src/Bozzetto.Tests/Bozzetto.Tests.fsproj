@@ -30,6 +30,7 @@
         <Compile Include="../Bozzetto.Composer.Tests/LiveProviderTests.fs" Link="Composer/LiveProviderTests.fs" />
         <Compile Include="ComposerSupervisorTests.fs" />
         <Compile Include="ComposerWorkerClientTests.fs" />
+        <Compile Include="ManagedBuildTests.fs" />
         <Compile Include="ComposerBinaryProtocolTests.fs" />
         <Compile Include="UiBridgeTests.fs" />
         <Compile Include="BridgeFactsTests.fs" />

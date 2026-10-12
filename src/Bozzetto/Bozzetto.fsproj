@@ -41,6 +41,8 @@
 
     <ItemGroup>
         <Compile Include="WorkerProxyWait.fs" />
+        <Compile Include="../../tools/build/WorkLease.fs" Link="Build/WorkLease.fs" />
+        <Compile Include="ManagedBuild.fs" />
         <Compile Include="HttpJson.fs" />
         <Compile Include="McpProtocolJson.fs" />
         <Compile Include="DaemonState.fs" />
