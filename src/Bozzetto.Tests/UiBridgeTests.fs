@@ -1286,11 +1286,68 @@ let tests =
     ]
 
     testList "page" [
+      testTask "headless omits browser routes and refuses upgrades without constructing the UI hub" {
+        do! task {
+          let mutable created = false
+          let! app, url = Hosting.start (fun app ->
+            Microsoft.AspNetCore.Builder.WebSocketMiddlewareExtensions.UseWebSockets(app) |> ignore
+            mapRoutes true app (fun () ->
+              created <- true
+              failwith "Headless startup must not construct the UI hub."))
+          use client = new Net.Http.HttpClient(Timeout = TimeSpan.FromSeconds 10.)
+          try
+            created |> Expect.isFalse "no UI subscriptions or resource acquisition are started"
+            for route in [ "/composer"; "/dashboard"; "/ui/bridge"; "/api/resources" ] @ (clefIcons |> List.map (fun (route, _, _) -> route)) do
+              use! response = client.GetAsync(url + route)
+              int response.StatusCode |> Expect.equal (route + " is not installed") 404
+            use upgrade = new Net.Http.HttpRequestMessage(Net.Http.HttpMethod.Get, url + "/ui/bridge")
+            upgrade.Headers.Add("Connection", "Upgrade")
+            upgrade.Headers.Add("Upgrade", "websocket")
+            upgrade.Headers.Add("Sec-WebSocket-Version", "13")
+            upgrade.Headers.Add("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+            use! response = client.SendAsync upgrade
+            int response.StatusCode |> Expect.equal "the upgrade cannot reach a UI socket" 404
+          finally
+            Hosting.stop app
+        }
+      }
+
+      testTask "headless control listener omits browser redirects but retains discovery and shutdown" {
+        do! task {
+          let mutable stopped = false
+          let deps: Bozzetto.Server.ControlListener.ControlDeps =
+            { Version = "headless-test"; McpPort = 47749; Headless = true
+              GetSessionCount = (fun () -> Task.FromResult 3); Shutdown = (fun () -> stopped <- true) }
+          let! app, url = Hosting.start (Bozzetto.Server.ControlListener.mapRoutes deps)
+          use handler = new Net.Http.HttpClientHandler(AllowAutoRedirect = false)
+          use client = new Net.Http.HttpClient(handler, Timeout = TimeSpan.FromSeconds 10.)
+          try
+            for route in [ "/composer"; "/dashboard"; "/favicon.ico" ] do
+              use! response = client.GetAsync(url + route)
+              int response.StatusCode |> Expect.equal (route + " is not installed") 404
+              response.Headers.Location |> Expect.isNull "no browser redirect is advertised"
+            use! discovery = client.GetAsync(url + "/api/daemon-info")
+            int discovery.StatusCode |> Expect.equal "daemon discovery remains available" 200
+            let! info = discovery.Content.ReadAsStringAsync()
+            match Json.parse info with
+            | Ok value ->
+              JsonValue.prop "sessionCount" value |> Option.bind JsonValue.tryAsInt64
+              |> Expect.equal "discovery still reads the control owner" (Some 3L)
+            | Error reason -> failtestf "invalid discovery response: %A" reason
+            use content = new Net.Http.StringContent("{}", Encoding.UTF8, "application/json")
+            use! shutdown = client.PostAsync(url + "/api/shutdown", content)
+            int shutdown.StatusCode |> Expect.equal "shutdown remains available" 200
+            stopped |> Expect.isTrue "shutdown still reaches the control owner"
+          finally
+            Hosting.stop app
+        }
+      }
+
       testTask "Composer and dashboard bookmarks serve the same live Braidpoint page and policy" {
         do! task {
           use stopping = new CancellationTokenSource()
           let hub = hubOf (FakeComposer()) stopping.Token unpaused (ClockGate())
-          let! app, url = Hosting.start (fun app -> mapRoutes app hub)
+          let! app, url = Hosting.start (fun app -> mapRoutes false app (fun () -> hub))
           use client = new Net.Http.HttpClient(Timeout = TimeSpan.FromSeconds 10.)
           try
             let mutable pages = []
@@ -1318,7 +1375,7 @@ let tests =
       testTask "control-port Composer and old dashboard bookmarks redirect to the shared live view" {
         do! task {
           let deps: Bozzetto.Server.ControlListener.ControlDeps =
-            { Version = "0.6.834-test"; McpPort = 47749; GetSessionCount = (fun () -> Task.FromResult 0); Shutdown = ignore }
+            { Version = "0.6.834-test"; McpPort = 47749; Headless = false; GetSessionCount = (fun () -> Task.FromResult 0); Shutdown = ignore }
           let! app, url = Hosting.start (Bozzetto.Server.ControlListener.mapRoutes deps)
           use handler = new Net.Http.HttpClientHandler(AllowAutoRedirect = false)
           use client = new Net.Http.HttpClient(handler, Timeout = TimeSpan.FromSeconds 10.)
@@ -1366,8 +1423,8 @@ let tests =
         let stopping = new CancellationTokenSource()
         let hub = hubOf (FakeComposer()) stopping.Token unpaused (ClockGate())
         let deps: Bozzetto.Server.ControlListener.ControlDeps =
-          { Version = "0.6.834-test"; McpPort = 0; GetSessionCount = (fun () -> Task.FromResult 0); Shutdown = ignore }
-        let! (mcp: Microsoft.AspNetCore.Builder.WebApplication), (mcpUrl: string) = Hosting.start (fun app -> mapRoutes app hub)
+          { Version = "0.6.834-test"; McpPort = 0; Headless = false; GetSessionCount = (fun () -> Task.FromResult 0); Shutdown = ignore }
+        let! (mcp: Microsoft.AspNetCore.Builder.WebApplication), (mcpUrl: string) = Hosting.start (fun app -> mapRoutes false app (fun () -> hub))
         let! (control: Microsoft.AspNetCore.Builder.WebApplication), (controlUrl: string) =
           Hosting.start (Bozzetto.Server.ControlListener.mapRoutes deps)
         let client = new Net.Http.HttpClient()

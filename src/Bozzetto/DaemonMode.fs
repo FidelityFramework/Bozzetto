@@ -2328,6 +2328,7 @@ let run
       StateChanged = Some stateChangedEvent.Publish
       FrictionStore = frictionStore
       Port = mcpPort
+      Headless = flags.Headless
       BindHost = bindHost
       OwnOrigins = daemonOrigins
       SessionOps = sessionOps
@@ -2774,6 +2775,7 @@ let run
   let controlDeps : ControlListener.ControlDeps = {
     Version = version
     McpPort = mcpPort
+    Headless = flags.Headless
     GetSessionCount = fun () -> task {
       let! sessions = sessionOps.GetAllSessions()
       return sessions.Length
@@ -2853,7 +2855,10 @@ let run
   | false -> ()
   log.LogInformation("Bozzetto daemon ready in {StartupMs:F0}ms (PID {Pid}, MCP port {McpPort}, control port {ControlPort})",
     startupSw.Elapsed.TotalMilliseconds, Environment.ProcessId, mcpPort, controlPort)
-  log.LogInformation("Composer: http://localhost:{Port}/composer", mcpPort)
+  if flags.Headless then
+    log.LogInformation("Headless mode: browser pages, assets and UI bridge are disabled")
+  else
+    log.LogInformation("Composer: http://localhost:{Port}/composer", mcpPort)
   log.LogInformation("SSE events: http://localhost:{Port}/events", mcpPort)
   log.LogInformation("Health: http://localhost:{Port}/health", mcpPort)
 

@@ -62,6 +62,7 @@ let private startTestServer (ops: SessionManagementOps) = task {
       StateChanged = None
       FrictionStore = None
       Port = 0
+      Headless = false
       BindHost = Bozzetto.BozzettoConfig.LoopbackHost.Localhost
       OwnOrigins = Bozzetto.Server.HttpOriginGuard.OwnOrigins.ofPorts [ 0 ]
       SessionOps = ops

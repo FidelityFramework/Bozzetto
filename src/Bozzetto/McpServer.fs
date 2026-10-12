@@ -773,6 +773,8 @@ type McpServerConfig = {
   StateChanged: IEvent<SseEvent> option
   FrictionStore: Bozzetto.Features.FrictionSqlite.FrictionStore option
   Port: int
+  /// Omit browser pages, assets and the UI bridge on a headless worker.
+  Headless: bool
   /// Loopback interface to listen on (BozzettoConfig.BindHost, validated at startup).
   BindHost: Bozzetto.BozzettoConfig.LoopbackHost
   /// The daemon's own origins (MCP + control listeners) for the origin gate.
@@ -3333,8 +3335,8 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       mapLiveTestingRoutes app rctx
       mapAnalysisRoutes app rctx
       Bozzetto.Server.ComposerRoutes.mapRoutes app composer
-      Bozzetto.Server.UiBridge.create composer cfg.Port cfg.GetDaemonHealth app.Lifetime.ApplicationStopping cfg.CohortOwner
-      |> Bozzetto.Server.UiBridge.mapRoutes app
+      Bozzetto.Server.UiBridge.mapRoutes cfg.Headless app (fun () ->
+        Bozzetto.Server.UiBridge.create composer cfg.Port cfg.GetDaemonHealth app.Lifetime.ApplicationStopping cfg.CohortOwner)
 
       let _stateSub =
         cfg.StateChanged |> Option.map (fun evt ->

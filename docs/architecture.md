@@ -160,9 +160,15 @@ LLVM ORC JIT is the intended future Clef execution backend and is not implemente
 
 Clef-only deployment without .NET is the migration exit requirement. Portable command/effect replay must be supplemented by physical ownership tests for delayed children, callbacks, cancellation and failed drain on the native host. Native host migration and ORC delivery are separate gates; neither implies the other. See [development](development.md) for acceptance and differential controls.
 
-## Distributed lab nodes: requirements, not delivery
+## Distributed lab nodes: approved topology and delivery requirements
 
-A remote Bozzetto node should coordinate its site's workers, execution hosts and devices. This is a proposed extension of the same ownership model, not a capability established by local Unix sockets or a Host field in a reply. LAN reachability grants no authority.
+The owner has approved distributed FFI build work with the workstation's Bozzetto as controller and the existing Pi VMs on ONE, TWO and THREE as headless Bozzetto nodes. Each node hosts its canonical primary repositories, local admission and owned build processes alongside Pi. Manager retains Forgejo, retrieval and mesh/proxy/OpenNebula housekeeping; it is not a build node. ONE is the first resource and execution trial. TWO and THREE remain available at their current allocations for scoped agent work until ONE's acceptance supports rollout.
+
+The workstation's existing Composer view is the consolidated compiler/build/lease surface; a separate Controller page is not planned. Remote rows must identify the executing node and its incarnation, distinguish connectivity from readiness and admission, show source/toolchain identities and worker-reported outcomes, and keep cancellation requested, acknowledged and physically drained distinct. Dashboard remains the agent and machine-resource view. Remote nodes do not serve a second monitoring UI. Disconnected observations remain visibly unavailable or stale, never an inferred successful cancellation or a free remote slot.
+
+The worker owns its local lease pool and actual process lifetime. The controller requests named work and presents worker-issued observations; it cannot turn a workstation lease into remote capacity or accept an old node incarnation's result as current. Managed tooling builds and compiler-owned Composer operations retain their respective admission and acceptance boundaries. A generic build command must not impersonate a Composer Build or confer permission to execute a native artifact.
+
+This extends the existing ownership model. The topology is an owner decision, not a capability established by local Unix sockets or a Host field in a reply. Authenticated typed binary control, durable operation reconciliation and consolidated remote presentation still require implementation and acceptance. LAN or Cloudflare mesh reachability grants no authority.
 
 A bounded distributed workflow must establish:
 

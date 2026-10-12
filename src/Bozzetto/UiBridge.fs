@@ -1424,42 +1424,44 @@ let private header (ctx: HttpContext) (name: string) =
 /// layouts (resources/leases and compiler operations), GET /favicon.*
 /// its tab icons, and GET /ui/bridge upgrades to the bridge. All sit behind
 /// the daemon's origin guard.
-let mapRoutes (app: WebApplication) (hub: Hub) =
-  for icon in Icons.all () do
-    app.MapGet(icon.Route, RequestDelegate(fun ctx -> Icons.write icon ctx)) |> ignore
+let mapRoutes (headless: bool) (app: WebApplication) (createHub: unit -> Hub) =
+  if not headless then
+    let hub = createHub()
+    for icon in Icons.all () do
+      app.MapGet(icon.Route, RequestDelegate(fun ctx -> Icons.write icon ctx)) |> ignore
 
-  let servePage = RequestDelegate(fun (ctx: HttpContext) -> task {
-    let scripts, styles = pageHashes.Value
-    let host = if ctx.Request.Host.HasValue then Some(string ctx.Request.Host) else None
-    ctx.Response.ContentType <- "text/html; charset=utf-8"
-    ctx.Response.Headers.CacheControl <- StringValues "no-store"
-    ctx.Response.Headers.ContentSecurityPolicy <- StringValues(Page.contentSecurityPolicy scripts styles host)
-    ctx.Response.Headers.XContentTypeOptions <- StringValues "nosniff"
-    ctx.Response.Headers["Referrer-Policy"] <- StringValues "no-referrer"
-    do! ctx.Response.WriteAsync(page, ctx.RequestAborted)
-  })
-  // Both browser entry points share a bundle, theme and security policy.
-  // The frontend selects its layout from the route; no second bridge owner.
-  for route in [ "/dashboard"; "/composer" ] do
-    app.MapGet(route, servePage) |> ignore
+    let servePage = RequestDelegate(fun (ctx: HttpContext) -> task {
+      let scripts, styles = pageHashes.Value
+      let host = if ctx.Request.Host.HasValue then Some(string ctx.Request.Host) else None
+      ctx.Response.ContentType <- "text/html; charset=utf-8"
+      ctx.Response.Headers.CacheControl <- StringValues "no-store"
+      ctx.Response.Headers.ContentSecurityPolicy <- StringValues(Page.contentSecurityPolicy scripts styles host)
+      ctx.Response.Headers.XContentTypeOptions <- StringValues "nosniff"
+      ctx.Response.Headers["Referrer-Policy"] <- StringValues "no-referrer"
+      do! ctx.Response.WriteAsync(page, ctx.RequestAborted)
+    })
+    // Both browser entry points share a bundle, theme and security policy.
+    // The frontend selects its layout from the route; no second bridge owner.
+    for route in [ "/dashboard"; "/composer" ] do
+      app.MapGet(route, servePage) |> ignore
 
-  // Passive latest-observation API; reading it never starts acquisition.
-  app.MapGet("/api/resources", RequestDelegate(fun ctx -> task {
-    ctx.Response.ContentType <- "application/json"
-    ctx.Response.Headers.CacheControl <- StringValues "no-store"
-    do! ctx.Response.WriteAsync(UiBridgeCodec.encodeEvent(Resources hub.Resources), ctx.RequestAborted)
-  })) |> ignore
+    // Passive latest-observation API; reading it never starts acquisition.
+    app.MapGet("/api/resources", RequestDelegate(fun ctx -> task {
+      ctx.Response.ContentType <- "application/json"
+      ctx.Response.Headers.CacheControl <- StringValues "no-store"
+      do! ctx.Response.WriteAsync(UiBridgeCodec.encodeEvent(Resources hub.Resources), ctx.RequestAborted)
+    })) |> ignore
 
-  app.MapGet("/ui/bridge", RequestDelegate(fun (ctx: HttpContext) -> task {
-    if not ctx.WebSockets.IsWebSocketRequest then
-      ctx.Response.StatusCode <- 400
-      do! ctx.Response.WriteAsync("The UI bridge accepts WebSocket upgrades only.", ctx.RequestAborted)
-    else
-      match Page.admitUpgrade (header ctx "Origin") (header ctx "Sec-Fetch-Site") with
-      | Error reason ->
-        ctx.Response.StatusCode <- 403
-        do! ctx.Response.WriteAsync(reason, ctx.RequestAborted)
-      | Ok() ->
-        use! socket = ctx.WebSockets.AcceptWebSocketAsync()
-        do! hub.RunAsync(WebSocketTransport(socket, hub.Options.MaxFrameBytes), ctx.RequestAborted)
-  })) |> ignore
+    app.MapGet("/ui/bridge", RequestDelegate(fun (ctx: HttpContext) -> task {
+      if not ctx.WebSockets.IsWebSocketRequest then
+        ctx.Response.StatusCode <- 400
+        do! ctx.Response.WriteAsync("The UI bridge accepts WebSocket upgrades only.", ctx.RequestAborted)
+      else
+        match Page.admitUpgrade (header ctx "Origin") (header ctx "Sec-Fetch-Site") with
+        | Error reason ->
+          ctx.Response.StatusCode <- 403
+          do! ctx.Response.WriteAsync(reason, ctx.RequestAborted)
+        | Ok() ->
+          use! socket = ctx.WebSockets.AcceptWebSocketAsync()
+          do! hub.RunAsync(WebSocketTransport(socket, hub.Options.MaxFrameBytes), ctx.RequestAborted)
+    })) |> ignore

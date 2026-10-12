@@ -286,6 +286,12 @@ let decideDaemonLaunch
   | Some info -> AttachToExistingDaemon info
   | None -> StartNewDaemon
 
+/// Discovery does not attest the running daemon's deployment mode.
+let daemonAttachmentRejection (flags: Args.DaemonFlags) =
+  if flags.Headless then
+    Some "Cannot verify --headless for an already-running daemon. Stop it before starting headless, or choose an unused --mcp-port."
+  else None
+
 /// Result of the fallback force-kill performed when graceful shutdown fails.
 type StopKillResult =
   /// Process was found and terminated.
@@ -498,6 +504,7 @@ let main args =
     printfn "  --help, -h             Show this help message"
     printfn "  --mcp-port PORT        Set custom MCP server port (default: 47749)"
     printfn "  --supervised           Run under watchdog supervisor (auto-restart on crash)"
+    printfn "  --headless             Omit browser pages, assets and UI bridge; keep command services"
     printfn "  --no-resume            Skip restoring previous sessions on daemon startup"
     printfn "  --prune                Mark all stale sessions as stopped and exit"
     printfn "  --owner-pid PID        Exit when the process at PID exits (fenced by --owner-start"
@@ -533,6 +540,7 @@ let main args =
     printfn ""
     printfn "  The Composer page, MCP agents, and editor integrations are clients of the daemon."
     printfn "  If a daemon is already running, `boz` reports its Composer URL."
+    printfn "  --headless requires a new daemon; it cannot verify an existing daemon's mode."
     printfn ""
     printfn "Clef/Composer Quick Start:"
     printfn "  1. boz status — find the shared daemon. If absent, start the reviewed installed boz"
@@ -620,8 +628,13 @@ let main args =
     | true, _ ->
       runDaemon args
     | false, AttachToExistingDaemon info ->
-      printfn "Bozzetto daemon already running (PID %d, port %d)." info.Pid info.Port
-      printfn "Composer: http://localhost:%d/composer" info.Port
-      0
+      match daemonAttachmentRejection (Args.DaemonFlags.parse (Array.toList args)) with
+      | Some reason ->
+        eprintfn "boz: %s" reason
+        2
+      | None ->
+        printfn "Bozzetto daemon already running (PID %d, port %d)." info.Pid info.Port
+        printfn "Composer: http://localhost:%d/composer" info.Port
+        0
     | false, StartNewDaemon ->
       runDaemon args

@@ -16,6 +16,11 @@ let daemonFlagTests =
     testCase "empty args gives defaults" <| fun () ->
       let flags = DaemonFlags.parse []
       flags |> Expect.equal "empty args should equal defaults" DaemonFlags.defaults
+      flags.Headless |> Expect.isFalse "browser controller remains the default"
+
+    testCase "parses --headless without changing session flags" <| fun () ->
+      DaemonFlags.parse ["--headless"]
+      |> Expect.equal "headless is an explicit startup choice" { DaemonFlags.defaults with Headless = true }
 
     testCase "parses --no-resume" <| fun () ->
       let flags = DaemonFlags.parse ["--no-resume"]
@@ -38,10 +43,11 @@ let daemonFlagTests =
       flags |> Expect.equal "unknown flags should be ignored" DaemonFlags.defaults
 
     testCase "parses multiple flags" <| fun () ->
-      let flags = DaemonFlags.parse ["--no-resume"; "--no-watch"]
+      let flags = DaemonFlags.parse ["--no-resume"; "--no-watch"; "--headless"]
       flags.NoResume |> Expect.isTrue "should set no-resume"
       flags.NoWatch |> Expect.isTrue "should set no-watch"
       flags.Prune |> Expect.isFalse "prune not set"
+      flags.Headless |> Expect.isTrue "headless composes with session flags"
   ]
 
 // === Test Group 2: WorkerConfig from env (pure via dependency rejection) ===

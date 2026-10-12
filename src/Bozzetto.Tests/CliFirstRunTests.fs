@@ -34,7 +34,7 @@ let unimplementedFlagDetectionTests =
       |> Expect.isEmpty "empty args have no unimplemented flags"
 
     testCase "implemented flags alone detect nothing" <| fun () ->
-      Args.UnimplementedFlag.detectAll ["--no-resume"; "--prune"; "--mcp-port"; "47700"]
+      Args.UnimplementedFlag.detectAll ["--no-resume"; "--prune"; "--headless"; "--mcp-port"; "47700"]
       |> Expect.isEmpty "known-good flags must not be flagged as unimplemented"
 
     testCase "detects --proj" <| fun () ->
@@ -171,6 +171,7 @@ let mainRejectsUnimplementedFlagsTests =
       stdout |> Expect.stringContains "mentions daemon" "daemon"
       stdout |> Expect.stringContains "mentions stop" "stop"
       stdout |> Expect.stringContains "mentions status" "status"
+      stdout |> Expect.stringContains "documents explicit headless startup" "--headless"
       (stdout.Contains "--no-watch")
       |> Expect.isFalse "must not advertise a flag it refuses to honor"
       (stdout.Contains "--proj")
@@ -294,6 +295,14 @@ let daemonLaunchContractTests =
 
       Program.decideDaemonLaunch readOnPort 37849
       |> Expect.equal "custom port should not attach to default-port daemon" Program.StartNewDaemon
+    }
+
+    test "headless cannot silently attach to an existing daemon of unknown mode" {
+      Program.daemonAttachmentRejection (Args.DaemonFlags.parse ["--headless"])
+      |> Expect.equal "the refusal gives a concrete way to request a new daemon"
+           (Some "Cannot verify --headless for an already-running daemon. Stop it before starting headless, or choose an unused --mcp-port.")
+      Program.daemonAttachmentRejection Args.DaemonFlags.defaults
+      |> Expect.equal "default startup can still attach" None
     }
 
     test "daemon launch decision reuses daemon already running on requested port" {

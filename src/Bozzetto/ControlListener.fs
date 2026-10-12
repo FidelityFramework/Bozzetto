@@ -71,6 +71,7 @@ module DaemonInfoContract =
 type ControlDeps = {
   Version: string
   McpPort: int
+  Headless: bool
   GetSessionCount: unit -> Task<int>
   Shutdown: unit -> unit
 }
@@ -79,15 +80,16 @@ type ControlDeps = {
 let mapRoutes (deps: ControlDeps) (app: WebApplication) : unit =
   // Browsers probe /favicon.ico unconditionally; answer it with the Clef
   // logo the page's own tab shows, instead of a 404.
-  app.MapGet("/favicon.ico", fun (ctx: HttpContext) -> UiBridge.Icons.write UiBridge.Icons.ico.Value ctx) |> ignore
-  // Both browser bookmarks land on the MCP listener's shared Composer view.
-  // The control listener has no separate dashboard or session directory.
-  for route in [ "/composer"; "/dashboard" ] do
-    app.MapGet(route, fun (ctx: HttpContext) ->
-      let target = UriBuilder("http", ctx.Request.Host.Host, deps.McpPort, route)
-      ctx.Response.Redirect(target.Uri.AbsoluteUri)
-      Task.CompletedTask
-    ) |> ignore
+  if not deps.Headless then
+    app.MapGet("/favicon.ico", fun (ctx: HttpContext) -> UiBridge.Icons.write UiBridge.Icons.ico.Value ctx) |> ignore
+    // Both browser bookmarks land on the MCP listener's shared Composer view.
+    // The control listener has no separate dashboard or session directory.
+    for route in [ "/composer"; "/dashboard" ] do
+      app.MapGet(route, fun (ctx: HttpContext) ->
+        let target = UriBuilder("http", ctx.Request.Host.Host, deps.McpPort, route)
+        ctx.Response.Redirect(target.Uri.AbsoluteUri)
+        Task.CompletedTask
+      ) |> ignore
   // Client discovery (replaces daemon.json).
   app.MapGet("/api/daemon-info", fun (ctx: HttpContext) ->
     task {

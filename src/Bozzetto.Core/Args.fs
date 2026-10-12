@@ -6,11 +6,12 @@ open System.IO.Compression
 
 // === New types: the real daemon-worker contract ===
 
-/// What the daemon CLI actually cares about — 3 flags, nothing more.
+/// Daemon startup options, separate from worker configuration.
 type DaemonFlags = {
   NoResume: bool
   Prune: bool
   NoWatch: bool
+  Headless: bool
 }
 
 module DaemonFlags =
@@ -18,6 +19,7 @@ module DaemonFlags =
     NoResume = false
     Prune = false
     NoWatch = false
+    Headless = false
   }
 
   let parse (args: string list) =
@@ -27,6 +29,7 @@ module DaemonFlags =
       | "--no-resume" :: rest -> loop { acc with NoResume = true } rest
       | "--prune" :: rest -> loop { acc with Prune = true } rest
       | "--no-watch" :: rest -> loop { acc with NoWatch = true } rest
+      | "--headless" :: rest -> loop { acc with Headless = true } rest
       | ("--proj" | "--sln") :: [] ->
         acc
       | ("--proj" | "--sln") :: _ :: rest ->
