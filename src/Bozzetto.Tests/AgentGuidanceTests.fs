@@ -70,7 +70,7 @@ let serverInstructionsTests = testList "MCP server instructions" [
   testCase "provider identity and checkout routing remain explicit in every guidance surface" <| fun _ ->
     for label, text in guidanceSurfaces () do
       [ "get_daemon_status"; "identity"; "version"; "composer_list_sessions"; "list_sessions"; "working directory"
-        "worktree"; "host/session/epoch"; "source revision"; "composer://sessions"; "/composer"; "composer_retire_worker" ]
+        "worktree"; "host/session/epoch"; "source revision"; "composer://sessions"; "/work"; "composer_retire_worker" ]
       |> List.filter (fun needle -> not (contains needle text))
       |> Expect.isEmpty (sprintf "%s must retain provider and checkout authority" label)
 

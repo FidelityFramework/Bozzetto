@@ -1,6 +1,6 @@
 # Composer workflow
 
-Composer is a differential compiler. Bozzetto coordinates explicit project work and owned process lifetimes; it does not decide source meaning, proof validity or artifact eligibility. Use the `/composer` page on daemon port 47749 or the `composer_*` MCP operations. The control listener on 47750 is not an alternate execution path.
+Composer is a differential compiler. Bozzetto coordinates explicit project work and owned process lifetimes; it does not decide source meaning, proof validity or artifact eligibility. Use the `/work` page on daemon port 47749 or the `composer_*` MCP operations. The control listener on 47750 is not an alternate execution path.
 
 The governing rules are in repository-root `AGENTS.md`, especially **Clef and Composer work**, **Architecture**, **Language and stack**, and **Validation posture**. This document distinguishes inspected implementation from requirements. Source inspection is not evidence that the installed daemon matches the checkout, that a workflow passed, or that native hosting is delivered. Check installed identity and readiness using [operations.md](operations.md).
 
@@ -62,7 +62,7 @@ Other entry text is bounded too: caller labels, session identities and run sourc
 
 The supervisor publishes the complete immutable journal with a fixed incarnation and increasing entry sequence through `Journal` and `JournalChanged`. The fact plane derives the stamped `operations` event on protocol 8 and supplies current state on connect and resync (`src/Bozzetto/UiBridge.fs`, `Facts`; `src/bozzetto-web/src/Shared/Protocol.fs`, `OperationsBoard`). Push coalescing may skip intermediate snapshots, and the bounds mean this is not a durable audit history or missed-event replay.
 
-On the Composer page, Activity lists the journal newest first. Run output offers journal entries with run metadata, defaults to the newest journal run when no retained selection matches, and displays `[transcript dropped for space]` when output was evicted. The page's own command activity and run output remain separate, labelled `this page`; a browser operation can therefore appear in both sources (`src/bozzetto-web/src/Frontend/App.fs`, `OutputPane`; `src/bozzetto-web/src/Frontend/Model.fs`, `apply`). A journal outcome or retained transcript grants no current execution or physical-drain authority.
+On the Work page, Activity lists the journal newest first. Run output offers journal entries with run metadata, defaults to the newest journal run when no retained selection matches, and displays `[transcript dropped for space]` when output was evicted. The page's own command activity and run output remain separate, labelled `this page`; a browser operation can therefore appear in both sources (`src/bozzetto-web/src/Frontend/App.fs`, `OutputPane`; `src/bozzetto-web/src/Frontend/Model.fs`, `apply`). A journal outcome or retained transcript grants no current execution or physical-drain authority.
 
 ## Reserve before write
 

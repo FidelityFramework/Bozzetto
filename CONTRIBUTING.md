@@ -20,7 +20,7 @@ Welcome! Bozzetto is an open-source project and we genuinely appreciate contribu
 - An editor — VS Code with Ionide, Neovim, Rider, or your preference
 
 Bozzetto on `47749`/`47750` is the only daemon surface; it serves Clef/Composer
-through the `composer_*` tools and the `/composer` browser page. Embedded
+through the `composer_*` tools and the `/work` browser page. Embedded
 production FSI hosting is retired by the [architecture](docs/architecture.md),
 and no separate F# REPL service is part of the workflow. Changes to Bozzetto's
 own F# code are validated with `dotnet build` and the unfiltered test suite.
@@ -64,8 +64,8 @@ Now `boz` on your PATH is your locally-built version.
 # Point Bozzetto at any F# project
 boz
 
-# Use an editor integration, MCP client, or the Composer browser page
-# Composer: http://localhost:47749/composer
+# Use an editor integration, MCP client, or the Work browser page
+# Work: http://localhost:47749/work
 ```
 
 ## Project Structure
@@ -87,7 +87,7 @@ requires a separate dependency refactor.
 
 **Good starting points for reading code:**
 - `src/Bozzetto/DaemonMode.fs` — daemon composition and client routing
-- `src/Bozzetto/ComposerRoutes.fs` — the `/composer` browser page and `/api/composer/*` routes
+- `src/Bozzetto/UiBridge.fs` — the `/work` and `/dashboard` browser pages; `src/Bozzetto/ComposerRoutes.fs` owns the `/api/composer/*` routes
 - `src/Bozzetto/McpServer.fs` and `src/Bozzetto/McpTools.fs` — MCP transport and tools
 - `src/Bozzetto.Tests/` — the test project shows how every module is exercised
 
@@ -355,10 +355,10 @@ Bozzetto is **daemon-first** — one long-running server, many clients:
 
 Key architectural concepts:
 - **Thin clients** — editors and MCP clients use the same session-scoped daemon contracts
-- **Browser UI** — the plain-JS `/composer` page on 47749 uses `/api/composer/*` and SSE; a Partas.Solid UI in `src/bozzetto-web/` is in progress
-- **Worker isolation** — Composer supervises an isolated compiler worker for native build and accepted-artifact execution
-- **SSE for reads** — all state changes push to clients via Server-Sent Events
-- **POST for commands** — write operations are POST-only, return acknowledgment only
+- **Browser UI** — the Partas.Solid `/work` and `/dashboard` pages on 47749 share the `/ui/bridge` WebSocket
+- **Worker isolation** — Bozzetto supervises an isolated Composer compiler worker for native build and accepted-artifact execution
+- **Pushed observations** — the browser receives owner-published updates through its shared bridge
+- **Commands** — browser commands use that bridge; the compiler HTTP API exposes POST operations
 
 ## Questions?
 

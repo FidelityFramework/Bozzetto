@@ -25,7 +25,7 @@ let BozzettoLoopPromptName = "bozzetto_loop"
 let loopSteps = [
   "Clef: composer_open_project with an absolute .fidproj. Retain the returned host/session/epoch and source revision."
   "Call composer_reserve_edit before source writes; proceed only on success. Edit, then composer_build with that reservation."
-  "After an accepted build, execute only with composer_run_current. Observe composer://sessions or /composer. Use composer_retire_worker before compiler replacement, coordinating with other owners."
+  "After an accepted build, execute only with composer_run_current. Observe composer://sessions or /work. Use composer_retire_worker before compiler replacement, coordinating with other owners."
   "F# implementation: RED: write the smallest failing Expecto test in Bozzetto.Tests. GREEN: fix the .fs file; use 2 spaces and Expecto.Flip messages first."
   "Build: acquire_full_build_lease; after grant run dotnet build; release_work_lease with lease_id=<granted leaseId> when the process completes, including failure."
   "Tests: acquire_test_suite_lease; after grant run unfiltered dotnet Bozzetto.Tests/bin/<cfg>/net10.0/Bozzetto.Tests.dll --summary; require TRUST verdict=Trusted; release_work_lease with lease_id=<granted leaseId> when the process completes, including failure."

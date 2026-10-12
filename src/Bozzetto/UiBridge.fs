@@ -1420,8 +1420,8 @@ let private header (ctx: HttpContext) (name: string) =
   | true, values when not (String.IsNullOrWhiteSpace(string values)) -> Some(string values)
   | _ -> None
 
-/// GET /dashboard and /composer serve one welded bundle with route-selected
-/// layouts (resources/leases and compiler operations), GET /favicon.*
+/// GET /dashboard and /work serve one welded bundle with route-selected
+/// layouts (resources on Dashboard; compiler operations and leases on Work), GET /favicon.*
 /// its tab icons, and GET /ui/bridge upgrades to the bridge. All sit behind
 /// the daemon's origin guard.
 let mapRoutes (headless: bool) (app: WebApplication) (createHub: unit -> Hub) =
@@ -1442,7 +1442,7 @@ let mapRoutes (headless: bool) (app: WebApplication) (createHub: unit -> Hub) =
     })
     // Both browser entry points share a bundle, theme and security policy.
     // The frontend selects its layout from the route; no second bridge owner.
-    for route in [ "/dashboard"; "/composer" ] do
+    for route in [ "/dashboard"; "/work" ] do
       app.MapGet(route, servePage) |> ignore
 
     // Passive latest-observation API; reading it never starts acquisition.

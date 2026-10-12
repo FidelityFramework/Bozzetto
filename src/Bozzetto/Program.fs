@@ -61,7 +61,7 @@ let explicitDaemonInvocationUsesAlternatePort (args: string array) =
   requestedPort <> defaultPort
 
 let deprecatedClientMessage name =
-  sprintf "The '%s' client is deprecated and no longer shipped. Use an editor integration, an MCP client, or the Composer page at http://localhost:47749/composer." name
+  sprintf "The '%s' client is deprecated and no longer shipped. Use an editor integration, an MCP client, or the Work page at http://localhost:47749/work." name
 
 let waitForDaemonReady
   (sleep: int -> unit)
@@ -407,7 +407,7 @@ let statusCommand
     printfn "  Started:    %s" (info.StartedAt.ToString("o"))
     printfn "  Directory:  %s" info.WorkingDirectory
     printfn "  Version:    %s" info.Version
-    printfn "  Composer:   http://localhost:%d/composer" info.Port
+    printfn "  Work:       http://localhost:%d/work" info.Port
     printfn "  MCP (Streamable HTTP): http://localhost:%d/" info.Port
     printfn "  MCP (SSE, older clients): http://localhost:%d/sse" info.Port
     match fetchSessionCount info with

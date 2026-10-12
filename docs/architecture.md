@@ -32,7 +32,7 @@ Browser, editor and agent adapters
                  |
                  v
 Bozzetto daemon, main listener 47749
-  MCP, HTTP operations, /composer, /dashboard, /ui/bridge
+  MCP, HTTP operations, /work, /dashboard, /ui/bridge
   workspace routing, lease admission, observations
                  |
                  | typed binary, local Unix-domain stream socket
@@ -54,7 +54,7 @@ The two listeners are separate ASP.NET Core applications in the same daemon proc
 
 `src/Bozzetto/DaemonMode.fs` creates the Composer supervisor from configuration. `src/Bozzetto/ComposerSupervisor.fs` starts the worker lazily for an Open operation, using `BOZZETTO_COMPOSER_WORKER`; absent configuration produces an explicit unavailable result. Existing operations must address the active worker's host, epoch and provider. There is no implicit worker launch to satisfy an unrelated status or run request.
 
-The browser is the Partas.Solid application in `src/bozzetto-web/`. `src/Bozzetto/UiBridge.fs` serves one welded bundle at `/composer` and `/dashboard`, with one `/ui/bridge` WebSocket route. Both layouts use the same owner facts and supervisor. Build/validation leases and compiler work belong on Composer; the Dashboard presents agents and machine resources. See [operations](operations.md) for deployment, health and accounting.
+The browser is the Partas.Solid application in `src/bozzetto-web/`. `src/Bozzetto/UiBridge.fs` serves one welded bundle at `/work` and `/dashboard`, with one `/ui/bridge` WebSocket route. Both layouts use the same owner facts and supervisor. Build/validation leases and compiler work belong on Work; the Dashboard presents agents and machine resources. See [operations](operations.md) for deployment, health and accounting.
 
 ## Ownership, not a second compiler
 
@@ -128,7 +128,7 @@ The intended reactive shape is owner input, derived projection, then delivery ef
 A bounded implementation exists in `src/Bozzetto/UiBridge.fs`, `Facts.Graph`:
 
 - Owners publish complete immutable health, lease, agent-work and membership values with their own serials.
-- The supervisor also publishes its bounded, memory-only journal of every caller's settled non-status Composer operations, including refusals and run output, as the fifth input; the fourth work derives protocol 8 `operations` for the Composer page's Activity and Run output tabs, with adapter-reported caller labels rather than authenticated identities (`src/Bozzetto/ComposerJournal.fs`, `src/Bozzetto/ComposerSupervisor.fs`, `src/Bozzetto/UiBridge.fs`, `src/bozzetto-web/src/Shared/Protocol.fs`, `src/bozzetto-web/src/Frontend/App.fs`).
+- The supervisor also publishes its bounded, memory-only journal of every caller's settled non-status Composer operations, including refusals and run output, as the fifth input; the fourth work derives protocol 8 `operations` for the Work page's Activity and Run output tabs, with adapter-reported caller labels rather than authenticated identities (`src/Bozzetto/ComposerJournal.fs`, `src/Bozzetto/ComposerSupervisor.fs`, `src/Bozzetto/UiBridge.fs`, `src/bozzetto-web/src/Shared/Protocol.fs`, `src/bozzetto-web/src/Frontend/App.fs`).
 - Admission refuses older publications, distinguishes exact duplicates from conflicting equal serials, and fences foreign agent-board and journal incarnations.
 - Foundation work definitions declare their reads explicitly. Pure synchronous projections report Finished and Drained and deliver through Offers.
 - Sink registration and retrieval of current fact values occur under the same gate, preventing a gap between current-state delivery and later fact publications.

@@ -80,7 +80,7 @@ agent is connected.
 
 ## Clef and Composer work
 
-Use the `composer_*` tools and the `/composer` page on 47749. Open an explicit
+Use the `composer_*` tools and the `/work` page on 47749. Open an explicit
 `.fidproj`, reserve before editing, and execute only through
 `composer_run_current`.
 
@@ -102,7 +102,7 @@ dotnet fsi ci-pipeline.fsx     # full pipeline; `-- ci`, `-- composer`, `-- pack
   `tools/build/lease.fsx` (the client `ci-pipeline.fsx` uses), or the MCP tools `acquire_full_build_lease`,
   `acquire_test_suite_lease` and `release_work_lease`. Follow wait and refused
   decisions. Always release. Builds and suites over Clef/Composer code are
-  Composer work, so granted and queued leases show on the `/composer` page
+  Composer work, so granted and queued leases show on the `/work` page
   beside the compiler worker; the Dashboard keeps agents and machine resources.
 - **A lease is a heartbeat, not a deadline.** A granted lease expires after
   its kind's lifetime only if the holder stops renewing (`/api/lease/renew`).
@@ -218,7 +218,7 @@ and trust ledgers that validation records cite before deleting artifacts.
 - **Target:** `net10.0`; `global.json` selects the stable .NET 10 SDK.
   Solution format is `.slnx`.
 - **Daemon HTTP:** ASP.NET Core minimal APIs.
-- **Browser UI:** Partas.Solid in `src/bozzetto-web/`, served at `/composer` and
+- **Browser UI:** Partas.Solid in `src/bozzetto-web/`, served at `/work` and
   `/dashboard` over `/ui/bridge`. `src/bozzetto-web/theme.js` is the only colour
   and font source. Change reusable treatments in
   `src/bozzetto-web/src/Frontend/styles.css`, then rebuild, verify and weld the

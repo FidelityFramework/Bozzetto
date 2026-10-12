@@ -130,7 +130,7 @@ A lease is a heartbeat, not a command deadline. Current default lifetimes are 10
 
 No renewal or withdrawal MCP tool is registered. Current direct HTTP renewal uses `holder` and `leaseId`; withdrawal uses `holder` and `kind`, at `/api/lease/renew` and `/api/lease/withdraw`. Their JSON bodies in `McpServer.fs` are drift requiring typed-binary replacement. A caller-supplied HTTP holder is not the MCP connection binding. Do not mix holders or claim that MCP acquisition alone supplies an automatic heartbeat. `scripts/work-lease run` manages renewal for caller-owned commands; its current direct wire has the same migration obligation.
 
-Follow wait/refused decisions without bypassing accounting. Investigate memory deferrals rather than polling blindly or stopping another owner's processes. Lease grants and queued Clef/Composer work belong on `/composer`; the Dashboard's CPU figure covers only the daemon and its worker, not external leased processes. See [operations.md](operations.md) and [development.md](development.md) for validation under `net10.0` and the unfiltered TRUST acceptance rule.
+Follow wait/refused decisions without bypassing accounting. Investigate memory deferrals rather than polling blindly or stopping another owner's processes. Lease grants and queued Clef/Composer work belong on `/work`; the Dashboard's CPU figure covers only the daemon and its worker, not external leased processes. See [operations.md](operations.md) and [development.md](development.md) for validation under `net10.0` and the unfiltered TRUST acceptance rule.
 
 ## Cohort coordination
 

@@ -2858,7 +2858,7 @@ let run
   if flags.Headless then
     log.LogInformation("Headless mode: browser pages, assets and UI bridge are disabled")
   else
-    log.LogInformation("Composer: http://localhost:{Port}/composer", mcpPort)
+    log.LogInformation("Work: http://localhost:{Port}/work", mcpPort)
   log.LogInformation("SSE events: http://localhost:{Port}/events", mcpPort)
   log.LogInformation("Health: http://localhost:{Port}/health", mcpPort)
 

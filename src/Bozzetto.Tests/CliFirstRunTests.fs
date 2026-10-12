@@ -272,7 +272,9 @@ let daemonLaunchContractTests =
       Program.CliCommand.parse [| "gui" |]
       |> Expect.equal "gui should be recognized as deprecated" (Program.DeprecatedClient "gui")
       Program.deprecatedClientMessage "tui"
-      |> Expect.stringContains "deprecation should direct users to the maintained UI" "/composer"
+      |> Expect.stringContains "deprecation should direct users to the maintained UI" "Work page at http://localhost:47749/work"
+      (Program.deprecatedClientMessage "tui").Contains("/composer")
+      |> Expect.isFalse "deprecation must not advertise the retired monitoring route"
     }
 
     test "daemon launch decision starts new daemon when only default port is occupied" {

@@ -231,9 +231,9 @@ let tests =
           use! stream = streamResponse.Content.ReadAsStreamAsync()
           use reader = new StreamReader(stream)
           do! nextSse reader
-          let! humanPage = http.GetStringAsync "/composer"
+          let! humanPage = http.GetStringAsync "/work"
           let! dashboardPage = http.GetStringAsync "/dashboard"
-          humanPage |> Expect.equal "both human entry points share the live Composer display" dashboardPage
+          humanPage |> Expect.equal "both human entry points share the live Work display" dashboardPage
           humanPage |> Expect.stringContains "the shared display uses Braidpoint's theme" "data-theme=\"dark\""
           humanPage |> Expect.stringContains "the live display observes the daemon through its bridge" "/ui/bridge"
 

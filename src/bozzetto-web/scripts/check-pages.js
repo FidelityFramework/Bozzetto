@@ -102,17 +102,18 @@ async function check() {
   });
   await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
   const dashboard = await tab(origin, '/dashboard', 900);
-  const composer = await tab(origin, '/composer', 900);
+  const work = await tab(origin, '/work', 900);
   const inspect = session => evaluate(session, `({
     title: document.title, text: document.body.innerText,
-    links: [...document.querySelectorAll('a')].map(a => ({path: a.getAttribute('href'), active: a.classList.contains('btn-active')})),
+    headings: [...document.querySelectorAll('h2')].map(h => h.textContent),
+    links: [...document.querySelectorAll('a')].map(a => ({path: a.getAttribute('href'), title: a.getAttribute('title'), active: a.classList.contains('btn-active')})),
     overflow: document.documentElement.scrollWidth > innerWidth
   })`);
   const d = await inspect(dashboard);
-  const c = await inspect(composer);
-  await writeFile(join(evidence, 'views.json'), JSON.stringify({dashboard: d, composer: c}, null, 2));
+  const c = await inspect(work);
+  await writeFile(join(evidence, 'views.json'), JSON.stringify({dashboard: d, work: c}, null, 2));
   assert.equal(d.title, 'Dashboard · Bozzetto');
-  assert.equal(c.title, 'Composer · Bozzetto');
+  assert.equal(c.title, 'Work · Bozzetto');
   for (const text of ['Whole-machine resources', 'Observe for 2 minutes', 'Agent work', 'Healthy', 'memory Normal']) assert.ok(d.text.toLowerCase().includes(text.toLowerCase()), text);
   const agentPanel = "[...document.querySelectorAll('h2')].find(h => h.textContent === 'Agent work').closest('.card-body')";
   const historyDetails = `${agentPanel}.querySelector(':scope > details')`;
@@ -130,9 +131,9 @@ async function check() {
   assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'earlier passes start collapsed');
   assert.equal(await evaluate(dashboard, `${agentPanel}.querySelectorAll('details[open]').length`), 0, 'per-pass details start collapsed too');
   assert.equal(await evaluate(dashboard, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); return cards.indexOf('Agent work') < cards.indexOf('Whole-machine resources'); })()`), true, 'agent work precedes resources');
-  // Builds and suites are Composer work: their leases sit beside the compiler worker.
-  assert.equal(await evaluate(composer, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); const worker = cards.indexOf('Compiler worker'), leases = cards.indexOf('Work leases'); return worker >= 0 && leases > worker; })()`), true, 'leases follow the compiler worker on Composer');
-  assert.equal(await evaluate(composer, "[...document.querySelectorAll('h2')].find(h => h.textContent === 'Work leases').getBoundingClientRect().bottom < innerHeight"), true, 'leases are visible on Composer without scrolling');
+  // Builds and suites appear on Work: their leases sit beside the compiler worker.
+  assert.equal(await evaluate(work, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); const worker = cards.indexOf('Compiler worker'), leases = cards.indexOf('Work leases'); return worker >= 0 && leases > worker; })()`), true, 'leases follow the compiler worker on Work');
+  assert.equal(await evaluate(work, "[...document.querySelectorAll('h2')].find(h => h.textContent === 'Work leases').getBoundingClientRect().bottom < innerHeight"), true, 'leases are visible on Work without scrolling');
   // Native disclosures retain every supplied detail without dumping them into
   // the default view. Opening them must not fetch or issue bridge commands.
   await evaluate(dashboard, `${historyDetails}.querySelector(':scope > summary').click()`);
@@ -151,10 +152,15 @@ async function check() {
   await evaluate(dashboard, `(() => { const d = ${historyDetails}; d.append(...[...d.querySelectorAll(':scope > details')].reverse()); })()`);
   await assertHistoryOrder();
   await writeFile(join(evidence, 'agent-accordion.json'), JSON.stringify({current:await currentNames(), earlier:await historyNames(), initiallyCollapsed:true, fullDetailsRetained:true, noExpansionTraffic:true, reverseOrderMutationCaught:true}, null, 2));
-  for (const text of ['Open project', 'Compiler worker', 'Run output', 'Composer sessions', 'Work leases']) assert.ok(!d.text.toLowerCase().includes(text.toLowerCase()), `dashboard excludes ${text}`);
+  const assertDashboardHeadings = page => {
+    for (const title of ['Open project', 'Compiler worker', 'Run output', 'Composer sessions', 'Work leases']) {
+      assert.ok(!page.headings.includes(title), `dashboard excludes the ${title} panel`);
+    }
+  };
+  assertDashboardHeadings(d);
   for (const text of ['Composer sessions', 'Compiler worker', 'Run output', 'Open project', 'No open projects.', 'Work leases']) assert.ok(c.text.toLowerCase().includes(text.toLowerCase()), text);
-  for (const text of ['Whole-machine resources', 'Observe for 2 minutes', 'Agent work']) assert.ok(!c.text.toLowerCase().includes(text.toLowerCase()), `composer excludes ${text}`);
-  for (const [name, page] of [['dashboard', dashboard], ['composer', composer]]) {
+  for (const text of ['Whole-machine resources', 'Observe for 2 minutes', 'Agent work']) assert.ok(!c.text.toLowerCase().includes(text.toLowerCase()), `work excludes ${text}`);
+  for (const [name, page] of [['dashboard', dashboard], ['work', work]]) {
     const visible = (await inspect(page)).text;
     for (const editorial of ['Agent-driven view:', 'Live admission, not build/test results.', 'Explicit Linux counter window:', 'No live worker; an agent', 'Runs appear here:', 'CPU is normalized by processor count.']) {
       assert.ok(!visible.includes(editorial), `${name}: no editorial paragraph ${editorial}`);
@@ -186,14 +192,20 @@ async function check() {
   await evaluate(dashboard, "document.getElementById('modal-regression-control').remove()");
   assert.equal(await evaluate(dashboard, "[...document.querySelectorAll('dialog')].every(d => !d.open && getComputedStyle(d).display === 'none')"), true, 'restored stylesheet hides closed dialogs');
   await writeFile(join(evidence, 'modal-mutation.json'), JSON.stringify({mutation: 'closed dialogs forced to display:grid', caught: mutationCaught, restored: true}, null, 2));
-  for (const page of [dashboard, composer]) {
+  for (const page of [dashboard, work]) {
     assert.equal(await evaluate(page, "[...document.querySelectorAll('button')].some(b => b.innerText.includes('Refresh'))"), false, 'no manual refresh chore');
   }
-  assert.equal(await evaluate(composer, "document.querySelector('input[placeholder=\"/absolute/path/Project.fidproj\"]').closest('details').open"), false, 'manual opener is not the primary view');
-  assert.deepEqual(d.links, [{path: '/dashboard', active: true}, {path: '/composer', active: false}]);
-  assert.deepEqual(c.links, [{path: '/dashboard', active: false}, {path: '/composer', active: true}]);
+  assert.equal(await evaluate(work, "document.querySelector('input[placeholder=\"/absolute/path/Project.fidproj\"]').closest('details').open"), false, 'manual opener is not the primary view');
+  assert.deepEqual(d.links, [
+    {path: '/dashboard', title: 'Daemon resources and health', active: true},
+    {path: '/work', title: 'Compiler worker, project sessions, build/test leases and run output', active: false},
+  ]);
+  assert.deepEqual(c.links, [
+    {path: '/dashboard', title: 'Daemon resources and health', active: false},
+    {path: '/work', title: 'Compiler worker, project sessions, build/test leases and run output', active: true},
+  ]);
   assert.equal(d.overflow, false, 'dashboard fits a side-by-side viewport');
-  assert.equal(c.overflow, false, 'composer fits a side-by-side viewport');
+  assert.equal(c.overflow, false, 'work fits a side-by-side viewport');
   // Closed presentation must remain bound to pushed state, not a frozen copy.
   const snapshotDetails = "[...document.querySelectorAll('details')].find(d => d.querySelector(':scope > summary')?.innerText === 'Daemon snapshot')";
   const initialCollapsed = await evaluate(dashboard, `(() => { const d = ${snapshotDetails}; return {open:d.open, rows:[...d.querySelectorAll('tbody tr')].map(r => r.firstElementChild.textContent)}; })()`);
@@ -226,7 +238,7 @@ async function check() {
     // ahead of it. The outer history disclosure stays closed throughout.
     await evaluate(dashboard, `${historyDetails}.querySelector(':scope > details').open = true`);
     await openProject('SecondAgentProject', 102);
-    await waitFor(composer, "document.body.innerText.includes('SideBySide.fidproj') && document.body.innerText.includes('SecondAgentProject.fidproj')");
+    await waitFor(work, "document.body.innerText.includes('SideBySide.fidproj') && document.body.innerText.includes('SecondAgentProject.fidproj')");
     await waitFor(dashboard, "document.body.innerText.includes('Earlier passes (3)')");
     assert.deepEqual(await currentNames(), ['Mock uncertain'], 'completion removes the pass from current work');
     assert.deepEqual(await historyNames(), ['Mock implementer', 'Mock observer', 'Mock verifier'], 'completed work enters history newest first');
@@ -238,20 +250,22 @@ async function check() {
     await evaluate(dashboard, `${historyDetails}.querySelectorAll('details').forEach(d => { d.open = false; }); ${historyDetails}.open = false`);
     await writeFile(join(evidence, 'agent-push.json'), JSON.stringify({progressReordered:true, completedMovedToHistory:true, historyStayedClosed:true, nestedStateRetained:true, finalDetailAvailable:true}, null, 2));
   } finally { agent.terminate(); }
-  assert.equal(await evaluate(composer, "document.querySelector('input[placeholder=\"/absolute/path/Project.fidproj\"]').closest('details').open"), false, 'no manual opening was needed');
+  assert.equal(await evaluate(work, "document.querySelector('input[placeholder=\"/absolute/path/Project.fidproj\"]').closest('details').open"), false, 'no manual opening was needed');
   assert.ok(!(await inspect(dashboard)).text.includes('SideBySide.fidproj'));
-  await waitFor(dashboard, `(() => { const d = ${snapshotDetails}; return !d.open && [...d.querySelectorAll('tbody tr')].some(r => r.firstElementChild.textContent === 'composer-worker'); })()`);
+  await waitFor(dashboard, `(() => { const d = ${snapshotDetails}; return !d.open && [...d.querySelectorAll('tbody tr')].some(r => r.firstElementChild.textContent === 'Compiler worker'); })()`);
   const pushedWhileCollapsed = await evaluate(dashboard, `(() => { const d = ${snapshotDetails}; return {open:d.open, rows:[...d.querySelectorAll('tbody tr')].map(r => r.firstElementChild.textContent)}; })()`);
-  assert.deepEqual(pushedWhileCollapsed, {open:false, rows:['daemon','composer-worker']}, 'hidden Solid-bound rows update from owner push');
+  assert.deepEqual(pushedWhileCollapsed, {open:false, rows:['daemon','Compiler worker']}, 'hidden Solid-bound rows update from owner push');
   await evaluate(dashboard, `${snapshotDetails}.querySelector(':scope > summary').click()`);
-  assert.equal(await evaluate(dashboard, `(() => { const d = ${snapshotDetails}; return d.open && d.querySelector('table').getClientRects().length > 0 && d.querySelector('table').innerText.includes('composer-worker'); })()`), true, 'opening immediately reveals latest pushed state');
+  assert.equal(await evaluate(dashboard, `(() => { const d = ${snapshotDetails}; return d.open && d.querySelector('table').getClientRects().length > 0 && d.querySelector('table').innerText.includes('Compiler worker'); })()`), true, 'opening immediately reveals latest pushed state');
+  const dashboardWithWorker = await inspect(dashboard);
+  assertDashboardHeadings(dashboardWithWorker);
   assert.deepEqual({fetches: pageRequests.length, commands: pageFrames.length}, trafficBeforePush, 'owner push and expanding details require no frontend fetch or command');
   await evaluate(dashboard, `${snapshotDetails}.querySelector(':scope > summary').click()`);
-  await writeFile(join(evidence, 'collapsed-store.json'), JSON.stringify({initial:initialCollapsed, pushedWhileCollapsed, visibleOnOpen:true, fetchedOnOpen:false, commandOnOpen:false}, null, 2));
+  await writeFile(join(evidence, 'collapsed-store.json'), JSON.stringify({initial:initialCollapsed, pushedWhileCollapsed, headingsWithWorker:dashboardWithWorker.headings, visibleOnOpen:true, fetchedOnOpen:false, commandOnOpen:false}, null, 2));
   // Reload and trailing-slash bookmarks select the right view as well.
-  await call('Page.navigate', { url: origin + '/composer/' }, composer);
-  await waitFor(composer, "document.title === 'Composer · Bozzetto' && document.body.innerText.includes('SideBySide.fidproj')");
-  for (const [name, session] of [['dashboard', dashboard], ['composer', composer]]) {
+  await call('Page.navigate', { url: origin + '/work/' }, work);
+  await waitFor(work, "document.title === 'Work · Bozzetto' && document.body.innerText.includes('SideBySide.fidproj')");
+  for (const [name, session] of [['dashboard', dashboard], ['work', work]]) {
     const { data } = await call('Page.captureScreenshot', { format: 'png' }, session);
     await writeFile(join(evidence, name + '.png'), Buffer.from(data, 'base64'));
     await call('Emulation.setDeviceMetricsOverride', { width: 480, height: 900, deviceScaleFactor: 1, mobile: false }, session);

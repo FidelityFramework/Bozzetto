@@ -2,7 +2,7 @@
 
 Bozzetto's push plane presents owner-published facts without creating a second authority for them. Ranvier supplies the signal, memo and effect reference shape. Fidelity.FSharp.Incremental supplies the explicit dependency and work-lifetime machinery used by the implemented fact plane. Fidelity.PSG supplies compiler-owned evidence, which a page may display but cannot manufacture or authorize.
 
-The daemon serves `/dashboard`, `/composer` and the WebSocket endpoint `/ui/bridge` on port 47749. Port 47750 is the control listener, not a second UI pipeline. The browser is Partas.Solid; Ranvier is a reference for reactive consistency here, not a claim that the daemon's fact plane executes Ranvier nodes. See [architecture.md](architecture.md) and [Bozzetto_Fidelity_Component_Contracts.md](Bozzetto_Fidelity_Component_Contracts.md).
+The daemon serves `/dashboard`, `/work` and the WebSocket endpoint `/ui/bridge` on port 47749. Port 47750 is the control listener, not a second UI pipeline. The browser is Partas.Solid; Ranvier is a reference for reactive consistency here, not a claim that the daemon's fact plane executes Ranvier nodes. See [architecture.md](architecture.md) and [Bozzetto_Fidelity_Component_Contracts.md](Bozzetto_Fidelity_Component_Contracts.md).
 
 ## Delivery boundary
 

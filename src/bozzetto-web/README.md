@@ -1,6 +1,6 @@
 # bozzetto-web
 
-Bozzetto's browser UI: separate operations dashboard and Composer pages. It is an
+Bozzetto's browser UI: separate operations dashboard and Work pages. It is an
 F# (Partas.Solid) single-page app compiled by Fable, bundled by Vite into one
 self-contained HTML page, and welded into the daemon, which serves it and
 talks to it over one WebSocket.
@@ -10,17 +10,17 @@ one bundle, with shared styling, navigation, bridge protocol and security:
 
 - `/dashboard`: explicitly requested, bounded Linux whole-host observations
   (CPU, RAM/swap, pressure, available GPU counters and external processes), live
-  global agent work and work leases, and a labelled connection-time daemon
+  global agent work, and a labelled connection-time daemon
   snapshot. `boz rss` is the daemon reading, not total host memory.
-- `/composer`: Clef project sessions, compiler worker and run output. Global
-  agents and leases belong to Dashboard and are not duplicated here. Every
+- `/work`: Clef project sessions, compiler worker, build/test leases and run output.
+  Global agents belong to Dashboard and are not duplicated here. Every
   `composer_open_project` call uses the same supervisor. The opener is under
   **Open project**. Build/run controls remain available.
 
 Each view has its own browser title and connection, so both can remain open
 side by side without repeating global panels. Navigation uses ordinary links,
 which can also open in another tab. Reservations and command outcomes remain page-local: use the same
-Composer tab to reserve and build; the split does not fix the reservation
+Work tab to reserve and build; the split does not fix the reservation
 reporting gap documented below. There is no Refresh button: reconnect restores
 current shared state, Composer changes push automatically, and leases push on
 pool mutations or their next known expiry. Legacy health remains explicitly
@@ -413,7 +413,7 @@ small upstream fix would make it usable here.
 7. **Lease snapshot gaps.** `ExpensiveWorkLease.snapshot` exposes neither
    `GrantedAt` nor an id. The `LeaseId` is the release capability and must
    never be sent, so add a non-secret display id.
-8. **Page serving is implemented.** Both `/composer` and `/dashboard` serve
+8. **Page serving is implemented.** Both `/work` and `/dashboard` serve
    the welded page as `text/html; charset=utf-8` from memory, with
    `Cache-Control: no-store` and hashes of the exact inline script/styles in
    the CSP. The bridge uses the page's origin; tab icons use `img-src 'self'`.

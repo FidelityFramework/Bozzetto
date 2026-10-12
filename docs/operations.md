@@ -99,7 +99,7 @@ If renewal reports the lease gone, the wrapper requests termination of its direc
 
 `AGENTS.md` also calls for a newer ask from the same scope to supersede an older ask. The inspected core instead refuses a queued ask for a different kind. Do not claim cross-kind supersession is delivered by this module. Resolve or withdraw the old ask before changing kind; any adapter-level supersession needs its own code and acceptance evidence.
 
-Granted and queued Clef/Composer build/test leases belong on `/composer` beside compiler work. `/dashboard` keeps agents and machine resources. A lease records admission, not measured CPU/memory attribution, compiler proof or process-kill authority.
+Granted and queued Clef/Composer build/test leases belong on `/work` beside compiler work. `/dashboard` keeps agents and machine resources. A lease records admission, not measured CPU/memory attribution, compiler proof or process-kill authority.
 
 ## Reading resource observations correctly
 

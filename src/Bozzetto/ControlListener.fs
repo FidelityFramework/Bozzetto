@@ -82,9 +82,9 @@ let mapRoutes (deps: ControlDeps) (app: WebApplication) : unit =
   // logo the page's own tab shows, instead of a 404.
   if not deps.Headless then
     app.MapGet("/favicon.ico", fun (ctx: HttpContext) -> UiBridge.Icons.write UiBridge.Icons.ico.Value ctx) |> ignore
-    // Both browser bookmarks land on the MCP listener's shared Composer view.
+    // Both browser bookmarks land on the MCP listener's shared browser views.
     // The control listener has no separate dashboard or session directory.
-    for route in [ "/composer"; "/dashboard" ] do
+    for route in [ "/work"; "/dashboard" ] do
       app.MapGet(route, fun (ctx: HttpContext) ->
         let target = UriBuilder("http", ctx.Request.Host.Host, deps.McpPort, route)
         ctx.Response.Redirect(target.Uri.AbsoluteUri)

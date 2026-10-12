@@ -24,7 +24,7 @@ One long-running daemon owns a single Composer supervisor. Clients connect to th
 ```mermaid
 flowchart LR
   MCP[MCP clients] --> D[Bozzetto daemon]
-  Browser[Browser: /dashboard and /composer] --> D
+  Browser[Browser: /dashboard and /work] --> D
   CLI[boz CLI] --> C[Control listener]
   C --> D
   D --> S[Composer supervisor]
@@ -53,10 +53,10 @@ Composer must revalidate an artifact before execution, regardless of its reporte
 ### Client connections
 
 - **MCP** (Streamable HTTP on port 47749): the `composer_*` tools, the lease tools, the cohort and agent-work tools, and the `composer://sessions` resource. MCP uses JSON-RPC as its standard requires and is Bozzetto's only external protocol with JSON on the wire.
-- **The browser** serves `/dashboard` and `/composer` on port 47749 from a single [Partas.Solid](https://github.com/shayanhabibi/Partas.Solid) bundle in [`src/bozzetto-web/`](src/bozzetto-web/README.md), connected to the daemon through one WebSocket bridge. When a data owner publishes an update, the daemon sends it to the browser with a stamp and the age of the underlying data, and the page keeps the newest update. Both ends of the bridge use shared data types. The bridge still encodes messages as text. It needs to use BAREWire and typed contracts, as specified for direct communication between the daemon, worker, browser and agents. Apart from MCP, JSON is used only for Fidelity.Data exports and by the separate diagnostic sink process.
+- **The browser** serves `/dashboard` and `/work` on port 47749 from a single [Partas.Solid](https://github.com/shayanhabibi/Partas.Solid) bundle in [`src/bozzetto-web/`](src/bozzetto-web/README.md), connected to the daemon through one WebSocket bridge. When a data owner publishes an update, the daemon sends it to the browser with a stamp and the age of the underlying data, and the page keeps the newest update. Both ends of the bridge use shared data types. The bridge still encodes messages as text. It needs to use BAREWire and typed contracts, as specified for direct communication between the daemon, worker, browser and agents. Apart from MCP, JSON is used only for Fidelity.Data exports and by the separate diagnostic sink process.
 - **The control listener** (port 47750): daemon identity and shutdown for `boz status` and `boz stop`. It is a separate listener so that it answers even when the MCP listener has failed.
 
-Callers must hold and renew a lease while building or testing Clef and Composer code. These leases appear on the Composer page beside the compiler worker.
+Callers must hold and renew a lease while building or testing Clef and Composer code. These leases appear on the Work page beside the compiler worker.
 
 The host and compiler worker run on .NET. Their contracts allow native host and worker processes to replace the .NET processes without making compiler authority depend on CLR types, editors or transport protocols. Bozzetto no longer hosts an embedded F# REPL. Composer is planned to support interactive Clef execution through LLVM ORC JIT, but that backend has not been implemented.
 
@@ -101,7 +101,7 @@ curl --fail --max-time 3 http://127.0.0.1:47749/health
 | Interface | Address |
 |---|---|
 | Dashboard: health, machine resources, agents at work | `http://127.0.0.1:47749/dashboard` |
-| Composer: worker, sessions and leases, plus Activity and Run output from all callers through the [operations journal](docs/composer-workflow.md#operations-journal) (`src/bozzetto-web/src/Frontend/App.fs`, `OutputPane`) | `http://127.0.0.1:47749/composer` |
+| Work: compiler worker, sessions and leases, plus Activity and Run output from all callers through the [operations journal](docs/composer-workflow.md#operations-journal) (`src/bozzetto-web/src/Frontend/App.fs`, `OutputPane`) | `http://127.0.0.1:47749/work` |
 | Streamable HTTP MCP | `http://127.0.0.1:47749/` |
 | Composer session resource | `composer://sessions` through MCP |
 | Control listener | `http://127.0.0.1:47750/api/daemon-info` |
@@ -110,7 +110,7 @@ A connected agent can use `composer_list_sessions` and `composer_open_project`, 
 
 ### 4. Open, reserve, build and run
 
-1. Open an absolute `.fidproj` from the Composer page or with `composer_open_project`.
+1. Open an absolute `.fidproj` from the Work page or with `composer_open_project`.
 2. Keep the returned host, session and compiler epoch for the operations that follow.
 3. Reserve with `composer_reserve_edit` before changing source or dependencies.
 4. Make the edit, then pass the reservation to `composer_build`.

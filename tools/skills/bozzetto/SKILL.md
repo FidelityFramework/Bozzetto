@@ -12,7 +12,7 @@ posture and daemon lifecycle. Use this skill to select the current workflow.
 
 ## Clef and Composer projects
 
-Use the shared daemon’s `composer_*` tools and `/composer` page on ports
+Use the shared daemon’s `composer_*` tools and `/work` page on ports
 47749/47750. Open an explicit `.fidproj`, reserve before editing, build with
 that reservation, and execute through `composer_run_current`.
 

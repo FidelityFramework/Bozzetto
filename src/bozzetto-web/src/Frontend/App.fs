@@ -1,4 +1,4 @@
-/// Bozzetto's browser UI: separate dashboard and Composer views, in
+/// Bozzetto's browser UI: separate Dashboard and Work views, in
 /// Partas.Solid (SolidJS via Fable). Every action is a Command sent over the
 /// bridge; the backend is the update function; Events fold into the stores
 /// (Model.fs) and Solid updates only the DOM that reads what changed.
@@ -13,8 +13,8 @@ open Bozzetto.Web.Frontend.Model
 
 // Both routes share a bundle and bridge, not a layout. The route is fixed for
 // this page lifetime; ordinary links open a fresh, independent page.
-let private isComposerPage () =
-  Browser.Dom.window.location.pathname.TrimEnd('/') = "/composer"
+let private isWorkPage () =
+  Browser.Dom.window.location.pathname.TrimEnd('/') = "/work"
 
 let private linkDot (link: Bridge.Link) =
   match link with
@@ -52,7 +52,11 @@ let private workerText (worker: WorkerView) =
   match worker.state with
   | "running" -> "worker running"
   | "idle" -> "worker idle"
-  | _ -> "Composer not configured"
+  | _ -> "Compiler worker not configured"
+
+let private processRole = function
+  | "composer-worker" -> "Compiler worker"
+  | role -> role
 
 /// A CSS-only spinner. (DaisyUI's spinner component masks are data-URI SVGs that
 /// carry the SVG namespace URL, which the self-contained check forbids.)
@@ -136,21 +140,21 @@ let CommandOutcome (outcome: unit -> OutcomeView option) =
 
 [<SolidComponent>]
 let TopBar (link: unit -> Bridge.Link) (dark: unit -> bool) (toggleTheme: unit -> unit) =
-  let composerPage = isComposerPage ()
+  let workPage = isWorkPage ()
   div (class' = "navbar flex-wrap shrink-0 min-h-12 px-4 py-2 gap-2 bg-base-100 shadow-sm border-b border-base-content/10") {
     div (class' = "flex-1 flex items-center gap-3 min-w-0") {
       span (class' = "font-heading font-extrabold text-lg tracking-tight") { "Bozzetto" }
       div (class' = "flex items-center gap-1") {
         a (
           href = "/dashboard",
-          class' = (if composerPage then "btn btn-ghost btn-sm" else "btn btn-ghost btn-sm btn-active text-accent"),
-          title = "Daemon resources, health and work leases"
+          class' = (if workPage then "btn btn-ghost btn-sm" else "btn btn-ghost btn-sm btn-active text-accent"),
+          title = "Daemon resources and health"
         ) { "Dashboard" }
         a (
-          href = "/composer",
-          class' = (if composerPage then "btn btn-ghost btn-sm btn-active text-accent" else "btn btn-ghost btn-sm"),
-          title = "Compiler worker, project sessions and run output"
-        ) { "Composer" }
+          href = "/work",
+          class' = (if workPage then "btn btn-ghost btn-sm btn-active text-accent" else "btn btn-ghost btn-sm"),
+          title = "Compiler worker, project sessions, build/test leases and run output"
+        ) { "Work" }
       }
       span (class' = "flex items-center gap-1.5 text-xs") {
         span (class' = linkDot (link ()))
@@ -202,7 +206,7 @@ let HealthStrip (model: ModelView) (uptime: unit -> float) =
       }
       For (each = model.health.processes) {
         yield fun p _ ->
-          span (class' = "font-mono opacity-60") { p.role + " " + string p.pid + " " + bytes p.rss }
+          span (class' = "font-mono opacity-60") { processRole p.role + " " + string p.pid + " " + bytes p.rss }
       }
       For (each = model.health.alarms) {
         yield fun a _ -> span (class' = "badge badge-sm badge-warning", title = a.message) { "⚠ " + a.signal + " " + a.state }
@@ -313,7 +317,7 @@ let ResourcesPanel (model: ModelView) =
               For (each = model.health.processes) {
                 yield fun p _ ->
                   tr () {
-                    td (class' = "font-mono") { p.role }
+                    td (class' = "font-mono") { processRole p.role }
                     td (class' = "font-mono") { string p.pid }
                     td (class' = "font-mono") { bytes p.rss }
                     td (class' = "font-mono") { fixedPoint p.cpu 1 + "%" }
@@ -788,8 +792,8 @@ let OutputPane (model: ModelView) =
 
 [<SolidComponent>]
 let App () =
-  let composerPage = isComposerPage ()
-  Browser.Dom.document.title <- (if composerPage then "Composer · Bozzetto" else "Dashboard · Bozzetto")
+  let workPage = isWorkPage ()
+  Browser.Dom.document.title <- (if workPage then "Work · Bozzetto" else "Dashboard · Bozzetto")
 
   // ── Model ────────────────────────────────────────────────────────────────
   // Stores hold what the backend reported; the backend is the update.
@@ -857,7 +861,7 @@ let App () =
     }
     div (class' = (if connected () then "flex-1 min-h-0 overflow-auto" else "flex-1 min-h-0 overflow-auto opacity-70")) {
       Show (
-        when' = composerPage,
+        when' = workPage,
         fallback = (div (class' = "flex flex-col gap-4 p-4") {
           HealthStrip model stores.Uptime
           AgentsPanel model
@@ -878,12 +882,11 @@ let App () =
           }
           div (class' = "flex flex-col gap-3 min-w-0") {
             WorkerPanel model local connected dispatch
-            // Builds and test suites over Clef/Composer code are Composer work, so
-            // their leases sit beside the worker rather than on the Dashboard.
+            // Compiler builds and test suites share Work with the compiler worker.
             LeasesPanel model
           }
         }
       }
     }
-    Show (when' = composerPage) { OutputPane model }
+    Show (when' = workPage) { OutputPane model }
   }

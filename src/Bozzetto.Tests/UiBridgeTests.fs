@@ -1297,7 +1297,7 @@ let tests =
           use client = new Net.Http.HttpClient(Timeout = TimeSpan.FromSeconds 10.)
           try
             created |> Expect.isFalse "no UI subscriptions or resource acquisition are started"
-            for route in [ "/composer"; "/dashboard"; "/ui/bridge"; "/api/resources" ] @ (clefIcons |> List.map (fun (route, _, _) -> route)) do
+            for route in [ "/work"; "/composer"; "/dashboard"; "/ui/bridge"; "/api/resources" ] @ (clefIcons |> List.map (fun (route, _, _) -> route)) do
               use! response = client.GetAsync(url + route)
               int response.StatusCode |> Expect.equal (route + " is not installed") 404
             use upgrade = new Net.Http.HttpRequestMessage(Net.Http.HttpMethod.Get, url + "/ui/bridge")
@@ -1322,7 +1322,7 @@ let tests =
           use handler = new Net.Http.HttpClientHandler(AllowAutoRedirect = false)
           use client = new Net.Http.HttpClient(handler, Timeout = TimeSpan.FromSeconds 10.)
           try
-            for route in [ "/composer"; "/dashboard"; "/favicon.ico" ] do
+            for route in [ "/work"; "/composer"; "/dashboard"; "/favicon.ico" ] do
               use! response = client.GetAsync(url + route)
               int response.StatusCode |> Expect.equal (route + " is not installed") 404
               response.Headers.Location |> Expect.isNull "no browser redirect is advertised"
@@ -1343,7 +1343,7 @@ let tests =
         }
       }
 
-      testTask "Composer and dashboard bookmarks serve the same live Braidpoint page and policy" {
+      testTask "Work and dashboard bookmarks serve the same live Braidpoint page and policy without a Composer alias" {
         do! task {
           use stopping = new CancellationTokenSource()
           let hub = hubOf (FakeComposer()) stopping.Token unpaused (ClockGate())
@@ -1351,7 +1351,7 @@ let tests =
           use client = new Net.Http.HttpClient(Timeout = TimeSpan.FromSeconds 10.)
           try
             let mutable pages = []
-            for route in [ "/composer"; "/dashboard" ] do
+            for route in [ "/work"; "/dashboard" ] do
               use! response = client.GetAsync(url + route)
               let! html = response.Content.ReadAsStringAsync()
               int response.StatusCode |> Expect.equal (route + " is a browser page") 200
@@ -1366,13 +1366,15 @@ let tests =
               response.Headers.GetValues("X-Content-Type-Options") |> Seq.exactlyOne |> Expect.equal (route + " disables content guessing") "nosniff"
               pages <- (html, policy) :: pages
             pages |> List.distinct |> List.length |> Expect.equal "the bookmarks cannot drift into separate displays" 1
+            use! retired = client.GetAsync(url + "/composer")
+            int retired.StatusCode |> Expect.equal "the retired monitoring route has no alias" 404
           finally
             stopping.Cancel()
             Hosting.stop app
         }
       }
 
-      testTask "control-port Composer and old dashboard bookmarks redirect to the shared live view" {
+      testTask "control-port Work and dashboard bookmarks redirect without a Composer alias" {
         do! task {
           let deps: Bozzetto.Server.ControlListener.ControlDeps =
             { Version = "0.6.834-test"; McpPort = 47749; Headless = false; GetSessionCount = (fun () -> Task.FromResult 0); Shutdown = ignore }
@@ -1380,10 +1382,13 @@ let tests =
           use handler = new Net.Http.HttpClientHandler(AllowAutoRedirect = false)
           use client = new Net.Http.HttpClient(handler, Timeout = TimeSpan.FromSeconds 10.)
           try
-            for route in [ "/composer"; "/dashboard" ] do
+            for route in [ "/work"; "/dashboard" ] do
               use! response = client.GetAsync(url + route)
               int response.StatusCode |> Expect.equal (route + " redirects") 302
               string response.Headers.Location |> Expect.equal (route + " keeps its entry point on the MCP listener") ("http://127.0.0.1:47749" + route)
+            use! retired = client.GetAsync(url + "/composer")
+            int retired.StatusCode |> Expect.equal "the retired monitoring route is not redirected" 404
+            retired.Headers.Location |> Expect.isNull "no fallback location is advertised"
           finally
             Hosting.stop app
         }

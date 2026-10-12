@@ -27,7 +27,7 @@ Use the shared installed daemon, independently of any individual client's lifeti
 2. If the daemon is absent, start it as [operations.md](operations.md#installed-identity-and-bounded-readiness) shows, then make the bounded probe. Do not launch it in the foreground, wait for its lifetime or loop on health checks.
 3. Confirm a live MCP connection exposes `get_daemon_status`, `composer_list_sessions` and `composer_open_project`. A configured server entry is not evidence of connection or availability.
 4. Inspect the installed daemon and worker identities and their readiness. A checkout change does not replace a loaded compiler distribution. Report exact version, type and protocol errors.
-5. Use `/composer` for the human view and `composer://sessions` for the MCP session directory. Subscribe to supported resources rather than adding status polling.
+5. Use `/work` for the human view and `composer://sessions` for the MCP session directory. Subscribe to supported resources rather than adding status polling.
 
 Current connection checks belong in [operations.md](operations.md): installed identity, readiness and the matching daemon and worker pair.
 
@@ -127,7 +127,7 @@ BOZZETTO_AGENT=implementer BOZZETTO_PROJECT="$PWD" \
 
 Use a stable, distinct holder per agent/project; start only on grant, honor Wait/refusal, renew owned work, release on every terminal path and explicitly withdraw only when abandoning a queued ask. The detailed pool, wrapper and HTTP lifecycle contract belongs in [operations.md, Leases: admission, heartbeat and queues](operations.md#leases-admission-heartbeat-and-queues), with MCP lifecycle limits in [mcp-tools.md](mcp-tools.md). `tools/build/lease.fsx` keeps a deferred ask in line as the same ask and withdraws it after ten minutes.
 
-If memory defers work, investigate available RAM and swap, process RSS with parents, and cgroup usage. Separate daemon and worker usage from leased builds, unrelated work and language servers. Ask before stopping processes you do not own or changing scheduling policy. Granted and queued compiler-related leases belong beside the worker on `/composer`; the Dashboard keeps agents and machine resources, and its CPU figure covers only daemon and worker (`AGENTS.md`).
+If memory defers work, investigate available RAM and swap, process RSS with parents, and cgroup usage. Separate daemon and worker usage from leased builds, unrelated work and language servers. Ask before stopping processes you do not own or changing scheduling policy. Granted and queued compiler-related leases belong beside the worker on `/work`; the Dashboard keeps agents and machine resources, and its CPU figure covers only daemon and worker (`AGENTS.md`).
 
 ## Foundation lifetimes and human coordination
 
