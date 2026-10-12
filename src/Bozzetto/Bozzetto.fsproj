@@ -14,6 +14,7 @@
         <IsPackable>true</IsPackable>
         <ToolCommandName>boz</ToolCommandName>
         <PackageOutputPath>./nupkg</PackageOutputPath>
+        <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);PackCompilerWorkerPayload</TargetsForTfmSpecificContentInPackage>
 
         <!-- NuGet config -->
         <PackageId>Bozzetto</PackageId>
@@ -23,7 +24,7 @@
         <PackageTags>clef;composer;fidelity;incremental;interactive;mcp;bozzetto</PackageTags>
         <PackageProjectUrl>https://forge.spkez.dev/FidelityFramework/Bozzetto</PackageProjectUrl>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
-        <PackageReadmeFile>Readme.md</PackageReadmeFile>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
         <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://forge.spkez.dev/FidelityFramework/Bozzetto</RepositoryUrl>
@@ -129,10 +130,10 @@
         <Compile Include="CohortPlay.fs" />
         <Compile Include="McpStdioBridge.fs" />
         <Compile Include="Program.fs" />
-        <None Include="..\Readme.md">
+        <None Include="../../README.md">
           <Pack>true</Pack>
           <PackagePath>/</PackagePath>
-          <Link>Readme.md</Link>
+          <Link>README.md</Link>
         </None>
     </ItemGroup>
 
@@ -184,6 +185,66 @@
               PackagePath="tools\$(TargetFramework)\any" />
 
     </ItemGroup>
+
+  <!-- Packing is distribution work: include only the reviewed worker inventory,
+       with its own runtime configuration and process-local dependencies. -->
+  <Target Name="PackCompilerWorkerPayload" Condition="'$(TargetFramework)' != ''">
+    <Error Condition="'$(BOZZETTO_WORKER_DISTRIBUTION)' == '' or '$(BOZZETTO_WORKER_MANIFEST)' == ''"
+           Text="WORKER-PAYLOAD: packing requires BOZZETTO_WORKER_DISTRIBUTION and BOZZETTO_WORKER_MANIFEST." />
+    <Error Condition="!$([System.IO.Path]::IsPathFullyQualified('$(BOZZETTO_WORKER_DISTRIBUTION)')) or !$([System.IO.Path]::IsPathFullyQualified('$(BOZZETTO_WORKER_MANIFEST)'))"
+           Text="WORKER-PAYLOAD: worker distribution and manifest paths must be absolute." />
+    <Error Condition="!Exists('$(BOZZETTO_WORKER_MANIFEST)')"
+           Text="WORKER-PAYLOAD: reviewed worker manifest is missing." />
+    <Error Condition="$([System.IO.File]::ReadAllText('$(BOZZETTO_WORKER_MANIFEST)').Length) &gt; 131072"
+           Text="WORKER-PAYLOAD: worker manifest exceeds its size budget." />
+    <ReadLinesFromFile File="$(BOZZETTO_WORKER_MANIFEST)">
+      <Output TaskParameter="Lines" ItemName="_WorkerManifestLine" />
+    </ReadLinesFromFile>
+    <Error Condition="'@(_WorkerManifestLine)' == '' or $([System.IO.File]::ReadAllText('$(BOZZETTO_WORKER_MANIFEST)').TrimEnd().Split('&#xA;').Length) &gt; 1024"
+           Text="WORKER-PAYLOAD: worker manifest must contain 1 to 1024 files." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('%(_WorkerManifestLine.Identity)', '^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._/-]{0,255}$')) or $([System.Text.RegularExpressions.Regex]::IsMatch('%(_WorkerManifestLine.Identity)', '(^|/)\.\.?(/|$)|//|/$'))"
+           Text="WORKER-PAYLOAD: invalid hash or relative worker path in manifest." />
+    <ItemGroup>
+      <_WorkerManifestLine>
+        <RelativePath>$([System.String]::Copy('%(_WorkerManifestLine.Identity)').Substring(66))</RelativePath>
+        <ExpectedSha256>$([System.String]::Copy('%(_WorkerManifestLine.Identity)').Substring(0, 64).ToUpperInvariant())</ExpectedSha256>
+      </_WorkerManifestLine>
+      <_WorkerPayload Include="$(BOZZETTO_WORKER_DISTRIBUTION)/%(_WorkerManifestLine.RelativePath)">
+        <RelativePath>%(_WorkerManifestLine.RelativePath)</RelativePath>
+        <ExpectedSha256>%(_WorkerManifestLine.ExpectedSha256)</ExpectedSha256>
+      </_WorkerPayload>
+      <_RequiredWorkerPayload Include="Bozzetto.Composer.dll;Bozzetto.Composer.deps.json;Bozzetto.Composer.runtimeconfig.json;Bozzetto.Composer.Protocol.dll;Composer.dll;Composer.Hosting.dll;Clef.Compiler.Service.dll;Alex.dll;Fidelity.PSG.dll;BAREWire.dll;FSharp.Core.dll" />
+      <_MissingWorkerPayload Include="@(_RequiredWorkerPayload)" Exclude="@(_WorkerPayload-&gt;'%(RelativePath)')" />
+    </ItemGroup>
+    <!-- Item batching can collapse repeated rows; every source row must still
+         name exactly one payload item before uniqueness is checked. -->
+    <Error Condition="$([System.IO.File]::ReadAllText('$(BOZZETTO_WORKER_MANIFEST)').TrimEnd().Split('&#xA;').Length) != @(_WorkerPayload-&gt;Count())"
+           Text="WORKER-PAYLOAD: duplicate worker paths or blank lines in manifest." />
+    <Error Condition="'%(_WorkerPayload.RelativePath)' == 'payload.sha256'"
+           Text="WORKER-PAYLOAD: reserved worker manifest path." />
+    <RemoveDuplicates Inputs="@(_WorkerPayload)">
+      <Output TaskParameter="Filtered" ItemName="_UniqueWorkerPayload" />
+    </RemoveDuplicates>
+    <Error Condition="@(_WorkerPayload-&gt;Count()) != @(_UniqueWorkerPayload-&gt;Count())"
+           Text="WORKER-PAYLOAD: duplicate worker paths in manifest." />
+    <Error Condition="!Exists('%(_WorkerPayload.Identity)')"
+           Text="WORKER-PAYLOAD: declared worker file is missing: %(_WorkerPayload.RelativePath)." />
+    <Error Condition="'@(_MissingWorkerPayload)' != ''"
+           Text="WORKER-PAYLOAD: required worker files are absent from manifest: @(_MissingWorkerPayload)." />
+    <GetFileHash Files="@(_WorkerPayload)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_HashedWorkerPayload" />
+    </GetFileHash>
+    <Error Condition="'%(_HashedWorkerPayload.FileHash)' != '%(_HashedWorkerPayload.ExpectedSha256)'"
+           Text="WORKER-PAYLOAD: reviewed worker hash changed: %(_HashedWorkerPayload.RelativePath)." />
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="@(_WorkerPayload)">
+        <PackagePath>tools/$(TargetFramework)/any/$([System.IO.Path]::GetDirectoryName('worker/%(_WorkerPayload.RelativePath)'))</PackagePath>
+      </TfmSpecificPackageFile>
+      <TfmSpecificPackageFile Include="$(BOZZETTO_WORKER_MANIFEST)">
+        <PackagePath>tools/$(TargetFramework)/any/worker/payload.sha256</PackagePath>
+      </TfmSpecificPackageFile>
+    </ItemGroup>
+  </Target>
 
   <!-- Remove only generated legacy host output left by an earlier local build. -->
   <Target Name="RemoveRetiredFSharpHostOutput" AfterTargets="Build" Condition="'$(TargetFramework)' != ''">

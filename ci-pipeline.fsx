@@ -9,6 +9,9 @@
 //   dotnet fsi ci-pipeline.fsx -- ci          # + the mutation-score gate
 //   dotnet fsi ci-pipeline.fsx -- composer    # + the Composer provider tier
 //   dotnet fsi ci-pipeline.fsx -- pack        # + pack the CLI tool into nupkg/
+//   dotnet fsi ci-pipeline.fsx -- verify-package <nupkg> # artifact check only
+// Packing requires BOZZETTO_WORKER_DISTRIBUTION and BOZZETTO_WORKER_MANIFEST;
+// verification uses the same reviewed BOZZETTO_WORKER_MANIFEST inventory.
 //
 // The design goal: build the solution ONCE in Release, then run every
 // downstream check --no-build off that single output, on one Linux machine.
@@ -88,14 +91,78 @@ let propsVersion () =
 
 /// Verify the packed tool payload matches the supported stable runtime.
 let requiredToolTfms = [ "net10.0" ]
-let verifyToolInstallable () =
-  // The package for THIS build's version, never whichever nupkg sorts first.
-  let expected = Path.Combine(packDir, $"Bozzetto.{propsVersion ()}.nupkg")
+let workerPayloadInventory (text: string) =
+  let lines = text.TrimEnd('\r', '\n').Split('\n') |> Array.map (fun line -> line.TrimEnd '\r')
+  if lines.Length = 0 || lines.Length > 1024 then
+    failwith "WORKER-PAYLOAD: worker manifest must contain 1 to 1024 files."
+  lines
+  |> Array.fold (fun inventory line ->
+    if not (System.Text.RegularExpressions.Regex.IsMatch(line, "^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")) then
+      failwith "WORKER-PAYLOAD: invalid hash or relative worker path in manifest."
+    let path = line.Substring 66
+    if path.Split '/' |> Array.exists (fun part -> part = "" || part = "." || part = "..") then
+      failwith "WORKER-PAYLOAD: invalid relative worker path in manifest."
+    if path = "payload.sha256" || Map.containsKey path inventory then
+      failwith "WORKER-PAYLOAD: duplicate or reserved worker path in manifest."
+    Map.add path (line.Substring(0, 64)) inventory) Map.empty
+
+let verifyWorkerPayload (zip: ZipArchive) =
+  let manifest = Environment.GetEnvironmentVariable "BOZZETTO_WORKER_MANIFEST"
+  if String.IsNullOrWhiteSpace manifest || not (Path.IsPathFullyQualified manifest) || not (File.Exists manifest) then
+    failwith "WORKER-PAYLOAD: verification requires BOZZETTO_WORKER_MANIFEST."
+  if FileInfo(manifest).Length > 131072L then
+    failwith "WORKER-PAYLOAD: worker manifest exceeds its size budget."
+  let inventory = File.ReadAllText(manifest, Text.UTF8Encoding(false, true)) |> workerPayloadInventory
+  let digest (stream: Stream) = SHA256.HashData stream |> Convert.ToHexString |> fun hash -> hash.ToLowerInvariant()
+  let entry path =
+    match zip.GetEntry path with
+    | null -> failwithf "WORKER-PAYLOAD: package entry is missing: %s." path
+    | value -> value
+  let hashEntry path =
+    use stream = (entry path).Open()
+    digest stream
+  for tfm in requiredToolTfms do
+    let prefix = $"tools/{tfm}/any/worker/"
+    let names = zip.Entries |> Seq.map (fun e -> e.FullName) |> Seq.filter (fun n -> n.StartsWith(prefix, StringComparison.Ordinal)) |> Seq.toList
+    let expected = inventory |> Map.toSeq |> Seq.map (fun (path, _) -> prefix + path) |> Set.ofSeq |> Set.add (prefix + "payload.sha256")
+    if Set.ofList names <> expected || names.Length <> expected.Count then
+      failwith "WORKER-PAYLOAD: packaged worker inventory differs from reviewed manifest."
+    use manifestStream = File.OpenRead manifest
+    if hashEntry (prefix + "payload.sha256") <> digest manifestStream then
+      failwith "WORKER-PAYLOAD: packaged manifest differs from reviewed manifest."
+    inventory |> Map.iter (fun path hash ->
+      if hashEntry (prefix + path) <> hash then
+        failwithf "WORKER-PAYLOAD: packaged worker hash changed: %s." path)
+    for required in [ "Bozzetto.Composer.dll"; "Bozzetto.Composer.deps.json"; "Bozzetto.Composer.runtimeconfig.json"; "Composer.dll"; "Composer.Hosting.dll"; "Clef.Compiler.Service.dll"; "Alex.dll"; "FSharp.Core.dll" ] do
+      if not (Map.containsKey required inventory) then
+        failwithf "WORKER-PAYLOAD: required worker file is absent from manifest: %s." required
+    // Daemon and worker share the boundary and foundation; each process keeps
+    // its own FSharp.Core and runtime configuration.
+    for shared in [ "Bozzetto.Composer.Protocol.dll"; "Fidelity.PSG.dll"; "BAREWire.dll"; "Fidelity.Data.dll"; "Fidelity.FSharp.Incremental.dll"; "Fidelity.FSharp.Incremental.Hosting.dll" ] do
+      match Map.tryFind shared inventory with
+      | Some hash when hashEntry ($"tools/{tfm}/any/{shared}") = hash -> ()
+      | _ -> failwithf "WORKER-PAYLOAD: daemon and worker disagree on %s." shared
+    use depsStream = (entry (prefix + "Bozzetto.Composer.deps.json")).Open()
+    use deps = JsonDocument.Parse depsStream
+    for target in deps.RootElement.GetProperty("targets").EnumerateObject() do
+      for library in target.Value.EnumerateObject() do
+        for group in [ "runtime"; "resources" ] do
+          match library.Value.TryGetProperty group with
+          | true, assets ->
+            for asset in assets.EnumerateObject() do
+              let name = Path.GetFileName asset.Name
+              let path = if group = "resources" then asset.Value.GetProperty("locale").GetString() + "/" + name else name
+              if not (Map.containsKey path inventory) then
+                failwithf "WORKER-PAYLOAD: declared runtime dependency is absent: %s." path
+          | _ -> ()
+
+let verifyToolInstallable (expected: string) =
   match File.Exists expected with
-  | false -> failwithf "No %s in nupkg/. Did pack fail?" (Path.GetFileName expected)
+  | false -> failwithf "No %s. Did pack fail?" (Path.GetFileName expected)
   | true ->
     let nupkg = expected
     use zip = ZipFile.OpenRead nupkg
+    verifyWorkerPayload zip
     let tfms =
       zip.Entries
       |> Seq.map (fun e -> e.FullName)
@@ -122,12 +189,22 @@ let verifyToolInstallable () =
     match missing, unexpected with
     | [], [] ->
       printfn "OK %s carries exactly the %s tool payload." (Path.GetFileName nupkg) (String.concat " and " requiredToolTfms)
+      use stream = File.OpenRead nupkg
+      let hash = SHA256.HashData stream |> Convert.ToHexString |> fun value -> value.ToLowerInvariant()
+      printfn "PACKAGE_VERIFIED path=%s sha256=%s" (Path.GetFullPath nupkg) hash
     | missing, [] ->
       failwithf "DotnetToolSettings.xml missing for %s in %s — those SDK users' installs will fail (issue #131)." (String.concat ", " missing) (Path.GetFileName nupkg)
     | [], unexpected ->
       failwithf "Tool package also targets unexpected TFM(s) %s in %s — the repo must pack exactly %s." (String.concat ", " unexpected) (Path.GetFileName nupkg) (String.concat ", " requiredToolTfms)
     | missing, unexpected ->
       failwithf "Tool package TFM mismatch in %s: missing %s, unexpected %s." (Path.GetFileName nupkg) (String.concat ", " missing) (String.concat ", " unexpected)
+
+// A focused artifact gate uses the same owner without running unrelated tiers.
+match fsi.CommandLineArgs |> Array.skip 1 |> Array.filter ((<>) "--") with
+| [| "verify-package"; package |] -> verifyToolInstallable package; exit 0
+| arguments when Array.contains "verify-package" arguments ->
+  failwith "PACK-VERIFY: verify-package requires exactly one package path; no pipeline stage was started."
+| _ -> ()
 
 // ---- the trust ledger and the tier scheduler -----------------------------------
 //
@@ -640,7 +717,7 @@ pipeline "bozzetto" {
     // published from this pipeline.
     whenCmdArg "pack"
     run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet pack src/Bozzetto -c Release -o nupkg")
-    run (fun _ -> async { verifyToolInstallable (); return Ok() })
+    run (fun _ -> async { verifyToolInstallable (Path.Combine(packDir, $"Bozzetto.{propsVersion ()}.nupkg")); return Ok() })
   }
 
   runIfOnlySpecified false
