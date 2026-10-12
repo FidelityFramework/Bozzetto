@@ -105,7 +105,11 @@ module AgentWork =
           | Some run when r.Session <> run.Report.Session -> Some(InvalidField "session")
           | Some run when r.Name <> run.Report.Name -> Some(InvalidField "name")
           | Some run when regresses run.Report.Usage r.Usage -> Some RegressingUsage
-          | None when state.Runs.Count >= 256 || (state.Runs |> Map.toSeq |> Seq.map (fun (_,v) -> v.Member) |> Set.ofSeq |> Set.add who |> Set.count) > 64 -> Some Capacity
+          | None when state.Runs.Count >= 256 -> Some Capacity
+          | None when not (terminal r.Status)
+                      && (state.Runs |> Map.toSeq
+                          |> Seq.choose (fun (_, run) -> if terminal run.Report.Status then None else Some run.Member)
+                          |> Set.ofSeq |> Set.add who |> Set.count) > 64 -> Some Capacity
           | _ -> None
     match refusal with
     | Some error -> Error error

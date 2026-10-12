@@ -229,6 +229,52 @@ let agentWorkTests =
       latest.Runs.[report.Run].OmittedActivity |> Expect.equal "history omissions" 24L
       let full = (AgentWork.empty, [1..256]) ||> List.fold (fun state n -> AgentWork.report epoch alice JoinableRole.Implementer { report with Run = string n; Usage = None } state |> accepted)
       AgentWork.report epoch alice JoinableRole.Implementer { report with Run = "257" } full |> Expect.equal "retained run keys never evict and become takeovers" (Error AgentWork.Capacity)
+      AgentWork.report epoch bob JoinableRole.Implementer { report with Run = "257"; Status = "completed" } full
+      |> Expect.equal "terminal reports still obey the retained run limit" (Error AgentWork.Capacity)
+    }
+    test "active capacity correction preserves the retained byte limit" {
+      let large =
+        { report with Session = String.replicate 128 "s"; Name = String.replicate 128 "n"
+                      Model = String.replicate 128 "m"; Endpoint = String.replicate 256 "e"
+                      Project = String.replicate 512 "p"; Focus = String.replicate 256 "f"
+                      Operation = String.replicate 128 "o" }
+      let result =
+        (Ok AgentWork.empty, List.allPairs [1..256] [1L..16L])
+        ||> List.fold (fun state (run, sequence) ->
+          state |> Result.bind (AgentWork.report epoch alice JoinableRole.Implementer
+            { large with Run = string run; Sequence = sequence }))
+      result |> Expect.equal "retained bytes remain bounded even for one active member" (Error AgentWork.ByteCapacity)
+    }
+    test "terminal member history does not occupy active reporting capacity" {
+      for status in ["completed"; "failed"; "aborted"; "disconnected"; "unknown"] do
+        let history =
+          (AgentWork.empty, [1..65]) ||> List.fold (fun state n ->
+            AgentWork.report epoch (MemberId.Mcp (string n)) JoinableRole.Implementer
+              { report with Run = string n; Status = status } state |> accepted)
+        let next = AgentWork.report epoch alice JoinableRole.Implementer report history |> accepted
+        next.Runs.Count |> Expect.equal "more than 64 historical members still permit a new active member" 66
+        next.Runs |> Map.remove report.Run |> Expect.equal "terminal history is retained exactly" history.Runs
+    }
+    test "active member capacity refuses only a new active member" {
+      let full =
+        (AgentWork.empty, [1..64]) ||> List.fold (fun state n ->
+          AgentWork.report epoch (MemberId.Mcp (string n)) JoinableRole.Implementer
+            { report with Run = string n } state |> accepted)
+      AgentWork.report epoch alice JoinableRole.Implementer report full
+      |> Expect.equal "the 65th active member is refused" (Error AgentWork.Capacity)
+      let updated = AgentWork.report epoch (MemberId.Mcp "1") JoinableRole.Implementer
+                      { report with Run = "1"; Sequence = 2L } full |> accepted
+      updated.Runs.["1"].Report.Sequence |> Expect.equal "an existing active run can report progress" 2L
+      let sameMember = AgentWork.report epoch (MemberId.Mcp "1") JoinableRole.Implementer report updated |> accepted
+      sameMember.Runs.Count |> Expect.equal "another run of the same active member needs no member slot" 65
+      let terminal = AgentWork.report epoch alice JoinableRole.Implementer
+                       { report with Run = "terminal"; Status = "completed" } sameMember |> accepted
+      terminal.Runs.Count |> Expect.equal "a new terminal report needs no active member slot" 66
+      AgentWork.report epoch bob JoinableRole.Implementer { report with Run = "another" } terminal
+      |> Expect.equal "a terminal report does not release another member's active slot" (Error AgentWork.Capacity)
+      let departed = AgentWork.disconnect epoch (MemberId.Mcp "1") terminal
+      let admitted = AgentWork.report epoch bob JoinableRole.Implementer { report with Run = "another" } departed |> accepted
+      admitted.Runs.Count |> Expect.equal "disconnect releases the member slot without deleting its runs" 67
     }
     test "publication survives epoch recycling and preserves nonempty wire projection" {
       let publication = Bozzetto.Server.ResourceGraph.AgentPublication.create()
