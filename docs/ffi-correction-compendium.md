@@ -477,6 +477,8 @@ All under `~/.cache/bozzetto/evidence/`, outside the checkout:
 | `ffi-correction-2026-10-03/distributed-workers-2026-10-12/` | Package shape/mutation and fresh install/Hello evidence, native Opus local-only acceptance, `package-committed-binding.json`; scoped Observe `observe-admission/committed-binding.json`, producer/control/mutation receipts, rejected cache oracle, native Opus acceptance; THREE native task/rejected suggestions; remote build owner preparation, not remote execution evidence |
 | `ffi-correction-2026-10-03/tools/` | `audit.sh`, `study.sh`, `report.sh`, `keepalive.sh`, retrieval helpers and `README.md` |
 
+**Lab Work delivery closed (October 12).** Bozzetto `60618f5f` and speakez-lab `0540f7af` extend the existing lease runner, durable SQLite journal and Work observation/projection owners. Work now retains actual project, command, PID, lease display identity, exit and output for builds/tests across workstation, ONE, TWO and THREE. All64 compiler-worker files remain unchanged. Native Fable5.1 high accepted the bounded source review; focused owner/consumer checks, three discriminating mutations and real builds on every LAN worker passed. Holds are cleared; no leases remain active. This is host orchestration acceptance, not compiler-proof or FFI capability acceptance. Evidence: `ffi-resumption-2026-10-12/work-delivery-*`, `fable-work-delivery-03-return.md` and `lab-build-orchestration-2026-10-12/work-visibility-delivery/all-workers-tracked-builds-verified.json`. Owner-requested follow-up: collapse and dismiss long Work history; deferred while FFI resumes.
+
 ## 15. Source records
 
 The twenty-one records consolidated here, each readable with `git show d1c60aac:docs/<name>`:
