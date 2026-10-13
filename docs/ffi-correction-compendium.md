@@ -382,6 +382,29 @@ The owner's questions from that map: the next Baker construct (scalar calls, rea
 
 Not reached by any of this: native execution, native address realization, foreign ABI admission, foreign lifetime closure, the Alex native aggregate reconstruction, desktop binding regeneration. The next native lowering claim requires both source and reader controls: the next Alex native aggregate or entry case paired with a complete source pipeline and an independently constructed public row; function-to-address conversion and foreign invocation separately require ABI, loading and target-realization authority.
 
+#### LAN task outcome logging (October 13)
+
+SpeakEZ lab `caecd9d` extends the existing WorkerMonitor SQLite journal for
+manual controller submissions and explicit native observations. Read-only
+`worker_failures` summaries count distinct admitted runs in a stated first-
+observation cohort, separating native outcomes, pending work and submission
+failures. Failure codes are retained; duplicate collection preserves counts
+and first-terminal observation times. Unknown legacy times remain outside the
+windowed denominator. Counts reflect the latest native observation, and task
+completion grants no artifact, proof or usable-result acceptance.
+
+Native Fable5.1 high accepted the bounded source review and follow-up. The
+owning three-module gate passed45/45; the final changed-owner module passed17/17.
+Denominator and error-classification mutations were caught and exactly restored.
+Six existing files changed,+344/−25; new tracked files, owners and dependencies0.
+Exact retained submission replay confirmed the same run IDs and `replayed=true`;
+collection persisted ONE completed and TWO failed with `turn_budget_exceeded`.
+Repeat collection preserved the two-run counts and timestamps. This is the
+first observed sample, not a fleet-wide reliability estimate. No daemon,
+headless worker or VM change was required. Evidence: SpeakEZ lab primary
+`notes/lan-task-history/` (handoff, source bindings, leased gate logs, native
+Fable receipts, exact replay/collection and read-only summary receipts).
+
 #### Capability closure accounting (owner direction, October 13)
 
 FFI delivery is assessed at the capability boundary across its producers and
@@ -428,7 +451,7 @@ proofs it consumed, so their invalidation reaches dependent code choices through
 the existing dependency owner. Artifact checks are bound to emitted objects and
 can require renewal while graph claims remain valid. Tier2 evidence needs a Rocq
 form when it becomes a premise of a Tier3/4 lemma; no general Rocq projection is
-claimed for the current FFI slice. These obligations implement the existing
+claimed for the current FFI slice. These obligations specify the existing
 proof/differential design, without developer-written refinement predicates.
 
 #### October 13 source-demand checkpoint
