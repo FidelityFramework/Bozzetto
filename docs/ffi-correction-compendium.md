@@ -406,6 +406,16 @@ Growth: `git diff --shortstat 1fe9d44..eb656b2` reports9 existing files,1026 ins
 
 These focused compiler checks and audit do not establish solver or Rocq certificates. D5 stable provenance identity, durable discharge reuse and the remaining Phase B source/reader controls stay open. Native ABI, loading, address, lifetime and execution authority remain unchanged. Closing these five source-demand blockers does not close Phase B or deliver the whole FFI capability.
 
+#### October 13 Q2 scoped source-readiness acceptance
+
+The accepted repair receipts now reconcile all23 original Q2 integration failures: unused array1; callable result/Option7; direct-capture2 and aggregate5; Fibonacci/shared-cell fold/callback initializer3; the five source-demand cases closed at `eb656b2`. This is a mapping across accepted owner gates, not a newly executed combined23 run. The historical Option report at `82925c9` is superseded by the unchanged Placement/test blobs and accepted range-placement evidence at `9392e7e`; it does not reopen that seam.
+
+Fable5.1 high (`fable-q2-readiness-18`, one bounded evidence-packet read) earned a current committed-head gate: ForeignReference14, Pending/lifecycle3, BoundaryValue56 and the existing range-placement18. Its artifact-name shorthand was translated to the actual registered test selectors. The retained TRX IDs form91 distinct cases with zero overlap. `q2-integration-earned-01` passed91/91, zero skipped,22.638s; every old scope ID matched and missing/extra/failures lists are empty. The successful-producer guard and committed-blob bridge bind all producer inputs, nine changed files, four heads and five DLLs; before/after closure is unchanged. Commit metadata required no rebuild. This is executed narrowed Q2 source readiness, not unfiltered whole-compiler acceptance or Phase B closure. No framework regression was earned.
+
+ONE independently built `eb656b2` under lease `lease-f8dd7e05`, run `b32d268f61b448209adcb37cc63d775d`; durable Bozzetto operation25 and complete stdout4981bytes/stderr0 confirm exit0, compiler60.17s, zero errors and six warnings. Worker assertions about checkout heads and unchanged source are report-grade, separate from the local committed-blob gate binding. TWO and THREE clean-fast-forwarded their primary Clef checkouts to the same checkpoint (native worker reports). A stale TWO reading report used an unauthorized fallback after retrieval failure; it is excluded from current code evidence and led to no implementation change.
+
+Evidence: clef `artifacts/ffi-reconcile-20261013/q2-integration-earned-01-producer-guard.json`, `q2-integration-earned-01-binding.json`, `q2-integration-earned-01-closure-check.json`, `q2-integration-earned-01-outcomes.json` and its exact TRX (SHA256 `e2b70374ff3b63b2d0ccfef8014c80844e11ac5584c4eaa03cd69849fa51040d`); `one-final-source-journal-binding.json`; native Fable18 launch/result/return receipts. The next implementation item is Q3's existing constructor/sample cleanup (section6.5). Remaining reader/protocol controls, BF5 proof completeness/certificates, D5 provenance and durable reuse, and later native authority tranches retain their recorded status. No new tracked files, dependencies or owners accompany this acceptance record.
+
 ### 11.2 Residual catalog
 
 | Id | Residual | Where |
