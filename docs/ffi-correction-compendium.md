@@ -382,6 +382,55 @@ The owner's questions from that map: the next Baker construct (scalar calls, rea
 
 Not reached by any of this: native execution, native address realization, foreign ABI admission, foreign lifetime closure, the Alex native aggregate reconstruction, desktop binding regeneration. The next native lowering claim requires both source and reader controls: the next Alex native aggregate or entry case paired with a complete source pipeline and an independently constructed public row; function-to-address conversion and foreign invocation separately require ABI, loading and target-realization authority.
 
+#### Capability closure accounting (owner direction, October 13)
+
+FFI delivery is assessed at the capability boundary across its producers and
+consumers. Accepted source increments remain credited at their actual scope;
+capability closure requires all three columns below. Tests, commits and an audit
+are evidence for a column, not substitutes for the others.
+
+| Closure column | Required evidence |
+| --- | --- |
+| Implementation | The specified source and reader behavior, positive and exact-refusal controls, a caught rule mutation, and a successful producer bound to the accepted source and artifacts. Generated C/C++ bindings account for every supported representation and refuse unsupported forms with provenance. |
+| Proof and differential support | A complete obligation/dependency account for the retained boundary; `Pending`, discharged and refuted distinguished; coverage of reachable cases and a nonvacuous premise check where discharge is by refutation. External descriptor contracts and target ABI declarations retain hypothesis provenance. Evidence is identified at its actual tier; checker tests and audits never become solver certificates or Rocq proofs. |
+| Consumer synchronization | Named affected projects at exact heads and contract fingerprints, regenerated outputs reconciled with stale files, and focused consuming checks. Unchecked consumers are recorded as unverified; an explicit supported-scope exclusion carries its reason and located refusal. |
+
+The initial reconciliation uses the existing requirement map and increment
+history. These are the current closure groups, not a second requirements owner:
+
+| Capability boundary | Current accepted scope and remaining closure |
+| --- | --- |
+| Portable fat pointers and flat closures | Callable rows and several Phase B source-demand/readiness increments are accepted in bounded scopes. Reader binding, formation/lifetime and native reconstruction controls remain in §§6 and11. |
+| Native entry and foreign invocation | ABI, loading, address and execution authority remain separate open tranches. Source rooting or a portable callable row grants none of them. |
+| Aggregate and scalar marshaling | Existing source/receipt controls are credited; native aggregate/Assign readers, target conversions and required lifetime/ownership evidence remain open. |
+| Runtime string/byte borrows | Q3 samples18–23 retain explicit borrow/residence/lifetime refusals. The next slice extends existing source owners with complete evidence; it does not admit a borrow by suppressing its refusal. |
+| Binding generation and regeneration | Farscape and BAREWire vocabulary, descriptor provenance, pilot/annotation refusals and Fidelity.Platform regeneration require coordinated acceptance. Legacy desktop bindings retain their existing freeze. C++ template mapping through BAREWire is a later scoped row, with no delivery claimed. |
+| Differential claim and artifact reuse | D5 stable provenance, validity keys, consumed-proof dependencies and restart policy remain open. Accepted current-pipeline NodeId checks are not durable discharge reuse. |
+| Design-time consumers | Lattice, Clef Auto Complete and other affected tooling require a consumer-impact entry and bound checks for changed contracts. Their alignment is currently unverified, not implied by compiler acceptance. |
+
+Each closing increment records requirement IDs, accepted scope, source/artifact
+binding, proof tier and residuals, affected consumer heads, and its acceptance
+time in this standing record. Once the row-by-row inventory is reconciled, a
+fixed reporting window records capabilities opened, closed and reopened, with
+closure count per elapsed day and the remaining bounded scope. The denominator
+changes only with an explicit scope change; diagnostic count is not a feature
+count. No completion percentage or throughput figure is claimed before that
+inventory and acceptance timestamps are bound. Source-only closures and
+capability closures remain separate counts.
+
+Differential proof support must establish stable claim provenance from declaration
+identity, role and incarnation separately from discharge validity. Proposition,
+premise, descriptor, checker or pinned-lemma changes invalidate evidence for the
+same claim. Deletion/recreation retires its provenance even when a certificate
+would be logically reusable. Persisted evidence requires persisted tombstones;
+a cold start without evidence returns claims to `Pending`. A region records the
+proofs it consumed, so their invalidation reaches dependent code choices through
+the existing dependency owner. Artifact checks are bound to emitted objects and
+can require renewal while graph claims remain valid. Tier2 evidence needs a Rocq
+form when it becomes a premise of a Tier3/4 lemma; no general Rocq projection is
+claimed for the current FFI slice. These obligations implement the existing
+proof/differential design, without developer-written refinement predicates.
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
