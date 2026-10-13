@@ -368,12 +368,15 @@ let tests =
       let! refusedBuild = owner.ExecuteAsync(request Operation.Build worker "", "http", CancellationToken.None)
       refusedBuild |> refused RefusalCode.InvalidRequest
       let journal = owner.Journal
-      journal.Entries |> List.map (fun e -> e.Caller, e.Operation, (match e.Outcome with ComposerJournal.Outcome.Succeeded -> "ok" | ComposerJournal.Outcome.Refused _ -> "refused" | ComposerJournal.Outcome.Failed _ -> "failed"))
+      journal.Entries |> List.map (fun e -> e.Caller, (match e.Context with ComposerJournal.Context.Composer(operation, _) -> operation | _ -> failtest "expected compiler context"), (match e.Outcome with ComposerJournal.Outcome.Succeeded -> "ok" | ComposerJournal.Outcome.Refused _ -> "refused" | ComposerJournal.Outcome.Failed _ -> "failed" | ComposerJournal.Outcome.Running -> "running"))
       |> Expect.equal "newest first, no status read, the refusal kept"
            [ "http", Operation.Build, "refused"; "browser", Operation.Run, "ok"; "mcp:t1", Operation.Open, "ok" ]
       journal.Entries |> List.map _.Sequence |> Expect.equal "stamped one on per entry" [ 3L; 2L; 1L ]
       (journal.Entries.[1].Run |> Option.map _.StandardOutput) |> Expect.equal "the run carries its transcript" (Some "native result\n")
-      (journal.Entries.[1].Session, journal.Entries.[2].Project <> "") |> Expect.equal "the run names its session; the open names its project" (session, true)
+      (journal.Entries.[1].Context, journal.Entries.[2].Project <> "")
+      |> Expect.equal
+        "the run names its session; the open names its project"
+        (ComposerJournal.Context.Composer(Operation.Run, session), true)
       changes.Value |> Expect.equal "one announcement per entry" 3
       do! owner.StopAsync()
     }
@@ -390,7 +393,13 @@ let tests =
         let! _ = tools.composer_open_project("/project/fixture.fidproj", CancellationToken.None)
         ()
       finally Bozzetto.McpTools.currentTransportSessionId.Value <- None
-      owner.Journal.Entries |> List.map (fun e -> e.Caller, e.Operation) |> Expect.equal "the open is journaled under the transport label" [ "mcp:t9", Operation.Open ]
+      owner.Journal.Entries
+      |> List.map (fun e ->
+        e.Caller,
+        (match e.Context with
+         | ComposerJournal.Context.Composer(operation, _) -> operation
+         | _ -> failtest "expected compiler context"))
+      |> Expect.equal "the open is journaled under the transport label" [ "mcp:t9", Operation.Open ]
       do! owner.StopAsync()
     }
     taskCase "a status reply delayed past the close cannot bring the forgotten session back" <| fun () -> task {

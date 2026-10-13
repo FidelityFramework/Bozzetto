@@ -374,6 +374,37 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
       | None, Some(Ok store) -> store.ReadTranscript request
       | _ -> Error(ComposerJournal.TranscriptRefusal.StorageFailure "The operations journal has no durable store."))
 
+  /// These observations require durable publication. They never launch work or
+  /// grant a lease; ingress validates admission before beginning a command.
+  member private _.ChangeLeasedCommand(change: ComposerJournal.Store -> Result<ComposerJournal.Journal * ComposerJournal.Entry, string>) =
+    let result, publish = lock gate (fun () ->
+      match journal.StorageError, journalStore with
+      | Some reason, _ -> Error reason, false
+      | None, Some(Ok store) ->
+        match change store with
+        | Error reason -> Error reason, false
+        | Ok(stored, entry) ->
+          let publish = stored.Sequence <> journal.Sequence
+          journal <- stored
+          Ok entry, publish
+      | _ -> Error "Leased command observation requires a durable operations journal.", false)
+    if publish then
+      try journalChanged.Trigger() with _ -> ()
+    result
+
+  member this.BeginLeasedCommand(caller: string, project: string, command: ComposerJournal.LeasedCommand) =
+    this.ChangeLeasedCommand(fun store -> store.BeginCommand caller project command)
+
+  member this.SettleLeasedCommand(caller: string, project: string, command: ComposerJournal.LeasedCommand, result: ComposerJournal.CommandResult) =
+    this.ChangeLeasedCommand(fun store -> store.SettleCommand caller project command result)
+
+  member _.FindLeasedCommand(leaseId: string, runId: string) =
+    lock gate (fun () ->
+      match journal.StorageError, journalStore with
+      | Some reason, _ -> Error reason
+      | None, Some(Ok store) -> store.FindCommand leaseId runId
+      | _ -> Error "Leased command observation requires a durable operations journal.")
+
   /// Run one operation for `caller` (the adapter's label for who asked) and journal how it settled.
   member this.ExecuteAsync(request: RequestBody, caller: string, cancellation: CancellationToken): Task<ComposerResponse> = task {
     let before = cached (ComposerWire.session request)

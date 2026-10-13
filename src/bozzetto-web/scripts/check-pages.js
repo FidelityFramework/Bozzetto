@@ -90,7 +90,7 @@ async function tab(origin, route, width) {
   await call('Page.navigate', { url: origin + route }, sessionId);
   const facts = route.startsWith('/dashboard')
     ? "document.querySelector('.daemon-health')?.innerText.includes('Healthy') && document.body.innerText.includes('Mock implementer') && document.body.innerText.includes('Earlier passes (2)')"
-    : "document.body.innerText.includes('Composer sessions') || document.body.innerText.includes('COMPOSER SESSIONS')";
+    : "document.body.innerText.includes('Work across nodes')";
   await waitFor(sessionId, `[...document.querySelectorAll('span')].some(s => s.innerText === 'connected') && (${facts})`);
   return sessionId;
 }
@@ -140,6 +140,11 @@ async function check() {
   await writeFile(join(evidence, 'views.json'), JSON.stringify({dashboard: d, work: c}, null, 2));
   assert.equal(d.title, 'Dashboard · Bozzetto');
   assert.equal(c.title, 'Work · Bozzetto');
+  const initialNode = name => `[...document.querySelectorAll('h3')].find(h => h.textContent === '${name}').closest('.card')`;
+  const initialOne = await evaluate(work, `${initialNode('one')}.innerText`);
+  for (const text of ['/mock/clef', 'test_suite_run · running', 'PID 6543', '/mock/dotnet', '/mock/clef/tests.dll', 'fixture-lease', 'fixture-test-run', 'fixture queued build · /mock/Farscape', 'Compiler worker · running · PID 7654']) assert.ok(initialOne.includes(text), `cross-node running work: ${text}`);
+  assert.ok(initialOne.includes('0 compiler sessions · 1 active leases · 1 queued'), 'leased command does not manufacture a compiler session');
+  assert.ok(!initialOne.includes('Exit 0'), 'running command does not invent a successful result');
   const firstWorkAges = await evaluate(work, 'window.__firstWorkAges');
   assert.ok(firstWorkAges.one.includes('age unavailable (awaiting clock)'), 'unknown initial clock must not manufacture a zero sample age');
   const oneAge = "[...document.querySelectorAll('h3')].find(h=>h.textContent === 'one').closest('.card').querySelector('.work-sample-age').textContent";
@@ -171,9 +176,9 @@ async function check() {
   assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'earlier passes start collapsed');
   assert.equal(await evaluate(dashboard, `${agentPanel}.querySelectorAll('details[open]').length`), 0, 'per-pass details start collapsed too');
   assert.equal(await evaluate(dashboard, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); return cards.indexOf('Agent work') < cards.indexOf('Whole-machine resources'); })()`), true, 'agent work precedes resources');
-  // Builds and suites appear on Work: their leases sit beside the compiler worker.
-  assert.equal(await evaluate(work, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); const worker = cards.indexOf('Compiler worker'), leases = cards.indexOf('Work leases'); return worker >= 0 && leases > worker; })()`), true, 'leases follow the compiler worker on Work');
-  assert.equal(await evaluate(work, "[...document.querySelectorAll('p')].find(p => p.textContent.includes('fixture ONE build')).getBoundingClientRect().bottom < innerHeight"), true, 'consolidated remote active lease is visible on Work without scrolling');
+  // Each node groups its actual worker and leases; controller compiler controls are secondary.
+  assert.equal(await evaluate(work, `(() => { const card = ${initialNode('one')}; return !!(card.querySelector('.node-worker').compareDocumentPosition(card.querySelector('.node-lease')) & Node.DOCUMENT_POSITION_FOLLOWING); })()`), true, 'remote leases follow their own node worker');
+  assert.equal(await evaluate(work, `${initialNode('one')}.querySelector('.node-lease').getBoundingClientRect().bottom < innerHeight`), true, 'consolidated remote active lease is visible on Work without scrolling');
   // Native disclosures retain every supplied detail without dumping them into
   // the default view. Opening them must not fetch or issue bridge commands.
   await evaluate(dashboard, `${historyDetails}.querySelector(':scope > summary').click()`);
@@ -198,7 +203,12 @@ async function check() {
     }
   };
   assertDashboardHeadings(d);
-  for (const text of ['Composer sessions', 'Compiler worker', 'Run output', 'Open project', 'No open projects.', 'Work leases']) assert.ok(c.text.toLowerCase().includes(text.toLowerCase()), text);
+  for (const text of ['Work across nodes', 'Controller compiler controls']) assert.ok(c.text.includes(text), text);
+  for (const text of ['No open projects.', 'Controller projects', 'No runs yet:']) assert.ok(!c.text.includes(text), `empty controller state does not replace cross-node work: ${text}`);
+  assert.equal(await evaluate(work, "document.querySelector('.controller-compiler').open"), false, 'controller compiler controls start secondary and closed');
+  await evaluate(work, "document.querySelector('.controller-compiler > summary').click()");
+  const compilerControls = await inspect(work);
+  for (const text of ['Composer sessions', 'Compiler worker', 'Open project', 'No open projects.']) assert.ok(compilerControls.text.toLowerCase().includes(text.toLowerCase()), text);
   for (const text of ['Whole-machine resources', 'Observe for 2 minutes', 'Observe resources', 'Restart resource observation', 'Resources ·']) assert.ok(!c.text.includes(text), `Work excludes ${text}`);
   assert.ok(!c.text.includes('Agent work'), 'Work keeps the separate Agent work panel on Dashboard');
   for (const [name, page] of [['dashboard', dashboard], ['work', work]]) {
@@ -312,7 +322,10 @@ async function check() {
     assert.ok(await evaluate(work, `${nodeCard(name)}.innerText.includes('remote · read-only')`), name + ': remote scope is explicit');
     assert.deepEqual(await evaluate(work, `[...${nodeCard(name)}.querySelectorAll('button')].map(b=>b.textContent)`), name === 'one' ? ['Load stdout','Load stderr'] : [], name + ': only remote observation/readback actions');
   }
-  assert.ok(await evaluate(work, `${nodeCard('one')}.innerText.includes('fixture ONE build')`), 'remote active lease is shown');
+  const settledOne = await evaluate(work, `${nodeCard('one')}.innerText`);
+  for (const text of ['/mock/clef', 'command_failed: dotnet exited 1', 'PID 6543', 'fixture-lease', 'fixture-test-run', 'Exit 1']) assert.ok(settledOne.includes(text), `settled command remains after lease release: ${text}`);
+  assert.ok(settledOne.includes('0 active leases · 0 queued'), 'released admission is distinct from retained history');
+  assert.equal(await evaluate(work, `${nodeCard('one')}.querySelectorAll('.node-operation').length`), 1, 'one run keeps one row through settlement');
   assert.ok(await evaluate(work, `${nodeCard('two')}.innerText.includes('0 active leases')`), 'observed zero is shown');
   assert.ok(await evaluate(work, `${nodeCard('three')}.innerText.includes('Work state unavailable; no idle state inferred.')`), 'unobserved state is not zero');
   const resourceMetric = "[...document.querySelectorAll('div')].find(e=>e.className === 'text-xs opacity-70' && e.textContent === 'Host CPU busy')?.nextElementSibling?.textContent";
@@ -352,7 +365,7 @@ async function check() {
   assert.equal(await evaluate(dashboard, resourceMetric), '17.0%', 'stop acknowledgement preserves the last resource values without requiring a new sample');
   const readback = "document.querySelector('.transcript-readback')";
   const readsBefore = pageFrames.filter(f=>f.session === work && f.command === 10).length;
-  await evaluate(work, `${nodeCard('one')}.querySelector('details').open = true; [...${nodeCard('one')}.querySelectorAll('button')].find(b=>b.textContent === 'Load stdout').click()`);
+  await evaluate(work, `[...${nodeCard('one')}.querySelectorAll('button')].find(b=>b.textContent === 'Load stdout').click()`);
   await waitFor(work, `${readback}?.innerText.includes('more available')`);
   assert.ok((await evaluate(work, `${readback}.innerText`)).includes('32768 stored bytes loaded'), 'first page byte cursor is exact');
   assert.equal(await evaluate(work, `${readback}.querySelector('pre') === null`), true, 'incomplete UTF8 is not independently decoded or displayed');

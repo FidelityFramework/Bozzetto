@@ -124,7 +124,7 @@ module Project =
       Presence = [||]
       Runs = agentWorkRuns state }
 
-  /// The daemon's journal of settled Composer operations as a page shows it,
+  /// Compiler operations and leased process observations as a page shows them,
   /// stamped by the publication that produced it. The caller travels as the
   /// adapter's label, which is all it is.
   let operations (revision: int64) (journal: ComposerJournal.Journal) : OperationsBoard =
@@ -136,15 +136,25 @@ module Project =
         |> List.map (fun entry ->
           let ok, code, message =
             match entry.Outcome with
+            | ComposerJournal.Outcome.Running -> false, "running", ""
             | ComposerJournal.Outcome.Succeeded -> true, "", ""
             | ComposerJournal.Outcome.Refused(code, message) -> false, ComposerClientJson.refusalCode code, message
             | ComposerJournal.Outcome.Failed message -> false, "exception", message
+          let operation, session, lease =
+            match entry.Context with
+            | ComposerJournal.Context.Composer(operation, session) -> ComposerClientJson.operationName operation, session, None
+            | ComposerJournal.Context.LeasedCommand command ->
+              let kind = match command.Kind with ComposerJournal.LeasedKind.Build -> "full_build" | ComposerJournal.LeasedKind.Test -> "test_suite_run"
+              kind, "", Some { LeasedCommandInfo.Kind = kind; LeaseId = command.LeaseDisplayId; RunId = command.RunId
+                               Executable = command.Executable; Arguments = List.toArray command.Arguments
+                               ProcessId = command.ProcessId; StartedAtMs = command.StartedAtMs }
           { OperationEntry.Sequence = entry.Sequence; AtMs = entry.AtMs; CallerLabel = entry.Caller
-            Operation = ComposerClientJson.operationName entry.Operation; Session = entry.Session; Project = entry.Project
+            Operation = operation; Session = session; Project = entry.Project; Lease = lease
             Ok = ok; Code = code; Message = message
             Run =
               entry.Run |> Option.map (fun run ->
-                { OperationRun.ExitCode = run.ExitCode; Generation = run.Generation; SourceVersion = run.SourceVersion
+                { OperationRun.ExitCode = run.ExitCode
+                  Compiler = run.Compiler |> Option.map (fun c -> { OperationCompiler.Generation = c.Generation; SourceVersion = c.SourceVersion })
                   StandardOutput = run.StandardOutput; StandardError = run.StandardError; Dropped = run.Dropped }) })
         |> List.toArray }
 

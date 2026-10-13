@@ -5,7 +5,11 @@ module Bozzetto.Web.Shared.Protocol
 
 /// Binary envelope and vocabulary version, also carried in Welcome.
 [<Literal>]
-let ProtocolVersion = 9
+let ProtocolVersion = 10
+
+/// Existing observation requests are unchanged; deployed v9 peers remain readable.
+[<Literal>]
+let LegacyProtocolVersion = 9
 
 [<Literal>]
 let MaxObservedPeers = 16
@@ -327,13 +331,48 @@ type AgentWorkBoard = {
 
 /// A run's output as the daemon journaled it; `Dropped` marks a transcript
 /// given up for space, its entry kept.
+type OperationCompiler = { Generation: int64; SourceVersion: string }
+type LeasedCommandInfo = {
+  Kind: string
+  /// Non-secret display identity, matching the grant board; never a release token.
+  LeaseId: string; RunId: string; Executable: string
+  Arguments: string array; ProcessId: int32; StartedAtMs: int64
+}
 type OperationRun = {
-  ExitCode: int32; Generation: int64; SourceVersion: string
+  ExitCode: int32; Compiler: OperationCompiler option
   StandardOutput: string; StandardError: string
   Dropped: bool
 }
 
-/// One settled Composer operation from any caller, as the daemon journaled it.
+/// Private loopback reporting, separate from public Work snapshots and compiler commands.
+[<Literal>]
+let CommandObservationMediaType = "application/vnd.bozzetto.command-observation"
+[<Literal>]
+let MaxCommandObservationBytes = 256 * 1024
+[<Literal>]
+let MaxCommandObservationReplyBytes = 16 * 1024
+
+type CommandObservationResult = {
+  FinishedAtMs: int64; ExitCode: int32
+  StandardOutput: string; StandardError: string
+  OutputTruncated: bool; ErrorTruncated: bool
+}
+type CommandObservation =
+  | CommandStarted
+  | CommandFinished of CommandObservationResult
+
+type CommandObservationRequest = {
+  Holder: string; Project: string; Kind: string
+  /// Admission capability, private to the caller and its local daemon.
+  LeaseId: string
+  RunId: string; Executable: string; Arguments: string array
+  ProcessId: int32; StartedAtMs: int64; Observation: CommandObservation
+}
+type CommandObservationReply =
+  | CommandObservationAccepted of sequence: int64
+  | CommandObservationRefused of reason: string
+
+/// One compiler operation or leased process observation, as the daemon journaled it.
 /// `Caller` is the adapter's report of who asked ("mcp:<transport>", "http",
 /// "browser"): a label, never an authenticated identity.
 type OperationEntry = {
@@ -341,9 +380,10 @@ type OperationEntry = {
   CallerLabel: string; Operation: string; Session: string; Project: string
   Ok: bool; Code: string; Message: string
   Run: OperationRun option
+  Lease: LeasedCommandInfo option
 }
 
-/// The daemon's journal of settled operations, newest first, bounded by the
+/// The daemon's journal of running and settled operations, newest first, bounded by the
 /// daemon; stamped per publication, a page keeps the newest.
 type OperationsBoard = { Revision: int64; Incarnation: string; Entries: OperationEntry array; StorageError: string option }
 

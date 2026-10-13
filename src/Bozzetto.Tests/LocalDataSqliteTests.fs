@@ -77,8 +77,15 @@ let localDataSqliteTests =
       withTempDir (fun dir ->
         let store = ComposerIntegration.ComposerJournal.openStore (LocalData.operationsPath dir) |> ok
         let entry: ComposerIntegration.ComposerJournal.Entry =
-          { Sequence = 0L; AtMs = 42L; Caller = "test"; Operation = Composer.Protocol.Operation.Build
-            Session = "s"; Project = "/project"; Outcome = ComposerIntegration.ComposerJournal.Outcome.Succeeded; Run = None }
+          {
+            Sequence = 0L
+            AtMs = 42L
+            Caller = "test"
+            Context = ComposerIntegration.ComposerJournal.Context.Composer(Composer.Protocol.Operation.Build, "s")
+            Project = "/project"
+            Outcome = ComposerIntegration.ComposerJournal.Outcome.Succeeded
+            Run = None
+          }
         let first = store.Append entry |> ok
         let report = LocalData.report None LocalDataRetention.CohortActivity.Finished dir
         let usage = report.Operations |> ok

@@ -107,7 +107,7 @@ module Frames =
   }
 
 let validateRequest (identity: NodeIdentity) (request: PeerObserveRequest) =
-  if request.ProtocolVersion <> ProtocolVersion then Error "protocol_mismatch"
+  if request.ProtocolVersion <> ProtocolVersion && request.ProtocolVersion <> LegacyProtocolVersion then Error "protocol_mismatch"
   elif request.Node <> identity.Node then Error "node_mismatch"
   else
     match request.Topic, request.Seconds with
@@ -118,7 +118,7 @@ let validateRequest (identity: NodeIdentity) (request: PeerObserveRequest) =
 type private ReadRequest = Observe of PeerObserveRequest | Transcript of PeerTranscriptRequest
 
 let validateTranscriptRequest (identity: NodeIdentity) (request: PeerTranscriptRequest) =
-  if request.ProtocolVersion <> ProtocolVersion then Error "protocol_mismatch"
+  if request.ProtocolVersion <> ProtocolVersion && request.ProtocolVersion <> LegacyProtocolVersion then Error "protocol_mismatch"
   elif request.Request.Source <> identity then Error "node_mismatch"
   elif request.Request.MaxBytes < 1 || request.Request.MaxBytes > MaxTranscriptPageBytes then Error "invalid_limit"
   elif request.Request.Offset < 0L || request.Request.Sequence < 1L || String.IsNullOrWhiteSpace request.Request.Journal then Error "invalid_cursor"
@@ -247,7 +247,8 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
   }
 
   let openStream peer topic seconds ct =
-    openPayload peer (encodePeerObserveRequest { ProtocolVersion = ProtocolVersion; Node = peer.Node; Topic = topic; Seconds = seconds }) ct
+    // Requests keep the unchanged v9 layout while responses admit v9 and v10.
+    openPayload peer (encodePeerObserveRequest { ProtocolVersion = LegacyProtocolVersion; Node = peer.Node; Topic = topic; Seconds = seconds }) ct
 
   let nextFrame (stream: Stream) (ct: CancellationToken) = async {
     use deadline = CancellationTokenSource.CreateLinkedTokenSource ct
@@ -399,7 +400,7 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
       else
         try
           try
-            use! response = openPayload peer (encodePeerTranscriptRequest { ProtocolVersion = ProtocolVersion; Request = request }) cancellation.Token
+            use! response = openPayload peer (encodePeerTranscriptRequest { ProtocolVersion = LegacyProtocolVersion; Request = request }) cancellation.Token
             use! stream = response.Content.ReadAsStreamAsync(cancellation.Token) |> Async.AwaitTask
             let! frame = Frames.read stream cancellation.Token
             match frame |> Option.map decodePeerTranscriptReply with

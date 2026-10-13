@@ -16,7 +16,7 @@ let private MaxItems = 65536
 [<Literal>]
 let private MaxStringBytes = 1024 * 1024
 
-type private Reader = { Bytes: byte array; mutable Offset: int }
+type private Reader = { Bytes: byte array; mutable Offset: int; mutable Version: int }
 type private Writer = { Bytes: ResizeArray<byte>; Limit: int }
 type private Codec<'T> = { Read: Reader -> 'T; Write: Writer -> 'T -> unit }
 
@@ -804,22 +804,51 @@ let private agentWorkBoard : Codec<AgentWorkBoard> = {
     { AgentWorkBoard.Incarnation = f0; Sequence = f1; ExecutionHost = f2; Capacity = f3; Runs = f4; Presence = f5 }
 }
 
+let private operationCompiler : Codec<OperationCompiler> = {
+  Write = fun w value -> wide.Write w value.Generation; text.Write w value.SourceVersion
+  Read = fun r ->
+    let generation = wide.Read r
+    let source = text.Read r
+    { Generation = generation; SourceVersion = source }
+}
+
+let private leasedCommand : Codec<LeasedCommandInfo> = {
+  Write = fun w value ->
+    text.Write w value.Kind
+    text.Write w value.LeaseId
+    text.Write w value.RunId
+    text.Write w value.Executable
+    (array text).Write w value.Arguments
+    whole.Write w value.ProcessId
+    wide.Write w value.StartedAtMs
+  Read = fun r ->
+    let kind = text.Read r
+    let lease = text.Read r
+    let run = text.Read r
+    let executable = text.Read r
+    let arguments = (array text).Read r
+    let pid = whole.Read r
+    let started = wide.Read r
+    { Kind = kind; LeaseId = lease; RunId = run; Executable = executable
+      Arguments = arguments; ProcessId = pid; StartedAtMs = started }
+}
+
 let private operationRun : Codec<OperationRun> = {
   Write = fun w value ->
     whole.Write w value.ExitCode
-    wide.Write w value.Generation
-    text.Write w value.SourceVersion
+    (optional operationCompiler).Write w value.Compiler
     text.Write w value.StandardOutput
     text.Write w value.StandardError
     flag.Write w value.Dropped
   Read = fun r ->
     let f0 = whole.Read r
-    let f1 = wide.Read r
-    let f2 = text.Read r
+    let compiler =
+      if r.Version = LegacyProtocolVersion then Some(operationCompiler.Read r)
+      else (optional operationCompiler).Read r
     let f3 = text.Read r
     let f4 = text.Read r
     let f5 = flag.Read r
-    { OperationRun.ExitCode = f0; Generation = f1; SourceVersion = f2; StandardOutput = f3; StandardError = f4; Dropped = f5 }
+    { OperationRun.ExitCode = f0; Compiler = compiler; StandardOutput = f3; StandardError = f4; Dropped = f5 }
 }
 
 let private operationEntry : Codec<OperationEntry> = {
@@ -834,6 +863,7 @@ let private operationEntry : Codec<OperationEntry> = {
     text.Write w value.Code
     text.Write w value.Message
     (optional operationRun).Write w value.Run
+    (optional leasedCommand).Write w value.Lease
   Read = fun r ->
     let f0 = wide.Read r
     let f1 = wide.Read r
@@ -845,7 +875,8 @@ let private operationEntry : Codec<OperationEntry> = {
     let f7 = text.Read r
     let f8 = text.Read r
     let f9 = (optional operationRun).Read r
-    { OperationEntry.Sequence = f0; AtMs = f1; CallerLabel = f2; Operation = f3; Session = f4; Project = f5; Ok = f6; Code = f7; Message = f8; Run = f9 }
+    let lease = if r.Version = LegacyProtocolVersion then None else (optional leasedCommand).Read r
+    { OperationEntry.Sequence = f0; AtMs = f1; CallerLabel = f2; Operation = f3; Session = f4; Project = f5; Ok = f6; Code = f7; Message = f8; Run = f9; Lease = lease }
 }
 
 let private operationsBoard : Codec<OperationsBoard> = {
@@ -984,21 +1015,89 @@ let private event : Codec<Event> = {
     | _ -> fail "unknown Event tag"
 }
 
-let private encode family limit codec value =
+let private commandObservationResult : Codec<CommandObservationResult> = {
+  Write = fun w value ->
+    wide.Write w value.FinishedAtMs
+    whole.Write w value.ExitCode
+    text.Write w value.StandardOutput
+    text.Write w value.StandardError
+    flag.Write w value.OutputTruncated
+    flag.Write w value.ErrorTruncated
+  Read = fun r ->
+    let finished = wide.Read r
+    let exitCode = whole.Read r
+    let output = text.Read r
+    let error = text.Read r
+    let outputTruncated = flag.Read r
+    let errorTruncated = flag.Read r
+    { FinishedAtMs = finished; ExitCode = exitCode; StandardOutput = output; StandardError = error
+      OutputTruncated = outputTruncated; ErrorTruncated = errorTruncated }
+}
+
+let private commandObservationRequest : Codec<CommandObservationRequest> = {
+  Write = fun w value ->
+    text.Write w value.Holder
+    text.Write w value.Project
+    text.Write w value.Kind
+    text.Write w value.LeaseId
+    text.Write w value.RunId
+    text.Write w value.Executable
+    (array text).Write w value.Arguments
+    whole.Write w value.ProcessId
+    wide.Write w value.StartedAtMs
+    match value.Observation with
+    | CommandStarted -> uint.Write w 0
+    | CommandFinished result -> uint.Write w 1; commandObservationResult.Write w result
+  Read = fun r ->
+    let holder = text.Read r
+    let project = text.Read r
+    let kind = text.Read r
+    let lease = text.Read r
+    let run = text.Read r
+    let executable = text.Read r
+    let arguments = (array text).Read r
+    let pid = whole.Read r
+    let started = wide.Read r
+    let observation =
+      match uint.Read r with
+      | 0 -> CommandStarted
+      | 1 -> CommandFinished(commandObservationResult.Read r)
+      | _ -> fail "unknown CommandObservation tag"
+    { Holder = holder; Project = project; Kind = kind; LeaseId = lease; RunId = run
+      Executable = executable; Arguments = arguments; ProcessId = pid; StartedAtMs = started; Observation = observation }
+}
+
+let private commandObservationReply : Codec<CommandObservationReply> = {
+  Write = fun w value ->
+    match value with
+    | CommandObservationAccepted sequence -> uint.Write w 0; wide.Write w sequence
+    | CommandObservationRefused reason -> uint.Write w 1; text.Write w reason
+  Read = fun r ->
+    match uint.Read r with
+    | 0 -> CommandObservationAccepted(wide.Read r)
+    | 1 -> CommandObservationRefused(text.Read r)
+    | _ -> fail "unknown CommandObservationReply tag"
+}
+
+let private encodeVersion version family limit codec value =
   let writer = { Writer.Bytes = ResizeArray<byte>(); Limit = limit }
   for b in [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy |] do put writer b
-  uint.Write writer ProtocolVersion
+  uint.Write writer version
   uint.Write writer family
   codec.Write writer value
   writer.Bytes.ToArray()
 
+let private encode family limit codec value = encodeVersion ProtocolVersion family limit codec value
+
 let private decode family limit codec (bytes: byte array) =
   try
     if isNull bytes || bytes.Length > limit then fail "frame too large"
-    let reader = { Reader.Bytes = bytes; Offset = 0 }
+    let reader = { Reader.Bytes = bytes; Offset = 0; Version = 0 }
     for b in [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy |] do
       if take reader <> b then fail "wrong magic"
-    if uint.Read reader <> ProtocolVersion then fail "unsupported version"
+    reader.Version <- uint.Read reader
+    let legacyFamily = family >= 1 && family <= 6
+    if reader.Version <> ProtocolVersion && (not legacyFamily || reader.Version <> LegacyProtocolVersion) then fail "unsupported version"
     if uint.Read reader <> family then fail "wrong message family"
     let value = codec.Read reader
     if reader.Offset <> bytes.Length then fail "trailing bytes"
@@ -1022,7 +1121,7 @@ let private validateCommand (frame: CommandFrame) =
     | _ -> Ok frame
 
 let private validatePeer (request: PeerObserveRequest) =
-  if request.ProtocolVersion <> ProtocolVersion then Error "unsupported peer version"
+  if request.ProtocolVersion <> ProtocolVersion && request.ProtocolVersion <> LegacyProtocolVersion then Error "unsupported peer version"
   elif String.IsNullOrWhiteSpace request.Node then Error "node: required"
   elif request.Topic <> "work" && request.Topic <> "resources" then Error "unknown observation topic"
   elif request.Seconds < 0 || request.Seconds > 120 then Error "seconds: expected 0 through 120"
@@ -1033,15 +1132,21 @@ let encodeCommand value = encode 1 MaxFrameBytes commandFrame (validateCommand v
 let decodeCommand bytes = decode 1 MaxFrameBytes commandFrame bytes |> Result.bind validateCommand
 let encodeEvent value = encode 2 MaxFrameBytes event value
 let decodeEvent bytes = decode 2 MaxFrameBytes event bytes
-let encodePeerObserveRequest value = encode 3 MaxRequestBytes peerObserveRequest (validatePeer value |> require)
+let encodePeerObserveRequest (value: PeerObserveRequest) = encodeVersion value.ProtocolVersion 3 MaxRequestBytes peerObserveRequest (validatePeer value |> require)
 let decodePeerObserveRequest bytes = decode 3 MaxRequestBytes peerObserveRequest bytes |> Result.bind validatePeer
 let encodePeerFrame value = encode 4 MaxFrameBytes peerFrame value
 let decodePeerFrame bytes = decode 4 MaxFrameBytes peerFrame bytes
 
 let private validatePeerTranscript (request: PeerTranscriptRequest) =
-  if request.ProtocolVersion <> ProtocolVersion then Error "unsupported peer version"
+  if request.ProtocolVersion <> ProtocolVersion && request.ProtocolVersion <> LegacyProtocolVersion then Error "unsupported peer version"
   else validateTranscript request.Request |> Result.map (fun _ -> request)
-let encodePeerTranscriptRequest value = encode 5 MaxRequestBytes peerTranscriptRequest (validatePeerTranscript value |> require)
+let encodePeerTranscriptRequest (value: PeerTranscriptRequest) = encodeVersion value.ProtocolVersion 5 MaxRequestBytes peerTranscriptRequest (validatePeerTranscript value |> require)
 let decodePeerTranscriptRequest bytes = decode 5 MaxRequestBytes peerTranscriptRequest bytes |> Result.bind validatePeerTranscript
 let encodePeerTranscriptReply value = encode 6 MaxTranscriptBytes peerTranscriptReply value
 let decodePeerTranscriptReply bytes = decode 6 MaxTranscriptBytes peerTranscriptReply bytes
+
+// These new private reporting families have no legacy JSON or v9 representation.
+let encodeCommandObservationRequest value = encode 7 MaxCommandObservationBytes commandObservationRequest value
+let decodeCommandObservationRequest bytes = decode 7 MaxCommandObservationBytes commandObservationRequest bytes
+let encodeCommandObservationReply value = encode 8 MaxCommandObservationReplyBytes commandObservationReply value
+let decodeCommandObservationReply bytes = decode 8 MaxCommandObservationReplyBytes commandObservationReply bytes

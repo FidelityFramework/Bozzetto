@@ -24,6 +24,9 @@ open Bozzetto.McpPushNotifications
 open Bozzetto.McpStateHandlers
 open Bozzetto.Utils
 open Bozzetto
+module CommandWire = Bozzetto.Web.Shared.Protocol
+module CommandCodec = Bozzetto.Web.Shared.BinaryCodec
+module CommandJournal = Bozzetto.ComposerIntegration.ComposerJournal
 
 // ---------------------------------------------------------------------------
 // MCP Push Notifications — tracks active connections and broadcasts events
@@ -638,14 +641,27 @@ let guardRequestOf (ctx: Microsoft.AspNetCore.Http.HttpContext) : Bozzetto.Serve
 /// daemon's own (`own` — every loopback origin of the MCP and control
 /// listeners) and unsafe requests whose body has the wrong endpoint media type. Local
 /// tooling (curl, MCP, editors, CLI — no browser headers) passes.
+let private writeCommandObservationReply (ctx: Microsoft.AspNetCore.Http.HttpContext) status reply = task {
+  ctx.Response.StatusCode <- status
+  ctx.Response.ContentType <- CommandWire.CommandObservationMediaType
+  let bytes = CommandCodec.encodeCommandObservationReply reply
+  do! ctx.Response.Body.WriteAsync(bytes.AsMemory(), ctx.RequestAborted)
+}
+
 let originGuardMiddleware
   (own: Bozzetto.Server.HttpOriginGuard.OwnOrigins)
   (ctx: Microsoft.AspNetCore.Http.HttpContext)
   (next: Func<Task>) = task {
   let request = guardRequestOf ctx
+  let commandObservation =
+    ctx.Request.Method = "POST"
+    && (ctx.Request.Path.Value = "/api/lease/command/start"
+        || ctx.Request.Path.Value = "/api/lease/command/finish")
   let verdict =
     if ctx.Request.Method = "POST" && ctx.Request.Path.Value = WorkObservation.Route then
       Bozzetto.Server.HttpOriginGuard.decideWithBodyType WorkObservation.MediaType own request
+    elif commandObservation then
+      Bozzetto.Server.HttpOriginGuard.decideWithBodyType CommandWire.CommandObservationMediaType own request
     else Bozzetto.Server.HttpOriginGuard.decide own request
   match verdict with
   | Bozzetto.Server.HttpOriginGuard.Verdict.Allow ->
@@ -654,7 +670,17 @@ let originGuardMiddleware
     let reason = Bozzetto.Server.HttpOriginGuard.Rejection.describe rejection
     Log.warn "[origin-guard] rejected %s %s (%s)" ctx.Request.Method (string ctx.Request.Path) reason
     let status = Bozzetto.Server.HttpOriginGuard.Rejection.statusCode rejection
-    do! jsonResponse ctx status (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (sprintf "Request rejected: %s" reason) ])
+    if commandObservation then
+      do! writeCommandObservationReply ctx status (CommandWire.CommandObservationRefused(sprintf "Request rejected: %s" reason))
+    else
+      do!
+        jsonResponse
+          ctx
+          status
+          (JsonValue.Object [
+            "success", JsonValue.Bool(false)
+            "error", JsonValue.String(sprintf "Request rejected: %s" reason)
+          ])
 }
 
 /// Install the origin gate on a daemon web host (MCP and control share it).
@@ -680,6 +706,176 @@ let readJsonBody (ctx: Microsoft.AspNetCore.Http.HttpContext) = task {
   | false ->
   return HttpJson.parse body
 }
+
+/// Report a caller-owned process through the existing durable Work journal.
+/// These routes neither launch a process nor grant/renew its lease.
+let mapLeaseCommandRoutes (app: WebApplication) (supervisor: Bozzetto.ComposerIntegration.ComposerSupervisor option) =
+  let write = writeCommandObservationReply
+
+  let refuse ctx status reason =
+    write ctx status (CommandWire.CommandObservationRefused reason)
+
+  let read (ctx: Microsoft.AspNetCore.Http.HttpContext) =
+    task {
+      let mediaType =
+        if isNull ctx.Request.ContentType then
+          ""
+        else
+          ctx.Request.ContentType.Split(';').[0].Trim()
+
+      if not (String.Equals(mediaType, CommandWire.CommandObservationMediaType, StringComparison.OrdinalIgnoreCase)) then
+        return Error(415, "Command observation requires its typed binary media type.")
+      elif
+        ctx.Request.ContentLength.HasValue
+        && ctx.Request.ContentLength.Value > int64 CommandWire.MaxCommandObservationBytes
+      then
+        return Error(413, "Command observation exceeds its body bound.")
+      else
+        use body = new System.IO.MemoryStream()
+        let buffer = Array.zeroCreate<byte> 8192
+        let mutable reading = true
+
+        while reading && body.Length <= int64 CommandWire.MaxCommandObservationBytes do
+          let! count = ctx.Request.Body.ReadAsync(buffer.AsMemory(), ctx.RequestAborted)
+
+          if count = 0 then
+            reading <- false
+          else
+            body.Write(buffer, 0, count)
+
+        if body.Length > int64 CommandWire.MaxCommandObservationBytes then
+          return Error(413, "Command observation exceeds its body bound.")
+        else
+          return
+            CommandCodec.decodeCommandObservationRequest (body.ToArray())
+            |> Result.mapError (fun reason -> 400, reason)
+    }
+
+  let validate (request: CommandWire.CommandObservationRequest) =
+    let invalid field =
+      Error("Invalid leased command field '" + field + "'.")
+
+    let label limit value =
+      not (String.IsNullOrWhiteSpace value)
+      && value.Length <= limit
+      && not (value |> Seq.exists Char.IsControl)
+
+    let labels = [
+      "holder", CommandJournal.labelLimit, request.Holder
+      "project", CommandJournal.textLimit, request.Project
+      "leaseId", CommandJournal.labelLimit, request.LeaseId
+      "runId", CommandJournal.labelLimit, request.RunId
+      "executable", 4096, request.Executable
+    ]
+
+    match labels |> List.tryFind (fun (_, limit, value) -> not (label limit value)) with
+    | Some(field, _, _) -> invalid field
+    | None when not (System.IO.Path.IsPathRooted request.Executable) -> invalid "executable"
+    | None when request.ProcessId <= 0 -> invalid "processId"
+    | None when request.StartedAtMs <= 0L -> invalid "startedAtMs"
+    | None when
+      isNull request.Arguments
+      || request.Arguments.Length > 256
+      || Array.exists isNull request.Arguments
+      ->
+      invalid "arguments"
+    | None when
+      request.Arguments
+      |> Array.sumBy (fun value -> System.Text.Encoding.UTF8.GetByteCount value)
+        >
+        32768
+      ->
+      invalid "arguments"
+    | None ->
+      match request.Kind with
+      | "full_build" -> Ok(ExpensiveWorkLease.Kind.FullBuild, CommandJournal.LeasedKind.Build)
+      | "test_suite_run" -> Ok(ExpensiveWorkLease.Kind.TestSuiteRun, CommandJournal.LeasedKind.Test)
+      | _ -> invalid "kind"
+
+  let context (request: CommandWire.CommandObservationRequest) kind displayId : CommandJournal.LeasedCommand = {
+    Kind = kind
+    LeaseId = request.LeaseId
+    LeaseDisplayId = displayId
+    RunId = request.RunId
+    Executable = request.Executable
+    Arguments = Array.toList request.Arguments
+    ProcessId = request.ProcessId
+    StartedAtMs = request.StartedAtMs
+  }
+
+  let publish ctx =
+    function
+    | Ok(entry: CommandJournal.Entry) -> write ctx 200 (CommandWire.CommandObservationAccepted entry.Sequence)
+    | Error reason -> refuse ctx 409 reason
+
+  let handle start (ctx: Microsoft.AspNetCore.Http.HttpContext) =
+    task {
+      let! decoded = read ctx
+
+      match decoded with
+      | Error(status, reason) -> do! refuse ctx status reason
+      | Ok request ->
+        match validate request with
+        | Error reason -> do! refuse ctx 400 reason
+        | Ok(kind, leasedKind) ->
+          match start, request.Observation with
+          | true, CommandWire.CommandStarted ->
+            match Bozzetto.Features.LeaseWatch.tryMatchingLive request.Holder kind (ExpensiveWorkLease.LeaseId.ofWire request.LeaseId) with
+            | None -> do! refuse ctx 409 "The leased command requires a live lease matching its id, holder and kind."
+            | Some grant ->
+              let displayId =
+                Bozzetto.Server.UiBridge.Project.leaseDisplayId grant.Holder grant.Kind grant.GrantedAt
+
+              match supervisor with
+              | None -> do! refuse ctx 503 "Leased command observation requires the durable Work journal."
+              | Some owner ->
+                do! publish ctx (owner.BeginLeasedCommand(request.Holder, request.Project, context request leasedKind displayId))
+          | false, CommandWire.CommandFinished result ->
+            let bounded (value: string) =
+              not (isNull value) && value.Length <= CommandJournal.streamLimit + 64
+
+            if
+              result.FinishedAtMs < request.StartedAtMs
+              || not (bounded result.StandardOutput && bounded result.StandardError)
+            then
+              do! refuse ctx 400 "Invalid leased command terminal result."
+            else
+              match supervisor with
+              | None -> do! refuse ctx 503 "Leased command observation requires the durable Work journal."
+              | Some owner ->
+                // The durable issued context admits joined cleanup even after lease loss.
+                match owner.FindLeasedCommand(request.LeaseId, request.RunId) with
+                | Error reason -> do! refuse ctx 409 reason
+                | Ok issued ->
+                  match issued.Context with
+                  | CommandJournal.Context.LeasedCommand prior ->
+                    let terminal: CommandJournal.CommandResult = {
+                      FinishedAtMs = result.FinishedAtMs
+                      ExitCode = result.ExitCode
+                      StandardOutput = result.StandardOutput
+                      StandardError = result.StandardError
+                      OutputTruncated = result.OutputTruncated
+                      ErrorTruncated = result.ErrorTruncated
+                    }
+
+                    do!
+                      publish
+                        ctx
+                        (owner.SettleLeasedCommand(
+                          request.Holder,
+                          request.Project,
+                          context request leasedKind prior.LeaseDisplayId,
+                          terminal
+                        ))
+                  | _ -> do! refuse ctx 409 "The operation is not an issued leased command."
+          | _ -> do! refuse ctx 400 "Command observation phase does not match its endpoint."
+    }
+
+  app.MapPost("/api/lease/command/start", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) -> handle true ctx :> Task)
+  |> ignore
+
+  app.MapPost("/api/lease/command/finish", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) -> handle false ctx :> Task)
+  |> ignore
 
 let tryGetJsonStringAliases (root: JsonValue) (names: string list) =
   names |> List.tryPick (fun name ->
@@ -2755,6 +2951,7 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
             do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "sessionId", JsonValue.String (sidStr); "evalCount", HttpJson.integer (0); "content", JsonValue.String (""); "note", JsonValue.String ("Export is available for the active session.") ])
     } :> Task
   ) |> ignore
+  mapLeaseCommandRoutes app rctx.Config.Composer
   // The coordination point for expensive, memory-costly work — session
   // create/warmup, rebuild, a full `dotnet build`, a test-suite run,
   // starting an app. Deliberately a plain HTTP endpoint, not an MCP tool

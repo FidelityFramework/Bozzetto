@@ -228,7 +228,7 @@ let factsTests =
       let sink = Sink()
       let _, _ = graph.Register sink.Push
       let entry caller op : ComposerIntegration.ComposerJournal.Entry =
-        { Sequence = 0L; AtMs = 1L; Caller = caller; Operation = op; Session = "s"; Project = "/p/P.fidproj"
+        { Sequence = 0L; AtMs = 1L; Caller = caller; Context = ComposerIntegration.ComposerJournal.Context.Composer(op, "s"); Project = "/p/P.fidproj"
           Outcome = ComposerIntegration.ComposerJournal.Outcome.Succeeded; Run = None }
       let j1 = ComposerIntegration.ComposerJournal.empty "journal-t" |> ComposerIntegration.ComposerJournal.append (entry "mcp:a" Composer.Protocol.Operation.Open)
       let j2 = j1 |> ComposerIntegration.ComposerJournal.append (entry "http" Composer.Protocol.Operation.Build)
@@ -248,12 +248,12 @@ let factsTests =
     testCase "the operations projection spells operations and refusals as the wire does and carries a run" <| fun () ->
       // Mutation caught: spell the refusal code with the F# case name and the page would show PascalCase codes beside the wire's snake_case.
       let run : ComposerIntegration.ComposerJournal.Transcript =
-        { ExitCode = 3; Generation = 9L; SourceVersion = "src"; StandardOutput = "out"; StandardError = ""
+        { ExitCode = 3; Compiler = Some { Generation = 9L; SourceVersion = "src" }; StandardOutput = "out"; StandardError = ""
           OutputTruncated = false; ErrorTruncated = false; Dropped = false }
       let entries : ComposerIntegration.ComposerJournal.Entry list =
-        [ { Sequence = 2L; AtMs = 2L; Caller = "http"; Operation = Composer.Protocol.Operation.Build; Session = "s"; Project = "/p"
+        [ { Sequence = 2L; AtMs = 2L; Caller = "http"; Context = ComposerIntegration.ComposerJournal.Context.Composer(Composer.Protocol.Operation.Build, "s"); Project = "/p"
             Outcome = ComposerIntegration.ComposerJournal.Outcome.Refused(Composer.Protocol.RefusalCode.InvalidReservation, "superseded"); Run = None }
-          { Sequence = 1L; AtMs = 1L; Caller = "browser"; Operation = Composer.Protocol.Operation.Run; Session = "s"; Project = "/p"
+          { Sequence = 1L; AtMs = 1L; Caller = "browser"; Context = ComposerIntegration.ComposerJournal.Context.Composer(Composer.Protocol.Operation.Run, "s"); Project = "/p"
             Outcome = ComposerIntegration.ComposerJournal.Outcome.Succeeded; Run = Some run } ]
       let board = Project.operations 7L { Incarnation = "j"; Sequence = 2L; Entries = entries; StorageError = None }
       (board.Revision, board.Incarnation) |> Expect.equal "stamped by the publication; the owner's incarnation carried" (7L, "j")

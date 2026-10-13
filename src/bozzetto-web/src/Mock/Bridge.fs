@@ -176,14 +176,21 @@ let private workNodes () =
     Operations = { Revision = 0L; Incarnation = "mock-journal"; StorageError = None; Entries = [||] }
   }
   let remote = { snapshot with Snapshot = { Revision = 0L; Worker = Idle; Sessions = [||] }; Leases = { Revision = 0L; Active = [||]; Queued = [||] } }
+  let finished = sessions.Count >= 2
   let run = {
-    OperationEntry.Sequence = 7L; AtMs = int64 startedAt; CallerLabel = "fixture"; Operation = "run"; Session = "fixture-run"
-    Project = "/mock/Remote.fidproj"; Ok = true; Code = ""; Message = ""
-    Run = Some { ExitCode = 0; Generation = 2L; SourceVersion = "fixture-source"; StandardOutput = ""; StandardError = ""; Dropped = false }
+    OperationEntry.Sequence = 7L; AtMs = int64 startedAt; CallerLabel = "fixture"; Operation = "test_suite_run"; Session = ""
+    Project = "/mock/clef"; Ok = false; Code = (if finished then "command_failed" else "running"); Message = (if finished then "dotnet exited 1" else "")
+    Lease = Some { Kind = "test_suite_run"; LeaseId = "fixture-lease"; RunId = "fixture-test-run"; Executable = "/mock/dotnet"
+                   Arguments = [| "vstest"; "/mock/clef/tests.dll"; "--TestCaseFilter:ForeignReferenceTests" |]
+                   ProcessId = 6543; StartedAtMs = int64 startedAt }
+    Run = if finished then Some { ExitCode = 1; Compiler = None; StandardOutput = ""; StandardError = ""; Dropped = false } else None
   }
   let busy = { remote with
+                Snapshot = { remote.Snapshot with Worker = Running { Target = { Host = "fixture-host"; Epoch = "fixture-epoch" }; CompilerVersion = "fixture-compiler"; ProcessId = Some 7654 } }
                 Operations = { remote.Operations with Entries = [| run |] }
-                Leases = { remote.Leases with Active = [| { Id = "fixture-lease"; Kind = "full_build"; Holder = "fixture ONE build"; GrantedAtMs = int64 startedAt; ExpiresAtMs = int64 startedAt + 120000L } |] } }
+                Leases = { remote.Leases with
+                             Active = if finished then [||] else [| { Id = "fixture-lease"; Kind = "test_suite_run"; Holder = "fixture ONE test · /mock/clef"; GrantedAtMs = int64 startedAt; ExpiresAtMs = int64 startedAt + 120000L } |]
+                             Queued = if finished then [||] else [| { Kind = "full_build"; Holder = "fixture queued build · /mock/Farscape"; RequestedAtMs = int64 startedAt } |] } }
   WorkNodes { Revision = workRevision; Nodes = [|
     { Source = { Node = "controller"; Incarnation = "mock-controller" }; Local = true; Status = "available"; Note = "Synthetic controller fixture"; Value = Some snapshot }
     { Source = { Node = "one"; Incarnation = "mock-one" }; Local = false; Status = "available"; Note = "Synthetic remote build fixture"; Value = Some busy }
@@ -472,12 +479,12 @@ let private operations () =
     Incarnation = "mock-journal"
     Entries = [|
       { OperationEntry.Sequence = 3L; AtMs = at - 20_000L; CallerLabel = "mcp:3f9c"; Operation = "run"; Session = "s-1"; Project = "/home/mock/Hello/Hello.fidproj"
-        Ok = true; Code = ""; Message = ""
-        Run = Some { OperationRun.ExitCode = 0; Generation = 4L; SourceVersion = "src-4"; StandardOutput = "hello from the mock run\n"; StandardError = ""; Dropped = false } }
+        Ok = true; Code = ""; Message = ""; Lease = None
+        Run = Some { OperationRun.ExitCode = 0; Compiler = Some { Generation = 4L; SourceVersion = "src-4" }; StandardOutput = "hello from the mock run\n"; StandardError = ""; Dropped = false } }
       { OperationEntry.Sequence = 2L; AtMs = at - 60_000L; CallerLabel = "mcp:3f9c"; Operation = "build"; Session = "s-1"; Project = "/home/mock/Hello/Hello.fidproj"
-        Ok = false; Code = "invalid_reservation"; Message = "The reservation was superseded."; Run = None }
+        Ok = false; Code = "invalid_reservation"; Message = "The reservation was superseded."; Run = None; Lease = None }
       { OperationEntry.Sequence = 1L; AtMs = at - 120_000L; CallerLabel = "browser"; Operation = "open"; Session = "s-1"; Project = "/home/mock/Hello/Hello.fidproj"
-        Ok = true; Code = ""; Message = ""; Run = None } |] }
+        Ok = true; Code = ""; Message = ""; Run = None; Lease = None } |] }
 
 let connect (send: byte array -> unit) : obj =
   nextClient <- nextClient + 1

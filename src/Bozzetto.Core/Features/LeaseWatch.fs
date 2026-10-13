@@ -101,6 +101,26 @@ module LeaseWatch =
   /// Safe observation: the release capability never appears in this snapshot.
   let snapshot () = lock gate (fun () -> ExpensiveWorkLease.snapshot DateTimeOffset.UtcNow pool)
 
+  /// Command reporting proves the existing grant without publishing its capability
+  /// or renewing it. The admission owner and its expiry remain unchanged.
+  let private matchingAt now holder kind leaseId (state: ExpensiveWorkLease.PoolState) =
+    state.Active |> List.tryFind (fun lease ->
+      lease.Id = leaseId && lease.Holder = holder && lease.Kind = kind && lease.ExpiresAt > now)
+
+  let internal matchesAt now holder kind leaseId state = matchingAt now holder kind leaseId state |> Option.isSome
+
+  let matchesLive holder kind leaseId =
+    lock gate (fun () -> matchesAt DateTimeOffset.UtcNow holder kind leaseId pool)
+
+  let tryMatchingLive holder kind leaseId =
+    lock gate (fun () ->
+      matchingAt DateTimeOffset.UtcNow holder kind leaseId pool
+      |> Option.map (fun lease ->
+        let view: ExpensiveWorkLease.GrantView = {
+          Holder = lease.Holder; Kind = ExpensiveWorkLease.Kind.toToken lease.Kind
+          GrantedAt = lease.GrantedAt; ExpiresAt = lease.ExpiresAt }
+        view))
+
   /// The pool as last published, with its serial: what a subscriber takes as
   /// its first value, so a change announced meanwhile is ordered after it.
   let current () : Pool = lock gate (fun () -> latest)

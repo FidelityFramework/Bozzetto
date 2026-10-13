@@ -195,11 +195,11 @@ let private events = [
     Incarnation = "daemon-ü"
     Entries = [|
       { OperationEntry.Sequence = Int64.MaxValue; AtMs = -1L; CallerLabel = "mcp:3f9c 🎼"; Operation = "run"; Session = "s"; Project = "/p/Ü.fidproj"
-        Ok = true; Code = ""; Message = ""
-        Run = Some { OperationRun.ExitCode = -2147483648; Generation = 7L; SourceVersion = "src"; StandardOutput = "[cut: 5 characters omitted]\nout\u0000"; StandardError = "err — 日本"; Dropped = false } }
-      { OperationEntry.Sequence = 1L; AtMs = 0L; CallerLabel = "http"; Operation = "build"; Session = ""; Project = ""; Ok = false; Code = "invalid_reservation"; Message = "⚠"; Run = None }
+        Ok = true; Code = ""; Message = ""; Lease = None
+        Run = Some { OperationRun.ExitCode = -2147483648; Compiler = Some { Generation = 7L; SourceVersion = "src" }; StandardOutput = "[cut: 5 characters omitted]\nout\u0000"; StandardError = "err — 日本"; Dropped = false } }
+      { OperationEntry.Sequence = 1L; AtMs = 0L; CallerLabel = "http"; Operation = "build"; Session = ""; Project = ""; Ok = false; Code = "invalid_reservation"; Message = "⚠"; Run = None; Lease = None }
       { OperationEntry.Sequence = 2L; AtMs = 1L; CallerLabel = "browser"; Operation = "run"; Session = "s"; Project = "p"; Ok = true; Code = ""; Message = ""
-        Run = Some { OperationRun.ExitCode = 0; Generation = 0L; SourceVersion = ""; StandardOutput = ""; StandardError = ""; Dropped = true } } |] }
+        Lease = None; Run = Some { OperationRun.ExitCode = 0; Compiler = Some { Generation = 0L; SourceVersion = "" }; StandardOutput = ""; StandardError = ""; Dropped = true } } |] }
   Uptime { UptimeTick.UptimeMs = 0L }
   Uptime { UptimeTick.UptimeMs = 93784005L }
   Uptime { UptimeTick.UptimeMs = Int64.MaxValue }
@@ -559,7 +559,7 @@ let tests =
     testList "binary codec" [
       test "fixed command golden binds envelope and primitive byte order" {
         let frame = { CommandFrame.Correlation = 1; Command = RequestSnapshot }
-        let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 9uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+        let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 10uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
         Ui.encodeCommand frame |> Expect.equal "exact independently specified bytes" golden
         Codec.decodeCommand golden |> Expect.equal "golden decoded" (Ok frame)
       }
@@ -628,7 +628,60 @@ let tests =
       }
     ]
 
+    testList "command observation codec" [
+      test "private typed observations preserve arguments and refuse legacy or browser frames" {
+        let report : CommandObservationRequest = {
+          Holder = "agent · /repo"; Project = "/repo"; Kind = "test_suite_run"; LeaseId = "private-token"
+          RunId = "run"; Executable = "/sdk/dotnet"; Arguments = [|"vstest"; "path with space"; ""|]
+          ProcessId = 4321; StartedAtMs = 1L; Observation = CommandStarted }
+        let result = { FinishedAtMs = 2L; ExitCode = 1; StandardOutput = "out"; StandardError = "err"
+                       OutputTruncated = true; ErrorTruncated = false }
+        for value in [report; {report with Observation = CommandFinished result}] do
+          let bytes = Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationRequest value
+          Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest bytes |> Expect.equal "exact command context" (Ok value)
+          Bozzetto.Web.Shared.BinaryCodec.decodeCommand bytes |> Expect.equal "private reporting is not a browser command" (Error "binary: wrong message family")
+          let old = Array.copy bytes
+          old[4] <- byte LegacyProtocolVersion
+          Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest old |> Expect.equal "no invented v9 reporting" (Error "binary: unsupported version")
+        Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest [|123uy;125uy|] |> Result.isError |> Expect.isTrue "no JSON fallback"
+        Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest (Array.zeroCreate (MaxCommandObservationBytes + 1))
+        |> Expect.equal "bounded before decoding" (Error "binary: frame too large")
+        let accepted = [|66uy;90uy;87uy;49uy;10uy;8uy;0uy;7uy;0uy;0uy;0uy;0uy;0uy;0uy;0uy|]
+        Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationReply (CommandObservationAccepted 7L) |> Expect.equal "independent reply golden" accepted
+        Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationReply accepted |> Expect.equal "golden reply decode" (Ok(CommandObservationAccepted 7L))
+      }
+    ]
+
     testList "projections" [
+      test "leased commands retain process and result without compiler authority" {
+        let command : Bozzetto.ComposerIntegration.ComposerJournal.LeasedCommand = {
+          Kind = Bozzetto.ComposerIntegration.ComposerJournal.LeasedKind.Test
+          LeaseId = "private-release-capability"; LeaseDisplayId = "lease-display"; RunId = "run"; Executable = "/sdk/dotnet"; Arguments = ["vstest"; "/repo/tests.dll"]
+          ProcessId = 4321; StartedAtMs = 10L }
+        let entry : Bozzetto.ComposerIntegration.ComposerJournal.Entry = {
+          Sequence = 7L; AtMs = 10L; Caller = "tester"; Project = "/repo/clef"
+          Context = Bozzetto.ComposerIntegration.ComposerJournal.Context.LeasedCommand command
+          Outcome = Bozzetto.ComposerIntegration.ComposerJournal.Outcome.Running; Run = None }
+        let journal : Bozzetto.ComposerIntegration.ComposerJournal.Journal = {
+          Incarnation = "journal"; Sequence = 1L; Entries = [entry]; StorageError = None }
+        let started = (Project.operations 1L journal).Entries[0]
+        (started.Operation, started.Project, started.Session, started.Code, started.Run)
+        |> Expect.equal "running test is not a compiler session or successful run" ("test_suite_run", "/repo/clef", "", "running", None)
+        started.Lease |> Option.map (fun value -> value.LeaseId, value.RunId, value.ProcessId, value.Arguments)
+        |> Expect.equal "exact reported process context" (Some("lease-display", "run", 4321, [|"vstest"; "/repo/tests.dll"|]))
+        let finished = { entry with AtMs = 20L; Outcome = Bozzetto.ComposerIntegration.ComposerJournal.Outcome.Failed "exit 1"
+                                    Run = Some { ExitCode = 1; Compiler = None; StandardOutput = "failed"; StandardError = "detail"
+                                                 OutputTruncated = false; ErrorTruncated = false; Dropped = false } }
+        let board = Project.operations 2L { journal with Sequence = 2L; Entries = [finished] }
+        let settled = board.Entries[0]
+        (settled.Sequence, settled.Lease, settled.Run |> Option.bind _.Compiler)
+        |> Expect.equal "settlement preserves one operation and never invents compiler evidence" (started.Sequence, started.Lease, None)
+        settled.Run |> Option.map _.ExitCode |> Expect.equal "actual failure retained" (Some 1)
+        let wire = Codec.encodeEvent (Operations board)
+        Encoding.UTF8.GetString(wire).Contains command.LeaseId |> Expect.isFalse "the release capability never leaves the journal owner"
+        Ui.decodeEvent wire |> Expect.equal "typed command context survives binary projection" (Ok(Operations board))
+      }
+
       test "commands become the requests the MCP tools send" {
         let address = { SessionAddress.Worker = { WorkerAddress.Host = "host-α"; Epoch = "epoch-0001"; Provider = ProviderIdentity.ClefComposer }; Session = "session-日本-🎼" }
         let anyWorker = { WorkerAddress.Host = ""; Epoch = ""; Provider = ProviderIdentity.ClefComposer }
@@ -1570,6 +1623,7 @@ let observationTests =
         let noResources _ _ _ = async { return invalidOp "This control does not request resource acquisition." }
         let workerHub = makeHub workerGraph pb noResources
         let aborted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let requestVersions = System.Collections.Concurrent.ConcurrentQueue<byte>()
         let! server, url = Hosting.start (fun app ->
           Bozzetto.Server.McpServer.useOriginGuard
             (Bozzetto.Server.HttpOriginGuard.OwnOrigins.ofPorts [47749; 47750]) app
@@ -1579,7 +1633,18 @@ let observationTests =
                 if string ctx.Request.Headers.Authorization = "Bearer fixture-token" then
                   ctx.RequestAborted.Register(fun () -> aborted.TrySetResult() |> ignore)
                 else Unchecked.defaultof<CancellationTokenRegistration>
-              do! next.Invoke()
+              if string ctx.Request.Headers.Authorization = "Bearer fixture-token" then
+                use buffered = new System.IO.MemoryStream()
+                do! ctx.Request.Body.CopyToAsync buffered
+                let payload = buffered.ToArray()
+                if payload.Length > 4 then requestVersions.Enqueue payload[4]
+                buffered.Position <- 0L
+                let original = ctx.Request.Body
+                ctx.Request.Body <- buffered
+                try do! next.Invoke()
+                finally ctx.Request.Body <- original
+              else
+                do! next.Invoke()
             })) |> ignore
           mapRoutes true app (fun () -> failwith "headless must not map browser routes")
           Observe.mapRoutes app workerHub)
@@ -1669,6 +1734,10 @@ let observationTests =
           use! rejected = client.PostAsync(url + "/api/work/observe", forged)
           int rejected.StatusCode |> Expect.equal "worker also rejects a crossed identity" 400
           transcriptReads.Count |> Expect.equal "worker identity checked before storage" 2
+          let versions = requestVersions.ToArray()
+          versions.Length >= 3 |> Expect.isTrue "work and readback went through the actual controller HTTP client"
+          versions |> Array.forall ((=) (byte LegacyProtocolVersion))
+          |> Expect.isTrue "unchanged requests retain v9 envelopes for deployed workers"
           workerGraph.PeerUnavailable(pb, "Worker snapshot is unavailable.") |> Expect.equal "source publishes unavailable without inventing work" (Ok())
           let! (lost: NodeWork) = unavailable.Task.WaitAsync(TimeSpan.FromSeconds 5.)
           lost.Value |> Expect.equal "HTTP status propagation retains the old snapshot and timestamp" (Some(workValue 7L))

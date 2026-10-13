@@ -83,6 +83,8 @@ module EndpointContracts =
     @ liveTestingEndpoints
     @ diagnosticEndpoints
     @ codeAnalysisEndpoints
+    @ [ Endpoint.create POST "/api/lease/command/start" "Work" "Report a running command under a live lease"
+        Endpoint.create POST "/api/lease/command/finish" "Work" "Report the joined result of an issued command" ]
 
   /// Supported compatibility subset for Neovim clients. Removed managed-patching
   /// routes are unavailable in API4; external clients must check apiVersion.

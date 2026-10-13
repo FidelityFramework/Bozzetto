@@ -98,6 +98,22 @@ let release leaseId =
 let withdraw kind holder =
   post "withdraw" [ "kind", kind; "holder", holder ] |> Async.Ignore
 
+/// Binary observation transport for the runner; the shared codec owns its payload.
+let observeCommand mediaType phase bytes =
+  async {
+    try
+      use content = new ByteArrayContent(bytes: byte array)
+      content.Headers.ContentType <- Headers.MediaTypeHeaderValue(mediaType)
+
+      use! response =
+        client.PostAsync($"{endpoint}/command/{phase}", content) |> Async.AwaitTask
+
+      let! reply = response.Content.ReadAsByteArrayAsync() |> Async.AwaitTask
+      return Ok(int response.StatusCode, reply)
+    with error ->
+      return Error $"command/{phase}: {error.Message}"
+  }
+
 /// Injectable effects of the existing lease client; admission remains daemon-owned.
 type Client = {
   Acquire: string -> string -> Async<Admission>

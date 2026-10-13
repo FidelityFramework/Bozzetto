@@ -98,7 +98,11 @@ type LeaseView = {| id: string; kind: string; holder: string; grantedAt: float; 
 
 type WaitView = {| id: string; kind: string; holder: string; requestedAt: float |}
 
-type NodeOperationView = {| sequence: string; label: string; hasRun: bool; dropped: bool |}
+type NodeOperationView = {|
+  sequence: string; label: string; project: string; operation: string; outcome: string; at: float
+  hasRun: bool; exitCode: int; dropped: bool; hasLease: bool; leaseId: string; runId: string
+  executable: string; arguments: string array; pid: int; startedAt: float
+|}
 type TranscriptView = {|
   node: string; incarnation: string; journal: string; sequence: string; stream: TranscriptStream
   correlation: int; bytes: byte array; text: string; next: string; total: string; truncated: bool; status: string
@@ -112,7 +116,7 @@ let private noTranscript () : TranscriptView =
 type NodeWorkView = {|
   id: string; incarnation: string; local: bool; status: string; note: string
   hasValue: bool; sequence: string; sampledAt: float
-  sessions: SessionView array; leases: LeaseView array; queue: WaitView array
+  worker: WorkerView; sessions: SessionView array; leases: LeaseView array; queue: WaitView array
   journal: string; storageError: string; transcriptsOmitted: bool; operations: NodeOperationView array
 |}
 
@@ -449,6 +453,7 @@ let private nodeView (node: NodeWork) : NodeWorkView =
      status = node.Status; note = node.Note; hasValue = node.Value.IsSome
      sequence = node.Value |> Option.map (fun v -> string v.Sequence) |> Option.defaultValue ""
      sampledAt = node.Value |> Option.map (fun v -> float v.SampledAtMs) |> Option.defaultValue 0.
+     worker = node.Value |> Option.map (fun v -> workerView v.Snapshot.Worker) |> Option.defaultWith noWorker
      sessions = node.Value |> Option.map (fun v -> Array.map sessionView v.Snapshot.Sessions) |> Option.defaultValue [||]
      leases = node.Value |> Option.map (fun v -> Array.map leaseView v.Leases.Active) |> Option.defaultValue [||]
      queue = node.Value |> Option.map (fun v -> Array.map waitView v.Leases.Queued) |> Option.defaultValue [||]
@@ -456,8 +461,18 @@ let private nodeView (node: NodeWork) : NodeWorkView =
      storageError = node.Value |> Option.bind (fun v -> v.Operations.StorageError) |> Option.defaultValue ""
      transcriptsOmitted = node.Value |> Option.exists _.TranscriptsOmitted
      operations = node.Value |> Option.map (fun v -> v.Operations.Entries |> Array.map (fun e ->
+       let outcome = if e.Code = "running" then "running" elif e.Ok then "completed" else e.Code + ": " + e.Message
        {| sequence = string e.Sequence; hasRun = e.Run.IsSome; dropped = e.Run |> Option.exists _.Dropped
-          label = clockTime (float e.AtMs) + " · " + e.Operation + " · " + e.Project + " · " + (if e.Ok then "completed" else e.Code + ": " + e.Message) |})) |> Option.defaultValue [||] |}
+          project = e.Project; operation = e.Operation; outcome = outcome; at = float e.AtMs
+          exitCode = e.Run |> Option.map _.ExitCode |> Option.defaultValue 0
+          hasLease = e.Lease.IsSome
+          leaseId = e.Lease |> Option.map _.LeaseId |> Option.defaultValue ""
+          runId = e.Lease |> Option.map _.RunId |> Option.defaultValue ""
+          executable = e.Lease |> Option.map _.Executable |> Option.defaultValue ""
+          arguments = e.Lease |> Option.map _.Arguments |> Option.defaultValue [||]
+          pid = e.Lease |> Option.map _.ProcessId |> Option.defaultValue 0
+          startedAt = e.Lease |> Option.map (fun l -> float l.StartedAtMs) |> Option.defaultValue 0.
+          label = clockTime (float e.AtMs) + " · " + e.Operation + " · " + e.Project + " · " + outcome |})) |> Option.defaultValue [||] |}
 
 // ── Store writes ───────────────────────────────────────────────────────────
 
@@ -672,15 +687,16 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       // Stamped per publication; an older journal arriving after a newer one is kept out.
       if float board.Revision >= stores.Model.operationsRevision then
         setSlice stores "operationsRevision" (box (float board.Revision))
-        reconcileSlice stores "operations" (box (board.Entries |> Array.map (fun e ->
+        // This secondary pane is compiler-owned; all node operations remain in WorkNodes.
+        reconcileSlice stores "operations" (box (board.Entries |> Array.filter (fun e -> e.Lease.IsNone) |> Array.map (fun e ->
           let run = e.Run
           {|
             id = string e.Sequence; sequence = float e.Sequence; at = float e.AtMs; caller = e.CallerLabel; operation = e.Operation
             session = e.Session; project = fileName e.Project; ok = e.Ok; code = e.Code; message = e.Message
             hasRun = run.IsSome
             exitCode = run |> Option.map (fun r -> r.ExitCode) |> Option.defaultValue 0
-            generation = run |> Option.map (fun r -> string r.Generation) |> Option.defaultValue ""
-            sourceVersion = run |> Option.map (fun r -> r.SourceVersion) |> Option.defaultValue ""
+            generation = run |> Option.bind _.Compiler |> Option.map (fun c -> string c.Generation) |> Option.defaultValue ""
+            sourceVersion = run |> Option.bind _.Compiler |> Option.map _.SourceVersion |> Option.defaultValue ""
             stdout = run |> Option.map (fun r -> r.StandardOutput) |> Option.defaultValue ""
             stderr = run |> Option.map (fun r -> r.StandardError) |> Option.defaultValue ""
             dropped = run |> Option.map (fun r -> r.Dropped) |> Option.defaultValue false

@@ -216,11 +216,15 @@ let private baseEvents = [
     Incarnation = "daemon-ü"
     Entries = [|
       { OperationEntry.Sequence = System.Int64.MaxValue; AtMs = -1L; CallerLabel = "mcp:3f9c 🎼"; Operation = "run"; Session = "s"; Project = "/p/Ü.fidproj"
-        Ok = true; Code = ""; Message = ""
-        Run = Some { OperationRun.ExitCode = -2147483648; Generation = 7L; SourceVersion = "src"; StandardOutput = "[cut: 5 characters omitted]\nout\u0000"; StandardError = "err — 日本"; Dropped = false } }
-      { OperationEntry.Sequence = 1L; AtMs = 0L; CallerLabel = "http"; Operation = "build"; Session = ""; Project = ""; Ok = false; Code = "invalid_reservation"; Message = "⚠"; Run = None }
+        Ok = true; Code = ""; Message = ""; Lease = None
+        Run = Some { OperationRun.ExitCode = -2147483648; Compiler = Some { Generation = 7L; SourceVersion = "src" }; StandardOutput = "[cut: 5 characters omitted]\nout\u0000"; StandardError = "err — 日本"; Dropped = false } }
+      { OperationEntry.Sequence = 1L; AtMs = 0L; CallerLabel = "http"; Operation = "build"; Session = ""; Project = ""; Ok = false; Code = "invalid_reservation"; Message = "⚠"; Run = None; Lease = None }
       { OperationEntry.Sequence = 2L; AtMs = 1L; CallerLabel = "browser"; Operation = "run"; Session = "s"; Project = "p"; Ok = true; Code = ""; Message = ""
-        Run = Some { OperationRun.ExitCode = 0; Generation = 0L; SourceVersion = ""; StandardOutput = ""; StandardError = ""; Dropped = true } } |] }
+        Lease = None; Run = Some { OperationRun.ExitCode = 0; Compiler = Some { Generation = 0L; SourceVersion = "" }; StandardOutput = ""; StandardError = ""; Dropped = true } }
+      { OperationEntry.Sequence = 3L; AtMs = 2L; CallerLabel = "builder"; Operation = "test_suite_run"; Session = ""; Project = "/repo/clef"
+        Ok = false; Code = "command_failed"; Message = "exit 1"
+        Lease = Some { Kind = "test_suite_run"; LeaseId = "lease"; RunId = "run"; Executable = "/sdk/dotnet"; Arguments = [| "vstest"; "path with space"; "" |]; ProcessId = 4321; StartedAtMs = 1L }
+        Run = Some { ExitCode = 1; Compiler = None; StandardOutput = "failed"; StandardError = "detail"; Dropped = false } } |] }
   Uptime { UptimeTick.UptimeMs = 0L }
   Uptime { UptimeTick.UptimeMs = 93784005L }
   Uptime { UptimeTick.UptimeMs = System.Int64.MaxValue }
@@ -346,22 +350,79 @@ let private run () =
     check ("malformed event refused " + wire) (FrontendCodec.decodeEvent (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
   for wire in badCommands do
     check ("malformed command refused " + wire) (BackendCodec.decodeCommand (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
-  let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 9uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+  let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 10uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
   let frame = { CommandFrame.Correlation = 1; Command = RequestSnapshot }
   check "independent binary golden" (FrontendCodec.encodeCommand frame = golden)
   check "golden decode" (BackendCodec.decodeCommand golden = Ok frame)
+  let oldCommand = Array.copy golden
+  oldCommand[4] <- 9uy
+  check "deployed v9 command remains readable" (BackendCodec.decodeCommand oldCommand = Ok frame)
   check "trailing byte refused" (BackendCodec.decodeCommand (Array.append golden [|0uy|]) |> Result.isError)
   for length in 0 .. golden.Length - 1 do
     check "every truncated golden prefix refused" (BackendCodec.decodeCommand golden[..length-1] |> Result.isError)
   let peers = [ PeerHello source; PeerWork peerWork; PeerResources peerResources; PeerUnavailable "closed"; PeerHeartbeat { UptimeMs = 33L } ]
   for value in peers do
     check "peer case round trip" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value) = Ok value)
+    check "new peer frames explicitly emit v10" ((Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value)[4] = 10uy)
+  // Fixed deployed v9 Operations bytes: one real compiler run, no lease field.
+  let oldOperations = [|
+    66uy; 90uy; 87uy; 49uy; 9uy; 2uy; 10uy; 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 106uy; 1uy
+    7uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 8uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy
+    1uy; 99uy; 3uy; 114uy; 117uy; 110uy; 1uy; 115uy; 2uy; 47uy; 112uy; 1uy; 0uy; 0uy; 1uy
+    0uy; 0uy; 0uy; 0uy; 2uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 3uy; 115uy; 114uy; 99uy; 3uy; 111uy; 117uy; 116uy; 0uy; 0uy; 0uy |]
+  let oldEntry : OperationEntry = {
+    Sequence = 7L; AtMs = 8L; CallerLabel = "c"; Operation = "run"; Session = "s"; Project = "/p"
+    Ok = true; Code = ""; Message = ""; Lease = None
+    Run = Some { ExitCode = 0; Compiler = Some { Generation = 2L; SourceVersion = "src" }; StandardOutput = "out"; StandardError = ""; Dropped = false } }
+  let oldBoard = { Revision = 1L; Incarnation = "j"; Entries = [| oldEntry |]; StorageError = None }
+  check "v9 operation preserves compiler provenance without inventing lease context" (FrontendCodec.decodeEvent oldOperations = Ok(Operations oldBoard))
+  let oldPeer = Array.concat [
+    [| 66uy; 90uy; 87uy; 49uy; 9uy; 4uy; 1uy |]
+    [| 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 2uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy |]
+    Array.zeroCreate 8; [| 1uy; 0uy |]; Array.zeroCreate 8; [| 0uy; 0uy |]
+    oldOperations[7..]; [| 1uy |] ]
+  let oldSnapshot =
+    { peerWork with
+        Sequence = 1L
+        SampledAtMs = 2L
+        Snapshot = { Revision = 0L; Worker = Idle; Sessions = [||] }
+        Leases = { Revision = 0L; Active = [||]; Queued = [||] }
+        Operations = oldBoard
+        TranscriptsOmitted = true }
+  check "deployed v9 PeerWork remains readable" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame oldPeer = Ok(PeerWork oldSnapshot))
   covers "PeerFrame" typeof<PeerFrame> (peers |> List.map (fun value -> caseName (box value) typeof<PeerFrame>))
+  let commandReport : CommandObservationRequest = {
+    Holder = "agent · /repo"; Project = "/repo"; Kind = "test_suite_run"; LeaseId = "private-capability"
+    RunId = "run-id"; Executable = "/sdk/dotnet"; Arguments = [| "vstest"; "path with space"; "" |]
+    ProcessId = 4321; StartedAtMs = 1L; Observation = CommandStarted }
+  let commandResult = { FinishedAtMs = 2L; ExitCode = 1; StandardOutput = "out 🎼"; StandardError = "error"
+                        OutputTruncated = true; ErrorTruncated = false }
+  for report in [commandReport; {commandReport with Observation = CommandFinished commandResult}] do
+    let bytes = Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationRequest report
+    check "private typed observation preserves exact arguments and result" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest bytes = Ok report)
+    let legacy = Array.copy bytes
+    legacy[4] <- 9uy
+    check "new observation refuses a fabricated legacy envelope" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest legacy = Error "binary: unsupported version")
+    check "private observation is not a browser command" (Bozzetto.Web.Shared.BinaryCodec.decodeCommand bytes = Error "binary: wrong message family")
+    check "observation rejects trailing bytes" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest (Array.append bytes [|0uy|]) |> Result.isError)
+  let acceptedGolden = [|66uy;90uy;87uy;49uy;10uy;8uy;0uy;7uy;0uy;0uy;0uy;0uy;0uy;0uy;0uy|]
+  check "observation accepted reply independent golden" (Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationReply (CommandObservationAccepted 7L) = acceptedGolden)
+  check "observation accepted reply golden decode" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationReply acceptedGolden = Ok(CommandObservationAccepted 7L))
+  let refused = CommandObservationRefused "lease_not_active"
+  check "observation specific refusal survives" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationReply (Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationReply refused) = Ok refused)
+  check "observation body bound" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest (Array.zeroCreate (MaxCommandObservationBytes + 1)) = Error "binary: frame too large")
+  check "observation rejects JSON" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest [|123uy;125uy|] |> Result.isError)
   let request = { PeerObserveRequest.ProtocolVersion = ProtocolVersion; Node = "three"; Topic = "resources"; Seconds = 120 }
   check "peer request round trip" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest request) = Ok request)
+  let oldRequest = { request with ProtocolVersion = LegacyProtocolVersion }
+  let oldRequestBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest oldRequest
+  check "controller request uses unchanged v9 envelope and payload" (oldRequestBytes[4] = 9uy && Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest oldRequestBytes = Ok oldRequest)
   check "request cap" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Array.zeroCreate 4097) = Error "binary: frame too large")
   let read = { PeerTranscriptRequest.ProtocolVersion = ProtocolVersion; Request = { Source = source; Journal = "journal"; Sequence = 7L; Stream = Stderr; Offset = 32768L; MaxBytes = MaxTranscriptPageBytes } }
   check "typed transcript request" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest read) = Ok read)
+  let oldRead = { read with ProtocolVersion = LegacyProtocolVersion }
+  let oldReadBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest oldRead
+  check "v9 transcript request remains accepted" (oldReadBytes[4] = 9uy && Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest oldReadBytes = Ok oldRead)
   let page = { Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; NextOffset = Some 32768L; TotalBytes = 32770L; Bytes = Array.create MaxTranscriptPageBytes 255uy; Truncated = false }
   let reply = { PeerTranscriptReply.Source = source; Outcome = TranscriptPage page }
   check "exact maximum byte page" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply (Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptReply reply) = Ok reply)

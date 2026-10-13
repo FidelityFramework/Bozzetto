@@ -99,6 +99,8 @@ If renewal reports the lease gone, the wrapper requests termination of its direc
 
 `AGENTS.md` also calls for a newer ask from the same scope to supersede an older ask. The inspected core instead refuses a queued ask for a different kind. Do not claim cross-kind supersession is delivered by this module. Resolve or withdraw the old ask before changing kind; any adapter-level supersession needs its own code and acceptance evidence.
 
+Caller-owned builds and tests run through `tools/build/lease.fsx`, which reports the actual project, command, PID and start under its live lease, then settles the same durable SQLite record with exit status and output before releasing admission. The new reporting routes use the shared typed binary command-observation contract; the older admission JSON drift remains separate. Work shows these observations per node alongside actual compiler sessions and worker state.
+
 Granted and queued Clef/Composer build/test leases belong on `/work` beside compiler work. `/dashboard` keeps agents and machine resources. A lease records admission, not measured CPU/memory attribution, compiler proof or process-kill authority.
 
 ## Reading resource observations correctly
