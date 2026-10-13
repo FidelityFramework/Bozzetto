@@ -1522,6 +1522,57 @@ let observationTests =
       summary.Snapshot |> Expect.equal "session/work facts are preserved" original.Snapshot
       summary.Leases |> Expect.equal "actual lease facts are preserved" original.Leases
 
+    testCase "work history bounds settled rows while preserving running work and active lease facts" <| fun () ->
+      let original = workValue 1L
+      let entry sequence : OperationEntry =
+        { Sequence = sequence; AtMs = sequence; CallerLabel = "caller"; Operation = "full_build"
+          Session = ""; Project = "/repo"; Lease = None; Ok = true; Code = ""; Message = ""; Run = None }
+      let command : LeasedCommandInfo =
+        { Kind = "full_build"; LeaseId = "held"; RunId = "run"; Executable = "dotnet"
+          Arguments = [| "build" |]; ProcessId = 42; StartedAtMs = 1L }
+      let entries = [| for sequence in 200L .. -1L .. 1L -> entry sequence |]
+      entries[198] <- { entries[198] with Code = "running"; Ok = false }
+      entries[199] <- { entries[199] with Lease = Some command }
+      let original =
+        { original with
+            Snapshot = { original.Snapshot with Worker = Idle; Sessions = [| bareSession |] }
+            Leases = { original.Leases with
+                         Active = [| { Id = "held"; Kind = "full_build"; Holder = "caller"; GrantedAtMs = 1L; ExpiresAtMs = 2L } |]
+                         Queued = [| { Kind = "test_suite_run"; Holder = "queued"; RequestedAtMs = 1L } |] }
+            Operations = { original.Operations with Entries = entries } }
+      let summary = Project.workSummary original
+      summary.Operations.Entries |> Array.map _.Sequence
+      |> Expect.equal "twenty newest settled rows plus all current operations remain in journal order" (Array.append [| 200L .. -1L .. 181L |] [| 2L; 1L |])
+      summary.Snapshot |> Expect.equal "compiler sessions and worker stay exact" original.Snapshot
+      summary.Leases |> Expect.equal "active and queued admission facts stay exact" original.Leases
+      original.Operations.Entries.Length |> Expect.equal "source journal retains its full history" 200
+      let graph = workGraph ()
+      graph.PublishWork(graph.BindPeer b, summary) |> Expect.equal "bounded summary is admitted" (Ok())
+      graph.Stop()
+
+    testCase "work history shrinks oldest settled rows to the encoded byte budget and never hides oversized current work" <| fun () ->
+      let original = workValue 1L
+      let entry sequence : OperationEntry =
+        { Sequence = sequence; AtMs = sequence; CallerLabel = "caller"; Operation = "full_build"
+          Session = ""; Project = "/repo"; Lease = None; Ok = true; Code = ""; Message = String.replicate 9000 "x"; Run = None }
+      let original = { original with Operations = { original.Operations with Entries = [| for sequence in 20L .. -1L .. 1L -> entry sequence |] } }
+      let summary = Project.workSummary original
+      let bytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame(PeerWork summary)
+      (bytes.Length <= MaxWorkSnapshotBytes) |> Expect.isTrue "actual envelope fits its wire budget"
+      (summary.Operations.Entries.Length < 20 && summary.Operations.Entries.Length > 0) |> Expect.isTrue "byte bound removes settled history beyond the count bound"
+      summary.Operations.Entries |> Array.map _.Sequence
+      |> Expect.equal "the newest outcomes survive byte pressure" [| 20L .. -1L .. 21L - int64 summary.Operations.Entries.Length |]
+      Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame bytes |> Expect.equal "bounded summary round trips" (Ok(PeerWork summary))
+      let current = { entry 21L with Code = "running"; Ok = false; Message = String.replicate MaxWorkSnapshotBytes "x" }
+      let oversized = { original with Operations = { original.Operations with Entries = Array.append [| current |] original.Operations.Entries } }
+      let refused = Project.workSummary oversized
+      refused.Operations.Entries |> Expect.equal "current operation survives after every settled row is omitted" [| current |]
+      let graph = workGraph ()
+      let peer = graph.BindPeer b
+      graph.PublishWork(peer, refused) |> Expect.equal "current core remains a specific oversize refusal" (Error Facts.Refusal.Oversized)
+      (workNode graph b.Node).Note |> Expect.equal "the oversize reason stays visible" "Work snapshot exceeds the encoded observation budget."
+      graph.Stop()
+
     testCase "encoded work budget admits its exact edge and refuses oversize with retained stale facts" <| fun () ->
       let graph = workGraph ()
       let peer = graph.BindPeer b

@@ -64,6 +64,25 @@ Daemon wire compatibility and worker-loaded PSG/distribution identity are distin
 
 Rollback restores executable compatibility, not authority from the previous epoch. Outstanding acknowledgements, demands and artifacts must be reconciled with their owners; an old process or browser snapshot cannot revive revoked permission. A second daemon is allowed only for testing daemon code the running instance cannot execute, with an explicit owner and time limit.
 
+## Work view and recent history
+
+The Work page keeps controller compiler sessions and the compiler worker above
+the collapsible node listing. Each node reports its actual open compiler
+projects, worker state, active leases and queue. A leased command's project
+directory is recent activity; it does not create a compiler session.
+
+Completed operations start collapsed, with individually expandable summaries.
+The browser shows at most 20 completed entries per node within the last 24 hours.
+Retire controls hide entries in that browser only, with a restore control;
+they do not delete the node's SQLite evidence. Running work and current
+sessions or leases do not age out of the view. Historical search is not provided.
+
+The observation projection retains all current operations and at most 20
+completed summaries, shedding the oldest completed summaries further if needed
+to fit the existing encoded byte budget. Source journal retention is unchanged.
+If current work alone exceeds that budget, the existing explicit oversize
+refusal remains; availability is never fabricated by hiding active work.
+
 ## Leases: admission, heartbeat and queues
 
 Every caller-owned build or test suite requires a lease. The ordinary client is:

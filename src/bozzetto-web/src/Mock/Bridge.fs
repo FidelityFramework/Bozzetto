@@ -185,9 +185,20 @@ let private workNodes () =
                    ProcessId = 6543; StartedAtMs = int64 startedAt }
     Run = if finished then Some { ExitCode = 1; Compiler = None; StandardOutput = ""; StandardError = ""; Dropped = false } else None
   }
+  // Deliberately exceeds the presentation window; retained source evidence is
+  // not deleted when a browser retires its own rows.
+  let history =
+    Array.init 30 (fun index ->
+      { run with Sequence = int64 index + 100L; AtMs = int64 startedAt - int64 index * 1000L
+                 Project = "/mock/history/Project" + string index; Code = ""; Ok = true
+                 Lease = None; Run = Some { ExitCode = 0; Compiler = None; StandardOutput = ""; StandardError = ""; Dropped = false } })
+  let old = { history[0] with Sequence = 999L; Project = "/mock/retired-by-age"; AtMs = int64 startedAt - 86400001L }
+  let expired =
+    { run with Sequence = 1000L; Project = "/mock/expired-lease"; Code = ""; AtMs = old.AtMs; Run = None
+               Lease = run.Lease |> Option.map (fun lease -> { lease with LeaseId = "expired-lease"; RunId = "expired-run" }) }
   let busy = { remote with
                 Snapshot = { remote.Snapshot with Worker = Running { Target = { Host = "fixture-host"; Epoch = "fixture-epoch" }; CompilerVersion = "fixture-compiler"; ProcessId = Some 7654 } }
-                Operations = { remote.Operations with Entries = [| run |] }
+                Operations = { remote.Operations with Entries = Array.concat [ [| run |]; history; [| old; expired |] ] }
                 Leases = { remote.Leases with
                              Active = if finished then [||] else [| { Id = "fixture-lease"; Kind = "test_suite_run"; Holder = "fixture ONE test · /mock/clef"; GrantedAtMs = int64 startedAt; ExpiresAtMs = int64 startedAt + 120000L } |]
                              Queued = if finished then [||] else [| { Kind = "full_build"; Holder = "fixture queued build · /mock/Farscape"; RequestedAtMs = int64 startedAt } |] } }

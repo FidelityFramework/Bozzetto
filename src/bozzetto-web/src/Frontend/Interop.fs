@@ -55,6 +55,13 @@ let getSavedTheme () : string = jsNative
 [<Emit("(function(){try{localStorage.setItem('bozzetto-web-theme', $0)}catch(e){}})()")>]
 let saveTheme (name: string) : unit = jsNative
 
+/// Retiring a Work row changes this browser only; the node journal remains intact.
+[<Emit("(function(){try{const v=JSON.parse(localStorage.getItem('bozzetto-work-retired')||'[]');return Array.isArray(v)?v.filter(x=>typeof x==='string').slice(0,256):[]}catch(e){return []}})()")>]
+let getRetiredWork () : string array = jsNative
+
+[<Emit("(function(v){try{localStorage.setItem('bozzetto-work-retired',JSON.stringify(v.slice(0,256)))}catch(e){}})($0)")>]
+let saveRetiredWork (keys: string array) : unit = jsNative
+
 /// The tab icon follows the system color scheme, as clef-lang.com's does:
 /// favicon-dark.svg under a dark scheme, favicon.svg otherwise. It listens for
 /// the media query's change event; nothing is polled.

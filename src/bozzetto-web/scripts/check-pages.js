@@ -67,7 +67,7 @@ async function waitFor(session, expression) {
     if (await evaluate(session, expression)) return;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  await writeFile(join(evidence, 'wait-timeout.json'), JSON.stringify({expression, text:await evaluate(session, 'document.body.innerText'), buttons:await evaluate(session, '[...document.querySelectorAll("h3")].filter(x=>["one","two","three"].includes(x.textContent)).map(x=>({name:x.textContent,button:x.closest(".card").querySelector("button").outerHTML}))'), sent:pageFrames, errors:browserErrors},null,2));
+  await writeFile(join(evidence, 'wait-timeout.json'), JSON.stringify({expression, text:await evaluate(session, 'document.body.innerText'), buttons:await evaluate(session, '[...document.querySelectorAll("h3")].filter(x=>["one","two","three"].includes(x.textContent)).map(x=>({name:x.textContent,button:x.closest(".card").querySelector("button")?.outerHTML}))'), sent:pageFrames, errors:browserErrors},null,2));
   throw new Error(`Page did not become ready: ${expression}`);
 }
 async function tab(origin, route, width) {
@@ -142,7 +142,7 @@ async function check() {
   assert.equal(c.title, 'Work · Bozzetto');
   const initialNode = name => `[...document.querySelectorAll('h3')].find(h => h.textContent === '${name}').closest('.card')`;
   const initialOne = await evaluate(work, `${initialNode('one')}.innerText`);
-  for (const text of ['/mock/clef', 'test_suite_run · running', 'PID 6543', '/mock/dotnet', '/mock/clef/tests.dll', 'fixture-lease', 'fixture-test-run', 'fixture queued build · /mock/Farscape', 'Compiler worker · running · PID 7654']) assert.ok(initialOne.includes(text), `cross-node running work: ${text}`);
+  for (const text of ['/mock/clef', 'test_suite_run · running', 'PID 6543', '/mock/dotnet', 'fixture-lease', 'fixture-test-run', 'fixture queued build · /mock/Farscape', 'Compiler worker · running · PID 7654']) assert.ok(initialOne.includes(text), `cross-node running work: ${text}`);
   assert.ok(initialOne.includes('0 compiler sessions · 1 active leases · 1 queued'), 'leased command does not manufacture a compiler session');
   assert.ok(!initialOne.includes('Exit 0'), 'running command does not invent a successful result');
   const firstWorkAges = await evaluate(work, 'window.__firstWorkAges');
@@ -176,9 +176,9 @@ async function check() {
   assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'earlier passes start collapsed');
   assert.equal(await evaluate(dashboard, `${agentPanel}.querySelectorAll('details[open]').length`), 0, 'per-pass details start collapsed too');
   assert.equal(await evaluate(dashboard, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); return cards.indexOf('Agent work') < cards.indexOf('Whole-machine resources'); })()`), true, 'agent work precedes resources');
-  // Each node groups its actual worker and leases; controller compiler controls are secondary.
+  // Each node groups its actual worker and leases ahead of collapsed history.
   assert.equal(await evaluate(work, `(() => { const card = ${initialNode('one')}; return !!(card.querySelector('.node-worker').compareDocumentPosition(card.querySelector('.node-lease')) & Node.DOCUMENT_POSITION_FOLLOWING); })()`), true, 'remote leases follow their own node worker');
-  assert.equal(await evaluate(work, `${initialNode('one')}.querySelector('.node-lease').getBoundingClientRect().bottom < innerHeight`), true, 'consolidated remote active lease is visible on Work without scrolling');
+  assert.equal(await evaluate(work, `(() => { const card = ${initialNode('one')}; return !!(card.querySelector('.node-lease').compareDocumentPosition(card.querySelector('.node-operations')) & Node.DOCUMENT_POSITION_FOLLOWING) && !card.querySelector('.node-operations').open; })()`), true, 'remote active leases precede folded history');
   // Native disclosures retain every supplied detail without dumping them into
   // the default view. Opening them must not fetch or issue bridge commands.
   await evaluate(dashboard, `${historyDetails}.querySelector(':scope > summary').click()`);
@@ -204,8 +204,12 @@ async function check() {
   };
   assertDashboardHeadings(d);
   for (const text of ['Work across nodes', 'Controller compiler controls']) assert.ok(c.text.includes(text), text);
-  for (const text of ['No open projects.', 'Controller projects', 'No runs yet:']) assert.ok(!c.text.includes(text), `empty controller state does not replace cross-node work: ${text}`);
-  assert.equal(await evaluate(work, "document.querySelector('.controller-compiler').open"), false, 'controller compiler controls start secondary and closed');
+  assert.ok(c.text.includes('No open projects.'), 'visible controller sessions report their actual empty state');
+  for (const text of ['Controller projects', 'No runs yet:']) assert.ok(!c.text.includes(text), `empty controller state does not replace cross-node work: ${text}`);
+  assert.equal(await evaluate(work, "document.querySelector('.controller-compiler').open"), true, 'controller sessions and worker start visible');
+  assert.equal(await evaluate(work, "!!(document.querySelector('.controller-compiler').compareDocumentPosition(document.querySelector('.work-nodes')) & Node.DOCUMENT_POSITION_FOLLOWING)"), true, 'compiler controls precede completed history');
+  await evaluate(work, "document.querySelector('.controller-compiler > summary').click()");
+  assert.equal(await evaluate(work, "document.querySelector('.controller-compiler').open"), false, 'compiler controls can be folded');
   await evaluate(work, "document.querySelector('.controller-compiler > summary').click()");
   const compilerControls = await inspect(work);
   for (const text of ['Composer sessions', 'Compiler worker', 'Open project', 'No open projects.']) assert.ok(compilerControls.text.toLowerCase().includes(text.toLowerCase()), text);
@@ -257,6 +261,24 @@ async function check() {
   ]);
   assert.equal(d.overflow, false, 'dashboard fits a side-by-side viewport');
   assert.equal(c.overflow, false, 'work fits a side-by-side viewport');
+  // Retirement is bounded, browser-local and never removes active work.
+  const history = `${initialNode('one')}.querySelector('.node-operations')`;
+  assert.equal(await evaluate(work, `${history}.open`), false, 'completed node history starts folded');
+  assert.equal(await evaluate(work, `${history}.querySelectorAll('details.node-operation').length`), 20, 'completed rows are capped at twenty');
+  assert.equal(await evaluate(work, `${history}.textContent.includes('/mock/retired-by-age')`), false, 'entries older than a day retire from this view');
+  assert.equal(await evaluate(work, `${initialNode('one')}.textContent.includes('/mock/expired-lease')`), false, 'released leases with no run do not pin aged history as active');
+  assert.equal(await evaluate(work, `${initialNode('one')}.querySelector('.node-active pre').textContent.includes('/mock/clef/tests.dll')`), true, 'running command arguments remain available inside their disclosure');
+  assert.equal(await evaluate(work, `${initialNode('one')}.querySelectorAll('.node-active').length`), 1, 'active command stays visible outside retired history');
+  const retirementTraffic = {fetches: pageRequests.length, commands: pageFrames.length};
+  await evaluate(work, `${history}.querySelector(':scope > summary').click()`);
+  await evaluate(work, `${history}.querySelector('details.node-operation > summary').click()`);
+  await evaluate(work, `[...${history}.querySelectorAll('button')].find(b=>b.textContent === 'Retire entry').click()`);
+  assert.equal(await evaluate(work, `${history}.querySelectorAll('details.node-operation').length`), 20, 'retiring one row reveals the next retained recent row');
+  assert.equal(await evaluate(work, "JSON.parse(localStorage.getItem('bozzetto-work-retired')).length"), 1, 'manual retirement persists across a page reload');
+  await evaluate(work, `[...document.querySelectorAll('button')].find(b=>b.textContent === 'Restore retired entries').click()`);
+  assert.equal(await evaluate(work, "JSON.parse(localStorage.getItem('bozzetto-work-retired')).length"), 0, 'retirement can be undone');
+  assert.deepEqual({fetches: pageRequests.length, commands: pageFrames.length}, retirementTraffic, 'retiring a row does not alter the remote journal or issue commands');
+  await writeFile(join(evidence, 'work-retirement.json'), JSON.stringify({cap:20, ageHours:24, collapsed:true, activePreserved:true, browserOnly:true, reversible:true}, null, 2));
   // Closed presentation must remain bound to pushed state, not a frozen copy.
   const snapshotDetails = "[...document.querySelectorAll('details')].find(d => d.querySelector(':scope > summary')?.innerText === 'Daemon snapshot')";
   const initialCollapsed = await evaluate(dashboard, `(() => { const d = ${snapshotDetails}; return {open:d.open, rows:[...d.querySelectorAll('tbody tr')].map(r => r.firstElementChild.textContent)}; })()`);
@@ -320,12 +342,14 @@ async function check() {
   const nodeCard = name => `[...document.querySelectorAll('h3')].find(h => h.textContent === '${name}').closest('.card')`;
   for (const name of ['one', 'two', 'three']) {
     assert.ok(await evaluate(work, `${nodeCard(name)}.innerText.includes('remote · read-only')`), name + ': remote scope is explicit');
-    assert.deepEqual(await evaluate(work, `[...${nodeCard(name)}.querySelectorAll('button')].map(b=>b.textContent)`), name === 'one' ? ['Load stdout','Load stderr'] : [], name + ': only remote observation/readback actions');
+    assert.equal(await evaluate(work, `[...${nodeCard(name)}.querySelectorAll('button')].every(b=>['Load stdout','Load stderr','Retire entry','Retire shown entries'].includes(b.textContent))`), true, name + ': only remote readback and browser-local retirement actions');
   }
+  const settledRow = `[...${nodeCard('one')}.querySelectorAll('details.node-operation')].find(row=>row.textContent.includes('fixture-test-run'))`;
+  await evaluate(work, `${nodeCard('one')}.querySelector('.node-operations').open = true; ${settledRow}.open = true`);
   const settledOne = await evaluate(work, `${nodeCard('one')}.innerText`);
-  for (const text of ['/mock/clef', 'command_failed: dotnet exited 1', 'PID 6543', 'fixture-lease', 'fixture-test-run', 'Exit 1']) assert.ok(settledOne.includes(text), `settled command remains after lease release: ${text}`);
+  for (const text of ['/mock/clef', 'command_failed: dotnet exited 1', 'PID 6543', 'fixture-lease', 'fixture-test-run', 'exit 1']) assert.ok(settledOne.includes(text), `settled command remains after lease release: ${text}`);
   assert.ok(settledOne.includes('0 active leases · 0 queued'), 'released admission is distinct from retained history');
-  assert.equal(await evaluate(work, `${nodeCard('one')}.querySelectorAll('.node-operation').length`), 1, 'one run keeps one row through settlement');
+  assert.equal(await evaluate(work, `[...${nodeCard('one')}.querySelectorAll('.node-operation')].filter(row=>row.textContent.includes('fixture-test-run')).length`), 1, 'one run keeps one row through settlement among bounded history');
   assert.ok(await evaluate(work, `${nodeCard('two')}.innerText.includes('0 active leases')`), 'observed zero is shown');
   assert.ok(await evaluate(work, `${nodeCard('three')}.innerText.includes('Work state unavailable; no idle state inferred.')`), 'unobserved state is not zero');
   const resourceMetric = "[...document.querySelectorAll('div')].find(e=>e.className === 'text-xs opacity-70' && e.textContent === 'Host CPU busy')?.nextElementSibling?.textContent";
@@ -365,7 +389,7 @@ async function check() {
   assert.equal(await evaluate(dashboard, resourceMetric), '17.0%', 'stop acknowledgement preserves the last resource values without requiring a new sample');
   const readback = "document.querySelector('.transcript-readback')";
   const readsBefore = pageFrames.filter(f=>f.session === work && f.command === 10).length;
-  await evaluate(work, `[...${nodeCard('one')}.querySelectorAll('button')].find(b=>b.textContent === 'Load stdout').click()`);
+  await evaluate(work, `[...${settledRow}.querySelectorAll('button')].find(b=>b.textContent === 'Load stdout').click()`);
   await waitFor(work, `${readback}?.innerText.includes('more available')`);
   assert.ok((await evaluate(work, `${readback}.innerText`)).includes('32768 stored bytes loaded'), 'first page byte cursor is exact');
   assert.equal(await evaluate(work, `${readback}.querySelector('pre') === null`), true, 'incomplete UTF8 is not independently decoded or displayed');
@@ -376,7 +400,7 @@ async function check() {
   assert.equal(stored, 'x'.repeat(32767) + '🎼 stored tail', 'split UTF8 pages reconstruct the exact stored stream');
   assert.ok((await evaluate(work, `${readback}.innerText`)).includes('Truncated at the source'), 'stored source truncation is distinct from live summary omission');
   assert.ok(!(await evaluate(work, `${readback}.innerText`)).includes('must be ignored'), 'foreign daemon incarnation cannot replace selected readback');
-  await evaluate(work, `[...${nodeCard('one')}.querySelectorAll('button')].find(b=>b.textContent === 'Load stderr').click()`);
+  await evaluate(work, `[...${settledRow}.querySelectorAll('button')].find(b=>b.textContent === 'Load stderr').click()`);
   await waitFor(work, `${readback}.innerText.includes('storage_failure: Synthetic transcript store refusal.')`);
   assert.equal(await evaluate(work, `${readback}.querySelector('pre') === null`), true, 'failed new selection never shows the previous stream as its transcript');
   await observe('three');

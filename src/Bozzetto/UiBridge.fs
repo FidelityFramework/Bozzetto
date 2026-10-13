@@ -181,11 +181,30 @@ module Project =
   /// Consolidated work carries outcomes and references. Omission from this
   /// projection is distinct from eviction in the source journal.
   let workSummary (value: WorkSnapshot) =
+    let active entry =
+      entry.Code = "running"
+      || (entry.Lease |> Option.exists (fun command -> value.Leases.Active |> Array.exists (fun lease -> lease.Id = command.LeaseId)))
+    let recent =
+      value.Operations.Entries |> Array.filter (active >> not) |> Array.truncate 20
+      |> Array.map _.Sequence |> Set.ofArray
     let entries =
-      value.Operations.Entries |> Array.map (fun entry ->
+      value.Operations.Entries |> Array.filter (fun entry -> active entry || Set.contains entry.Sequence recent)
+      |> Array.map (fun entry ->
         let run = entry.Run |> Option.map (fun run -> { run with StandardOutput = ""; StandardError = "" })
         { entry with Run = run })
-    { value with Operations = { value.Operations with Entries = entries }; TranscriptsOmitted = true }
+    let rec fit entries =
+      let summary = { value with Operations = { value.Operations with Entries = entries }; TranscriptsOmitted = true }
+      let fits =
+        try Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame(PeerWork summary).Length <= MaxWorkSnapshotBytes
+        with :? InvalidOperationException -> false
+      if fits then summary
+      else
+        match entries |> Array.tryFindIndexBack (active >> not) with
+        | Some oldest -> entries |> Array.indexed |> Array.choose (fun (index, entry) -> if index = oldest then None else Some entry) |> fit
+        // Current work is never hidden to make a history projection fit.
+        // PublishWork retains its loud refusal when this core alone is oversized.
+        | None -> summary
+    fit entries
 
   let targetOf (authority: Authority) : SessionTarget =
     { SessionTarget.Worker = { WorkerTarget.Host = authority.Host; Epoch = authority.Epoch }; Session = authority.Session }

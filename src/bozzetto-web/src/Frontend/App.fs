@@ -810,10 +810,43 @@ let OutputPane (model: ModelView) =
     }
   }
 
+let private runningOperation (node: NodeWorkView) (operation: NodeOperationView) =
+  operation.outcome = "running" || (operation.hasLease && (node.leases |> Array.exists (fun lease -> lease.id = operation.leaseId)))
+
+let private operationKey (node: NodeWorkView) (operation: NodeOperationView) =
+  node.id + ":" + node.journal + ":" + operation.sequence
+
 [<SolidComponent>]
 let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -> bool) (read: NodeWorkView -> NodeOperationView -> TranscriptStream -> unit) =
-  div (class' = "flex flex-col gap-3") {
-    h2 (class' = "text-lg font-bold") { "Work across nodes" }
+  let retired, setRetired = createSignal (Interop.getRetiredWork ())
+  let retire keys =
+    let next = Array.append keys (retired ()) |> Array.distinct |> Array.truncate 256
+    Interop.saveRetiredWork next
+    setRetired next
+  let recent (node: NodeWorkView) =
+    let now = if uptime () < 0. then node.sampledAt else model.startedAt + uptime ()
+    node.operations
+    |> Array.filter (fun operation ->
+      not (runningOperation node operation) && now - operation.at <= 86400.
+      && not (retired () |> Array.contains (operationKey node operation)))
+    |> Array.sortByDescending (fun operation -> operation.at, int64 operation.sequence)
+    |> Array.truncate 20
+  let active (node: NodeWorkView) = node.operations |> Array.filter (runningOperation node)
+  details (open' = true, class' = "work-nodes flex flex-col gap-3") {
+    summary (class' = "cursor-pointer text-lg font-bold") { "Work across nodes" }
+    div (class' = "flex items-center gap-2 text-xs opacity-70") {
+      span () { "Completed entries retire after 24 hours; at most 20 per node are shown." }
+      Show (when' = ((retired ()).Length > 0)) {
+        button (class' = "btn btn-xs btn-ghost", onClick = fun _ ->
+          Interop.saveRetiredWork [||]
+          setRetired [||]) { "Restore retired entries" }
+      }
+      Information "Work history" (fun () -> [|
+        "Running work, queued leases and open compiler projects never retire from this view."
+        "Retiring or hiding an entry affects this browser only. The node's SQLite journal retains its stored evidence."
+        "Compiler sessions are opened Clef projects. Leased command projects are displayed separately; a checkout alone is not an open compiler session."
+      |])
+    }
     Show (when' = (model.nodes.Length = 0)) {
       p (class' = "text-sm opacity-70") { "No node work observation has arrived. Availability is unknown." }
     }
@@ -835,7 +868,7 @@ let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -
                      else duration (max 0. (model.startedAt + uptime () - node.sampledAt)) + " ago")
                 }
                 p (class' = "text-sm") {
-                  string node.sessions.Length + " compiler sessions · " + string node.leases.Length + " active leases · " + string node.queue.Length + " queued"
+                  string (node.sessions |> Array.filter (fun session -> not session.closed)).Length + " compiler sessions · " + string node.leases.Length + " active leases · " + string node.queue.Length + " queued"
                 }
                 Show (when' = (node.status <> "available" || not (connected ()))) {
                   p (class' = "text-xs text-warning") { "Retained observation; current work is unavailable." }
@@ -843,6 +876,26 @@ let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -
                 p (class' = "text-xs font-mono node-worker") {
                   "Compiler worker · " + node.worker.state
                   + (if node.worker.pid = "" then "" else " · PID " + node.worker.pid)
+                }
+                div (class' = "node-projects flex flex-col gap-1") {
+                  h4 (class' = "text-sm font-semibold") { "Compiler projects" }
+                  Show (when' = (node.sessions |> Array.exists (fun session -> not session.closed)), fallback = (p (class' = "text-xs opacity-60") { "No open compiler projects in this observation." })) {
+                    For (each = (node.sessions |> Array.filter (fun session -> not session.closed))) {
+                      yield fun session _ ->
+                        p (class' = "text-xs font-mono break-words node-session") {
+                          session.project + " · " + (if session.busy then "busy" else "open")
+                        }
+                    }
+                  }
+                }
+                Show (when' = ((recent node).Length > 0)) {
+                  div (class' = "node-recent-projects flex flex-col gap-1") {
+                    h4 (class' = "text-sm font-semibold") { "Recent project activity" }
+                    For (each = (recent node |> Array.distinctBy _.project |> Array.truncate 3)) {
+                      yield fun operation _ ->
+                        p (class' = "text-xs font-mono break-words") { operation.project + " · " + operation.outcome + " · " + clockTime operation.at }
+                    }
+                  }
                 }
                 For (each = node.leases) {
                   yield fun lease _ ->
@@ -862,47 +915,52 @@ let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -
                 Show (when' = (connected () && node.status = "available" && node.leases.Length = 0 && node.queue.Length = 0)) {
                   p (class' = "text-xs opacity-70") { "No active or queued leases in this observation." }
                 }
-                Show (when' = (node.sessions.Length > 0)) { h4 (class' = "text-sm font-semibold") { "Compiler sessions" } }
-                For (each = node.sessions) {
-                  yield fun session _ ->
-                    p (class' = "text-xs font-mono break-words") {
-                      session.project + " · " + (if session.closed then "closed" elif session.busy then "busy" else "not busy")
+                For (each = active node) {
+                  yield fun operation _ ->
+                    div (class' = "node-operation node-active py-2 border-t border-base-300") {
+                      p (class' = "text-sm font-semibold break-words") { operation.project }
+                      p (class' = "text-xs font-mono break-words") { operation.operation + " · " + operation.outcome + " · PID " + string operation.pid }
+                      p (class' = "text-xs font-mono break-words") { operation.executable + (operation.arguments |> Array.tryHead |> Option.map (fun argument -> " · " + argument) |> Option.defaultValue "") }
+                      details () {
+                        summary (class' = "cursor-pointer text-xs opacity-60") { "Command arguments" }
+                        pre (class' = "text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto") { String.concat "\n" operation.arguments }
+                      }
+                      p (class' = "text-xs opacity-60 break-words") { "Lease " + operation.leaseId + " · run " + operation.runId }
                     }
                 }
-                div (class' = "node-operations flex flex-col gap-2") {
-                  h4 (class' = "text-sm font-semibold") { "Recent operations" }
-                  Show (when' = (node.storageError <> "")) {
-                    p (class' = "text-xs text-warning") { "Transcript store unavailable: " + node.storageError }
-                  }
-                  Show (when' = (node.operations.Length = 0)) {
-                    p (class' = "text-xs opacity-70") { "No settled operations reported by this node." }
-                  }
-                  Show (when' = node.transcriptsOmitted) {
-                    p (class' = "text-xs opacity-70") { "Transcript bytes are omitted from live updates. Load a stream to check stored availability." }
-                  }
-                  For (each = node.operations) {
-                    yield fun operation _ ->
-                      div (class' = "node-operation py-2 border-t border-base-300") {
-                        p (class' = "text-sm font-semibold break-words") { operation.project }
-                        p (class' = "text-xs font-mono break-words") { operation.operation + " · " + operation.outcome + " · " + clockTime operation.at }
-                        Show (when' = operation.hasLease) {
-                          p (class' = "text-xs font-mono break-words") { "PID " + string operation.pid + " · started " + clockTime operation.startedAt }
-                          pre (class' = "text-xs font-mono whitespace-pre-wrap break-words", title = "Executable, followed by one argument per line") {
-                            operation.executable + (if operation.arguments.Length = 0 then "" else "\n" + String.concat "\n" operation.arguments)
+                details (class' = "node-operations") {
+                  summary (class' = "cursor-pointer text-sm font-semibold") { "Recent operations (" + string (recent node).Length + ")" }
+                  div (class' = "flex flex-col gap-2 pt-2") {
+                    Show (when' = (node.storageError <> "")) { p (class' = "text-xs text-warning") { "Transcript store unavailable: " + node.storageError } }
+                    Show (when' = ((recent node).Length = 0)) { p (class' = "text-xs opacity-70") { "No recent completed operations in this view." } }
+                    Show (when' = node.transcriptsOmitted) { p (class' = "text-xs opacity-70") { "Transcript bytes are loaded from the node on request." } }
+                    Show (when' = ((recent node).Length > 0)) {
+                      button (class' = "btn btn-xs btn-ghost self-start", onClick = fun _ -> retire (recent node |> Array.map (operationKey node))) { "Retire shown entries" }
+                    }
+                    For (each = recent node) {
+                      yield fun operation _ ->
+                        details (class' = "node-operation py-2 border-t border-base-300") {
+                          summary (class' = "cursor-pointer text-xs font-mono break-words") {
+                            operation.project + " · " + operation.operation + " · " + operation.outcome
+                            + (if operation.hasRun then " · exit " + string operation.exitCode else "") + " · " + clockTime operation.at
                           }
-                          p (class' = "text-xs font-mono opacity-60 break-words") { "Lease " + operation.leaseId + " · run " + operation.runId }
-                        }
-                        Show (when' = operation.hasRun) {
-                          p (class' = "text-xs font-mono") { "Exit " + string operation.exitCode }
-                        }
-                        Show (when' = operation.dropped) { p (class' = "text-xs text-warning") { "Source transcript was not retained." } }
-                        Show (when' = operation.hasRun) {
-                          div (class' = "flex gap-2 mt-1") {
-                            button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stdout) { "Load stdout" }
-                            button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stderr) { "Load stderr" }
+                          div (class' = "flex flex-col gap-2 pt-2") {
+                            Show (when' = operation.hasLease) {
+                              p (class' = "text-xs font-mono break-words") { "PID " + string operation.pid + " · started " + clockTime operation.startedAt }
+                              pre (class' = "text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto", title = "Executable, followed by one argument per line") { operation.executable + "\n" + String.concat "\n" operation.arguments }
+                              p (class' = "text-xs font-mono opacity-60 break-words") { "Lease " + operation.leaseId + " · run " + operation.runId }
+                            }
+                            Show (when' = operation.dropped) { p (class' = "text-xs text-warning") { "Source transcript was not retained." } }
+                            Show (when' = operation.hasRun) {
+                              div (class' = "flex gap-2") {
+                                button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stdout) { "Load stdout" }
+                                button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stderr) { "Load stderr" }
+                              }
+                            }
+                            button (class' = "btn btn-xs btn-ghost self-start", onClick = fun _ -> retire [| operationKey node operation |]) { "Retire entry" }
                           }
                         }
-                      }
+                    }
                   }
                 }
               }
@@ -1025,6 +1083,21 @@ let App () =
         })
       ) {
         div (class' = "grid grid-cols-1 xl:grid-cols-3 gap-4 p-4") {
+          details (open' = true, class' = "xl:col-span-3 controller-compiler") {
+            summary (class' = "cursor-pointer text-sm font-semibold") { "Controller compiler controls" }
+            div (class' = "grid grid-cols-1 xl:grid-cols-3 gap-4 mt-3") {
+              div (class' = "xl:col-span-2 flex flex-col gap-3 min-w-0") {
+                SessionsPanel model local connected dispatch
+                details () {
+                  summary (class' = "cursor-pointer text-xs opacity-60") { "Open project" }
+                  OpenBar local connected dispatch
+                }
+              }
+              div (class' = "flex flex-col gap-3 min-w-0") {
+                WorkerPanel model local connected dispatch
+              }
+            }
+          }
           div (class' = "xl:col-span-3") { WorkNodesPanel model stores.Uptime connected readTranscript }
           Show (when' = (model.transcript.node <> "")) {
             div (class' = "xl:col-span-3 card card-compact panel transcript-readback") {
@@ -1043,21 +1116,7 @@ let App () =
               }
             }
           }
-          details (class' = "xl:col-span-3 controller-compiler") {
-            summary (class' = "cursor-pointer text-sm font-semibold") { "Controller compiler controls" }
-            div (class' = "grid grid-cols-1 xl:grid-cols-3 gap-4 mt-3") {
-              div (class' = "xl:col-span-2 flex flex-col gap-3 min-w-0") {
-                SessionsPanel model local connected dispatch
-                details () {
-                  summary (class' = "cursor-pointer text-xs opacity-60") { "Open project" }
-                  OpenBar local connected dispatch
-                }
-              }
-              div (class' = "flex flex-col gap-3 min-w-0") {
-                WorkerPanel model local connected dispatch
-              }
-            }
-          }
+
         }
       }
     }
