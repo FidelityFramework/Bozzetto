@@ -827,7 +827,7 @@ let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -
     let now = if uptime () < 0. then node.sampledAt else model.startedAt + uptime ()
     node.operations
     |> Array.filter (fun operation ->
-      not (runningOperation node operation) && now - operation.at <= 86400.
+      not (runningOperation node operation) && now - operation.at <= 86400000.
       && not (retired () |> Array.contains (operationKey node operation)))
     |> Array.sortByDescending (fun operation -> operation.at, int64 operation.sequence)
     |> Array.truncate 20

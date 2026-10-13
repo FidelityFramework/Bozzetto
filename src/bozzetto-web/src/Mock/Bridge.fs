@@ -205,7 +205,8 @@ let private workNodes () =
   WorkNodes { Revision = workRevision; Nodes = [|
     { Source = { Node = "controller"; Incarnation = "mock-controller" }; Local = true; Status = "available"; Note = "Synthetic controller fixture"; Value = Some snapshot }
     { Source = { Node = "one"; Incarnation = "mock-one" }; Local = false; Status = "available"; Note = "Synthetic remote build fixture"; Value = Some busy }
-    { Source = { Node = "two"; Incarnation = "mock-two" }; Local = false; Status = "available"; Note = "Synthetic observed idle fixture"; Value = Some remote }
+    { Source = { Node = "two"; Incarnation = "mock-two" }; Local = false; Status = "available"; Note = "Synthetic observed idle fixture"
+      Value = Some { remote with Operations = { remote.Operations with Entries = [| { history[0] with Project = "/mock/recent-two-hour"; AtMs = int64 startedAt - 7200000L } |] } } }
     { Source = { Node = "three"; Incarnation = "mock-three" }; Local = false; Status = "unavailable"; Note = "Synthetic disconnected fixture"; Value = None }
   |] }
 

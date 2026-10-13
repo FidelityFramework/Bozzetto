@@ -266,6 +266,7 @@ async function check() {
   assert.equal(await evaluate(work, `${history}.open`), false, 'completed node history starts folded');
   assert.equal(await evaluate(work, `${history}.querySelectorAll('details.node-operation').length`), 20, 'completed rows are capped at twenty');
   assert.equal(await evaluate(work, `${history}.textContent.includes('/mock/retired-by-age')`), false, 'entries older than a day retire from this view');
+  assert.equal(await evaluate(work, `${initialNode('two')}.querySelector('.node-operations').textContent.includes('/mock/recent-two-hour')`), true, 'history older than seconds but within twenty-four hours remains available');
   assert.equal(await evaluate(work, `${initialNode('one')}.textContent.includes('/mock/expired-lease')`), false, 'released leases with no run do not pin aged history as active');
   assert.equal(await evaluate(work, `${initialNode('one')}.querySelector('.node-active pre').textContent.includes('/mock/clef/tests.dll')`), true, 'running command arguments remain available inside their disclosure');
   assert.equal(await evaluate(work, `${initialNode('one')}.querySelectorAll('.node-active').length`), 1, 'active command stays visible outside retired history');
