@@ -466,12 +466,12 @@ history. These are the current closure groups, not a second requirements owner:
 | Capability boundary | Current accepted scope and remaining closure |
 | --- | --- |
 | Portable fat pointers and flat closures | Callable rows and several Phase B source-demand/readiness increments are accepted in bounded scopes. Reader binding, formation/lifetime and native reconstruction controls remain in §§6 and11. |
-| Native entry and foreign invocation | ABI, loading, address and execution authority remain separate open tranches. Source rooting or a portable callable row grants none of them. |
+| Native entry and foreign invocation | Explicit Linux AMD64 libc write/snapshot and relational labs fixtures have bounded accepted native realization. General ABI, host loading, address and execution authority remain separate open tranches. Source rooting or a portable callable row grants none of them. |
 | Aggregate and scalar marshaling | Existing source/receipt controls are credited; native aggregate/Assign readers, target conversions and required lifetime/ownership evidence remain open. |
 | Runtime string/byte borrows | Q3 samples18–23 retain explicit borrow/residence/lifetime refusals. The next slice extends existing source owners with complete evidence; it does not admit a borrow by suppressing its refusal. |
 | Binding generation and regeneration | Farscape and BAREWire vocabulary, descriptor provenance, pilot/annotation refusals and Fidelity.Platform regeneration require coordinated acceptance. Legacy desktop bindings retain their existing freeze. C++ template mapping through BAREWire is a later scoped row, with no delivery claimed. |
 | Differential claim and artifact reuse | D5 stable provenance, validity keys, consumed-proof dependencies and restart policy remain open. Accepted current-pipeline NodeId checks are not durable discharge reuse. |
-| Design-time consumers | Lattice, Clef Auto Complete and other affected tooling require a consumer-impact entry and bound checks for changed contracts. Their alignment is currently unverified, not implied by compiler acceptance. |
+| Design-time consumers | Active CCS.Editor/Lattice.Server conditional result-proof alignment is accepted at Composer c38e239 with bound controls; the Clef AutoComplete reference fork is retired. Separate deployed IDE-client acceptance and other affected consumers remain unverified. |
 
 Each closing increment records requirement IDs, accepted scope, source/artifact
 binding, proof tier and residuals, affected consumer heads, and its acceptance
