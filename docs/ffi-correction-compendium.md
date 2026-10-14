@@ -662,6 +662,14 @@ and `native2-final.sha256`. Native1 remains recorded as failed. Local immutable
 declared-extern address/invoke is accepted at this explicit LinuxAMD64/libc scope;
 module storage, general ABI/loading and full FFI closure remain open.
 
+Spec `03e7846` synchronizes its informative implementation status with that
+accepted scope (1existingfile+1/−1); the public hybrid index still shows the old
+`fromSymbol` text, so deployed-site synchronization remains unverified. TWO
+fast-forwarded its primary Alex checkout to `3a6c278`; one leased Release build
+passed11.54s, zero warnings/errors. All18 distribution hashes verify; the other
+five reviewed heads and existing job history are preserved. This is distribution
+evidence, with no repeated suite (`t1b-lan/two-operand-update/handoff.md`).
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
