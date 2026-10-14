@@ -705,6 +705,39 @@ grant module native-capability acceptance. Existing source, public-model, Alex
 and Composer owners are being extended in parallel; Fable remains the sole
 increment reviewer after evidence is frozen.
 
+**Module source/consumer gate and first native refusal (October14).** Pushed
+checkpoints are PSG `e24d633`, Clef `5c5ceb1`, Alex `89791aa` and Composer
+`8ac4f39`. Source/public7 controls, exported-library L3 negative, Alex7 and
+target7 controls pass at their sealed closures; three independent compiled
+mutations were caught with exact source/binary restoration. The target positive
+executes stock LLVM lowering/translation. Fable5.1/high read all four diffs
+completely (11 reads) and accepted with nonblocking follow-ups; no wider
+regression was earned. These remain component gates, not native acceptance.
+
+The matching `20261014-module-entry-pair` is installed with326 files verified;
+actual Hello binds schema27/fingerprint29D668, Composer2b40/Alexa6c3/PSG98d19/
+CCSc11286/BARE0ba and unchanged wire digest. Its schema26 predecessor remains
+available for rollback. The previous session/worker/daemon physically drained;
+no active or queued leases were interrupted. The named startup helper was absent,
+so the documented detached installed-launcher path was used, with actual readiness
+reported in1.736s. This is deployment evidence, not an FFI execution result.
+
+The actual private module fixture's first build **failed before emission**:
+TypeMapping occurrence927 still demanded ordinary source representation and
+refused with CCS8410. No artifact was accepted or executed. The failed receipt
+and exact fixture inputs are retained under `module-entry/build-native1.json`
+and `failed-native1-inputs`; Alex's existing owning seam is being corrected.
+Module native capability, writable-region/ELF accounting and direct object reuse
+remain unaccepted. Evidence: the four sealed owner packets, `relational-audit/
+module-entry-source-01-return.md`, and Bozzetto `nupkg/work-visibility/module-entry-*`.
+
+ONE fast-forwarded its primary PSG to `e24d633`; its leased scoped producer
+passed17.01s with zero warnings/errors and a verified complete native tool output
+and build-log hash. Pi made four extra metadata/preflight calls despite the
+single-call instruction; that deviation and its inaccurate summary are retained,
+separately from the verified build result (`module-entry/lan-one`). Existing
+SQLite job/failure reporting remains the logging owner; no new logger was added.
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
