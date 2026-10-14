@@ -502,6 +502,50 @@ form when it becomes a premise of a Tier3/4 lemma; no general Rocq projection is
 claimed for the current FFI slice. These obligations specify the existing
 proof/differential design, without developer-written refinement predicates.
 
+#### T1-B declared extern entry loading and differential dependencies (October 14)
+
+The owner approved `FnPtr.ofExtern : 'F -> FnPtr<'F>` with the actual declared
+extern binding as its operand; spec source `36f25b1` carries that ruling. The
+entry retains its exact import, declaration, ABI and pointer transport in the
+existing boundary account. It obtains no ordinary compiler-owned lifetime and
+executes no foreign placeholder. The first realization is an immutable local
+entry; module-level entry storage remains a separately refused residual.
+
+The selected platform explicitly names a sibling process-link contract through
+`[platform].loading`. BAREWire owns its eleven-field vocabulary; Fidelity.Platform
+supplies the Linux AMD64 libc declaration. Identity, version and source identify
+the stated loading assumption. Its initial supported policy is library `c`,
+runtime `libc`, Linux `x86_64`, process startup through process termination, with
+unloading and exported-library residence forbidden. Runtime availability alone
+supplies no loading contract. The source platform reader owns selection and
+provenance; boundary admission owns the entry; Composer checks the retained
+account against the actual executable and libc link recipe. L3 remains in force.
+
+Loading and arithmetic evidence have different validity dependencies. The
+existing Common region fingerprint structurally includes the boundary account,
+including the complete selected loading contract. The existing object key also
+includes that fingerprint and the actual target, link and tool recipe. Thus a
+loading-contract change invalidates the dependent code through its existing
+owner. An arithmetic discharge depends on its actual behavioral descriptor,
+ABI and destination premises; a loading change need not change that mathematical
+claim. This is code-read evidence, not a demonstrated cache-reuse result. D5
+provenance, tombstones and persisted evidence reuse remain open; current
+fresh-only restrictions remain in force.
+
+Code-read binding: Clef `6958ed15`,
+`src/Compiler/PSGSaturation/SemanticGraph/WitnessSegmentation.fs:57–96,411–423`;
+Composer `c8410eca`, `src/BackEnd/LLVM/IncrementalRegions.fs:53–72,130–178`
+and `src/Core/WitnessArtifacts.fs:165–333`. The bounded report and seal are in
+Composer `artifacts/ffi-native-functionpointer-20261014/reuse-report.md` and
+`reuse-final.sha256`. Retrieval118 `1cfd21c6…` was fresh/latest/equal with pinned
+schema→find→pgq→sources; dirty type-field drafts remain separate from those heads.
+
+Implementation and focused controls are in progress. Alex's sealed consumer
+packet is `artifacts/ffi-t1b-20261014/handoff.md`; source admission, semantic PSG
+integrity, backend validation and the actual native artifact remain required
+before capability acceptance. Schema26 type-shape production is not semantic
+acceptance. No complete T1-B, Phase B or FFI closure is claimed here.
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
