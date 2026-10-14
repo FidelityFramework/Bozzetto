@@ -819,6 +819,40 @@ verified distribution work, not another FFI acceptance gate. Its retained packet
 is `clef/artifacts/ffi-reconcile-20261013/module-entry/lan-two/`; the existing lab
 SQLite journal remains the LAN job/failure owner.
 
+**Finite direct-helper native-entry expansion accepted (October14).** Composer
+`cd69dba` removes the artificial single-helper/single-invocation bounds in the
+same EnvironmentArtifacts owner. Exact source call-site/result identity, caller,
+read ownership and complete inventories remain required. Typed calls and reloads
+are ordered within their actual functions; linked callee sequences must match.
+Two helpers and three distinct invocations (Nine/Five/Five) survive emission.
+Seven controls pass; omitting only linked sequence equality admits a swapped
+callee sequence and is caught; byte-exact restoration passes7/7. Sole Fable
+accepts source and native bindings with no wider regression earned. Growth:
+1existingfile+16/−8, no new files, owners or dependencies.
+
+Matched release `20261014-module-helpers-pair` changes only Composer DLL/PDB
+(`324d9a…`), preserving326-file daemon/protocol/support closure. Actual HelpersEntry
+build and `composer_run_current` exit0 with empty output. SourceF27B438B… and
+ELFC88268C3… are sealed with59 files under primary Composer
+`artifacts/ffi-t1b-entry-storage/helpers/`. Receipt sites949/953/957 map to main
+instruction ordinals0/2/4; read930 in callFive and939 in callNine each maps to
+load0/indirectcall1. Source47/MLIR47 UNSAT pair with4 premise-only SAT checks and
+4 distinct consumed-proof identity/validity keys. Rocq37 byte-accounting theorems,
+0Claims/Origins and47 solver-only anchors keep the prior trust limits. This is
+ordered positional correspondence under stock lowering, not interchangeability
+of equal-argument foreign calls; Fable explicitly withdraws its earlier contrary
+non-blocking remark. No foreign functionhood, instruction equivalence, Alethe or
+D5/durable reuse is claimed. Common compiles once, zero objects reused. Helper
+chains/conditional helper calls, multiple/mixed slots and other ABI/loading
+profiles remain unaccepted; single-helper limits above are historical.
+
+THREE independently fast-forwards accepted primary PSG/Alex/Composer checkpoints
+(e24d633/e36f548/c5b2178) and runs the exact supplied single native tool call under
+renewing leases:15.73s/9.91s/8.77s, all exit0; Composer retains2 existing warnings.
+Root reconstructs all log hashes and seals `helper/lan-three/`. These distribution
+builds are separate from the newer cd69dba native acceptance; no tests, remote
+compiler deployment or model self-report is substituted for execution evidence.
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
