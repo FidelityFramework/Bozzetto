@@ -670,6 +670,41 @@ passed11.54s, zero warnings/errors. All18 distribution hashes verify; the other
 five reviewed heads and existing job history are preserved. This is distribution
 evidence, with no repeated suite (`t1b-lan/two-operand-update/handoff.md`).
 
+**Equal-argument native control (October14).** The same admitted entry is now
+invoked twice with argument5. Generation2 builds and `composer_run_current`
+exits0; portable MLIR retains two indirect calls and LLVM retains two calls to
+`labs(5)`. The manifest records four distinct consumed-proof identities and
+validities, with the shared descriptor explicitly retained as a hypothesis.
+Source38/MLIR38 queries are UNSAT and four premise queries are SAT; artifact,
+query and Rocq source/object hashes verify. This is an executed shape control,
+not a foreign functionhood theorem or geometric-preservation proof. No object
+reuse or D5 closure is claimed. Immutable evidence and inputs are sealed in
+`native-fnptr-ofextern/accepted-native3`, `accepted-native3-inputs` and
+`native3-final.sha256`; native2's original input bytes remain separately archived.
+
+**Private module-entry implementation contract (October14).** The next bounded
+tranche extends existing program storage with `NativeEntry`, referring to the
+original admitted formation. Selected Pointer layout supplies storage dimensions;
+it grants no loading authority. Source inventory precedes final Boundary admission,
+and public integrity binds initializer, entry, loading, layout and read incidence.
+Alex carries typed declaration/store/load operations over a pointer-sized byte
+view; it does not construct `memref<TFunc>`. Composer's existing structured
+target realizer consumes those exact storage/entry accounts before serialization,
+replacing reserved internal placeholders with LLVM pointer globals, stores and
+loads. Unmatched placeholders must refuse before linking. No symbol lookup,
+integer code-address conversion, pass re-entry or duplicate authority is added.
+Mutable/generic storage and exported-library L3 admission remain refused.
+
+A leased stock LLVM probe lowered and translated the typed bridge into an LLVM
+pointer global, `store ptr @labs`, `load ptr` and an indirect call, without an
+integer conversion (`Composer/artifacts/ffi-t1b-entry-storage/`). This establishes
+target legality only. The real private-module source/public snapshot reports
+Entry1/Calls2 and Integrity0; focused withdrawal controls and consumer realization
+are in progress. Schema27 production and these intermediate reports do not yet
+grant module native-capability acceptance. Existing source, public-model, Alex
+and Composer owners are being extended in parallel; Fable remains the sole
+increment reviewer after evidence is frozen.
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
