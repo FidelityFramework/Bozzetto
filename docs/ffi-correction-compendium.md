@@ -629,6 +629,39 @@ accepted source/public gates do not grant native artifact acceptance. Exact
 receipt: `native-fnptr-ofextern/build-native1.json`. Runtime execution remains
 unperformed until an artifact is compiler-accepted through the current session.
 
+**T1-B native correction and realization.** Alex `3a6c278` extends the existing
+VarRefWitness with an exact, parent-bound admitted declaration-operand reading.
+It emits no closure/SSA for that metadata occurrence and retains ordinary
+callable refusals. Two specific controls pass; disabling only the classification
+reproduces formal882's refusal. Source/DLL/PDB/test restoration is byte-exact;
+the unfiltered CallableSymbolTests-only DLL passes11/11 (not the full Alex suite).
+Fable accepted the delta after two reads, with no wider regression earned.
+Growth:2existing Alex files+224; new tracked files/owners/dependencies0.
+
+The matched installed `20261014-declared-extern-operand-pair` verifies326files,
+schema26 and unchanged wire digest. The unchanged local fixture now compiles
+and `composer_run_current` exits0 with empty output. ELF `8F88A874…D5A5E` is
+retained with its full evidence in `native-fnptr-ofextern/accepted-native2`.
+Portable MLIR forms one `func.constant @labs`, invokes its actual pointer SSA,
+extends the argument8→64 and narrows the result64→8. LLVM canonicalizes the
+known constant to a direct call; that grants no foreign purity or result equality.
+Source24/MLIR24 solver queries are UNSAT; two premise queries are SAT. All
+artifact/query and Rocq source/object hashes verify. Existing ELF byte-accounting
+has40theorems, zero source Claims/Origins and24solver-only anchors: it does not
+prove foreign behavior or instruction-level semantic equivalence. The object
+manifest records two consumed proofs with descriptor hypothesis/version/source
+and distinct validity; one Common object compiled, zero reused. D5 remains open.
+Fable accepted native2 as root-verified reported binding evidence after two
+reads, with no blocking mismatch or wider regression earned. Root supplied its
+nonblocking Composer bridge: all15 reviewed source hashes match committed
+`fda0374`, whose producer4D979487 is byte-identical in the installed pair.
+Two premise anchors now match exactly to source/MLIR claim outcomes, recorded
+by anchor hash. These follow-ups are root-verified additions, not further auditor
+reads. Evidence: `native2-binding-summary.json`, `composer-postcommit-binding.json`
+and `native2-final.sha256`. Native1 remains recorded as failed. Local immutable
+declared-extern address/invoke is accepted at this explicit LinuxAMD64/libc scope;
+module storage, general ABI/loading and full FFI closure remain open.
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
