@@ -928,6 +928,39 @@ evidence. No automatic retry or successful distribution is claimed; the retained
 classification is `archive-slots-integration/lan-one/`. The local accepted gates
 remain independently bound.
 
+**SLOT-HELPERS closed by execution; no implementation change (October14).**
+The unchanged b034e33/9fea9407 compiler admits two private imported-entry slots,
+two disjoint unit helpers and three distinct main calls, including a repeated
+call. Source/publication has Integrity0; seven source/typed/linked controls pass.
+Actual SlotsHelpersEntry builds and runs through Composer with exit0, source
+9F30E825…/ELFE8C02915…. The first slot owns read934 and calls957/961 at2/4; the
+second owns read943 and call953 at0. Receipt counts are47source/47MLIR UNSAT,
+4premise SAT and4 distinct consumed claims;38Rocq byte-accounting theorems,
+0Claims/Origins and47solver-only anchors. Common compiles once, zero reuse.
+
+The existing owner already derives helper names from identity-filtered per-slot
+reads. Fable `slots-helpers-native-review-01` accepts and explicitly withdraws
+its earlier possible global-census restriction. No guard relaxation, producer,
+new mutation, source growth or regression was earned. The61-file native seal and
+original component controls are Composer
+`artifacts/ffi-t1b-entry-storage/slots-helpers/`. Earlier SLOT-HELPERS wording
+records a historical inference, not a remaining defect. Longer/conditional helper
+chains, mixed/mutable/exported storage and other loading profiles remain outside
+this coverage.
+
+**Active editor alignment inspected (October14; code-read evidence).** Composer
+b034e33 `Lattice.Server/Server.fs313–352` uses CCS.Editor and advertises
+hover/definition/proofs, not a completion catalog. `CCS.Editor/Session.fs20–43`
+delegates project loading to FidprojLoader;91–100 formats compiler node types.
+The declared-binding FnPtr surface and explicit archives therefore use their
+compiler owners without another loader/catalog. ClefAutoComplete c55d25e is
+explicitly retired reference plumbing and remains untouched. No code changes or
+new gates were needed. Checker InputFiles does not establish archive-byte event
+invalidation; ARC-EVENT stays open. Fresh137 pinned retrieval and the outside-index
+retired metadata exception are sealed in Bozzetto
+`nupkg/work-visibility/ffi-consumer-sync-20261014/`; THREE's query suggestions are
+model-report only, and TWO's409 busy response is an admission rejection.
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
