@@ -853,7 +853,7 @@ Root reconstructs all log hashes and seals `helper/lan-three/`. These distributi
 builds are separate from the newer cd69dba native acceptance; no tests, remote
 compiler deployment or model self-report is substituted for execution evidence.
 
-**Explicit static archive mapping approved (October14; acceptance pending).**
+**Explicit static archive mapping approved (October14; bounded acceptance below).**
 The owner approves `[link] archives = { call_twice = "native/libcall_twice.a" }`.
 Each key names an already-declared library; paths resolve against the declaring
 project. The initial custom process-image profile requires the archive for the
@@ -868,10 +868,65 @@ hypothesis or create functionhood. The linker consumes a captured, hash-checked
 archive input. Existing reserve/build/acceptance/run checks must reject changed
 bytes. **ARC-EVENT remains open:** listing archive dependencies alone does not
 establish automatic file-event invalidation through the foundation. No parallel
-watcher or polling mechanism is authorized. Two-slot native-entry and custom
-scalar native acceptance, combined Fable review and committed bindings remain
-pending. Proposal and original carrier patch are retained under Clef
+watcher or polling mechanism is authorized. The initial two-slot and custom
+scalar gates are accepted below; broader callback and differential coverage
+remain open. Proposal and original carrier patch are retained under Clef
 `artifacts/ffi-reconcile-20261013/archive-input-proposal/`.
+
+**Finite native slots and exact custom scalar archive accepted (October14).**
+PSG `c16baa888102830dc77afa02812824f856405507`, Clef
+`f84041aa3491d8a43e033bea778f66987dfa3d55` and Composer
+`b034e3313749e9e01d0f6d0023d2317ef8d9d5e3` are pushed. All17 committed
+blobs match the reviewed source hashes. Existing owners retain exact custom
+loading through source/publication, validate the explicit annotation incidence,
+account for each immutable native slot, and bind archive bytes to project and
+artifact validity. No new tracked file, owner or package was added. Growth:
+PSG1file+17/−3; Clef5files+49/−6; Composer11files+673/−83.
+
+Focused gates pass: source/public6; archive10; final-closure slots7, receipt2 and
+loading6. Annotation-parent, loading-retention, linked initializer-order and
+archive-digest omissions are independently caught and restored. Earlier runner
+setup failures and two loading-fixture failures remain failures; corrected
+fixtures reach their intended archive refusal. Sole Fable5.1 high accepts source
+and final native bindings, earning no full regression.
+
+The matched326-file workstation release `20261014-archive-slots-pair` changes
+only seven existing assembly/PDB copies, including PSG on both sides. Actual
+Hello binds Composer9fea9407/CCSe0a319/PSGa9b52f, schema27/fingerprint29D668 and
+protocolF641. SlotsEntry builds and runs through Composer with exit0: two distinct
+formations/bindings, stores0/1 before entry2, exact helper/direct reloads, two8B
+slots in24B used/32B allocated `.data`. Its receipts contain38source/38MLIR UNSAT,
+4premise-only SAT and4 distinct consumed claims;38Rocq byte-accounting theorems,
+0Claims/Origins and38solver-only anchors retain the previous evidence limits.
+
+CustomScalar links the declared `call_twice` archive7bdaefb0… from the exact
+captured bytes. Project receipt and region recipe carry that same digest. Actual
+gen1 builds/runs0; a controlled archive-byte change makes `run_current` refuse
+with `compiler_refused` and clears Current. Byte-exact restoration requires a new
+reservation/gen2; it builds/runs0 with the same sourceVersion/ELF, Common compiled
+once and zero objects reused. Receipts contain23source/23MLIR UNSAT,2premise-only
+SAT and2 distinct consumed claims;36Rocq byte-accounting theorems,0Claims/Origins
+and23solver-only anchors. These custom claims are conservatively fresh-only:
+declaration/call anchors are stable, but their context participant falls back to
+`main.clef:3:0` under NumericCarrierRecipes69–95. This is an identity limitation,
+not an archive-dependent mathematical invalidation rule.
+
+The200-file native seal, committed bridge, final acceptance and context-key
+explanation are Clef `artifacts/ffi-reconcile-20261013/archive-slots-integration/`.
+Composer `artifacts/ffi-archives-20261014/` and
+`artifacts/ffi-t1b-entry-storage/slots/` retain original gates and refreshes.
+**SLOT-HELPERS** records an unexecuted fail-closed restriction when disjoint
+helpers read different slots; the admitted fixture has one helper plus a direct
+main read. Exactly one selected custom archive is admitted. ARC-EVENT, D5/durable
+reuse, Alethe checking and closed C callback receiving ABI remain open. No foreign
+truth/functionhood or instruction-equivalence theorem is claimed.
+
+ONE's independent distribution job `run_bf7d5360a45a4a7092e456bd6a5023b0` fails
+with `model_output_incomplete`; its untruncated native message projection contains
+zero tool calls. This is a journaled agent failure, supplying no compiler build
+evidence. No automatic retry or successful distribution is claimed; the retained
+classification is `archive-slots-integration/lan-one/`. The local accepted gates
+remain independently bound.
 
 #### October 13 source-demand checkpoint
 
