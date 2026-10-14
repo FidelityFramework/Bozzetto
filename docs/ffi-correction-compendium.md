@@ -546,6 +546,89 @@ integrity, backend validation and the actual native artifact remain required
 before capability acceptance. Schema26 type-shape production is not semantic
 acceptance. No complete T1-B, Phase B or FFI closure is claimed here.
 
+**Relation authority (Lava comparison, October 14).** Foreign behavioral
+contracts and inferred ranges establish only inclusion: every actual result,
+under the stated hypotheses, belongs to the described relation. They establish
+neither a biconditional with the computation nor functionhood. Two calls with
+equal arguments retain distinct application/result evidence; shared descriptors
+or entry addresses supply no result equality. A proved functionhood lemma may
+be used only with its explicit domain, effect/context premises and validity pins.
+The Lava comparison is research guidance, not a new compiler authority.
+
+The FFI consequences are explicit ABI/representation conversions and their
+obligations, opaque foreign implementations, and hypothesis provenance kept
+distinct from proved premises. A branch's range narrowing is a graph fact with
+support; it does not itself require a runtime cast. No source refinement
+predicates or dependent evidence pairs are introduced. Dimensional/parametric
+typing supplies Tier1 guarantees; numeric bounds and actual target widths remain
+separate. SMT integer arithmetic is not a replacement for the selected machine
+representation or its conversion/overflow obligation.
+
+Emitter faithfulness, relation/coherence lemmas for quoted Tier3 functions,
+unfolding eligibility, and lemma conclusions consumed as Tier2 premises remain
+broader proof-roadmap work. Such proved premises must retain their lemma identity,
+premises and checker/library pins in validity keys. cvc5 remains the Tier2 owner;
+Rocq projection is required when higher-tier proof consumes the fact. Generated
+proof checking and metatheoretic preservation are separate from empirical
+automation coverage. Current compiler tests, audits and execution receipts prove
+none of that broader completeness or translation-faithfulness theorem. Research
+source: arxiv-papers `c24c9169`,
+`research/DBC/Lava_Haskell_2610.14092v1.pdf`, §§3.3.2,E.1 (pp.14–15,42–43).
+This repository is outside retrieval119's published sources; the bounded local
+PDF read is the recorded exception. Detailed paper review is delegated by the
+owner separately and is not a prerequisite to the current FFI gate.
+
+**Information-geometry consequence (October14).** The paper
+[Compositional Information Geometry of Probabilistic Programs](https://arxiv.org/html/2610.17886v1#S1)
+shows that equal output distributions need not preserve trace geometry. The FFI
+design consequence is to preserve distinct call occurrences and require explicit
+effect/context evidence for any identification. A range descriptor supplies no
+probability law, derivative or geometric-preservation theorem. If future proofs
+consume such observations, their contracts and support must join the existing
+validity/dependency account; unchanged bounds alone cannot justify reuse. This is
+a design inference, with geometric optimization outside this FFI increment.
+Current equal-argument controls test distinct call evidence, not geometry.
+
+**T1-B scoped source/public/consumer acceptance.** Checkpoints pushed October14:
+BAREWire `c8587b9`, Fidelity.Platform `1f9a1b2`, PSG `4deb8dd`, Clef `d7ddea1`,
+Alex `443b343`, Composer `fda0374`. Root's
+`clef/artifacts/ffi-reconcile-20261013/t1b-committed-binding.json` matches every
+committed changed blob to its reviewed source and records per-repository
+shortstats; no new tracked files. Source8 controls, public11 controls plus the
+same9 stronger reason assertions, two existing schema/generator checks, Alex6
+controls and backend13/current3 controls are credited at their exact closures,
+not summed into a full suite. Seven independently compiled mutations were
+caught and sources/binaries restored exactly. The actual local publication
+has Entry1/Call1, Integrity0 and713953 encoded bytes; its uniquely retained
+restored snapshot and explicit overwritten-initial-snapshot bridge are bound.
+
+Native Fable5.1/high accepted with nonblocking follow-ups (`relational-audit/
+t1b-source-01-return.md`); ten reads, with source diff tail graded from reported
+execution evidence rather than direct source reading. No wider regression was
+earned. Mutable/captured alias refusal coverage, string-vocabulary refinement,
+coarse account support and repeated transfer-reader cost remain follow-ups.
+Module storage, L3/library loading, D5 and certificates remain open.
+
+LAN scoped builds completed on ONE (PSG), TWO (Alex) and THREE (Composer).
+THREE's first assignment remains failed: its primary Thuja dependency was absent.
+A separately named repair provisioned that already-declared dependency at
+`e1b855dd` on branch `fidelity`; the ensuing leased Composer build exited0 in
+12.22s with zero errors. All21 repair evidence hashes verify, and complete native
+stdout matches the worker's build-log hash. Original failure and new completion
+remain distinct in the existing SQLite job journal. Evidence:
+`t1b-lan/three-dependency-repair/handoff.md`. These are build receipts, not suite,
+proof or native-capability acceptance.
+
+The matched installed pair `20261014-declared-extern-pair` preserves the previous
+complete release for rollback; all326 files and actual schema26 Hello were
+verified. Its first native fixture build is **failed**, before artifact emission:
+the `ofExtern` declaration operand was traversed as an ordinary callable and
+demanded physical representation for signature participant882, causing AX4001
+child refusals. Fixing that exact source-only operand seam belongs to Alex; the
+accepted source/public gates do not grant native artifact acceptance. Exact
+receipt: `native-fnptr-ofextern/build-native1.json`. Runtime execution remains
+unperformed until an artifact is compiler-accepted through the current session.
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
