@@ -738,6 +738,50 @@ single-call instruction; that deviation and its inaccurate summary are retained,
 separately from the verified build result (`module-entry/lan-one`). Existing
 SQLite job/failure reporting remains the logging owner; no new logger was added.
 
+**Private module native-entry notch accepted (October14).** Alex `e36f548`
+corrects the passive TypeMapping reader for the exact admitted slot/entry account
+and shares its ABI reader with MemoryPatterns. The original numeric CCS8410 row
+remains intact; ordinary or withdrawn support still refuses. Actual-source
+Generation and four withdrawals, three focused cases, and one compiled transport
+mutation pass with exact restoration. Fable accepted the narrow delta after
+four reads. Growth versus `89791aa`:3existingfiles+143/−17, no new tracked files.
+
+Composer `03c049a` extends the existing artifact family classifier and LLVM
+observer: native-entry storage is distinct from scalar environments, with full
+writable inventory retained. Five actual source/typed/linked-bitcode controls,
+one initializer-incidence mutation and exact restoration pass; two existing
+receipt-consumer controls pass. The native SSA-lane and final hidden-link-anchor
+failed positives are preserved and corrected against their existing owners.
+Fable accepted after reading the complete671-line delta. Growth versus `8ac4f39`:
+4existingfiles+489/−12; no new tracked files, owners or dependencies.
+
+The matched `20261014-module-entry-artifact-pair` verifies326 files and actual
+schema27 Hello: Composer523e/Alexb0c4/PSG98d19/CCSc11286/BARE0ba. The real module
+fixture now compiles and `composer_run_current` exits0. ELF8E404405…8D7A and
+source versionA9985429…A871 are sealed with43 acceptance files and immutable
+inputs (`module-entry/accepted-native3`, `accepted-native3-inputs`,
+`native3-final.sha256`). Source37/MLIR37 queries are UNSAT; four SAT premise
+checks match exact source/MLIR claim anchors. Four distinct consumed-proof
+identities/validities retain descriptor hypothesis/version/provenance.
+
+The native receipt binds original formation926/binding927, explicit loading
+identity/version/source, wrapper store0 before entry call1 and two linked
+reload/call sites. One8B object resides in the committed16B `.data` region;
+existing complete writable/ELF byte accounting remains enforced. Rocq has37
+byte-accounting theorems, zero source Claims/Origins and37solver-only anchors:
+this proves no foreign behavior/address truth or instruction equivalence. There
+is no Alethe certificate. Fable accepted final binding after two reads, relying
+on root-verified original hashes; no wider regression was earned. Its pin-hash
+readback follow-up is supplied separately in `native3-pair-binding.json`, leaving
+the original seal unchanged. Native1/2 remain failed historical receipts.
+
+Scope remains **one private immutable LinuxAMD64/libc slot, read in the source
+entry function**. Helper reads, multiple/mixed storage, generic/mutable forms,
+exported-library host loading and other profiles are not accepted by this notch.
+Common compiled once with zero objects reused; D5 and durable proof/code reuse
+remain open. Full FFI closure is not claimed. The next increments must broaden
+these declared limits through the existing owners, not weaken the current checks.
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
