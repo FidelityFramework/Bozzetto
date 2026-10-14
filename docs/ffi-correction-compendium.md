@@ -782,6 +782,43 @@ Common compiled once with zero objects reused; D5 and durable proof/code reuse
 remain open. Full FFI closure is not claimed. The next increments must broaden
 these declared limits through the existing owners, not weaken the current checks.
 
+**Closed-helper native-entry expansion accepted (October14).** Composer `c5b2178`
+extends the existing
+EnvironmentArtifacts account now binds a reload to its containing source callable,
+and admits one closed ordinary unit helper invoked once by source main. It checks
+the exact source invocation/result identity, typed edge, linked helper call and
+helper-owned reload/indirect use; ArtifactProof records `HelperCalls`. Published
+lambda/binding symbol aliases remain distinct source roles. No call-graph traversal,
+repeated compiler pass or additional loading authority is introduced.
+
+Four source/typed/LLVM controls pass; deleting the source-call result identity
+check makes the changed-call control fail, and exact source/DLL/PDB restoration
+passes all four again. Two receipt-projection cases pass. Sole Fable accepts the
+complete three-file delta and final native binding, with no wider gate earned.
+Growth is3existingfiles+194/−10; no new tracked files, owners or dependencies.
+
+The complete326-file matched release `20261014-module-helper-pair` preserves the
+accepted daemon/protocol/support and changes only Composer DLL/PDB (`15a345…`).
+Actual HelperEntry compilation and `composer_run_current` succeed with exit0 and
+empty output; source162C0092…/ELFBF6E2602… and51 evidence files are sealed in primary
+Composer `artifacts/ffi-t1b-entry-storage/helper/`. The native receipt records main
+callsite941→callFive, read930/load0→indirectcall1, and startup store0 before source
+entry call1. One8B slot remains in16B `.data`. Source21/MLIR21 UNSAT results pair
+with2 premise-only SAT checks and2 distinct consumed-proof identity/validity keys.
+Rocq37 byte-accounting theorems,0 source Claims/Origins and21solver-only anchors
+retain the existing evidence limits: no foreign behavior/address/functionhood,
+instruction-equivalence theorem or Alethe certificate. Common compiles once with
+zero object reuse; D5/durable differential reuse remains open. Helper chains,
+multiple helper invocations, multiple/mixed slots and other ABI/loading profiles
+remain unaccepted. Earlier source-entry-only limits describe the preceding notch.
+
+TWO fast-forwards its primary PSG/Alex checkouts to accepted e24d633/e36f548 and
+executes the exact supplied single native tool call: leased builds15.42s/10.43s,
+exit0,0warnings/errors, original log hashes independently reconstructed. This is
+verified distribution work, not another FFI acceptance gate. Its retained packet
+is `clef/artifacts/ffi-reconcile-20261013/module-entry/lan-two/`; the existing lab
+SQLite journal remains the LAN job/failure owner.
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
