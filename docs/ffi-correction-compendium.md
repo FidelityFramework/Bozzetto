@@ -853,6 +853,26 @@ Root reconstructs all log hashes and seals `helper/lan-three/`. These distributi
 builds are separate from the newer cd69dba native acceptance; no tests, remote
 compiler deployment or model self-report is substituted for execution evidence.
 
+**Explicit static archive mapping approved (October14; acceptance pending).**
+The owner approves `[link] archives = { call_twice = "native/libcall_twice.a" }`.
+Each key names an already-declared library; paths resolve against the declaring
+project. The initial custom process-image profile requires the archive for the
+exact selected loading library. No ambient custom DSO fallback or inferred
+archive selection is granted. Dependency-declared archives remain a specific
+refusal in this bounded increment.
+
+The existing FidprojLoader, source resolver, project-input snapshot, backend
+context, link recipe and linker own the implementation. Archive name, path and
+bytes belong to artifact validity; they do not prove a foreign behavioral
+hypothesis or create functionhood. The linker consumes a captured, hash-checked
+archive input. Existing reserve/build/acceptance/run checks must reject changed
+bytes. **ARC-EVENT remains open:** listing archive dependencies alone does not
+establish automatic file-event invalidation through the foundation. No parallel
+watcher or polling mechanism is authorized. Two-slot native-entry and custom
+scalar native acceptance, combined Fable review and committed bindings remain
+pending. Proposal and original carrier patch are retained under Clef
+`artifacts/ffi-reconcile-20261013/archive-input-proposal/`.
+
 #### October 13 source-demand checkpoint
 
 Clef `1fe9d44fb464629331ab3bd1f6876016f1460eee` is committed and pushed. The existing sequence acquisition/current/use census now supplies source pull evidence before physical layout; the local mutable-initializer rule excludes only an initial value proved overwritten before every retained read, preserving the used cell and ABI positions. Closed immutable tail transitions use the existing budgeted matrix certificate, Baker relation/enrichment fold and range saturation. Their source readers use finite worklists. Current all-zero transition evidence excludes only continuing-call occurrences; missing or changed evidence restores demand. No compiler/pass re-entry, default width, foreign ABI or loading authority was introduced.
