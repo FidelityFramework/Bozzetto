@@ -1449,6 +1449,42 @@ Dirty diffs, ignored evidence and bounded located-line confirmations are the
 direct-read exceptions. These accepted finite profiles do not close all T8 or
 the complete FFI design.
 
+### October 16: event-driven selected-archive revocation
+
+Composer `6de66ec1` and Bozzetto `34bf4c5e` close the selected-archive event
+path. ProjectInputs observes exact selected bytes; ProjectSession withdraws the
+captured native ticket, Foundation receives the declared receipt census, and
+the existing worker socket pushes a typed revocation through the supervisor to
+the UI. Old-ticket receipts cannot revoke a fresh reservation; restoring bytes
+cannot revive withdrawn authority. No polling or second invalidation owner was
+added. Artifact-side authority changes independently of graph claims.
+
+Sole Opus accepted29 focused controls and the compiled subscription-omission
+discriminator. Its lock-order finding F1 was corrected in the same owner, with
+five focused controls passing, including deterministic cross-thread reservation
+during initial observation. The internal default-ignore test seam exists only
+to reach that race. Growth: Composer4 existing files,+186/−4; Bozzetto18 existing
+files,+267/−70; no new production file, owner or dependency.
+
+The reviewed matching pair is installed with326 exact file pins and its prior
+release retained. It uses schema40 and breaking wire digest `7722F539…`; the
+separate schema41 codec work is not included. The live binary UI frame reports
+revocation about45ms after a copied selected archive changes, before any status
+or run refresh. Same bytes, timestamp and unrelated-file changes retain
+authority. The next run refuses with `not_accepted`; ABA restoration stays
+withdrawn. A fresh reservation/build reaches generation3 and exits0 with
+`slot-callback`. Initial/restored ELF and source-version bytes match; both builds
+recompile common with zero reused objects. This is not selective proof reuse.
+
+Final sole-auditor acceptance: `ffi-delivery-closeout/arclivefinal01-return.md`.
+Evidence: Composer `artifacts/ffi-archive-events-20261016/{f1,live}/`; Bozzetto
+`nupkg/work-visibility/ffi-archive-events-20261016/pair/`, including independent
+326-file verification and test-runtime/candidate compiler equality. Retained
+harness failures are uncredited. The changed-byte hash is derived from the
+executed append, not read back. One live fixture on one machine is accepted;
+receipt retention and timing-based negative controls remain low follow-ups.
+Focused evidence is not an unfiltered TRUST suite, certificate or full FFI gate.
+
 ## 15. Source records
 
 The twenty-one records consolidated here, each readable with `git show d1c60aac:docs/<name>`:
