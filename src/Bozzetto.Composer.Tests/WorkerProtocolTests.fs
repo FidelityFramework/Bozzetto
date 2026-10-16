@@ -24,6 +24,7 @@ type private Backend() =
   let mutable generation = 100L
   let mutable current: AcceptedArtifact option = None
   interface IProjectBackend<int64> with
+    member _.InputChanged = (Event<int64 * ProjectInputChange>()).Publish
     member _.ManifestPath = "owner-manifest"
     member _.Current = current
     member _.Reserve _ = generation <- generation + 1L; current <- None; generation

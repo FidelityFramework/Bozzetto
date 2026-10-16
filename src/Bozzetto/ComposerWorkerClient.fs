@@ -25,6 +25,7 @@ type IComposerWorker =
   /// The worker is both physically alive and available for protocol requests.
   abstract IsAlive: bool
   abstract Exited: IEvent<string>
+  abstract InputsRevoked: IEvent<Reply>
   abstract RequestAsync: body: RequestBody * cancellation: CancellationToken -> Task<Reply>
   abstract StopAsync: unit -> Task
 
@@ -66,6 +67,7 @@ module ComposerWorkerClient =
     let cancellationSlots = HashSet<string>()
     let children = Dictionary<Guid, Task>()
     let exited = Event<string>()
+    let inputsRevoked = Event<Reply>()
     let mutable identity: WorkerAddress option = None
     let mutable handshake: Reply option = None
     let mutable failure: exn option = None
@@ -153,7 +155,7 @@ module ComposerWorkerClient =
           handshake <- Some response
         | _ -> raise (InvalidDataException "Composer worker did not establish a valid hello authority."))
 
-    let accept (response: Reply) =
+    let acceptReply (response: Reply) =
       if String.IsNullOrWhiteSpace response.RequestId then raise (InvalidDataException "Composer reply has no request identity.")
       record "response" response.RequestId (response.Outcome |> Result.map BAREWireCodec.replyOperation |> sprintf "%A")
       let request, wasPending = lock gate (fun () ->
@@ -171,6 +173,19 @@ module ComposerWorkerClient =
             abandoned.Remove response.RequestId |> ignore
             false)
         if admitted then request.Completion.TrySetResult response |> ignore
+
+    let accept (response: Reply) =
+      match response.Outcome with
+      | Result.Ok(InputsRevoked status) ->
+        let valid = lock gate (fun () ->
+          response.RequestId = "" && response.ProtocolVersion = BAREWireCodec.ProtocolVersion
+          && response.Authority.Session <> "" && response.Authority.Generation >= 0L
+          && status.Current.IsNone && status.Observation > 0UL
+          && (identity |> Option.exists (fun expected -> ComposerWire.workerAddress response.Authority = expected)))
+        if not valid then raise (InvalidDataException "Invalid Composer input-revocation notification authority.")
+        record "notification" "" "InputsRevoked"
+        inputsRevoked.Trigger response
+      | _ -> acceptReply response
 
     let input = task {
       try
@@ -343,6 +358,7 @@ module ComposerWorkerClient =
       member this.IsProcessAlive = this.IsProcessAlive
       member this.IsAlive = this.IsAlive
       member _.Exited = exited.Publish
+      member _.InputsRevoked = inputsRevoked.Publish
       member this.RequestAsync(body, cancellation) = this.RequestAsync(body, cancellation)
       member this.StopAsync() = this.StopAsync()
 

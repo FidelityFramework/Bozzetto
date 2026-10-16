@@ -67,6 +67,21 @@ let main argv =
           do! stream.FlushAsync CancellationToken.None
         finally writes.Release() |> ignore
       }
+      use inputSubscription = worker.InputRevoked.Subscribe(fun reply ->
+        let key = Guid.NewGuid().ToString("N")
+        let completion = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        running[key] <- completion.Task
+        Task.Run(Func<Task>(fun () -> task {
+          try
+            try do! emit reply
+            with error ->
+              cleanupFailed <- true
+              eprintfn "Composer input notification failed: %s" error.Message
+              try socket.Shutdown(SocketShutdown.Both) with _ -> ()
+          finally
+            running.TryRemove key |> ignore
+            completion.SetResult()
+        })) |> ignore)
       try
         let mutable reading = true
         while reading do
@@ -120,6 +135,9 @@ let main argv =
         if not joined then
           eprintfn "Provider socket shutdown exceeded five seconds; native children joined, terminating the managed worker."
           Environment.Exit 1
+        // Retirement seals session callbacks. Join notifications admitted by
+        // those callbacks after the first pending-work snapshot as well.
+        Task.WhenAll(running.Values |> Seq.toArray).GetAwaiter().GetResult()
       if cleanupFailed then 1 else 0
     with error ->
       eprintfn "Composer worker refused: %s" error.Message

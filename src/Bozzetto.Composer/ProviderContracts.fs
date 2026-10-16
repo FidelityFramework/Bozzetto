@@ -4,6 +4,13 @@ open System
 open System.Threading
 open System.Threading.Tasks
 
+/// Immutable artifact-input observation; this does not alter source claims.
+type ProjectInputChange = {
+  Path: string
+  ExpectedSha256: string
+  ObservedSha256: string option
+}
+
 /// Tickets remain process-local. Only the owning backend creates/consumes them.
 /// The provider never serializes or reconstructs a compiler ticket.
 /// Reserve and Dispose may mutate state before throwing. RunCurrentAsync must
@@ -20,3 +27,5 @@ type IProjectBackend<'Ticket> =
   /// callers must use the invocation fence rather than a status read.
   abstract Current: AcceptedArtifact option
   abstract ManifestPath: string
+  /// Raised only after native authority for the selected input was withdrawn.
+  abstract InputChanged: IEvent<'Ticket * ProjectInputChange>

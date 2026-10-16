@@ -345,7 +345,7 @@ module Project =
     | Result.Ok ReplyBody.Canceled -> [ accepted WorkCanceled ]
     | Result.Ok(ReplyBody.Closed _) -> [ accepted SessionClosed ]
     | Result.Ok(ReplyBody.CompilerRetired _) -> [ accepted WorkerRetired ]
-    | Result.Ok(ReplyBody.HelloAccepted _ | ReplyBody.Observed _ | ReplyBody.RequestCanceled _ | ReplyBody.Formatted _) ->
+    | Result.Ok(ReplyBody.HelloAccepted _ | ReplyBody.Observed _ | ReplyBody.RequestCanceled _ | ReplyBody.Formatted _ | ReplyBody.InputsRevoked _) ->
       [ refused "contract_mismatch" "Composer answered with a reply this command cannot produce." ]
 
   /// Protocol.fs spells pressure as the level's name ("Normal", "Tight",

@@ -59,6 +59,7 @@ type private Backend(failCleanup: bool) =
   member _.Runs = runs
   member _.Disposals = disposals
   interface IProjectBackend<int64> with
+    member _.InputChanged = (Event<int64 * ProjectInputChange>()).Publish
     member _.ManifestPath = "unused-in-memory-manifest"
     member _.Current = None
     member _.Reserve _ = generation <- generation + 1L; generation

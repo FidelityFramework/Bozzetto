@@ -33,6 +33,7 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
   let opening = Collections.Generic.Dictionary<string, Task<Result<unit, Bozzetto.Providers.Refusal>>>()
   let mutable retired = false
   let mutable agreed = false
+  let inputRevoked = Event<Bozzetto.Composer.Protocol.Reply>()
   let cancelRequest = defaultArg cancelRequest (fun _ -> false)
   let hostIdentity: Authority =
     { Host = host; Session = ""; Epoch = epoch; Provider = ProviderIdentity.ClefComposer; Generation = 0L }
@@ -53,6 +54,7 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
     | _ -> None
 
   member _.RejectFrame(id, code, message) = reject id code message
+  member _.InputRevoked = inputRevoked.Publish
 
   member private _.BeginRetirement() =
     lock gate (fun () ->
@@ -149,6 +151,7 @@ type Worker<'Ticket>(root: string, createBackend: string -> string -> IProjectBa
                       let session = new ProviderSession<'Ticket>(host, sessionId, epoch, Path.GetFullPath project, backend,
                         ?formatter = (createFormatter |> Option.map (fun create -> create ())),
                         ?formatterCleanupTimestamp = formatterCleanupTimestamp)
+                      session.InputRevoked.Add(fun reply -> inputRevoked.Trigger(convert "" InputsRevoked reply))
                       let installed = lock gate (fun () ->
                         if retired then false
                         else

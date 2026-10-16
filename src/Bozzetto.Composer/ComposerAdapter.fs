@@ -28,6 +28,10 @@ module ComposerAdapter =
         member _.Reserve label = session.Reserve label
         member _.Current = session.Current |> Option.map accepted
         member _.ManifestPath = session.ManifestPath
+        member _.InputChanged =
+          session.InputChanged |> Event.map (fun (ticket, change) ->
+            ticket, { ProjectInputChange.Path = change.Path
+                      ExpectedSha256 = change.ExpectedSha256; ObservedSha256 = change.ObservedSha256 })
         member _.BuildAsync(ticket, cancellation) = task {
           let! result = session.BuildAsync(ticket, cancellation)
           return Result.map accepted result

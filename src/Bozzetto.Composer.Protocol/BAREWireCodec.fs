@@ -14,7 +14,7 @@ module BAREWireCodec =
   [<Literal>]
   let MaximumPayload = MaximumBody - 5
   [<Literal>]
-  let ContractDigest = "F641CBC43607354163EACAE34D8A2A7BA904FCFBFC35295BFBEB73943C6CA9BC"
+  let ContractDigest = "7722F539EB5B8CAC921635E6063819B6532F3831E16B1513802B9AB204ACE580"
 
   let agreement = { ProtocolVersion = ProtocolVersion; Encoding = EncodingId.BAREWire1; ContractDigest = ContractDigest }
   let private utf8 = UTF8Encoding(false, true)
@@ -113,12 +113,14 @@ module BAREWireCodec =
     | Operation.Cancel -> 6 | Operation.CancelRequest -> 7 | Operation.Close -> 8
     | Operation.PrepareCompilerChange -> 9 | Operation.Format -> 10
 
-  let private readOperation (r: Reader) =
-    match r.Tag() with
+  let private readOperationTag (r: Reader) tag =
+    match tag with
     | 0 -> Operation.Hello | 1 -> Operation.Open | 2 -> Operation.Reserve
     | 3 -> Operation.Build | 4 -> Operation.Status | 5 -> Operation.Run
     | 6 -> Operation.Cancel | 7 -> Operation.CancelRequest | 8 -> Operation.Close
     | 9 -> Operation.PrepareCompilerChange | 10 -> Operation.Format | _ -> r.Invalid()
+
+  let private readOperation (r: Reader) = readOperationTag r (r.Tag())
 
   let refusalTag = function
     | RefusalCode.InvalidRequest -> 0 | RefusalCode.ProtocolVersion -> 1
@@ -199,6 +201,7 @@ module BAREWireCodec =
     | Canceled -> Operation.Cancel | RequestCanceled _ -> Operation.CancelRequest
     | Closed _ -> Operation.Close | CompilerRetired _ -> Operation.PrepareCompilerChange
     | Formatted _ -> Operation.Format
+    | InputsRevoked _ -> Operation.Status
 
   let private writeRequestBody (w: Writer) body =
     w.Tag(operationTag (requestOperation body))
@@ -289,7 +292,7 @@ module BAREWireCodec =
       CleanupPending = cleanup; CleanupError = cleanupError }
 
   let private writeReplyBody (w: Writer) body =
-    w.Tag(operationTag (replyOperation body))
+    w.Tag(match body with InputsRevoked _ -> 11 | _ -> operationTag (replyOperation body))
     match body with
     | HelloAccepted v ->
       writeAgreement w v.Agreement
@@ -301,6 +304,7 @@ module BAREWireCodec =
     | Reserved v -> w.String v.Reservation
     | Built v -> writeArtifact w v
     | Observed v -> writeStatus w v
+    | InputsRevoked v -> writeStatus w v
     | Ran v -> w.I64 v.Generation; w.String v.SourceVersion; w.I32 v.ExitCode; w.String v.StandardOutput; w.String v.StandardError
     | Canceled -> ()
     | RequestCanceled v -> w.String v.TargetRequestId; w.Bool v.CancellationRequested
@@ -310,63 +314,66 @@ module BAREWireCodec =
       w.String v.Document; w.String v.Incarnation; w.U64 v.Revision
       w.String v.SourceSha256; w.String v.Configuration; w.String v.FormatterIdentity; w.String v.Formatted
   let private readReplyBody (r: Reader) =
-    match readOperation r with
-    | Operation.Hello ->
-      let agreed = readAgreement r
-      let path = r.String()
-      let hash = r.String()
-      let version = r.String()
-      let schema = r.I32()
-      let psgHash = r.String()
-      let format = r.U32()
-      let fingerprint = r.String()
-      let operations = r.Array(fun () -> readOperation r)
-      let patch = r.Bool()
-      HelloAccepted { Agreement = agreed; Compiler = { AssemblyPath = path; Sha256 = hash; Version = version }
-                      Psg = { Schema = schema; AssemblySha256 = psgHash; FormatVersion = format; ContractFingerprint = fingerprint }
-                      Operations = operations; InMemoryPatchAllowed = patch }
-    | Operation.Open ->
-      let observation = r.U64()
-      let project = r.String()
-      let manifest = r.String()
-      Opened { Observation = observation; Project = project; ManifestPath = manifest }
-    | Operation.Reserve -> Reserved { Reservation = r.String() }
-    | Operation.Build -> Built(readArtifact r)
-    | Operation.Status -> Observed(readStatus r)
-    | Operation.Run ->
-      let generation = r.I64()
-      let source = r.String()
-      let code = r.I32()
-      let output = r.String()
-      let error = r.String()
-      Ran { Generation = generation; SourceVersion = source; ExitCode = code; StandardOutput = output; StandardError = error }
-    | Operation.Cancel -> Canceled
-    | Operation.CancelRequest ->
-      let target = r.String()
-      RequestCanceled { TargetRequestId = target; CancellationRequested = r.Bool() }
-    | Operation.Close ->
-      let observation = r.U64()
-      let closed = r.Bool()
-      let pending = r.Bool()
-      let error = r.Optional r.String
-      Closed { Observation = observation; Closed = closed; CleanupPending = pending; CleanupError = error }
-    | Operation.PrepareCompilerChange ->
-      let restart = r.Bool()
-      CompilerRetired { RestartRequired = restart; InMemoryPatchAllowed = r.Bool() }
-    | Operation.Format ->
-      let document = r.String()
-      let incarnation = r.String()
-      let revision = r.U64()
-      let source = r.String()
-      let configuration = r.String()
-      let formatter = r.String()
-      let formatted = r.String()
-      let preview: FormatPreview = {
-        Document = document; Incarnation = incarnation; Revision = revision
-        SourceSha256 = source; Configuration = configuration
-        FormatterIdentity = formatter; Formatted = formatted
-      }
-      Formatted preview
+    let tag = r.Tag()
+    if tag = 11 then InputsRevoked(readStatus r)
+    else
+      match readOperationTag r tag with
+      | Operation.Hello ->
+        let agreed = readAgreement r
+        let path = r.String()
+        let hash = r.String()
+        let version = r.String()
+        let schema = r.I32()
+        let psgHash = r.String()
+        let format = r.U32()
+        let fingerprint = r.String()
+        let operations = r.Array(fun () -> readOperation r)
+        let patch = r.Bool()
+        HelloAccepted { Agreement = agreed; Compiler = { AssemblyPath = path; Sha256 = hash; Version = version }
+                        Psg = { Schema = schema; AssemblySha256 = psgHash; FormatVersion = format; ContractFingerprint = fingerprint }
+                        Operations = operations; InMemoryPatchAllowed = patch }
+      | Operation.Open ->
+        let observation = r.U64()
+        let project = r.String()
+        let manifest = r.String()
+        Opened { Observation = observation; Project = project; ManifestPath = manifest }
+      | Operation.Reserve -> Reserved { Reservation = r.String() }
+      | Operation.Build -> Built(readArtifact r)
+      | Operation.Status -> Observed(readStatus r)
+      | Operation.Run ->
+        let generation = r.I64()
+        let source = r.String()
+        let code = r.I32()
+        let output = r.String()
+        let error = r.String()
+        Ran { Generation = generation; SourceVersion = source; ExitCode = code; StandardOutput = output; StandardError = error }
+      | Operation.Cancel -> Canceled
+      | Operation.CancelRequest ->
+        let target = r.String()
+        RequestCanceled { TargetRequestId = target; CancellationRequested = r.Bool() }
+      | Operation.Close ->
+        let observation = r.U64()
+        let closed = r.Bool()
+        let pending = r.Bool()
+        let error = r.Optional r.String
+        Closed { Observation = observation; Closed = closed; CleanupPending = pending; CleanupError = error }
+      | Operation.PrepareCompilerChange ->
+        let restart = r.Bool()
+        CompilerRetired { RestartRequired = restart; InMemoryPatchAllowed = r.Bool() }
+      | Operation.Format ->
+        let document = r.String()
+        let incarnation = r.String()
+        let revision = r.U64()
+        let source = r.String()
+        let configuration = r.String()
+        let formatter = r.String()
+        let formatted = r.String()
+        let preview: FormatPreview = {
+          Document = document; Incarnation = incarnation; Revision = revision
+          SourceSha256 = source; Configuration = configuration
+          FormatterIdentity = formatter; Formatted = formatted
+        }
+        Formatted preview
 
   let private encode maximum version write =
     if version <> ProtocolVersion then Result.Error(CodecFailure.UnsupportedVersion version)

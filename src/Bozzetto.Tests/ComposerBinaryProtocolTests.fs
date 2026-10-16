@@ -155,11 +155,19 @@ let tests = testList "Composer typed binary worker protocol" [
       |> Expect.equal "request exact equality" (Result.Ok original)
 
   testCase "every reply case preserves authority independently from artifact generation" <| fun _ ->
-    replies.Length |> Expect.equal "all closed reply cases covered" (Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<ReplyBody>).Length)
-    for body in replies do
+    let allReplies = replies @ [InputsRevoked { status with Current = None }]
+    allReplies.Length |> Expect.equal "all closed reply cases covered" (Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<ReplyBody>).Length)
+    for body in allReplies do
       let original = reply body
       original |> BAREWireCodec.encodeReply |> mustSucceed |> BAREWireCodec.decodeReply
       |> Expect.equal "reply exact equality" (Result.Ok original)
+
+  testCase "archive notification has a distinct binary tag and no request identity" <| fun _ ->
+    let original = { reply (InputsRevoked { status with Current = None }) with RequestId = "" }
+    let bytes = original |> StreamFrames.encodeReply |> mustSucceed
+    use stream = new MemoryStream(bytes, false)
+    let received = StreamFrames.readReplyAsync stream CancellationToken.None |> fun work -> work.GetAwaiter().GetResult()
+    received |> Expect.equal "notification roundtrips through the actual frame reader" (Result.Ok(Some original))
 
   testCase "public status labels formatter evidence separately from compiler failure" <| fun _ ->
     let property name value = JsonValue.prop name value |> Option.defaultWith (fun () -> failtestf "Missing JSON property %s" name)

@@ -102,6 +102,8 @@ type ReplyBody =
   | Closed of CloseResult
   | CompilerRetired of RetirementResult
   | Formatted of FormatPreview
+  /// Unsolicited worker publication; RequestId is empty. It cannot satisfy a request.
+  | InputsRevoked of SessionSnapshot
 
 type Reply = {
   ProtocolVersion: uint16

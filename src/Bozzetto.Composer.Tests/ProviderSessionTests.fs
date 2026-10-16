@@ -29,6 +29,7 @@ let private artifact generation : AcceptedArtifact = {
 /// replies even when a compiler or process cannot stop immediately.
 type private Backend() =
   let gate = obj ()
+  let inputChanged = Event<Ticket * ProjectInputChange>()
   let buildEntered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let buildRelease = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
   let buildReturned = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
@@ -67,8 +68,14 @@ type private Backend() =
   member _.ReserveLabels = reserveLabels.ToArray()
   member _.BuildCancellation = buildCancellation
   member _.Disposed = disposed
+  member _.ArchiveChange = ticket.Value, { Path = "/selected/archive.a"; ExpectedSha256 = "old-bytes"; ObservedSha256 = Some "new-bytes" }
+  member _.PublishArchiveChange change = inputChanged.Trigger change
+  member _.ChangeArchive() =
+    lock gate (fun () -> current <- None)
+    inputChanged.Trigger(ticket.Value, { Path = "/selected/archive.a"; ExpectedSha256 = "old-bytes"; ObservedSha256 = Some "new-bytes" })
 
   interface IProjectBackend<Ticket> with
+    member _.InputChanged = inputChanged.Publish
     member _.ManifestPath = "/project/program.fidproj"
     member _.Current = lock gate (fun () -> currentReads <- currentReads + 1; current)
     member this.Reserve label =
@@ -208,6 +215,40 @@ let private preCanceledRequest runOperation () = task {
 [<Tests>]
 let tests =
   testList "Composer provider session authority" [
+    taskCase "selected archive input publication revokes accepted authority and requires a fresh reservation" <| fun () -> task {
+      let backend = new Backend()
+      use owner = session "archive-event" "epoch-a" backend
+      let! first = build owner "initial"
+      first |> success |> ignore
+      let staleChange = backend.ArchiveChange
+      let notification = TaskCompletionSource<Reply<SessionSnapshot>>(TaskCreationOptions.RunContinuationsAsynchronously)
+      use subscription = owner.InputRevoked.Subscribe(fun value -> notification.TrySetResult value |> ignore)
+      backend.ChangeArchive()
+      let status = owner.Status()
+      (status |> success).Current |> Expect.isNone "archive event withdraws cached authority synchronously"
+      status.Authority.Generation > first.Authority.Generation |> Expect.isTrue "event advances session authority"
+      let! refused = owner.RunAsync([], CancellationToken.None)
+      refused |> refuses "not_accepted"
+      backend.RunCount |> Expect.equal "withdrawn code is never launched" 0
+      let! pushed = notification.Task
+      (pushed |> success).Current |> Expect.isNone "typed notification contains no current code"
+      let! restored = build owner "restored-archive-new-generation"
+      restored |> success |> ignore
+      restored.Authority.Generation > first.Authority.Generation |> Expect.isTrue "restoration earns a new generation"
+      backend.PublishArchiveChange staleChange
+      (owner.Status() |> success).Current |> Expect.isSome "delayed prior-ticket event cannot withdraw the new reservation"
+    }
+    taskCase "selected archive event fences late successful in-flight build publication" <| fun () -> task {
+      let backend = new Backend(HoldBuild = true)
+      use owner = session "archive-inflight" "epoch-a" backend
+      let building = build owner "initial"
+      do! backend.BuildEntered
+      backend.ChangeArchive()
+      backend.ReleaseBuild()
+      let! stale = building
+      stale |> refuses "superseded"
+      (owner.Status() |> success).Current |> Expect.isNone "late success cannot restore archive authority"
+    }
     testCase "producer failure evidence records exact diagnostic and owning revision without global console capture" <| fun _ ->
       use writer = new System.IO.StringWriter()
       let authority: Authority =

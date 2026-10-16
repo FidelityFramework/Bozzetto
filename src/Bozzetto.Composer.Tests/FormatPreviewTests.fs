@@ -43,6 +43,7 @@ type private Backend() =
   let mutable current = None
   member val Reservations = 0 with get, set
   interface IProjectBackend<int64> with
+    member _.InputChanged = (Event<int64 * ProjectInputChange>()).Publish
     member _.ManifestPath = "/no-file-reads/program.fidproj"
     member _.Current = current
     member this.Reserve _ =

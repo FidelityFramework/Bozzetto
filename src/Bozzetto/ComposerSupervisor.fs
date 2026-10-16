@@ -188,6 +188,22 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
           else
             connection.Exited.Add(fun reason ->
               if lock gate (fun () -> isOwner connection && not retiring) then withdrawOwned connection reason)
+            connection.InputsRevoked.Add(fun notification ->
+              let accepted = lock gate (fun () ->
+                match notification.Outcome, cached notification.Authority.Session with
+                | Result.Ok(InputsRevoked status), Some _
+                    when notification.RequestId = "" && status.Current.IsNone
+                         && notification.ProtocolVersion = BAREWireCodec.ProtocolVersion
+                         && ComposerWire.workerAddress notification.Authority = ComposerWire.workerAddress connection.Handshake.Authority
+                         && ((observation notification.Authority.Session).Last |> Option.forall (fun previous -> status.Observation > previous)) ->
+                  let projected = { notification with Outcome = Result.Ok(Observed status) } |> ComposerState.response
+                  if remember connection projected then
+                    let prior = observation notification.Authority.Session
+                    observations[notification.Authority.Session] <- { prior with Last = Some status.Observation }
+                    true
+                  else false
+                | _ -> false)
+              if accepted then changed ())
             if not connection.IsAlive then withdrawOwned connection "Worker exited during startup."
             changed ()
             return Result.Ok connection

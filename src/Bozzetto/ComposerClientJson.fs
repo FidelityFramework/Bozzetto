@@ -111,6 +111,7 @@ module ComposerClientJson =
         "sourceSha256", text item.SourceSha256; "configuration", text item.Configuration
         "formatterIdentity", text item.FormatterIdentity; "formatted", text item.Formatted
       ]
+    | InputsRevoked _ -> invalidArg (nameof body) "Worker input notifications must enter the typed supervisor projection before external export."
   let private envelope requestId owner success result error =
     JsonValue.Object [
       "protocolVersion", signed 1L; "requestId", text requestId; "authority", authority owner

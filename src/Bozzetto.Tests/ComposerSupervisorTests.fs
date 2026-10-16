@@ -48,6 +48,7 @@ type private SessionState = {
 type private Worker(host: string, pid: int) =
   let gate = obj ()
   let exited = Event<string>()
+  let inputsRevoked = Event<Reply>()
   let requests = ConcurrentQueue<Operation * string>()
   let tokens = ConcurrentQueue<Operation * CancellationToken>()
   let sessions = Dictionary<string, SessionState>()
@@ -73,6 +74,7 @@ type private Worker(host: string, pid: int) =
   member _.Tokens = tokens.ToArray()
   member _.StopCount = Volatile.Read &stops
   member _.Alive = lock gate (fun () -> alive)
+  member _.PublishInputNotification notification = inputsRevoked.Trigger notification
   member val Intercept: Operation -> string -> Task<Reply> option = (fun _ _ -> None) with get, set
   member val CleanupFails = false with get, set
   member val StopThrows = false with get, set
@@ -150,6 +152,7 @@ type private Worker(host: string, pid: int) =
     member this.IsProcessAlive = this.Alive
     member this.IsAlive = this.Alive
     member _.Exited = exited.Publish
+    member _.InputsRevoked = inputsRevoked.Publish
     member this.RequestAsync(body, cancellation) =
       let operation = BAREWireCodec.requestOperation body
       let session = ComposerWire.session body
@@ -338,6 +341,40 @@ let private delayedSameGenerationStatus humanView duringBuild failedRead () = ta
 [<Tests>]
 let tests =
   testList "Composer daemon supervisor" [
+    taskCase "typed archive revocation pushes the directory while stale and foreign notifications cannot restore or alter it" <| fun () -> task {
+      let worker = Worker("archive-push", 123)
+      let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
+      try
+        let! session = openSession owner worker
+        let! _ = execute owner (request Operation.Reserve worker session)
+        let! _ = execute owner (request Operation.Build worker session)
+        let! _ = execute owner (request Operation.Status worker session)
+        let mutable pushes = 0
+        use changed = owner.Changed.Subscribe(fun () -> pushes <- pushes + 1)
+        worker.Withdraw(session, false)
+        let fresh = worker.Response(Operation.Status, session)
+        let notification =
+          match fresh.Outcome with
+          | Result.Ok(Observed status) -> { fresh with RequestId = ""; Outcome = Result.Ok(InputsRevoked status) }
+          | _ -> failwith "Expected status"
+        let before = worker.Requests.Length
+        worker.PublishInputNotification notification
+        pushes |> Expect.equal "one event pushes without a request" 1
+        let current = owner.CachedDirectory().Sessions
+        let projected = snapshot session current
+        (observed projected).Current |> Expect.isNone "archive event clears directory authority"
+        projected.StatusFresh |> Expect.isTrue "worker notification is an actual observation"
+        worker.Requests.Length |> Expect.equal "archive notification adds no status polling" before
+        worker.PublishInputNotification notification
+        let newerObservation =
+          match notification.Outcome with
+          | Result.Ok(InputsRevoked status) -> { notification with Outcome = Result.Ok(InputsRevoked { status with Observation = status.Observation + 1UL }) }
+          | _ -> failwith "Expected notification"
+        worker.PublishInputNotification { newerObservation with Authority = { notification.Authority with Host = "foreign" } }
+        worker.PublishInputNotification { newerObservation with Authority = { notification.Authority with Generation = 0L } }
+        pushes |> Expect.equal "duplicate, foreign and old-generation notifications are refused" 1
+      finally owner.StopAsync().GetAwaiter().GetResult()
+    }
     taskCase "a session closed with its cleanup finished leaves the directory; a retired worker's sessions stay, withdrawn" <| fun () -> task {
       // Mutation caught: keep storing the Closed reply and the directory would list a card that is never fresh again.
       let worker = Worker("closing", 123)
@@ -803,6 +840,7 @@ let tests =
             member _.IsProcessAlive = underlying.IsProcessAlive
             member _.IsAlive = transportAvailable && underlying.IsAlive
             member _.Exited = underlying.Exited
+            member _.InputsRevoked = underlying.InputsRevoked
             member _.RequestAsync(body, cancellation) = underlying.RequestAsync(body, cancellation)
             member _.StopAsync() =
               transportAvailable <- false

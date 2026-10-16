@@ -27,7 +27,7 @@ type private Producer<'a> = {
 /// One mailbox owns this explicit compiler session. Tasks here are projections
 /// for the CLR worker protocol; evaluator and callback lifetime belongs to the
 /// functional host. A producer's scope also identifies its physical drain.
-type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend<'Ticket>, ?formatter: IFormatBackend, ?beforeFormatInvocation: (unit -> Task), ?formatterCleanupTimestamp: (unit -> int64)) =
+type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend<'Ticket>, ?formatter: IFormatBackend, ?beforeFormatInvocation: (unit -> Task), ?formatterCleanupTimestamp: (unit -> int64)) as this =
   let gate = obj ()
   let invocation = new SemaphoreSlim(1, 1)
   let formatter = match formatter with Some supplied -> supplied | None -> new FormatterSession() :> IFormatBackend
@@ -46,6 +46,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   let mutable generation = 0L
   let mutable closed = false
   let mutable reservation: (string * Producer<AcceptedArtifact>) option = None
+  let mutable backendTicket: 'Ticket option = None
   let mutable current: AcceptedArtifact option = None
   let mutable revocation: int64 option = None
   let mutable backendError: string option = None
@@ -65,6 +66,13 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   let formatterCleanups = Dictionary<uint64, int64>()
   let mutable formatterCloseTask: Task<Result<unit, string>> option = None
   let mutable workerRetirementRequired: string option = None
+  let inputRevoked = Event<Reply<SessionSnapshot>>()
+  // A complete immutable publication of this backend's selected-archive change
+  // census. The initial publication contains no observed change. The byte
+  // receipt owner remains ProjectInputs; Foundation owns dependent eligibility.
+  let inputPublications = Dictionary<ValueToken, ProjectInputChange option>()
+  let mutable inputSerial = 1UL
+  do inputPublications.Add(ValueToken inputSerial, None)
 
   let authority () =
     { Host = host; Session = id; Provider = ProviderIdentity.ClefComposer
@@ -167,6 +175,8 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
       let! _ = observe operation
       ()
   }
+  let initialInputs = admit (Action.SetInputs [
+    { Input = InputId 1UL; Stamp = InputStamp inputSerial; Value = ValueToken inputSerial } ])
   let drainObservations () =
     AsyncMailbox.drainEvents mailbox |> ignore
     // Returned compiler refusals belong to their producer's settled result.
@@ -183,6 +193,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   let revoke () =
     generation <- generation + 1L
     reservation <- None
+    backendTicket <- None
     current <- None
     // Changing the compiler generation also withdraws its accepted immutable
     // previews. Their existing owners still observe and join the exact release
@@ -334,9 +345,11 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
         | Result.Error message -> Completion.Failed { Code = "compiler_refused"; Message = message })
     }
     evaluators.Add(producer.Work, evaluate)
-    [ admit (Action.ReserveScope(producer.Scope, RevisionId 1UL))
+    [ initialInputs
+      admit (Action.ReserveScope(producer.Scope, RevisionId 1UL))
       admit (Action.ReplaceScope(producer.Scope, RevisionId 1UL,
-        [ ScopeEntry.Define { Work = producer.Work; Stamp = DefinitionStamp 1UL; Reads = [] } ])) ]
+        [ ScopeEntry.Define { Work = producer.Work; Stamp = DefinitionStamp 1UL
+                              Reads = [{ Slot = ReadSlotId 1UL; Source = ReadSource.Input(InputId 1UL) }] } ])) ]
 
   let rec awaitProducer (producer: Producer<'a>) = async {
     let snapshot, changed = AsyncMailbox.watch mailbox
@@ -420,6 +433,21 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
           admit (Action.Release demand) |> ignore)
   }
 
+  let inputSubscription = backend.InputChanged.Subscribe(fun (ticket, change) ->
+    lock gate (fun () ->
+      if not closed && (backendTicket |> Option.exists (Unchecked.equals ticket)) then
+        inputSerial <- inputSerial + 1UL
+        inputPublications.Add(ValueToken inputSerial, Some change)
+        let input = admit (Action.SetInputs [
+          { Input = InputId 1UL; Stamp = InputStamp inputSerial; Value = ValueToken inputSerial } ])
+        let _, withdrawals = revoke ()
+        backendError <- Some(sprintf "Selected archive input changed: %s; reserve and build a new generation" change.Path)
+        startControl (fun _ -> async {
+          inputRevoked.Trigger(this.Status())
+          do! observeAll (input :: withdrawals)
+        }) |> ignore))
+
+  member _.InputRevoked = inputRevoked.Publish
   member _.Identity = lock gate authority
 
   member _.WorkerRetirementRequired = lock gate (fun () ->
@@ -473,6 +501,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
               backendError <- Some message
               Result.Error { Authority = expected; Outcome = refuse "backend_failed" message }
             | None, Result.Ok ticket ->
+              backendTicket <- Some ticket
               let producer = allocate expected
               let operations = define producer (fun cancellation -> backend.BuildAsync(ticket, cancellation)) (fun () -> async.Return())
               Result.Ok(producer, operations))
@@ -611,6 +640,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   member _.BeginClose() = lock gate (fun () ->
     if not closed then
       closed <- true
+      inputSubscription.Dispose()
       generation <- generation + 1L
       reservation <- None
       current <- None
