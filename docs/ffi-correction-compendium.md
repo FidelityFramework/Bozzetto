@@ -1397,6 +1397,58 @@ explicit in the audit. Transitive headers are not fully inventoried. This closes
 CLI-path evidence for EOF, with the existing error/positive fixture and
 readln/text-validation limits unchanged; it adds no implementation percentage.
 
+### October 16: maintained platform inputs and regeneration
+
+Sole Opus5.5/high accepted the source-library input leaf and maintained Pthread
+alignment (`ffi-delivery-closeout/platform02-return.md`). Fidelity.Platform
+`15f763b` adds the generated descriptor-only `Fidelity.Platform.NativeInput`
+dependency, breaking the Environment→Libc→Platform cycle without moving Console
+or its capacity policy. Its writable-buffer and relational-result hypotheses
+remain separate, with portable opaque `repo://…#posix-read-v1` provenance.
+The canonical dependency omission produces CCS8009; restoration passes with93
+held obligations and Integrity0. Native generation2 returns EOF12 with93/93
+UNSAT, two satisfiable premises,40 finite structural Rocq checks and four
+nonreusable consumed claims. Changing only provenance preserves all four claim
+identities, changes all four validity keys and leaves ELF bytes identical.
+This checks identity versus validity; it does not demonstrate selective reuse.
+
+Platform `8452124` regenerates six maintained Pthread modules byte-exact from
+the current CLI publication, aligns the existing bridge with its generated
+callback record, and quotes the dotted project dependency key. The callback
+itself is nonnull; its argument/result carry nullable CHandle values. Default
+ownership becomes Undeclared. The canonical chain publishes1713 nodes with
+Integrity0 and no CCS8003; the old bridge annotation yields two specific
+CCS8003 errors, and export still refuses with CCS8416/L3. No pthread invocation,
+thread activation or additional ownership/lifetime authority is accepted.
+The generated public descriptor name follows the existing generator convention;
+external references to its former name need migration.
+
+Growth: leaf5 files,+140/−0, including four new pilot/generated/project files
+owned by the acyclic descriptor-only input library; Pthread8 existing files,
++89/−51, no new owner or dependency technology. All13 changed blobs match their
+gate pins and are pushed. Generator evidence remains HEAD23edcf0 plus the
+preserved parser diff, with the three ambient Farscape changes untouched.
+Evidence: Platform `artifacts/console-readln-20261016/library-dag/` and
+`artifacts/t8-regeneration-20261016/`; Bozzetto
+`nupkg/work-visibility/ffi-delivery-closeout/` (portable native receipts,
+claim-validity comparison, final evidence, committed binding and sole audit).
+Leased focused captures/native compiler authority were used; no broad regression
+was earned. Header/checker, nonreusable-proof and EOF-only limits remain.
+
+The owner approved `String.tryFromBytes : array<int> -> voption<string>`;
+clef-lang-spec `684a79c` records the independent snapshot, RFC3629 rejection,
+existing memory-authority requirements and named runtime-validator trusted base.
+`voption` is a current native representation choice, not CLR/BCL machinery or
+an immutable framework requirement. These are approved semantics, not completed
+codec/readln implementation evidence. UTF-8 validity grants no memory/bounds
+authority, and a text conversion's absence grants no foreign-null admission.
+
+This update uses fresh/latest/equal retrieval snapshot `b7a13394…`, with
+schema→find→pgq→sources at Bozzetto `300bba9b`, compendium1351–1426.
+Dirty diffs, ignored evidence and bounded located-line confirmations are the
+direct-read exceptions. These accepted finite profiles do not close all T8 or
+the complete FFI design.
+
 ## 15. Source records
 
 The twenty-one records consolidated here, each readable with `git show d1c60aac:docs/<name>`:
