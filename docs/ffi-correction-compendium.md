@@ -1379,6 +1379,24 @@ native execution used current compiler authority. This evidence-only closure
 does not increase implementation coverage by itself. D5, durable/selective proof
 reuse, foreign functionhood and Tier3 libraries retain their recorded limits.
 
+The same fresh CLI publication also closes the actual-header libc `read` bridge,
+accepted by sole Opus5.5/high (`ffi-cli-integration/libc-read/libccli01-return.md`).
+Its three generated files are byte-identical to the accepted Core output;
+104 selected inputs and55 runtime files remain frozen. The seven-path consumer
+inventory pins both generated source units and the canonical generated project.
+On the unchanged schema40 pair the existing program returns its expected EOF12,
+empty stdout/stderr, with93 source/93 typed UNSAT outcomes, two satisfiable
+premises,40 finite structural Rocq checks and four nonreusable consumed claims.
+Borrow and relational-result hypotheses remain distinct. Exact observed bitcode
+has `read(i32 0, ptr ..., i64 3)` returning i64;29 produced files are archived.
+Worker fd0 was observed as `/dev/null`; inheritance by the program is inferred.
+No new product change or additional regression was earned. The accepted checker
+uses producer/PSG and artifact hashes rather than repeating every callback-gate
+check; its narrower schema/mapping, query-census and Rocq-output assertions remain
+explicit in the audit. Transitive headers are not fully inventoried. This closes
+CLI-path evidence for EOF, with the existing error/positive fixture and
+readln/text-validation limits unchanged; it adds no implementation percentage.
+
 ## 15. Source records
 
 The twenty-one records consolidated here, each readable with `git show d1c60aac:docs/<name>`:
