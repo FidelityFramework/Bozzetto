@@ -687,6 +687,24 @@ form when it becomes a premise of a Tier3/4 lemma; no general Rocq projection is
 claimed for the current FFI slice. These obligations specify the existing
 proof/differential design, without developer-written refinement predicates.
 
+**SSA assignment follow-up (owner direction, October 16).** Correct current
+assignments are required for FFI acceptance. The checked-text correction must
+retain Alex's actual witness result at each graph occurrence and check its typed
+operation incidence; reconstructing an expected assignment from a node-number
+formula is not equivalent evidence. Physical emission correspondence grants no
+new source identity, representation, placement or proof authority. This correction
+remains subject to its focused controls and audit; this note claims no acceptance.
+
+After FFI, compiler maturation should extend the existing Baker `SSAAssignment`
+nanopass discipline for differential renewal: preserve settled regions, renew
+affected assignments through explicit prior/current correspondence, and permit
+previously eliminated nodes to reappear when their supporting premises change.
+Follow Composer's `docs/Nanopass_Incremental_Contract_Direction.md` §2.7, including
+its distinction between the intended discipline and the narrower implementation.
+This is neither a whole-graph assignment requirement nor permission for recursive
+compiler re-entry, and is not a prerequisite to solving every broader SSA question
+before closing FFI.
+
 #### T1-B declared extern entry loading and differential dependencies (October 14)
 
 The owner approved `FnPtr.ofExtern : 'F -> FnPtr<'F>` with the actual declared
