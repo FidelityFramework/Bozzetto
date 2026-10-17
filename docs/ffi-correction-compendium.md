@@ -1743,6 +1743,40 @@ Evidence: Bozzetto `ffi-delivery-closeout/capacity-support/`
 gen25 `b8ebbd35…` schema→find→pgq→sources at Bozzetto`c6842f0`; retained primary
 artifacts and this documentation diff are the direct-read exceptions.
 
+**Internal read-count source/PSG checkpoint accepted, October 17.** Clef
+`77daefc` and PSG `393a48c` extend only the existing writable signed64 relational
+profile from count 3/capacity 4 to a current singleton `0 < n <= C` with fixed,
+initialized byte capacity `C`. The same declaration, ordered actuals, allocation,
+octet and coverage accounts remain mandatory. The actual count independently
+fits its u64 ABI; capacity `C` need not fit that ABI when `n` does. Unit calls
+retain their four-byte profile; zero signed-result count remains unsupported.
+No new public API, foreign behavior default or functionhood is inferred.
+
+Source 23 and PSG 10 focused cases pass; both compiled guard omissions are caught
+and restored. Actual Read1024 publishes with Integrity 0, image `f1b5…`, memory
+11/11 and unresolved 0. Its 129 claims are query-ready, not 129 executed solver
+proofs. Sole Opus `readcount-review01` accepts the bounded source review with
+follow-ups; `readcount-deploy02` replaces the earlier reference-byte precondition
+with a rebuilt matching pair. Worker 3.73s and host 15.58s builds pass; the active
+`20261017-ffi-read-count-matching-pair` changes 9/326 payloads and retains 317,
+with PSG`abec7dd1`/CCS`d9404a17`, unchanged schema45/fingerprint/wire.
+
+The earned previous 3/4 build passes. Actual Read1024 instead returns
+`compiler_refused`: "Writable artifact requires the exact four-byte zero
+allocation and three-byte direct borrow." This live selected-backend profile
+residual is being corrected in the existing Composer owner; neither 1024 native
+execution nor graph-owned `readln` is accepted here. Public Console outcomes
+remain `Q3-RESULT-EOF-ERROR`, awaiting the owner; proofs remain `NonReusable`,
+with no Tier3 or D5 reuse claim. The approximately 90% estimate is unchanged.
+
+Growth: Clef 3 existing files,+123/-22; PSG 1 existing file,+26/-9; no new file,
+owner or dependency. The controller binds all four tested postimages; fresh
+gen27 contains both pushed heads. Evidence: Bozzetto
+`ffi-delivery-closeout/read-count-final/` (`committed-source-binding.json`, the
+two review returns and `gates/{read1024,prior3of4}/build.json`). This update uses
+fresh/latest/equal gen27 `2430af18…` schema→find→pgq→sources at Bozzetto`e57ab8c`;
+known primary artifacts and this documentation diff are the direct-read exceptions.
+
 ## 15. Source records
 
 The twenty-one records consolidated here, each readable with `git show d1c60aac:docs/<name>`:
