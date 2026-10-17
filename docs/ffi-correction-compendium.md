@@ -1861,6 +1861,37 @@ Fresh/latest/equal gen33 `edce016f…` schema→find→pgq→sources locates thi
 Bozzetto `0366e9f2`, lines 1801–1870. Exact primary source/runtime bindings,
 ignored review artifacts and this documentation diff are direct-read exceptions.
 
+**Private read-prefix → checked UTF-8 finite tranche accepted, October 17.**
+Composer `2e865dc0d2fcf2a726ea74c2b7fa107d589737e8` is
+pushed: four existing files, +669/-201, no new files, dependencies or owners.
+With accepted Clef `1dfc73de`, `composition01` and `compositioncorrection01`
+accept this component. Four composition cases pass in 21s and 19 retained cases
+in 65s, including three adapted-bound controls; four literal controls retain
+their unchanged acceptance. The copy-completion negative initially failed in
+20s; the corrected exit-predecessor and domination guard catches it. Cursor
+selection follows the actual destination STORE independently of the bound,
+keeping the second copy's read distinct.
+The active matching `20261017-ffi-read-checked-text-pair-v2` replaces seven of
+326 payloads and retains 319. Compiler `1FE589EC…777D29C`, CCS `49b475b8`,
+PSG `abec7dd1`/schema45 and wire2 bind the three selected native passes through
+the generated Farscape binding and existing archive: count3 → exit3 (31s),
+count30 malformed UTF-8 → None/exit14 (22s), and plain prefix3/capacity1024 →
+exit3 (14s). Selected sessions close. The plain-prefix binary `1E0291D8…` equals
+the prior binary, while its receipt, manifest and checker are regenerated;
+this is not a reuse claim. Final Opus `nativefinal01` accepts this finite tranche;
+no further gate is earned.
+Bindings and native receipts are in Bozzetto
+`nupkg/work-visibility/ffi-delivery-closeout/read-prefix-text-final/`
+(`final-binding-addendum.json`, `native-receipts-view.json`, `nativefinal01-return.md`).
+Nonblocking follow-ups
+remain: checked-requirement call-predicate fidelity, copied-prefix refusal without
+a WritablePlan occurring late, and optional receipt Count/hash shape. No public
+Console policy, D5, durable reuse or Tier3 claim is added; progress stays ~90%.
+Evidence remains NonReusable; foreign behavior is hypothetical and RFC3629 trusted.
+Fresh/latest/equal gen35 `09260231…` schema→find→pgq→sources binds the existing
+record at Bozzetto `673650fe`:1801–1890; exact ignored receipts and the current
+documentation diff are direct-read exceptions.
+
 ## 15. Source records
 
 The twenty-one records consolidated here, each readable with `git show d1c60aac:docs/<name>`:
