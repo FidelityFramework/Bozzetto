@@ -1127,8 +1127,9 @@ Composer `artifacts/ffi-archives-20261014/` and
 `artifacts/ffi-t1b-entry-storage/slots/` retain original gates and refreshes.
 **SLOT-HELPERS** records an unexecuted fail-closed restriction when disjoint
 helpers read different slots; the admitted fixture has one helper plus a direct
-main read. Exactly one selected custom archive is admitted. ARC-EVENT, D5/durable
-reuse, Alethe checking and closed C callback receiving ABI remain open. No foreign
+main read. Exactly one selected custom archive is admitted. ARC-EVENT was open
+(resolved by the October 16 closure below); D5/durable reuse, Alethe checking and
+closed C callback receiving ABI remained open. No foreign
 truth/functionhood or instruction-equivalence theorem is claimed.
 
 ONE's independent distribution job `run_bf7d5360a45a4a7092e456bd6a5023b0` fails
@@ -1166,7 +1167,8 @@ The declared-binding FnPtr surface and explicit archives therefore use their
 compiler owners without another loader/catalog. ClefAutoComplete c55d25e is
 explicitly retired reference plumbing and remains untouched. No code changes or
 new gates were needed. Checker InputFiles does not establish archive-byte event
-invalidation; ARC-EVENT stays open. Fresh137 pinned retrieval and the outside-index
+invalidation; ARC-EVENT was then open, resolved by the October 16 closure below.
+Fresh137 pinned retrieval and the outside-index
 retired metadata exception are sealed in Bozzetto
 `nupkg/work-visibility/ffi-consumer-sync-20261014/`; THREE's query suggestions are
 model-report only, and TWO's409 busy response is an admission rejection.
@@ -1776,6 +1778,23 @@ gen27 contains both pushed heads. Evidence: Bozzetto
 two review returns and `gates/{read1024,prior3of4}/build.json`). This update uses
 fresh/latest/equal gen27 `2430af18…` schema→find→pgq→sources at Bozzetto`e57ab8c`;
 known primary artifacts and this documentation diff are the direct-read exceptions.
+
+**ARC-EVENT reconciliation, October 17.** The earlier open entries are historical;
+selected-archive session scope closed October 16. Retained executed evidence
+records unsolicited revocation in 44.4ms before any
+status/run refresh, same-byte/unrelated no-ops, no authority revival after ABA,
+and fresh same-session generation 3 followed by native exit 0. Evidence: Composer
+`artifacts/ffi-archive-events-20261016/live/`
+(`final-addendum.txt`, `verdict.json`, `binding.json`, `evidence.sha256`).
+
+Current `ProjectInputs.fs`, `CompilationOrchestrator.fs`, `ProjectSessionTests.fs`
+(Composer) and `ProviderSession.fs` (Bozzetto) are whole-file byte-equal to retained
+`6de66ec1`/`34bf4c5e` checkpoints. The existing Foundation input/event path revokes
+artifact/execution authority separately from graph-claim identity and validity.
+Prior sole Opus component/F1 acceptance is recorded in the retained implementer
+handoff; original raw return was not located here. This reconciles retained
+closure, without new acceptance or runtime rerun. No new watcher, owner, code or
+gate; Q3/Read residuals and the approximately 90% estimate are unchanged.
 
 ## 15. Source records
 
