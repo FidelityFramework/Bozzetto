@@ -1649,6 +1649,19 @@ uses fresh/latest/equal gen18 snapshot `0673e45b…` with pinned
 schema/find/pgq/sources. Dirty diffs, bounded located confirmations and retained
 primary-checkout evidence are the direct-read exceptions.
 
+**Application-group follow-up, October 17.** Composer `6faf8db` closes the
+support-subset asymmetry inside the Application-headed group. Sole Opus accepts
+the component checkpoint: seven focused cases pass before and after restoration;
+omitting only the new guard admits the new negative while the full selective
+compilation positive passes. Two existing files,+11/-4; no new file or authority.
+The compiled source postimages match the pushed blobs. This check is not deployed:
+the installed compiler remains `939bc741…`. The next matching deployment earns
+the four returned native cases (about40s), with other cases selected only if their
+owners change. `CAPACITY-SELF-SUPPORT` retains the separate union-order nuance:
+remove Capacity after union with Uses; current producer Uses contains aliases
+only. Evidence: `returned-consumer/app-support-followup/` and Bozzetto
+`ffi-delivery-closeout/{returnedappfinal01,app-support-review}/`.
+
 ## 15. Source records
 
 The twenty-one records consolidated here, each readable with `git show d1c60aac:docs/<name>`:
