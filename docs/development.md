@@ -37,7 +37,7 @@ If retrieval is unavailable, report that limitation. An unavailable service does
 
 Prefer extending or deleting at the owner. Each new file, dependency, abstraction or duplicated producer/reader rule needs a reason. No second authority, inferred replay or fallback may conceal a missing owner contract. Delegate bulk first-pass reading where workers are available; include retrieval and lease rules in every brief. Use one reviewer and one checklist.
 
-The owner's 2026-10-11 authorization lets the implementer coordinate agents and carry out settled implementation work without asking again for routine delegation. Claude Code running Opus 5.5 is the sole auditor. LAN research and local design reviews supply leads and implementation checks; the auditor owns the acceptance verdict and the decision to widen regression. Unsettled owner decisions retain the boundary above.
+The owner's 2026-10-11 authorization lets the implementer coordinate agents and carry out settled implementation work without asking again for routine delegation. For the current FFI work, the owner's October 17 role assignment is Claude Code Fable 5.1 as implementer and Codex GPT-6.1 Sol as sole auditor; use the [implementation handoff](ffi-implementation-handoff.md). Earlier Opus acceptances remain valid at their recorded scopes. LAN research and local design reviews supply leads and implementation checks; the auditor owns the acceptance verdict and the decision to widen regression. Unsettled owner decisions retain the boundary above.
 
 ### Authoring conventions
 

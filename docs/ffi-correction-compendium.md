@@ -6,6 +6,14 @@ Words used here. A **ruling** is the owner's or the spec's decision and binds ev
 
 ## 1. Purpose and status
 
+**Owner-directed role transition, October 17.** Claude Code Fable 5.1 takes
+over implementation; Codex GPT-6.1 Sol becomes the sole auditor. Earlier
+Opus verdicts retain their accepted scopes. The
+[implementation handoff](ffi-implementation-handoff.md) binds the starting
+heads, unfinished fixture, next deliverable and review protocol; it introduces
+no additional FFI requirements. This assignment supersedes older descriptions
+of Opus as the current sole auditor.
+
 **Private foreign-read → checked text accepted, October 17.** Clef `1dfc73de`
 and Composer `2e865dc0` deliver the finite private prefix/checked-UTF-8 profile;
 Composer `ee0e5817` additionally binds all four current guard requirements.
