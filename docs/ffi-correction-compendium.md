@@ -6,6 +6,13 @@ Words used here. A **ruling** is the owner's or the spec's decision and binds ev
 
 ## 1. Purpose and status
 
+**Returned checked text accepted and pushed, October 17.** PSG `3976b87`, Clef
+`3716983`, Alex `499569c` and Composer `eea35b7` close the finite positive-byte
+snapshot profile across one noncapturing unit helper and one application.
+Source-owned allocation, caller use and retirement facts reach native execution
+and eleven current consumed-proof rows. The seven-case native gate passes;
+the detailed scope, evidence strength and remaining limits are recorded below.
+
 **Returned optional backing: allocation policy and retirement accepted and pushed, October 16.** PSG `5c6067c`, Clef `3c20d76`, Alex `f840e73` and Composer `b1ceff2` close `FFI-OPTIONAL-RETURN-POLICY` and `FFI-OPTIONAL-RETURN-RETIREMENT` for the existing closed-result profile. ProjectChecker carries the captured project path/text digest and permission derived from the parsed memory model; standalone checking grants no project allocation authority. Baker authors each application’s exact caller, constructor, actual, receiver and ordered use closure through existing completed origin/activation readings and a bounded parent-path fold. Standard permits the escaping backing; restrictive policies remain Pending and refuse native delivery. PSG validates stored facts, Alex emits the existing deallocation after the receiver, and Composer checks the same returned allocation through its two-body typed/native account. Existing aggregate representation and `EscapesViaReturn` remain intact. No LLVM pointer type enters a binding or the middle end.
 
 Source 22/22 and affected 24/24 pass, with restored 4/4. Auditor additions comprise six passing cases from the retained initial selection plus corrected 4/4, rather than a claimed combined ten-case green run. They cover all four requested passive tamper shapes, ordinary uses, loops and well-typed returned escapes; nested Some is specifically refused earlier at CCS8413 and is not retirement-law coverage. Target 30/30 and earned direct/mixed 15/15 pass. Four compiled source omissions and two target omissions discriminate; normal sources/outputs are restored exactly. The store negative occurs after valid cleanup and preserves its original unsupported-use purpose. Early cleanup is caught by the earlier no-intervening-operation guard; source m3 remains defence in depth because I6 still refuses. These are not unsafe-admission demonstrations. All filtered xUnit/VSTest results remain `NarrowedRun`, with no TRUST producer or full-suite claim; initial syntax, fixture and oracle failures retain their failed grades.
@@ -1564,6 +1571,83 @@ bindings, installed326 manifests and final pin checks). Earlier native failures
 remain separate records. Retrieval recovered to fresh/latest/equal generations
 16/17; exact schema/find/pgq/sources receipts and historical503/uncommitted-diff/
 ignored-evidence exceptions are retained there.
+
+### October 17: returned checked-text lifetime and consumption closure
+
+Sole native Opus5.5/high accepts the Linux AMD64 finite positive snapshot
+returned by one noncapturing unit helper at one application. Baker owns the
+exact caller, case arms, uses, project allocation permission and retirements.
+PSG schema44/fingerprint `A9958C27…` stores and validates those facts; Alex
+emits portable heap allocation/alignment/deallocation and actual occurrence
+results. Composer verifies the helper return, caller descriptor, scalar use
+before backing/carrier release, and complete Some/None retirement. The middle
+end gains no LLVM pointer type or semantic repair in its consumers.
+
+The final leased native gate passes **7/7**, zero failed/skipped, in68.43s:
+returned embedded-NUL, single-NUL, malformed and multibyte input exit3/1/17/2;
+the retained local embedded-NUL/empty and signed32 callback controls exit3/7/0.
+Multibyte length2 follows the spec's byte-count rule. Independent receipt
+verification passes7/7: exact source/project/dependency, executable, bitcode,
+compiler epoch, source bytes and actually loaded LLVM pins. Returned cases
+retain eleven unique current consumed claims, local cases ten, and the scalar
+everywhere zero; each text claim has its paired source/typed UNSAT outcomes,
+ordered support, current validity and `Reusable=false`.
+
+Two native integration refusals remain separately recorded. Proof participants
+had polluted the memory-operation census; removing that widening preserves the
+strict census and the combined claim. The consumption finalizer then rejected
+a static Space-headed support group outside Common. Its narrow exception now
+uses only the exact capacity citizen named by the published returned lifetime,
+requires its Application-headed in-Common group with Platform/Space/retirements,
+and preserves every external lifetime-bound group in order. Other claims keep
+the former ownership rule. No incidental Common participant grants admission.
+
+Accepted focused evidence includes source22, PSG generated3 and actual-image9,
+Alex currentness5 with separately bound earlier controls, physical M1 four,
+admission2/restored1, and complete selective compilation plus five ownership
+negatives6/restored6. The compiled support-subset omission admits unrelated
+evidence while the full positive passes; restoration returns all six green.
+Source/runtime DLL/PDB postimages match;246/247 build-tree files match, with
+the disclosed test AssemblyReference.cache metadata difference. No broad
+regression was earned. Earlier failing fixture, syntax and native runs retain
+their failed grades.
+
+The matching installed release `20261017-ffi-returned-checked-text-consumption-pair`
+contains326 verified payloads and compiler `939bc741…`; previous releases remain
+available. LLVM observer PID377128 loads `/usr/lib/libLLVM.so.22.1`, SHA
+`06662e11…`. Native-binding SHA `796576ef…` and every committed source blob bind
+the reviewed precommit products; no metadata-only rebuild was performed.
+
+Growth from the preceding accepted heads, with no new tracked production file,
+owner or dependency:
+
+| Repository/head | Existing files | Insertions/deletions |
+| --- | ---: | ---: |
+| Fidelity.PSG `3976b87` | 6 | +390/-19 |
+| Clef `3716983` | 12 | +638/-29 |
+| Alex `499569c` | 5 | +375/-10 |
+| Composer `eea35b7` | 4 | +778/-84 |
+
+Typing and arithmetic retain their Tier1/2 strength; ELF/Rocq byte-account
+checks add no source-function lemma. RFC3629 validation, positive-size allocator
+semantics and LLVM lowering remain explicit trusted-base entries. Allocation
+success/OOM, empty returned backing, general escape analysis, graph-owned
+`readln`, D5 and durable reuse remain separate scope. Platform/Space role binding
+is component evidence; the native receipt exposes Application, retirements and
+capacity, not those two role IDs. Low follow-ups include applying the support
+subset check inside the Application-headed group, typed-outcome tampering,
+duplicate prepare cost and the previously unregated ByteGlobals consumers.
+Lattice/ClefAutoComplete reach was checked read-only; no changed memory-row
+consumer or new tooling gate was identified by that inspection.
+
+Evidence: Composer `artifacts/ffi-utf8-20261016/returned-consumer/` and
+`returned-native/results03`; Clef `artifacts/utf8-checked-20261016/returned-probe/`;
+PSG `artifacts/returned-checked-20261017/`; Alex returned-consumer currentness
+and reach packets; Bozzetto `nupkg/work-visibility/ffi-delivery-closeout/`
+(`returnednativefinal01`, committed binding and installed manifests). Retrieval
+uses fresh/latest/equal gen18 snapshot `0673e45b…` with pinned
+schema/find/pgq/sources. Dirty diffs, bounded located confirmations and retained
+primary-checkout evidence are the direct-read exceptions.
 
 ## 15. Source records
 
