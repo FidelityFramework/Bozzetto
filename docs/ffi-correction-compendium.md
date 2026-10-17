@@ -1654,12 +1654,13 @@ support-subset asymmetry inside the Application-headed group. Sole Opus accepts
 the component checkpoint: seven focused cases pass before and after restoration;
 omitting only the new guard admits the new negative while the full selective
 compilation positive passes. Two existing files,+11/-4; no new file or authority.
-The compiled source postimages match the pushed blobs. This check is not deployed:
-the installed compiler remains `939bc741…`. The next matching deployment earns
+The compiled source postimages match the pushed blobs. At that checkpoint this
+check was not deployed: the installed compiler was `939bc741…`. Deployment required
 the four returned native cases (about40s), with other cases selected only if their
-owners change. `CAPACITY-SELF-SUPPORT` retains the separate union-order nuance:
+owners change. `CAPACITY-SELF-SUPPORT` retained the separate union-order nuance:
 remove Capacity after union with Uses; current producer Uses contains aliases
-only. Evidence: `returned-consumer/app-support-followup/` and Bozzetto
+only. This union-order residual is now closed by the correction below.
+Evidence: `returned-consumer/app-support-followup/` and Bozzetto
 `ffi-delivery-closeout/{returnedappfinal01,app-support-review}/`.
 
 **Returned-empty checked text, October 17 — accepted bounded profile.**
@@ -1683,8 +1684,9 @@ remains an explicit trusted-base entry.
 
 Sole Opus gives final ACCEPT after the count/view declaration-role correction,
 unconditional fixture cleanup, exact source bridge and selected native gate.
-`CAPACITY-UNION-ORDER` retains the requirement to remove the capacity citizen
-after unioning all support, so Uses cannot reintroduce self-support. The source
+`CAPACITY-UNION-ORDER` remained open at that checkpoint: remove the capacity citizen
+after unioning all support, so Uses cannot reintroduce self-support. The accepted
+correction below now closes it. The source
 allocation-census change also carries a shared ordinary-array regression risk.
 Native7 passes all seven cases in 65.760s through normal Composer
 open/reserve/build/run_current/close in epoch `d4f4df796c87406ab5ff7076df7a303e`.
@@ -1711,6 +1713,35 @@ Final ruling: Bozzetto `ffi-delivery-closeout/emptyfinal03-return.md`.
 `Q3-RESULT-EOF-ERROR` is next: malformed UTF8 rejection and native checked
 conversion are settled, while Console's public EOF/read-error/capacity outcome
 contract still needs the owner decision before graph-owned `readln` proceeds.
+
+**Capacity support union-order correction accepted, October 17.** Composer
+`02ed1e0` closes `CAPACITY-UNION-ORDER` in the existing internal
+`WitnessArtifacts.validateMemoryClaimSupport`: remove `life.Capacity` after
+unioning named identities with `Uses`. Unchanged support and real aliases pass;
+external and Application-headed self-support and five required-role withdrawals
+refuse. Six legacy refusal controls pass; the new fact's initial fixture failure,
+corrected pass and restored pass retain their separate bindings. One compiled
+omission catches external self-support after the positives; the Application-headed
+negative is not separately mutation-proven. Normal source and DLL/PDB/ref products
+are restored; one AssemblyReference.cache metadata difference is recorded.
+
+Sole Opus `capacityfinal02` gives final ACCEPT. One existing returned-empty native
+vector passes in 15.271s with exactly seven current consumed claims, two carrier
+frees and no backing allocation/free. The active immutable
+`20261017-ffi-capacity-support-pair` verifies 326 payloads: Composer DLL/PDB changed,
+324 retained, previous release preserved. Compiler `14209127…fab65cd`, unchanged
+PSG45/`198c3516`, CCS`1416d422`, Alex`03d6a425` and wire2 agree with fresh Hello;
+no host rebuild or new authority is claimed. This is one selected native case,
+not native7 or a full suite. The approximately 90% estimate and the separate
+`Q3-RESULT-EOF-ERROR` owner decision remain unchanged.
+
+Growth: two existing Composer files,+35/-1; new files, owners and dependencies0.
+Evidence: Bozzetto `ffi-delivery-closeout/capacity-support/`
+(`capacityfinal02-return.md`, `final-binding.json`) and Composer
+`returned-consumer/capacity-union-order/` (`handoff.md`,
+`native-one01/native-binding.json`). This standing update uses fresh/latest/equal
+gen25 `b8ebbd35…` schema→find→pgq→sources at Bozzetto`c6842f0`; retained primary
+artifacts and this documentation diff are the direct-read exceptions.
 
 ## 15. Source records
 
