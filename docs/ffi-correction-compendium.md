@@ -15,6 +15,14 @@ the detailed acceptance and evidence limits are recorded below. Overall FFI
 progress remains approximately 90%; this closes evidence fidelity within the
 delivered profile, without granting broader callback or public Console policy.
 
+**Owner decision: checked Console input result, October 17.** Graph-owned
+`Console.readln` adopts `Result<voption<string>, ConsoleInputError>` in place of
+the string-only signature. `Ok(ValueSome text)` is a line, `Ok ValueNone` is EOF
+before any bytes, and errors distinguish read failure, invalid UTF-8 and capacity
+exhaustion. Malformed UTF-8 remains rejected. This settles `Q3-RESULT-EOF-ERROR`;
+implementation, proofs and consumer synchronization still require their gates.
+The decision grants no foreign-behavior proof or new proof tier.
+
 **Returned checked text accepted and pushed, October 17.** PSG `3976b87`, Clef
 `3716983`, Alex `499569c` and Composer `eea35b7` close the finite positive-byte
 snapshot profile across one noncapturing unit helper and one application.
