@@ -1834,8 +1834,12 @@ record at Bozzetto`04d7f8b`: `docs/ffi-correction-compendium.md:1711–1810`.
 Known primary artifacts and this documentation diff are direct-read exceptions.
 The approximately 90% overall estimate stays unchanged. Public Console outcomes
 remain the separate `Q3-RESULT-EOF-ERROR` owner decision. Evidence is still
-`NonReusable`, with no Tier3, D5 or durable-reuse claim. Low follow-ups are shared
-width-refusal wording and a physical tamper for an adapted small copy count.
+`NonReusable`, with no Tier3, D5 or durable-reuse claim. The test-only
+Composer `a859fb1`/`adaptedbound01` follow-up closes the small-count physical-tamper gap: n1/n3/n1024
+all refuse the changed copy bound; three scoped cases pass in 30s and Opus
+accepts without a native rerun. Growth: one existing test file,+15/-16;
+production compiler bytes remain unchanged. Shared width-refusal wording remains
+a low follow-up.
 
 ## 15. Source records
 
