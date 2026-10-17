@@ -11,9 +11,25 @@ and Composer `2e865dc0` deliver the finite private prefix/checked-UTF-8 profile;
 Composer `ee0e5817` additionally binds all four current guard requirements.
 The active pair is `20261017-ffi-checked-guard-pair`. Opus accepts the committed
 and installed correction after 31 focused checks and one native spot check;
-the detailed acceptance and evidence limits are recorded below. Overall FFI
-progress remains approximately 90%; this closes evidence fidelity within the
-delivered profile, without granting broader callback or public Console policy.
+the detailed acceptance and evidence limits are recorded below. This closes
+evidence fidelity within the delivered profile, without granting broader
+callback or public Console policy.
+
+**Completion assessment corrected, October 17.** Earlier approximately-90%
+statements were not bound to the closure denominator required by §11.1 and do
+not establish full-plan completion. Eight of the ten roadmap families
+(T0–T8 plus T6-T) have accepted bounded profiles; no delivered T5 captured-userdata
+or T6-T native-table profile is recorded. Those counts measure family coverage,
+not completed families or remaining effort. Four of six Phase B questions have
+source-scope acceptance; Q2 and Q3 remain partial. Broader
+profile, proof/tracking and consumer closure must remain separate. Current
+checked Console input is an approved design, not an implemented capability.
+Since the first recorded 90% statement (`c6842f02`, October 17 01:52 EDT), the
+bound compiler changes cover nine existing files, +4311/-695: implementation
++3105/-678 and tests +1206/-17, with no new files or generated-code delta.
+The accounting is in `nupkg/work-visibility/ffi-assessment-20261017/`.
+That interval does not reconcile the owner's UI figure of 68 files/+7244:
+the UI comparison base has not been established. The figures remain separate.
 
 **Owner decision: checked Console input result, October 17.** Graph-owned
 `Console.readln` adopts `Result<voption<string>, ConsoleInputError>` in place of
