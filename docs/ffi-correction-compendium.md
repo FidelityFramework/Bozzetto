@@ -1796,6 +1796,47 @@ handoff; original raw return was not located here. This reconciles retained
 closure, without new acceptance or runtime rerun. No new watcher, owner, code or
 gate; Q3/Read residuals and the approximately 90% estimate are unchanged.
 
+**Guarded writable-prefix backend tranche accepted, October 17.** Composer
+`601a5d7` is committed and pushed; all three committed blobs equal the tested
+and reviewed postimages. The existing backend owner now consumes the graph-owned
+guarded `Array.sub` prefix and its Length result after the declared writable
+borrow. The actual count and positive-path reference remain distinct, with their
+current numeric carrier/adaptation and refined coverage citizen carried into the
+artifact receipt separately from its four storage claims. Original allocation,
+zero initialization, native call, copy bounds, memory inventory and pointer uses
+are checked together; Probe and Prefix remain exclusive. No semantic recovery,
+new middle-end authority or recursive compilation was introduced.
+
+Seventeen focused cases pass in 66s. The compiled initialization-order omission
+admits the reordered native-before-zero-fill artifact and is caught; the exact
+normal source and all 247 product files/membership are restored, followed by a
+passing control. The earlier compiled overlap omission remains caught. Sole
+Opus5.5/high `prefixcorrection01` accepts the component and `prefixfinal01` gives
+final finite-tranche acceptance; no full regression is earned.
+
+The active matching `20261017-ffi-read-prefix-pair` retains 320/326 payloads,
+replacing the compiler and matching daemon/worker DLL/PDB pairs. Current Hello
+binds Composer `8453f3dc…f0e1ba0`, unchanged PSG45/`abec7dd1`, CCS`d9404a17`
+and wire2/digest`7722f539`. Canonical internal Read1024 now builds in 27s; the
+retained 3/4 Probe builds in 14s; the existing-archive count3/capacity1024 Prefix
+builds/runs in 18s through `composer_run_current`, returning exit3. The native
+case checks Length; initialization ordering relies on the verifier/refusal and
+compiled omission evidence. All selected sessions close and installed bytes
+remain unchanged; the previous release is retained.
+
+Growth: three existing Composer files,+3187/-549; new product files, owners and
+dependencies0. Evidence: Bozzetto `ffi-delivery-closeout/read-prefix-final/`
+(component/correction reviews) and `read-prefix-accepted/` (`prefixfinal01-return.md`,
+`final-binding.json`, `final-binding-addendum.json`, copied native receipts);
+Composer `writable-singleton/` retains focused/mutation/restore bindings.
+Fresh/latest/equal gen30 `7194d0d7…` schema→find→pgq→sources locates this standing
+record at Bozzetto`04d7f8b`: `docs/ffi-correction-compendium.md:1711–1810`.
+Known primary artifacts and this documentation diff are direct-read exceptions.
+The approximately 90% overall estimate stays unchanged. Public Console outcomes
+remain the separate `Q3-RESULT-EOF-ERROR` owner decision. Evidence is still
+`NonReusable`, with no Tier3, D5 or durable-reuse claim. Low follow-ups are shared
+width-refusal wording and a physical tamper for an adapted small copy count.
+
 ## 15. Source records
 
 The twenty-one records consolidated here, each readable with `git show d1c60aac:docs/<name>`:
