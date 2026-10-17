@@ -1503,6 +1503,68 @@ executed append, not read back. One live fixture on one machine is accepted;
 receipt retention and timing-based negative controls remain low follow-ups.
 Focused evidence is not an unfiltered TRUST suite, certificate or full FFI gate.
 
+### October 16: local checked-text, occurrence and consumption closure
+
+Sole native Opus5.5/high accepts the finite Linux AMD64 local checked-text
+profile. The approved `String.tryFromBytes` native `voption<string>` now has
+source-issued snapshot/outcome/layout evidence, actual Alex result transport at
+each checked occurrence, typed and native correspondence, and ten current
+memory-claim consumption/validity rows in the Common region. Assignment names
+are not reconstructed from node numbers or fixed lanes. Placement remains the
+layout owner; physical evidence grants no new source or residence authority.
+
+Pushed checkpoints: PSG `ab014c7`, Clef `9d0c625`, Alex `49b6f19`, and Composer
+through `acc9da6` (`ed4db61`, `5683465`, `fc811b8`). Exact committed postimages
+bind the precommit production outputs; there was no metadata-only rebuild.
+Installed release `20261016-ffi-checked-text-roles-pair` has compiler `789a2772`,
+PSG schema43/fingerprint `5C21AFD6…`, and the unchanged wire2 contract. Only
+Composer DLL/PDB changed from the preceding pair; all324 other files remain
+byte-identical, with one compiler DLL and one observed LLVM library.
+
+The final leased native matrix passes **13/13**, zero failed/skipped, through
+Composer execution authority: twelve text cases and the signed32 callback
+control. Empty input returns Some (exit7), valid single ASCII/NUL returns
+length1, and all seven malformed vectors return None (exit17). Each text
+artifact retains exactly ten unique current claim IDs, validity keys, ordered
+support and matching source/typed UNSAT outcomes; every row is nonreusable.
+The scalar retains zero text rows and its original empty consumption account.
+Observed native log window:125.480s. Exact source-byte and observer-library pins
+also match all twelve retained text receipts.
+
+The gate exposed two physical-observer assumptions: snapshot and cursor can
+have identical one-byte size/alignment, and all-zero byte arrays use LLVM's
+aggregate-zero initializer. Existing owners now distinguish allocation roles
+by their operation incidence and decode actual bounded readonly i8 zero arrays.
+Missing/undef/nonbyte initializers receive no default bytes. Empty logical
+storage stays zero; any unsupported address observation still refuses. Both
+previously failing bitcodes pass unchanged under the corrected observer.
+
+Focused accepted evidence includes source43 controls, Alex138, Composer59,
+cvc5/vacuity14, zero-storage6, consumption20 and physical-observer9; scopes and
+compiled mutations retain their individual bindings. No broad sweep was earned.
+Growth: Alex16 existing files,+281/-64; Composer consumer9,+1263/-15, followed
+by zero-storage2,+101/-18, consumption4,+177/-39 and physical4,+132/-28.
+There are no new tracked files, dependencies or semantic owners in these
+increments; overlapping test files are counted in each increment, not summed
+as unique files. PSG/Clef source growth remains bound in their source43 packet.
+
+Typing and generated arithmetic remain Tier1/2; RFC3629-v1 validation and LLVM
+lowering are explicit trusted-base components, not solver certificates or a
+Tier3 library. Current-revision attribution does not establish D5, durable
+reuse or a general Baker assignment ledger; the SSA maturation breadcrumb above
+stands. Source-authorized escaping strings and graph-owned `readln` are next.
+Low follow-ups retain the typed-outcome-specific negative, cross-process
+validity before reuse, duplicate plan-construction cost and unregated broader
+byte-global consumers.
+
+Evidence: Composer `artifacts/ffi-utf8-20261016/` (source/consumer, zero-storage,
+memory-consumption, single-byte and native/round2-results); Bozzetto
+`nupkg/work-visibility/ffi-delivery-closeout/` (`checkednativefinal01`, committed
+bindings, installed326 manifests and final pin checks). Earlier native failures
+remain separate records. Retrieval recovered to fresh/latest/equal generations
+16/17; exact schema/find/pgq/sources receipts and historical503/uncommitted-diff/
+ignored-evidence exceptions are retained there.
+
 ## 15. Source records
 
 The twenty-one records consolidated here, each readable with `git show d1c60aac:docs/<name>`:
