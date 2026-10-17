@@ -6,6 +6,15 @@ Words used here. A **ruling** is the owner's or the spec's decision and binds ev
 
 ## 1. Purpose and status
 
+**Private foreign-read → checked text accepted, October 17.** Clef `1dfc73de`
+and Composer `2e865dc0` deliver the finite private prefix/checked-UTF-8 profile;
+Composer `ee0e5817` additionally binds all four current guard requirements.
+The active pair is `20261017-ffi-checked-guard-pair`. Opus accepts the committed
+and installed correction after 31 focused checks and one native spot check;
+the detailed acceptance and evidence limits are recorded below. Overall FFI
+progress remains approximately 90%; this closes evidence fidelity within the
+delivered profile, without granting broader callback or public Console policy.
+
 **Returned checked text accepted and pushed, October 17.** PSG `3976b87`, Clef
 `3716983`, Alex `499569c` and Composer `eea35b7` close the finite positive-byte
 snapshot profile across one noncapturing unit helper and one application.
@@ -1891,6 +1900,42 @@ Evidence remains NonReusable; foreign behavior is hypothetical and RFC3629 trust
 Fresh/latest/equal gen35 `09260231…` schema→find→pgq→sources binds the existing
 record at Bozzetto `673650fe`:1801–1890; exact ignored receipts and the current
 documentation diff are direct-read exceptions.
+
+**Checked-text guard fidelity accepted and pushed, October 17.** Composer
+`ee0e581706549ac1881b0dfd8015cb9221312dea` changes two existing files,
++206/-13, with no new tracked files, dependencies or semantic owners. The
+existing artifact reader binds construction, source-read, destination-write and
+None-case requirement operands to their exact current predicates, predecessor
+edges and protected operations; Writable shares its existing guard checks.
+There is no additional scan requirement. The conditional upper comparison feeds
+the exact conjunction phi; it need not dominate the joined access itself.
+Four operand-only mutants are admitted by the old producer and specifically
+refused by the corrected producer, using byte-identical tests. The genuine
+composition and original scan/copy negatives pass with them (8/8, 21s), as do
+the shared Writable controls (19/19, 66s) and returned/literal controls (4/4).
+These are NarrowedRun results; the retained parser, fixture and positive-control
+failures receive no passing credit. Opus `guardreview02` accepts the component
+and earns no full suite or further compiled omission.
+The active immutable pair `20261017-ffi-checked-guard-pair` replaces only
+Composer DLL/PDB, retaining 324 of 326 payloads and the previous rollback release.
+Compiler `C7896B9D…`, CCS `49B475B8…`, unchanged PSG schema45 and wire2 agree
+with Hello and current receipts. The one earned existing-archive count3 control
+passes through Composer build/run_current/close with exit3 (32s). Source version
+`28ACF3BC…` and binary `EE10C979…` equal the prior accepted valid case, while
+the checker and artifact evidence renew; this is not a proof/object reuse claim.
+Opus `guardfinal01` accepts the committed/installed correction and earns no
+further gate. Its preparation-state label note is corrected in an additive bound
+record, preserving the accepted original. Composition finding2 is closed;
+late copied-prefix refusal and optional receipt-shape notes remain low residuals.
+Evidence: Composer `artifacts/ffi-utf8-20261016/checked-guard-fidelity/`
+(`candidate.diff`, `review-binding-addendum.json`, `guardreview02-return.md`,
+`commit-installed-native-binding-corrected.json`, `guardfinal01-return.md`);
+the native spot check is in Bozzetto's existing read-prefix-text-final packet,
+`gates/guard-valid/`. Fresh/latest/equal generation36 `5110035c…` supplies the
+retained schema→find→pgq→sources baseline; committed-blob comparisons, ignored
+evidence, bounded located confirmations and current diffs are direct-read
+exceptions. Evidence remains NonReusable at Tier1+2; foreign hypotheses,
+trusted RFC3629, public Console policy and stable-identity/reuse limits stand.
 
 ## 15. Source records
 
