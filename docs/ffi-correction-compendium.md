@@ -1841,6 +1841,26 @@ accepts without a native rerun. Growth: one existing test file,+15/-16;
 production compiler bytes remain unchanged. Shared width-refusal wording remains
 a low follow-up.
 
+**Checked-text prefix source checkpoint accepted, October 17.** Clef
+`1dfc73def1c413fd30ac82ff99a19c6399fdc749` is pushed: two existing files,
++167/-1, with no new tracked files, dependencies or semantic owners. The existing
+string-storage recipe preserves source lineage through the eager wrapper. Four
+focused cases pass in 16s (`NarrowedRun`), including the exact snapshot-source
+alias → eager child → prefix copy chain and snapshot count range [1,3]. The
+compiled recipe-omission mutation and exact restoration were accepted earlier;
+`eagerorigin01` accepted the recipe and earned the lineage follow-up, now accepted
+by sole Opus `lineageclosure01` with no further gate earned. The controller
+verified 17 source/runtime/evidence files against Clef
+`artifacts/ffi-reconcile-20261013/read-checked-text-20261017/lineage-followup-binding.json`;
+the review and verification log are in Bozzetto
+`nupkg/work-visibility/ffi-delivery-closeout/read-prefix-text-source/`.
+Backend composition of the private positive-read result with checked text remains
+underway. This checkpoint grants no native admission, public Console EOF/error
+outcome or reuse authority; the overall estimate remains approximately 90%.
+Fresh/latest/equal gen33 `edce016f…` schema→find→pgq→sources locates this record at
+Bozzetto `0366e9f2`, lines 1801–1870. Exact primary source/runtime bindings,
+ignored review artifacts and this documentation diff are direct-read exceptions.
+
 ## 15. Source records
 
 The twenty-one records consolidated here, each readable with `git show d1c60aac:docs/<name>`:
