@@ -1662,6 +1662,56 @@ remove Capacity after union with Uses; current producer Uses contains aliases
 only. Evidence: `returned-consumer/app-support-followup/` and Bozzetto
 `ffi-delivery-closeout/{returnedappfinal01,app-support-review}/`.
 
+**Returned-empty checked text, October 17 — accepted bounded profile.**
+The next bounded helper-return profile now authors affirmative `EmptySnapshot`
+authority at the existing count-zero array producer and explicit `EmptyBacking`
+discard. Absence of an allocation row is never permission. The positive native
+outcome carrier still needs its captured Standard policy, declared heap and
+capacity; the original empty input literal retains its independent storage
+account. Alex carries neutral `EmptyBuffer` intent; the selected backend realizes
+its canonical empty descriptor without inventing a global, backing allocation
+or backing free. No new public API, intrinsic or allocation policy is introduced.
+
+Source evidence maps ten green cases across the original eight passes and three
+corrected withdrawal cases with one overlap. The compiled Empty-author omission
+fails the new positive while three nonempty controls pass; exact restoration
+returns all four to green. The actual public image has 13/13 memory operations,
+zero unresolved rows and 45 current claims; PSG codec/currentness controls pass 17/17.
+Alex's final focused controls pass 11/11 plus one actual nonempty validator case;
+its compiled zero-count guard omission is caught and restored. Runtime UTF8 truth
+remains an explicit trusted-base entry.
+
+Sole Opus gives final ACCEPT after the count/view declaration-role correction,
+unconditional fixture cleanup, exact source bridge and selected native gate.
+`CAPACITY-UNION-ORDER` retains the requirement to remove the capacity citizen
+after unioning all support, so Uses cannot reintroduce self-support. The source
+allocation-census change also carries a shared ordinary-array regression risk.
+Native7 passes all seven cases in 65.760s through normal Composer
+open/reserve/build/run_current/close in epoch `d4f4df796c87406ab5ff7076df7a303e`.
+Empty exits 0 (Some arm 0; None arm 17); four nonempty exits are 3/1/17/2 and the local
+controls exit 3/7. Consumed attribution binds 7/11/10 current claims for
+empty/nonempty/local respectively, all `NonReusable`. Exact receipt binding was
+verified after correcting the root verifier's field-role assumptions; no source
+or native rerun supplied that correction. The selected runtime is
+`20261017-ffi-empty-return-roles-pair`, compiler `d4c7d38f`, PSG `198c3516`,
+CCS `1416d422`, Alex `03d6a425`.
+
+PSG `da96527`, Clef `568da5b`, Alex `7ae1535` and Composer `e28f04b` are committed
+and pushed with all 24 tested postimages bound; new production files 0. Composer's
+count-role/test-cleanup followup passes 1/1. Sole Opus `emptyfinal03` accepts this
+selected tranche; no full regression was earned or claimed. The standing coarse
+completion estimate remains approximately 90%.
+
+Evidence: Clef `artifacts/utf8-checked-20261016/returned-probe/empty45/`
+(`binding.json`, source/control mapping, compiled omission and exact restoration),
+PSG actual-image controls and Alex's bound Empty/Allocated consumer packets.
+Native receipts: Composer `returned-empty-native/final-01/native-binding.json`;
+Bozzetto `empty-return-pair/final/committed-source-binding.json`.
+Final ruling: Bozzetto `ffi-delivery-closeout/emptyfinal03-return.md`.
+`Q3-RESULT-EOF-ERROR` is next: malformed UTF8 rejection and native checked
+conversion are settled, while Console's public EOF/read-error/capacity outcome
+contract still needs the owner decision before graph-owned `readln` proceeds.
+
 ## 15. Source records
 
 The twenty-one records consolidated here, each readable with `git show d1c60aac:docs/<name>`:
