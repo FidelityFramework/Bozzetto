@@ -21,9 +21,31 @@ the historical discriminating mutation is reused at identical source hashes.
 ONE, TWO and THREE checked out this commit. Production growth is +0/-3,
 tests +23/-8; no new file, owner or dependency. Evidence and remaining limits
 are bound in the handoff's B3 checkpoint and `mmio-b3-final-05-return.md` under
-`artifacts/ffi-resume-20261020/`. The failed Composer positive, F3/F5/F6 and
-the broader architectural remediation remain open; this acceptance establishes
-neither PSG admission nor the MMIO source-to-backend pathway.
+`artifacts/ffi-resume-20261020/`. This B3 acceptance establishes neither PSG
+admission nor the MMIO source-to-backend pathway.
+
+**Subsequent bounded checkpoints, October 21.** F5 descriptor consumption is
+accepted at Alex `832fbb3e`; F6 source-owner admission correction at clef `8297f157`.
+Range membership is accepted at clef `4ec95065`, and the literal/platform-reader
+C correction at `34b976bb`; the integer-spec correction is separately accepted
+at clef-lang-spec `a69ac8a9`. These are component acceptances, not full FFI or
+whole-spec consistency. Exact gates, growth and residuals are bound in the
+[implementation handoff](ffi-implementation-handoff.md). The retained Range
+consumer gate remains failed at 444/446; the subsequent six-leaf test repair
+passed five and failed at an earlier numeric Settlement refusal, retaining
+`NUMERIC-STRICT-COMPLETENESS-UNREACHED` pending review.
+
+The coupled Alex/Composer MMIO increment remains uncommitted. PSG's holding-role
+candidate passed 207/207 owner controls and seven mutations, but its three
+real-source positives still fail: MCU integrity and guest numeric-width
+agreement remain unresolved; only the overflow negative passes. G4 remains
+incomplete, including the Rocq compiler/standard-library mismatch and pending
+scalar-fixture review. F3 and broader architectural remediation remain open.
+These failures do not revoke earlier bounded verdicts or establish end-to-end
+MMIO acceptance. Evidence: `mmio-psg-source-z13-durable/binding.json` and
+`two-leaf-three/binding.json` in the same evidence directory. The retained spec
+float-suffix examples contradict executed compiler behavior
+(`SPEC-FLOAT-SUFFIX-EXAMPLES-STALE`); byte-array/Boolean remarks remain uncertified.
 
 **Private foreign-read → checked text accepted, October 17.** Clef `1dfc73de`
 and Composer `2e865dc0` deliver the finite private prefix/checked-UTF-8 profile;
