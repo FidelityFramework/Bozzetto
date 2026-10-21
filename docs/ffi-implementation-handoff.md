@@ -53,8 +53,27 @@ missing checkout was created. Four workstation origins remain inaccessible
 branch differences and missing checkouts are recorded in
 `artifacts/ffi-resume-20261020/final-primary-git-sync/handoff.md`.
 This synchronization advanced LAN Fidelity.Data from `7cc19d6b` to `fd2202fd`.
-F6's accepted gate remains bound to `7cc19d6b`; current-closure validation at
-`fd2202fd` is pending the auditor's assessment of the bounded JSON/TOML delta.
+F6's historical gate remains bound to `7cc19d6b`. Opus20 separately accepted
+the executed current closure at `fd2202fd`: Data passed 444 tests with one
+pre-existing ignored case, and the selected F6 controls passed 15/15. Exact
+durable exits, the full raw log behind Data's truncated durable stdout, binary
+identities and released leases are bound in
+`artifacts/ffi-resume-20261020/data-closure-one/acceptance-handoff.md`.
+`DATA-FD2202-CONSUMER-COMPAT-UNVERIFIED` remains beyond that executed scope.
+
+Opus19/20 approved the next exact-integer and pointer-consumption design with
+specific conditions. The real-checker prerequisite passed on ONE: three MMIO
+constructor sites and six accessor handle arguments have numeric-domain
+`Pointer 1` rows, including aliases. This proves the checked graph; it does not
+prove retained rows after admission/publication. The candidate test and exact
+gate binding are in `artifacts/ffi-resume-20261020/mmio-g0a-handoff.md`.
+The coupled Alex/Composer implementation is in progress, not accepted: extend
+the existing integer carrier, consume both published pointer representations,
+and retain exact source values in Composer's existing correspondence receipts.
+Keep `MMIO-POINTER-ROW-SELECTION-UNVERIFIED`, `BORROWEDVIEW-SIGNED-REPACK` and
+the nonblocking owner-policy question `ARTIFACT-RECEIPT-FORMAT-VERSIONING`
+explicit. The native reviews select the gates and mutations; this checkpoint
+does not claim they have executed.
 
 Remaining work includes operation-prefix interpretation, width/profile ownership,
 arity, signed-address conversion and pointer representation. Missing-descriptor
@@ -79,7 +98,7 @@ substitute for reviewing the ownership map.
 Bozzetto AgentWork records the controller, controller-observed Astra direction,
 LAN Pi runs, native Z13 Pi activity and native Claude audits. LAN observation uses
 the existing worker SSE adapter; recovered jobs are labeled recovered rather
-than replayed. Compilation belongs on ONE/TWO/THREE through each host's Bozzetto
+than replayed. Managed compilation uses ONE/TWO/THREE through each host's Bozzetto
 lease and command-observation tooling, after binding the existing primary
 checkout and dependency closure. Raw Pi tool results confirm local `~/repos`
 checkouts and a working .NET SDK 10.0.401 on all three nodes. The SDK is available
@@ -88,7 +107,12 @@ on the shell's PATH. The earlier claim of missing repository access is withdrawn
 the probes checked the wrong home and stopped before completing. Each node uses
 its own local primary checkouts; shared NFS repositories are not part of this
 setup. Bind the selected checkout revision and dependency closure before a gate.
-There is no clone, copied-repository or local-build fallback.
+The exact-integer increment's native target gates use Z13's existing installed
+LLVM tools; bounded checks did not locate them on the three LAN workers.
+Run those gates through their actual Composer owner and Z13's Bozzetto lease,
+with a focused local owner build only when needed to invoke that native path.
+Bind the selected host, tools and source closure explicitly. No clone,
+copied repository or alternate realization path is permitted.
 
 The October 20 operating-document correction is checkpointed separately in
 speakez-lab. Its worker guide owns checkout/SDK access; the Pi mission source
