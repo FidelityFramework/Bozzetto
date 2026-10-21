@@ -1,9 +1,65 @@
 # FFI implementation handoff
 
-Owner-directed transition, October 17, 2026: **Claude Code Fable 5.1 implements;
-Codex GPT-6.1 Sol audits.** This is the incoming implementer's operating brief,
-not another requirements record. Maintain capability decisions and acceptance
-in the [FFI compendium](ffi-correction-compendium.md).
+Owner-directed resumption, October 20, 2026: **Astra directs; Pi agents on the
+LAN and Z13 carry scoped investigation and implementation; native Claude Code
+is the independent adversarial auditor.** This supersedes the October 17 role
+assignment. The immediate priority is architectural correction: Baker owns
+transformations, and Alex passively witnesses published facts through the Huet
+zipper. Audit the compendium and earlier acceptances against the governing
+architecture and current code; their recorded acceptance can conceal leaks.
+This is the implementer's operating brief. Maintain capability decisions and
+scoped acceptance in the [FFI compendium](ffi-correction-compendium.md).
+
+## October 20 review checkpoint
+
+Native Claude reviewed the [detailed remediation draft](ffi-drift-correction-plan.md):
+planning direction accepted with changes; detailed remediation and implementation
+not ready. The revised draft records findings F1–F8 and the first concrete C1–C10
+authority map. Independent correspondence design, semantic compatibility and
+the remaining authority chains stay open. The MMIO candidate is frozen and
+uncommitted; no architecture or artifact acceptance is claimed. Further baseline
+sweeps do not substitute for reviewing the ownership map.
+
+Bozzetto AgentWork records the controller, controller-observed Astra direction,
+LAN Pi runs, native Z13 Pi activity and native Claude audits. LAN observation uses
+the existing worker SSE adapter; recovered jobs are labeled recovered rather
+than replayed. Compilation belongs on ONE/TWO/THREE through each host's Bozzetto
+lease and command-observation tooling, after binding the existing primary
+checkout and dependency closure. Raw Pi tool results confirm local `~/repos`
+checkouts and a working .NET SDK 10.0.401 on all three nodes. The SDK is available
+at `$HOME/.local/share/bozzetto/toolchains/dotnet/10.0.401/dotnet`; it need not be
+on the shell's PATH. The earlier claim of missing repository access is withdrawn:
+the probes checked the wrong home and stopped before completing. Each node uses
+its own local primary checkouts; shared NFS repositories are not part of this
+setup. Bind the selected checkout revision and dependency closure before a gate.
+There is no clone, copied-repository or local-build fallback.
+
+The October 20 operating-document correction is checkpointed separately in
+speakez-lab. Its worker guide owns checkout/SDK access; the Pi mission source
+now uses the text-only retrieval tool, and the obsolete agent memory and
+historical helper guidance have been corrected. Source corrections do not
+establish the contents of installed worker bundles or retained sessions.
+Resumed assignments carry the corrected instructions explicitly. No worker
+configuration or service deployment was changed for this correction.
+
+The owner directs regular synchronized checkpoints: commit and push bounded
+changes, update each participating LAN node's existing primary checkout,
+preserve dirty work and report any blocked update. Record the actual checked-out
+revision, rather than treating a push or fetch as checkout completion. Allow
+about 15 seconds for retrieval indexing, using that interval for independent
+handoff work, then require a fresh/latest schema with matching snapshot IDs.
+Rediscover relevant seeds after a snapshot change. Source recovery checkpoints
+do not confer design, gate or artifact acceptance.
+
+Evidence is retained in `artifacts/ffi-resume-20261020/` in this primary checkout:
+`candidate-binding.json`, `plan-review-binding.json`,
+`tracking-reconciliation.json`, the native audit receipts, and original gate
+logs/TRX. Alex's filtered MMIO run passed 86 cases, the restored guard mutation
+failed 2 of 86, and exact restoration passed 86 with identical assemblies. This
+xUnit runner emits no TRUST line. Composer's nine-case MMIO gate failed with
+exit 134: eight rejection controls passed, but the positive program was refused
+for unsettled numeric/operation and Memory/Spatial facts. The failure remains
+open; neither its cause nor full-pipeline acceptance has been established.
 
 ## Mandate and starting assessment
 
@@ -46,7 +102,7 @@ Primary-checkout heads at transition preparation:
 | Repository under `/home/hhh/repos/` | Pinned head |
 | --- | --- |
 | Bozzetto | `cc968d3048c40ed84f08a25060108f704ab186e9` before this documentation checkpoint |
-| clef | `1dfc73def1c413fd30ac82ff99a19c6399fdc749` |
+| clef | `09cab055fda0d82612388146c42c864ed1e71ca0` (segmentation restoration over `1dfc73de`, October 17) |
 | Fidelity.PSG | `393a48c1ef29a862a43520a197296a9583fdc92d` |
 | Alex | `7ae1535d4d3526145d0cf1870d1ceba090f9e9e1` |
 | Composer | `ee0e581706549ac1881b0dfd8015cb9221312dea` |
@@ -84,7 +140,9 @@ contain local, ignored evidence; tracked decisions stay in the compendium.
 ## Exact unfinished checkout state
 
 Clef has one uncommitted test-only change, **+76 lines** in
-`tests/Clef.Compiler.Service.Tests/ClosedCallbackCases.fs`. It deliberately
+`tests/Clef.Compiler.Service.Tests/ClosedCallbackCases.fs`. The October 17
+segmentation restoration is committed as clef `09cab05` and is not part of this
+state. It deliberately
 exercises a real Boolean formal selecting Some/None before one during-call
 foreign receiver. Current product code refuses with CCS8414/CCS8403. This is
 an unfinished feature test, not an accepted positive or a new regression in
@@ -118,6 +176,16 @@ editing; do not assume this inventory remains live after another agent acts.
 
 ## Next bounded deliverable: checked Console input
 
+**Re-sequenced October 17.** The owner directed that checked Console input
+is an off-ramp to the larger FFI remit and approved starting with generality
+in its proper scope: reified preservation correspondence through one reusable
+foreign-bearing region, with the `labs` fixture as the proving case. Sole
+auditor Sol accepted that increment (compendium 11.1) and its first
+checkpoint, clef `09cab05`, deployed as `20261017-ffi-segmentation-restore-pair`
+with the default-platform `04d` reuse journey matching the R4 record
+(compendium 10). Console input follows T5 as the consumer-synchronization
+item; the approved API below stands.
+
 Implement the approved graph-owned API:
 
 ```clef
@@ -131,9 +199,11 @@ names/payloads have not been settled in a proposal; keep representation native
 and raise any additional public policy choice concretely. Do not reopen the
 approved outcome distinctions or introduce CLR/BCL option behavior.
 
-Locate the existing owners first: Platform's Linux/x86_64 `Console.clef`, its
-generated `Bindings/ConsoleInput/NativeInput/NativeInput.clef`, Clef's
-`ClefIntrinsics.fs` and the current `Sys.readline` lowering. The last source
+Locate the existing owners first: Platform's Linux/x86_64 `Console.clef` and
+its generated `Bindings/ConsoleInput/NativeInput/NativeInput.clef`. Clef's
+`Sys.readline` and `Sys.read` intrinsics and the readln obligation recipes are
+vestiges to replace, not owners to extend; the public API is realized through
+platform source and the graph, as the accepted write path is. The last source
 inventory found the public/platform path still string-only. The accepted
 private read -> prefix -> checked-text profile is a dependency, not an
 implementation of this public API. Move semantic operations into platform

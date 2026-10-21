@@ -134,11 +134,10 @@ the risk it addresses.
 2. **Prove each new rule.** A new check or refusal needs a positive control, a
    negative control that asserts the specific reason, and one mutation that a
    test catches.
-3. **Acceptance scope belongs to the auditor.** For the current FFI work, the
-   owner's October 17 role assignment is Claude Code Fable 5.1 as implementer
-   and Codex GPT-6.1 Sol as sole auditor; see
-   [the implementation handoff](docs/ffi-implementation-handoff.md).
-   Earlier Opus acceptances retain their recorded scope. The auditor reviews
+3. **Acceptance scope belongs to the auditor.** The current FFI role assignment
+   is recorded in [the implementation handoff](docs/ffi-implementation-handoff.md).
+   Preserve earlier acceptance evidence at its recorded scope and audit its
+   architectural assumptions against current code. The auditor reviews
    the focused evidence and decides whether a
    full regression is earned, recording the risk, exact scope and expected
    wall-clock cost. No full sweep runs automatically per increment. The
