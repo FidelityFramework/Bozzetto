@@ -6,13 +6,24 @@ Words used here. A **ruling** is the owner's or the spec's decision and binds ev
 
 ## 1. Purpose and status
 
-**Owner-directed role transition, October 17.** Claude Code Fable 5.1 takes
-over implementation; Codex GPT-6.1 Sol becomes the sole auditor. Earlier
-Opus verdicts retain their accepted scopes. The
-[implementation handoff](ffi-implementation-handoff.md) binds the starting
-heads, unfinished fixture, next deliverable and review protocol; it introduces
-no additional FFI requirements. This assignment supersedes older descriptions
-of Opus as the current sole auditor.
+**Current owner-directed roles, October 20.** Astra directs, Pi on the LAN and
+Z13 carries scoped work, and native Claude Code is the sole independent
+adversarial auditor. This replaces the October 17 assignment. Earlier verdicts
+retain only their recorded scopes. The
+[implementation handoff](ffi-implementation-handoff.md) owns the current heads,
+next deliverable and review protocol; it introduces no additional FFI requirements.
+
+**B3 nominal MMIO width authority removed, October 20.** Alex `6d228cb`
+removes the three production lines that inferred access width from a handle's
+declaration name. Native Claude accepts the bound two-file component with
+follow-ups after ONE's clean Release build and 86/86 filtered pattern controls;
+the historical discriminating mutation is reused at identical source hashes.
+ONE, TWO and THREE checked out this commit. Production growth is +0/-3,
+tests +23/-8; no new file, owner or dependency. Evidence and remaining limits
+are bound in the handoff's B3 checkpoint and `mmio-b3-final-05-return.md` under
+`artifacts/ffi-resume-20261020/`. The failed Composer positive, F3/F5/F6 and
+the broader architectural remediation remain open; this acceptance establishes
+neither PSG admission nor the MMIO source-to-backend pathway.
 
 **Private foreign-read → checked text accepted, October 17.** Clef `1dfc73de`
 and Composer `2e865dc0` deliver the finite private prefix/checked-UTF-8 profile;

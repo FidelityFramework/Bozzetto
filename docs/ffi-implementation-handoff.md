@@ -16,9 +16,10 @@ Native Claude reviewed the [detailed remediation draft](ffi-drift-correction-pla
 planning direction accepted with changes; detailed remediation and implementation
 not ready. The revised draft records findings F1–F8 and the first concrete C1–C10
 authority map. Independent correspondence design, semantic compatibility and
-the remaining authority chains stay open. The MMIO candidate is frozen and
-uncommitted; no architecture or artifact acceptance is claimed. Further baseline
-sweeps do not substitute for reviewing the ownership map.
+the remaining authority chains stay open. Alex's bounded MMIO correction is
+checkpointed at `6d228cb`; Claude accepted the bounded component below. The
+Composer test candidate remains uncommitted. Further baseline sweeps do not
+substitute for reviewing the ownership map.
 
 Bozzetto AgentWork records the controller, controller-observed Astra direction,
 LAN Pi runs, native Z13 Pi activity and native Claude audits. LAN observation uses
@@ -60,6 +61,55 @@ xUnit runner emits no TRUST line. Composer's nine-case MMIO gate failed with
 exit 134: eight rejection controls passed, but the positive program was refused
 for unsettled numeric/operation and Memory/Spatial facts. The failure remains
 open; neither its cause nor full-pipeline acceptance has been established.
+
+### B3 synchronized component checkpoint
+
+Alex `7ae1535d..6d228cb` removes the three-line nominal handle-width check:
+width remains a published Baker fact, with missing-evidence and meet refusals
+preserved. Growth: **production +0/-3, tests +23/-8 across 2 existing files;
+no new file, owner or dependency**.
+Claude's `mmio-b3-scope-04` permits this component checkpoint and one focused
+gate; it withdraws the proposed universal PSG callee-shape restriction because
+Baker's existing resolver accepts more relationships than Alex's parser.
+
+ONE, TWO and THREE actually checked out `6d228cb`, with both source SHA-256s
+matching the reviewed candidate. BAREWire was also synchronized to `7c3951a0`.
+TWO's PSG remains at `1af3942a` with 14 staged files, preserved pending owner
+classification; it is excluded from acceptance builds. ONE's gate closure
+holds PSG `393a48c1`, Platform `8452124a`, clef `09cab055`, Composer `ee0e5817`
+and Bozzetto `ec034dda`, with no tracked changes before or after the run.
+
+ONE used SDK 10.0.401 and fresh Release outputs for the selected Alex test
+project. The build passed in 38.58 seconds; the filtered built-DLL run passed
+**86/86**, including the opaque-handle positive, missing-meet refusal and
+missing-MMIO-evidence refusal. These are direct pattern controls, not PSG
+admission or source-to-backend acceptance. The historical caught mutation is
+reused at identical source digests. No baseline or Composer gate was rerun.
+Native Claude's final `mmio-b3-final-05` verdict is **accept with follow-up**
+for the two bound files, with no new gate required. The requested read-only
+commit follow-up is retained in `b3-commit-contents.txt`: parent `7ae1535d`,
+only the reviewed two paths. Package-restore closure remains a follow-up if
+a later anomaly requires it.
+
+Evidence under `artifacts/ffi-resume-20261020/`: `b3-final-gate-summary.json`,
+`b3-one-gate/` (complete logs/TRX, hashes and frozen closure), actual native Pi
+checkout transcripts, and `b3-one-command-records.json`. Bozzetto's durable
+Build/Test records bind the stable caller, lease IDs, PIDs and successful
+terminal results. Claude accepts those records as gate binding. Separate
+renewal/release HTTP receipts were not emitted into the wrapper logs and have
+not been independently recovered; that operational limitation does not
+invalidate the bounded gate result.
+Retrieval caught the pushed Alex checkpoint at fresh/latest snapshot
+`7ff681a0c59235b8bc3a24d1c7ba1c9ca6ac06caba78bd45371607b48a658dc5`;
+new discovery used that snapshot. Direct-read exceptions cover retained gate
+artifacts, runtime journal evidence, git metadata/diffs and confirmed spans.
+
+Open: `MMIO-E2E-POSITIVE-UNVERIFIED`, F3 producer-control citations, F5/F6,
+signed-address rewriting, width-profile selection and the broader remediation
+plan. The next F6 proposal validates retained operation agreement in Baker
+before publication; Bits, provenance, address, permissions and post-publication
+corruption remain separate obligations. No PSG parser restriction or mandatory
+second MMIO evidence table is authorized by this component checkpoint.
 
 ## Mandate and starting assessment
 
@@ -292,12 +342,12 @@ Publish useful AgentWork and lease context. No polling UI or infrastructure
 redesign is required for this transition. Deploy matching worker/daemon
 contracts only when necessary, without interrupting another caller's work.
 
-Send **one small packet per increment to the GPT-6.1 Sol auditor in the existing
-Codex audit conversation**, using an available verified transport or owner
-relay. Do not assume a second session shares this conversation. The historical
-`audit.sh` launches read-only Claude Code; it neither launches Fable as a
-write-capable implementer nor routes to the new Codex auditor. Do not create
-a new audit harness or silently keep Opus as a second required reviewer.
+Send **one small packet per increment to native Claude Code, the sole
+independent auditor under the October 20 role assignment above**. The existing
+`audit.sh` launches the read-only auditor and binds its exact native model,
+session and evidence receipts. Astra directs and Pi carries scoped work;
+neither supplies a substitute acceptance verdict. Reuse the existing audit
+transport and resume the bound session where appropriate.
 
 The packet follows [development.md](development.md): requirement and bounded
 claim; base/head plus exact diff; producer/consumer fingerprints; shape matrix;
@@ -308,9 +358,9 @@ proof tier and differential limits; coded residuals. Include per-repo
 The separately named `FFI_Increment_Handoff_Template.md` is absent; use the
 existing development format rather than creating another template.
 
-GPT-6.1 Sol reviews binding, authority, vacuity/coverage, source-to-artifact
+Native Claude reviews binding, authority, vacuity/coverage, source-to-artifact
 faithfulness and consumers; it returns a scoped verdict and any earned gate.
-Fable executes selected gates under leases. Broader regression needs a named
+The implementer coordinates Pi execution of selected gates under leases. Broader regression needs a named
 risk, exact scope and expected wall-clock cost. No automatic whole sweep;
 filtered results remain NarrowedRun. Repeat accepted gates only for changed
 acceptance inputs, binding mismatch, unexplained results or owner-requested
