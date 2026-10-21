@@ -47,10 +47,17 @@ original and corrected Range bytes at this closure: recursive diagnostics were
 byte-identical; numeric diagnostics differed only in a recorded generated claim
 token. Retain `CLEF8297-CLOSURE-TWO-LEAF-FAILURES`; this is attribution, not a
 healthy-closure verdict. The two existing paths are +125/−8, with no new file,
-owner or dependency. Workstation and ONE/TWO/THREE now check out `4ec95065`;
+owner or dependency. Workstation and ONE/TWO/THREE synchronized `4ec95065`;
 G0a on ONE and Z13's G0a/ClosedCallback changes are preserved. Bindings:
 `range-accepted-commit.json`, `range-checkpoint-sync/`, and
 `range-coverage-review-25-return.md` under `artifacts/ffi-resume-20261020/`.
+
+Opus28 subsequently reviewed a three-file test repair. Its first six-leaf run
+on THREE at the C checkpoint below passed five and failed one: claim-only
+deletion reached an earlier Settlement refusal, retaining
+`NUMERIC-STRICT-COMPLETENESS-UNREACHED`. No mutation or weakened assertion is
+credited; the original 444/446 gate remains failed. Exact evidence is in
+`two-leaf-three/binding.json`; further acceptance is pending.
 
 The F5 descriptor correction is accepted at Alex
 `832fbb3e7b0bc0fc4df501eaabd8787a72a78f9c` (Opus review18). Its MMIO parser now
@@ -117,8 +124,12 @@ the corrected constant-index sub-gate: 4/4 controls, both per-carrier mutations
 caught, and 4/4 restored. The full G4 remains incomplete. Installed Rocq 9.3
 cannot load the installed Stdlib 9.2 artifacts; proof-backed cases are blocked,
 and that tool error cannot satisfy a negative control. Focused source probes
-also found CCS8401's signed-64 literal-storage refusal and a signed scalar
-identity refusal. With the accepted Range correction, the three DeviceAccess
+originally found CCS8401's signed-64 literal-storage refusal and a signed scalar
+identity refusal. C below corrects the literal producer; Composer consumer
+success remains unverified. Opus30 rejected an unapplied signed fixture proposal
+and required capture-occurrence, current-source and diagnostic corrections
+before its next three-row gate. With the accepted Range correction, the three
+DeviceAccess
 source positives pass the former Range crash but fail Composer revision integrity
 on missing held references in `Codata.Mmio.Binding` and `Foreign.Mmio.Arguments`.
 The pointer-overflow negative passes its intended boundary. Retain
@@ -128,21 +139,56 @@ bindings are in `range-source-z13-durable/`; the original failures remain in
 `source-failure-owner/finding-packet.md`, `consti-g4-source-owner-finding.json`
 and `g3-z13-durable/real-source-handoff.md`.
 
-The literal/platform-reader C v2 design is approved under Opus25/26 conditions
-and remains unapplied. BP1 passed 2/2 on TWO's original production: the tracked
+Opus29 accepted the literal/platform-reader C correction at clef
+`34b976bb08205971ef870ca0766b30f69075a54e`, parent `4ec95065`.
+TWO passed the filtered xUnit/VSTest selection 41/41, detected all nine reviewed
+mutations, and passed the restored 41/41 with byte-identical compiler/test
+assemblies. No TRUST verdict is claimed. The eight existing files are +290/−43,
+with no new file, owner or dependency. The exact tested ClosedCallback hunk was
+committed while the workstation's unrelated hunk and G0a remained unstaged.
+All four primaries checked out the accepted head, and fresh retrieval generation
+20 binds the pushed owners. CA1's low-literal diagnostic reproduced the high
+literal's exact CCS8403 refusal: module initialization requires the descriptor's
+explicit writable program space. It establishes no high-carrier-specific defect;
+its temporary source and assemblies were restored exactly. Bindings:
+`consti-ac-executed-handoff-final.md`, `consti-implementation-review-29-return.md`,
+`consti-ac-accepted-commit.json`, `consti-ac-accepted-sync/`, and
+`consti-c41-two-durable/ca1-binding.json` under the same evidence directory.
+
+BP1 passed 2/2 on TWO's original production and again within C: the tracked
 M33 and M7 profiles resolve their CPU source fields to `Some 32L`, equal Register
 width 32, with no WordSizeBits or CAbi findings. Both select zero CAbi declarations;
 absence is recorded explicitly. Other ProjectChecker diagnostics are retained,
 so this is effective-value coverage, not full profile admission. The existing
 ProjectWorkspaceTests theory is bound at `3d5afa8f4ca6634e0b7398519fd21f95744a8cb42d3d4f56296db59023ead6de`.
-This closes the two alias-family coverage gap through execution. C follows the
-synchronized documentation checkpoint, retaining the theory in its 41-case
-selection and executing the nine approved mutations.
-The independent ClosedCallback hunk must preserve the workstation's unrelated
-change. Conditions and exact input bindings are in
-`range-coverage-review-25-return.md`, `consti-ac-v2-handoff.md` and
-`consti-bp1-two-durable/final-artifact-binding.json`; exact effective values and
+This closes the two alias-family coverage gap through execution. Original
+effective-value bindings are in `consti-bp1-two-durable/final-artifact-binding.json`;
+exact effective values and
 the complete discovery log's truncated durable suffix are bound in that directory.
+
+The accepted integer-spec delta is separately committed at clef-lang-spec
+`a69ac8a91b49f97bd5a5e7bea2934246c2d54edd`, one existing file +13/−33, no new
+files, and synchronized to all four primaries. Retrieval confirms the new text.
+`SPEC-FLOAT-SUFFIX-EXAMPLES-STALE` remains explicit: retained float suffix examples
+contradict executed CCS8018 behavior. The byte-array and Boolean representation
+remarks are also uncertified. This is not whole-spec consistency acceptance.
+
+The uncommitted PSG typed MMIO holding-role correction implements the reviewed
+Opus27/28 design in two existing files (+126/−2, no new file or dependency).
+ONE passed the selected IntegrityTests owner 207/207, all seven mutations were
+detected, and restoration passed 207/207 with matching source/assembly hashes.
+The original role predicate and explicit-parts table remain byte-identical.
+Its four-source Z13 consumer gate nevertheless failed: the MCU still reports
+30 integrity violations; both guest cases advance to Alex and refuse an 8-bit
+numeric operand where the destination requires 32 bits; the pointer-overflow
+control passes. No Alex widening or source-fixture adjustment is authorized.
+Typed MCU positions and the exact source/selected/published numeric meet require
+diagnosis at their owners. Sole-auditor component acceptance is pending.
+Frozen bindings: `mmio-psg-owner-handoff.md`, `mmio-psg-one-durable/final-binding.json`,
+`mmio-psg-source-successor.md`, and `mmio-psg-source-z13-durable/binding.json`.
+Retain `MMIO-DECLARATION-PROVENANCE-UNHELD` and
+`MMIO-PREDICATE-ROLE-SEMANTICS-UNVERIFIED`; a structural suite is not source
+admission or end-to-end acceptance.
 
 Keep `MMIO-POINTER-ROW-SELECTION-UNVERIFIED`, `BORROWEDVIEW-SIGNED-REPACK` and
 the nonblocking owner-policy question `ARTIFACT-RECEIPT-FORMAT-VERSIONING`
