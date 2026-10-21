@@ -30,11 +30,27 @@ The F6 source-owner correction is accepted at clef
 selected 15 cases; disabling the operation comparison kept the real positive
 passing and killed the mismatch control; exact restoration passed 15/15 with
 byte-identical compiler/test assemblies. The three existing files are +150/−14,
-with no new file, owner or dependency. All four primary heads match; the
-workstation's unrelated ClosedCallback change is preserved. The indexed census
+with no new file, owner or dependency. All four primaries synchronized that
+checkpoint; the workstation's unrelated ClosedCallback change remains preserved. The indexed census
 found no existing admitted-MMIO test, so retain
 `F6-ADMITTED-MMIO-PREPARE-UNEXERCISED` alongside the existing failed end-to-end
 positive. Binding: `artifacts/ffi-resume-20261020/f6-acceptance-conditions/acceptance-handoff.md`.
+
+Opus25 independently accepted the Range invocation-membership correction at
+clef `4ec950659bd03b9ecae6a132d12092779cc2122f`, parent `8297f157`.
+The existing walker traverses full-graph structure within Lambda boundaries,
+then admits only reachable members. Four controls and four discriminating
+mutations establish that rule, with exact source and assembly restoration.
+The selected consumer gate **failed: 444 passed, 2 failed, 0 skipped**; all
+15 F6 controls passed and G0a was excluded. The same two leaves failed on the
+original and corrected Range bytes at this closure: recursive diagnostics were
+byte-identical; numeric diagnostics differed only in a recorded generated claim
+token. Retain `CLEF8297-CLOSURE-TWO-LEAF-FAILURES`; this is attribution, not a
+healthy-closure verdict. The two existing paths are +125/−8, with no new file,
+owner or dependency. Workstation and ONE/TWO/THREE now check out `4ec95065`;
+G0a on ONE and Z13's G0a/ClosedCallback changes are preserved. Bindings:
+`range-accepted-commit.json`, `range-checkpoint-sync/`, and
+`range-coverage-review-25-return.md` under `artifacts/ffi-resume-20261020/`.
 
 The F5 descriptor correction is accepted at Alex
 `832fbb3e7b0bc0fc4df501eaabd8787a72a78f9c` (Opus review18). Its MMIO parser now
@@ -90,8 +106,9 @@ settled width. Width agreement is required at those leaves, including nested
 regions; an unused pointer width remains irrelevant. The selected target gate
 and exact restoration passed 22/22; four buildable mutations failed as intended.
 The requested source-mutation case is separately qualified because the renderer
-receives immutable source values. Production acceptance is pending. Evidence:
-`mmio-native-amendment-audit-21-return.md` and `mmio-target-durable/handoff.md`.
+receives immutable source values. Opus22 accepted this target-renderer component;
+its commit remains deferred with the coupled Alex carrier. Evidence:
+`ffi-source-owner-audit-22-return.md` and `mmio-target-durable/handoff.md`.
 `GPU-NATIVE-INDEX-SPELLING` remains a bounded compatibility residual; the raw
 text lowerer grants no source admission authority.
 
@@ -101,11 +118,31 @@ caught, and 4/4 restored. The full G4 remains incomplete. Installed Rocq 9.3
 cannot load the installed Stdlib 9.2 artifacts; proof-backed cases are blocked,
 and that tool error cannot satisfy a negative control. Focused source probes
 also found CCS8401's signed-64 literal-storage refusal and a signed scalar
-identity refusal. All three existing DeviceAccess source cases threw in
-RangeAnalysis before witnessing or native lowering. These results are distinct
-from target-renderer success and do not establish source admission. Exact
-stages, source bindings and retained logs are in `source-failure-owner/finding-packet.md`,
-`consti-g4-source-owner-finding.json` and `g3-z13-durable/real-source-handoff.md`.
+identity refusal. With the accepted Range correction, the three DeviceAccess
+source positives pass the former Range crash but fail Composer revision integrity
+on missing held references in `Codata.Mmio.Binding` and `Foreign.Mmio.Arguments`.
+The pointer-overflow negative passes its intended boundary. Retain
+`MMIO-REVISION-HELD-REFERENCES`; the limited printed diagnostics do not identify
+every suppressed cause. This establishes no positive source admission. Current
+bindings are in `range-source-z13-durable/`; the original failures remain in
+`source-failure-owner/finding-packet.md`, `consti-g4-source-owner-finding.json`
+and `g3-z13-durable/real-source-handoff.md`.
+
+The literal/platform-reader C v2 design is approved under Opus25/26 conditions
+and remains unapplied. BP1 passed 2/2 on TWO's original production: the tracked
+M33 and M7 profiles resolve their CPU source fields to `Some 32L`, equal Register
+width 32, with no WordSizeBits or CAbi findings. Both select zero CAbi declarations;
+absence is recorded explicitly. Other ProjectChecker diagnostics are retained,
+so this is effective-value coverage, not full profile admission. The existing
+ProjectWorkspaceTests theory is bound at `3d5afa8f4ca6634e0b7398519fd21f95744a8cb42d3d4f56296db59023ead6de`.
+This closes the two alias-family coverage gap through execution. C follows the
+synchronized documentation checkpoint, retaining the theory in its 41-case
+selection and executing the nine approved mutations.
+The independent ClosedCallback hunk must preserve the workstation's unrelated
+change. Conditions and exact input bindings are in
+`range-coverage-review-25-return.md`, `consti-ac-v2-handoff.md` and
+`consti-bp1-two-durable/final-artifact-binding.json`; exact effective values and
+the complete discovery log's truncated durable suffix are bound in that directory.
 
 Keep `MMIO-POINTER-ROW-SELECTION-UNVERIFIED`, `BORROWEDVIEW-SIGNED-REPACK` and
 the nonblocking owner-policy question `ARTIFACT-RECEIPT-FORMAT-VERSIONING`
