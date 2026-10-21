@@ -96,6 +96,22 @@ history receipts are retained in `artifacts/ffi-resume-20261020/` as
 `two-staged.diff` (SHA-256 `9ae2585f…e690c1b`), `two-staged-inventory.json`
 and `two-staged-history.json`. No staged compiler work was reset or accepted.
 
+The owner subsequently directed that the reviewed rollback be discarded.
+After checking both exact captured diffs, TWO restored only those reviewed
+paths and fast-forwarded PSG to `393a48c1` and BAREWire to `7c3951a0`; both
+have clean tracked state. The review evidence remains retained. This
+disposition does not authorize discarding other staged work discovered by
+the wider repository inventory.
+
+**Absolute Alex boundary, owner reaffirmed:** Baker's construction and
+transformation of the PSG supplied to Alex is legitimate. Any transformation
+inside Alex is an architectural violation. Alex's sole program input is
+`Fidelity.PSG.Revision`; no Baker, Clef or CCS imports or dependencies are
+permitted anywhere in Alex, including tests and tooling. Missing facts are
+repaired at their source owner and published; they are never reconstructed
+inside Alex. This is an acceptance requirement, not an assertion that the
+current code has passed its complete architectural audit.
+
 ONE used SDK 10.0.401 and fresh Release outputs for the selected Alex test
 project. The build passed in 38.58 seconds; the filtered built-DLL run passed
 **86/86**, including the opaque-handle positive, missing-meet refusal and
