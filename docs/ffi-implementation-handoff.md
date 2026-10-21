@@ -73,11 +73,28 @@ gate; it withdraws the proposed universal PSG callee-shape restriction because
 Baker's existing resolver accepts more relationships than Alex's parser.
 
 ONE, TWO and THREE actually checked out `6d228cb`, with both source SHA-256s
-matching the reviewed candidate. BAREWire was also synchronized to `7c3951a0`.
-TWO's PSG remains at `1af3942a` with 14 staged files, preserved pending owner
-classification; it is excluded from acceptance builds. ONE's gate closure
+matching the reviewed candidate. ONE and THREE synchronized BAREWire to
+`7c3951a0`. TWO's PSG remains at `1af3942a` with 14 staged files; its BAREWire
+remains at `73c27605` with staged `src/Descriptors/Bindings.fs`. The owner
+classifies the PSG work as active or uncertain and directs preservation for
+review; the staged BAREWire work is also preserved. TWO is excluded from
+acceptance builds. ONE's gate closure
 holds PSG `393a48c1`, Platform `8452124a`, clef `09cab055`, Composer `ee0e5817`
 and Bozzetto `ec034dda`, with no tracked changes before or after the run.
+
+**TWO preservation review:** the captured PSG index tree `c650dec0` exactly
+matches historical commit `f77afebb`, five commits before its local HEAD
+`1af3942a`; no unstaged tracked delta was present. The 14 staged modifications
+are +559/-2868, including schema 32 → 28, resource lifecycle facts, callback
+extent/registration and snapshot-count incidence removals. Some supporting
+types relocate to `Edges.fs`; those moves do not replace the removed facts.
+The separate BAREWire staging also removes resource and process-exit
+descriptors. Native Claude's `two-staged-triage-07` says do not promote this
+state. Preserve both indexes for owner review; historical equivalence proves
+the PSG rollback's shape, not its author, timing or intent. Exact patch and
+history receipts are retained in `artifacts/ffi-resume-20261020/` as
+`two-staged.diff` (SHA-256 `9ae2585f…e690c1b`), `two-staged-inventory.json`
+and `two-staged-history.json`. No staged compiler work was reset or accepted.
 
 ONE used SDK 10.0.401 and fresh Release outputs for the selected Alex test
 project. The build passed in 38.58 seconds; the filtered built-DLL run passed
