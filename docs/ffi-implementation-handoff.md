@@ -16,8 +16,9 @@ Alex `18b12bf9cd927b5018a100e00db65d6a3675f00b` retires the compiler-dependent
 `tools/CcsSurfaceInventory.fsx` and updates its two historical references.
 Native Claude reviews 14/15 accepted this bounded removal; the durable THREE
 LeasedCommand record confirms the selected build exited 0 in 34.23 seconds.
-The historical measurement TSV is unchanged. The workstation and ONE/TWO/THREE
-have the same clean Alex `main` checkout, now at the F5 checkpoint below.
+The historical measurement TSV is unchanged. At the F5 synchronization below,
+the workstation and ONE/TWO/THREE had matching clean Alex `main` checkouts.
+The current coupled candidate is uncommitted and is distinguished below.
 Growth: three existing paths, +2/−64;
 no new file, owner or dependency. Exact commit, closure and command bindings are
 in `artifacts/ffi-resume-20261020/lan-resume/three/alex-retirement/acceptance-handoff.md`.
@@ -67,13 +68,50 @@ constructor sites and six accessor handle arguments have numeric-domain
 `Pointer 1` rows, including aliases. This proves the checked graph; it does not
 prove retained rows after admission/publication. The candidate test and exact
 gate binding are in `artifacts/ffi-resume-20261020/mmio-g0a-handoff.md`.
-The coupled Alex/Composer implementation is in progress, not accepted: extend
-the existing integer carrier, consume both published pointer representations,
-and retain exact source values in Composer's existing correspondence receipts.
+The coupled Alex/Composer implementation is in progress, not accepted. The
+existing integer carrier retains exact values, both MMIO sites consume direct
+published pointer representations through TypeMapping, and Composer retains
+exact source values in its existing correspondence receipts. ONE's final
+pointer controls passed 105/105; the two fixed-reader mutations each failed
+their three intended controls. Earlier address-repacking and unsigned-literal
+mutations remain bound to their earlier candidate. Z13's unfiltered Alex suite
+passed 490/490 after two existing callable-aggregate fixtures were corrected to
+match the current PSG contract; the original 482-pass/8-fail result is retained.
+Bindings: `mmio-alex-g1-handoff.md`, `g1-one-durable/` and `g2-z13-durable/`
+under `artifacts/ffi-resume-20261020/`.
+
+Native probes exposed MLIR's physical index-attribute limit: exact high i64
+constants work, but two high index64 constants were rejected. Those first
+probes bypassed Composer's typed renderer and are not complete production-route
+evidence. Opus21 approved a correction in the existing Composer target renderer:
+preserve the mathematical source value and catalog, validate source authority
+first, and spell the native representative only at an index leaf using its
+settled width. Width agreement is required at those leaves, including nested
+regions; an unused pointer width remains irrelevant. The selected target gate
+and exact restoration passed 22/22; four buildable mutations failed as intended.
+The requested source-mutation case is separately qualified because the renderer
+receives immutable source values. Production acceptance is pending. Evidence:
+`mmio-native-amendment-audit-21-return.md` and `mmio-target-durable/handoff.md`.
+`GPU-NATIVE-INDEX-SPELLING` remains a bounded compatibility residual; the raw
+text lowerer grants no source admission authority.
+
+G4's initial 73 executed cases passed 52 and failed 21. Opus21 separately closed
+the corrected constant-index sub-gate: 4/4 controls, both per-carrier mutations
+caught, and 4/4 restored. The full G4 remains incomplete. Installed Rocq 9.3
+cannot load the installed Stdlib 9.2 artifacts; proof-backed cases are blocked,
+and that tool error cannot satisfy a negative control. Focused source probes
+also found CCS8401's signed-64 literal-storage refusal and a signed scalar
+identity refusal. All three existing DeviceAccess source cases threw in
+RangeAnalysis before witnessing or native lowering. These results are distinct
+from target-renderer success and do not establish source admission. Exact
+stages, source bindings and retained logs are in `source-failure-owner/finding-packet.md`,
+`consti-g4-source-owner-finding.json` and `g3-z13-durable/real-source-handoff.md`.
+
 Keep `MMIO-POINTER-ROW-SELECTION-UNVERIFIED`, `BORROWEDVIEW-SIGNED-REPACK` and
 the nonblocking owner-policy question `ARTIFACT-RECEIPT-FORMAT-VERSIONING`
-explicit. The native reviews select the gates and mutations; this checkpoint
-does not claim they have executed.
+explicit. Native reviews select the gates and mutations; only the executed
+scopes above are claimed. The coupled source changes await sole-auditor review
+and a synchronized checkpoint; existing accepted heads remain their bases.
 
 Remaining work includes operation-prefix interpretation, width/profile ownership,
 arity, signed-address conversion and pointer representation. Missing-descriptor
@@ -82,7 +120,8 @@ can claim the occurrence; admission coherence of those rows remains unverified.
 The source trace is `artifacts/ffi-resume-20261020/f5-m4-authority-entry.json`.
 These accepted increments establish neither whole-Alex passivity nor completion
 of the larger remediation. Original failed attempts and durable Bozzetto command
-records remain part of each packet; no unfiltered-suite verdict is claimed.
+records remain part of each packet; a component suite does not establish the
+complete FFI architecture.
 
 ## October 20 review checkpoint
 
