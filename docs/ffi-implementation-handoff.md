@@ -10,6 +10,61 @@ architecture and current code; their recorded acceptance can conceal leaks.
 This is the implementer's operating brief. Maintain capability decisions and
 scoped acceptance in the [FFI compendium](ffi-correction-compendium.md).
 
+## October 21 engineering checkpoint
+
+Alex `18b12bf9cd927b5018a100e00db65d6a3675f00b` retires the compiler-dependent
+`tools/CcsSurfaceInventory.fsx` and updates its two historical references.
+Native Claude reviews 14/15 accepted this bounded removal; the durable THREE
+LeasedCommand record confirms the selected build exited 0 in 34.23 seconds.
+The historical measurement TSV is unchanged. The workstation and ONE/TWO/THREE
+have the same clean Alex `main` checkout, now at the F5 checkpoint below.
+Growth: three existing paths, +2/−64;
+no new file, owner or dependency. Exact commit, closure and command bindings are
+in `artifacts/ffi-resume-20261020/lan-resume/three/alex-retirement/acceptance-handoff.md`.
+The tooling guard source remains unbound (`BOUNDARY_SOURCE_UNAVAILABLE`); this
+removal does not establish exhaustive Alex passivity or repository-wide enforcement.
+
+The F6 source-owner correction is accepted at clef
+`8297f157b7974e7eac8907430b541fefa7e24daa` (Opus review17). ONE passed the
+selected 15 cases; disabling the operation comparison kept the real positive
+passing and killed the mismatch control; exact restoration passed 15/15 with
+byte-identical compiler/test assemblies. The three existing files are +150/−14,
+with no new file, owner or dependency. All four primary heads match; the
+workstation's unrelated ClosedCallback change is preserved. The indexed census
+found no existing admitted-MMIO test, so retain
+`F6-ADMITTED-MMIO-PREPARE-UNEXERCISED` alongside the existing failed end-to-end
+positive. Binding: `artifacts/ffi-resume-20261020/f6-acceptance-conditions/acceptance-handoff.md`.
+
+The F5 descriptor correction is accepted at Alex
+`832fbb3e7b0bc0fc4df501eaabd8787a72a78f9c` (Opus review18). Its MMIO parser now
+reads the published operation and arguments instead of resolving the callee
+again. THREE passed 90/90 selected tests; restoring the old resolver failed only
+the new nested-annotation control; restoring the candidate passed 90/90. Two
+existing files are +85/−3, with no new file, owner or dependency. These are
+PSG-only component controls, not proof of a real-source alias path. Binding:
+`artifacts/ffi-resume-20261020/f5-descriptor-production-handoff.json` and
+`artifacts/ffi-resume-20261020/f5-acceptance-conditions/acceptance-handoff.md`.
+
+The final Git inventory covered 53 existing FidelityFramework primary checkouts
+on the workstation and 19/19/20 on ONE/TWO/THREE. Eligible clean `main` branches
+were fetched and fast-forwarded; dirty and non-main work was preserved, and no
+missing checkout was created. Four workstation origins remain inaccessible
+(`.github`, `FStar`, `FsNativeAutoComplete`, `Ionide-vim-fsnative`). Exact heads,
+branch differences and missing checkouts are recorded in
+`artifacts/ffi-resume-20261020/final-primary-git-sync/handoff.md`.
+This synchronization advanced LAN Fidelity.Data from `7cc19d6b` to `fd2202fd`.
+F6's accepted gate remains bound to `7cc19d6b`; current-closure validation at
+`fd2202fd` is pending the auditor's assessment of the bounded JSON/TOML delta.
+
+Remaining work includes operation-prefix interpretation, width/profile ownership,
+arity, signed-address conversion and pointer representation. Missing-descriptor
+dispatch has conditional refusal paths, but a competing published callable row
+can claim the occurrence; admission coherence of those rows remains unverified.
+The source trace is `artifacts/ffi-resume-20261020/f5-m4-authority-entry.json`.
+These accepted increments establish neither whole-Alex passivity nor completion
+of the larger remediation. Original failed attempts and durable Bozzetto command
+records remain part of each packet; no unfiltered-suite verdict is claimed.
+
 ## October 20 review checkpoint
 
 Native Claude reviewed the [detailed remediation draft](ffi-drift-correction-plan.md):
