@@ -52,12 +52,20 @@ G0a on ONE and Z13's G0a/ClosedCallback changes are preserved. Bindings:
 `range-accepted-commit.json`, `range-checkpoint-sync/`, and
 `range-coverage-review-25-return.md` under `artifacts/ffi-resume-20261020/`.
 
-Opus28 subsequently reviewed a three-file test repair. Its first six-leaf run
-on THREE at the C checkpoint below passed five and failed one: claim-only
-deletion reached an earlier Settlement refusal, retaining
-`NUMERIC-STRICT-COMPLETENESS-UNREACHED`. No mutation or weakened assertion is
-credited; the original 444/446 gate remains failed. Exact evidence is in
-`two-leaf-three/binding.json`; further acceptance is pending.
+Opus34 accepted the three-file test-owner repair at clef
+`0070eec357ba1397437bb70d2aeba940fa2a51c3`, parent `34b976bb`, synchronized
+on all four primaries. Six selected leaves passed; all five reviewed mutants
+built and failed at their exact owner assertions; restoration passed 6/6 with
+three identical DLLs and restored production sources. The existing test paths
+are +105/−6, with no new file, owner or dependency. G0a and the unrelated
+ClosedCallback changes remain preserved and unstaged. No further gate was
+earned; this is filtered test-owner acceptance, not a full-suite verdict.
+The original 444/446 consumer gate stays failed. Retain
+`NUMERIC-STRICT-COMPLETENESS-UNREACHED` and `RANGE-RECURSION-EXACTNESS-UNVERIFIED`.
+The first mutant's compile failure and the recovered TRX-basename collection
+error remain recorded; no completed mutation was repeated. Exact bindings:
+`two-leaf-three-successor/acceptance-handoff.md`, `final-binding.json` and
+`attempt02-binding.json` in that directory, plus `b34-accepted-checkpoint/`.
 
 The F5 descriptor correction is accepted at Alex
 `832fbb3e7b0bc0fc4df501eaabd8787a72a78f9c` (Opus review18). Its MMIO parser now
@@ -126,11 +134,21 @@ cannot load the installed Stdlib 9.2 artifacts; proof-backed cases are blocked,
 and that tool error cannot satisfy a negative control. Focused source probes
 originally found CCS8401's signed-64 literal-storage refusal and a signed scalar
 identity refusal. C below corrects the literal producer; Composer consumer
-success remains unverified. Opus30 rejected an unapplied signed fixture proposal
-and required capture-occurrence, current-source and diagnostic corrections
-before its next three-row gate. With the accepted Range correction, the three
-DeviceAccess
-source positives pass the former Range crash but fail Composer revision integrity
+success remains unverified. Opus31 withdrew Opus30's claim that the owner ignores
+closure-application arguments and approved the corrected three-row fixture.
+Its build passed, but all three rows failed: signed −4/bits8 and bool1/bits1
+reached `CONSTI_SOURCE` before the exact Rocq mismatch (`TOOL-BLOCKED`); unsigned
+failed before the marker at the unchanged factory-call environment/scalar
+identity check. This is a source/correspondence finding, not acceptance or a
+width-policy decision. Five output assemblies remained unchanged; exact raw,
+TRX, argv and joins are in `g4-scalar31-durable/binding.json`.
+The subsequent single unsigned diagnostic bound the mismatch to expected scalar
+SSA `V(5808,511)` versus actual `V(6139,1000)`, with equal environment and
+64-bit type. Its source and all 235 DLL/PDB outputs were restored exactly.
+`UNSIGNED-EXACTCALL-SSA-IDENTITY` remains a finding, not an admitted conversion;
+see `g4-unsigned33-durable/binding.json`.
+Before the PSG correction below, the three DeviceAccess source positives passed
+the former Range crash but failed Composer revision integrity
 on missing held references in `Codata.Mmio.Binding` and `Foreign.Mmio.Arguments`.
 The pointer-overflow negative passes its intended boundary. Retain
 `MMIO-REVISION-HELD-REFERENCES`; the limited printed diagnostics do not identify
@@ -173,8 +191,11 @@ files, and synchronized to all four primaries. Retrieval confirms the new text.
 contradict executed CCS8018 behavior. The byte-array and Boolean representation
 remarks are also uncertified. This is not whole-spec consistency acceptance.
 
-The uncommitted PSG typed MMIO holding-role correction implements the reviewed
-Opus27/28 design in two existing files (+126/−2, no new file or dependency).
+Opus31 accepted the PSG typed MMIO holding-role component at
+`e50bd74aaa6d49a6288d2889f148c707745d7733`, synchronized to all four primaries.
+Its two existing files are +126/−2, with no new file, owner or dependency.
+The baseline generated enumerator covers every predicate position; the new
+role checks do not introduce additional refusals apart from the Site/key check.
 ONE passed the selected IntegrityTests owner 207/207, all seven mutations were
 detected, and restoration passed 207/207 with matching source/assembly hashes.
 The original role predicate and explicit-parts table remain byte-identical.
@@ -183,9 +204,23 @@ Its four-source Z13 consumer gate nevertheless failed: the MCU still reports
 numeric operand where the destination requires 32 bits; the pointer-overflow
 control passes. No Alex widening or source-fixture adjustment is authorized.
 Typed MCU positions and the exact source/selected/published numeric meet require
-diagnosis at their owners. Sole-auditor component acceptance is pending.
-Frozen bindings: `mmio-psg-owner-handoff.md`, `mmio-psg-one-durable/final-binding.json`,
-`mmio-psg-source-successor.md`, and `mmio-psg-source-z13-durable/binding.json`.
+diagnosis at their owners. The paired managed diagnostic subsequently confirmed
+the guest write32 consumer has no source, selected or published meet from its
+8-bit value to the 32-bit destination. MCU's exact 30 predicate participants
+exist natively but are inactive and absent from all six inspected retained sets.
+The two diagnostic cases passed and their temporary source/36 outputs were
+restored; this does not admit either real-source positive. Opus34 approved an
+existing Baker meet-producer design with fail-closed unsigned-extension and
+identity/health controls; implementation and downstream gates remain pending.
+MCU predicate retention remains an owner-policy question. Bindings:
+`mmio-two-case-final-handoff.md`, `mmio-two-case-one-durable/terminal-binding.json`
+and `b-acceptance-guest-review-34-return.md`.
+Component acceptance does not admit these source cases.
+Bindings: `mmio-psg-accepted-checkpoint/acceptance-handoff.md`,
+`mmio-psg-one-durable/final-binding.json`, `mmio-psg-source-successor.md`, and
+`mmio-psg-source-z13-durable/binding.json`. Its A3 successor explains the two-byte
+ledger discrepancy as UTF-8 byte versus decoded-character offsets; no bytes
+trail the matched suffix, and the frozen original bindings remain unchanged.
 Retain `MMIO-DECLARATION-PROVENANCE-UNHELD` and
 `MMIO-PREDICATE-ROLE-SEMANTICS-UNVERIFIED`; a structural suite is not source
 admission or end-to-end acceptance.

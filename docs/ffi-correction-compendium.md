@@ -31,20 +31,30 @@ C correction at `34b976bb`; the integer-spec correction is separately accepted
 at clef-lang-spec `a69ac8a9`. These are component acceptances, not full FFI or
 whole-spec consistency. Exact gates, growth and residuals are bound in the
 [implementation handoff](ffi-implementation-handoff.md). The retained Range
-consumer gate remains failed at 444/446; the subsequent six-leaf test repair
-passed five and failed at an earlier numeric Settlement refusal, retaining
-`NUMERIC-STRICT-COMPLETENESS-UNREACHED` pending review.
+consumer gate remains failed at 444/446. Opus34 separately accepted the three-file
+test-owner repair at clef `0070eec3`: six selected leaves, five discriminating
+mutations and exact source/three-DLL restoration. All four primaries checked
+out that head. No further gate was earned; retain
+`NUMERIC-STRICT-COMPLETENESS-UNREACHED` and `RANGE-RECURSION-EXACTNESS-UNVERIFIED`.
+This does not turn the historical consumer gate into a full-suite pass.
 
-The coupled Alex/Composer MMIO increment remains uncommitted. PSG's holding-role
-candidate passed 207/207 owner controls and seven mutations, but its three
+The coupled Alex/Composer MMIO increment remains uncommitted. Opus31 accepted
+PSG's holding-role component at `e50bd74a`, synchronized on all four primaries:
+207/207 owner controls, seven mutations and exact restoration. Its three
 real-source positives still fail: MCU integrity and guest numeric-width
-agreement remain unresolved; only the overflow negative passes. G4 remains
-incomplete, including the Rocq compiler/standard-library mismatch and pending
-scalar-fixture review. F3 and broader architectural remediation remain open.
-These failures do not revoke earlier bounded verdicts or establish end-to-end
-MMIO acceptance. Evidence: `mmio-psg-source-z13-durable/binding.json` and
-`two-leaf-three/binding.json` in the same evidence directory. The retained spec
-float-suffix examples contradict executed compiler behavior
+agreement remain unresolved; only the overflow negative passes. A paired
+managed diagnostic bound the guest's missing 8→32 meet and all 30 native-present,
+inactive MCU predicate participants. Opus34 approved a Baker meet-producer
+design, not its implementation or consumer acceptance; MCU retention policy
+remains open. G4 signed and Boolean rows reach their source markers but stop
+at the Rocq compiler/standard-library mismatch. The unsigned diagnostic records
+`UNSIGNED-EXACTCALL-SSA-IDENTITY`; exact temporary source and output restoration
+does not establish correspondence success. F3 and broader architectural
+remediation remain open. These failures do not revoke earlier bounded verdicts
+or establish end-to-end MMIO acceptance. Evidence under the same directory:
+`mmio-psg-accepted-checkpoint/`, `two-leaf-three-successor/acceptance-handoff.md`,
+`mmio-two-case-final-handoff.md`, and `g4-unsigned33-durable/binding.json`.
+The retained spec float-suffix examples contradict executed compiler behavior
 (`SPEC-FLOAT-SUFFIX-EXAMPLES-STALE`); byte-array/Boolean remarks remain uncertified.
 
 **Private foreign-read → checked text accepted, October 17.** Clef `1dfc73de`
