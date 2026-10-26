@@ -6,10 +6,12 @@ Words used here. A **ruling** is the owner's or the spec's decision and binds ev
 
 ## 1. Purpose and status
 
-**Current owner-directed roles, October 20.** Astra directs, Pi on the LAN and
-Z13 carries scoped work, and native Claude Code is the sole independent
-adversarial auditor. This replaces the October 17 assignment. Earlier verdicts
-retain only their recorded scopes. The
+**Current owner-directed roles, October 26.** Codex manages the full
+cross-repository FFI closure. Sage-A1.5 through Pi on Z13 and Pi on
+ONE/TWO/THREE perform scoped work, using retrieval for focused cited context.
+Native Claude Code supplies one independent adversarial auditor per increment:
+prefer Fable 5.1, with Opus 5.5 selected for more complex reviews. This replaces
+the October 20 assignment. Earlier verdicts retain only their recorded scopes. The
 [implementation handoff](ffi-implementation-handoff.md) owns the current heads,
 next deliverable and review protocol; it introduces no additional FFI requirements.
 

@@ -1,14 +1,28 @@
 # FFI implementation handoff
 
-Owner-directed resumption, October 20, 2026: **Astra directs; Pi agents on the
-LAN and Z13 carry scoped investigation and implementation; native Claude Code
-is the independent adversarial auditor.** This supersedes the October 17 role
-assignment. The immediate priority is architectural correction: Baker owns
+Owner-directed roles, October 26, 2026: **Codex manages the full cross-repository
+FFI closure; Sage-A1.5 through local Pi on Z13 and Pi on ONE/TWO/THREE carry
+scoped work; native Claude Code supplies one independent adversarial auditor
+per increment. Prefer Fable 5.1; select Opus 5.5 when the review's complexity
+warrants it.** This supersedes the October 20 role assignment.
+The immediate priority is architectural correction: Baker owns
 transformations, and Alex passively witnesses published facts through the Huet
 zipper. Audit the compendium and earlier acceptances against the governing
 architecture and current code; their recorded acceptance can conceal leaks.
 This is the implementer's operating brief. Maintain capability decisions and
 scoped acceptance in the [FFI compendium](ffi-correction-compendium.md).
+
+Codex owns sequencing across repositories, task boundaries, integration,
+checkpoint synchronization and the evidence packet for the selected auditor.
+Keep the closure account in compendium §11.1: each remaining designed profile
+needs its existing owner, affected consumers, accepted evidence and open exit
+conditions. Local and LAN workers receive bounded questions or candidate
+changes with exact source identities; retrieval supplies cited context, not
+acceptance. Preserve the unfinished checkouts before assigning edits. Resume
+the approved guest MMIO meet-producer increment first; keep MCU retention
+policy and the Rocq toolchain mismatch separately tracked, then return to the
+remaining designed FFI profiles. This role change neither expands those
+profiles nor changes any earlier acceptance scope.
 
 ## October 21 engineering checkpoint
 
@@ -612,11 +626,17 @@ redesign is required for this transition. Deploy matching worker/daemon
 contracts only when necessary, without interrupting another caller's work.
 
 Send **one small packet per increment to native Claude Code, the sole
-independent auditor under the October 20 role assignment above**. The existing
+independent auditor under the October 26 role assignment above**. The existing
 `audit.sh` launches the read-only auditor and binds its exact native model,
-session and evidence receipts. Astra directs and Pi carries scoped work;
-neither supplies a substitute acceptance verdict. Reuse the existing audit
-transport and resume the bound session where appropriate.
+session and evidence receipts. Select `--model claude-fable-5-1` explicitly at
+high effort by default; the launcher's historical Opus default is not the
+current assignment. Codex may select `--model claude-opus-5-5` for complex
+architectural, proof-correspondence or cross-repository contract reviews.
+Use one auditor at a time for an increment. A model change starts a new native
+session with the bound delta packet; never resume across models or silently
+fall back. Codex manages the work and Pi carries scoped tasks; neither supplies
+a substitute acceptance verdict. Reuse the existing audit transport and resume
+a bound same-model session where appropriate.
 
 The packet follows [development.md](development.md): requirement and bounded
 claim; base/head plus exact diff; producer/consumer fingerprints; shape matrix;
