@@ -9,6 +9,9 @@ Words used here. A **ruling** is the owner's or the spec's decision and binds ev
 **Current owner-directed roles, October 26.** Codex manages the full
 cross-repository FFI closure. Sage-A1.5 through Pi on Z13 and Pi on
 ONE/TWO/THREE perform scoped work, using retrieval for focused cited context.
+Codex assigns all four directly as peers according to their resources and
+capabilities. Z13 does not dispatch LAN work in this workflow; that hierarchy
+belongs to Beancounter.
 Native Claude Code supplies one independent adversarial auditor per increment:
 prefer Fable 5.1, with Opus 5.5 selected for more complex reviews. This replaces
 the October 20 assignment. Earlier verdicts retain only their recorded scopes. The
@@ -42,13 +45,26 @@ This does not turn the historical consumer gate into a full-suite pass.
 
 The coupled Alex/Composer MMIO increment remains uncommitted. Opus31 accepted
 PSG's holding-role component at `e50bd74a`, synchronized on all four primaries:
-207/207 owner controls, seven mutations and exact restoration. Its three
-real-source positives still fail: MCU integrity and guest numeric-width
-agreement remain unresolved; only the overflow negative passes. A paired
+207/207 owner controls, seven mutations and exact restoration. At that gate,
+the three real-source positives failed on MCU integrity and guest numeric-width
+agreement; only the overflow negative passed. A paired
 managed diagnostic bound the guest's missing 8→32 meet and all 30 native-present,
 inactive MCU predicate participants. Opus34 approved a Baker meet-producer
-design, not its implementation or consumer acceptance; MCU retention policy
-remains open. G4 signed and Boolean rows reach their source markers but stop
+design. The later retained Opus42 owner gate passed eight of nine controls and
+failed the annotated transaction operand identity (11701 versus 11700); no
+mutations or Z13 consumers followed, and all three sources and 156 original
+outputs were restored. The October 26 successor passed all nine owner controls
+and all seven mutation discriminators. Z13's rebuilt, assembly-bound consumer
+gate passed both guest positives through optimized LLVM lowering and retained
+the passing overflow rejection. MCU still fails with 30 missing-held-node
+integrity violations. Native Fable 5.1 accepted the producer and scoped guest
+consumer evidence, then required and accepted a second 9/9 gate on exact
+landing bytes excluding the unrelated G0a draft. Clef `9aa171ba` is pushed:
+three existing files, +262/-0 (20 producer lines, 242 tests), no new file, owner
+or dependency. The original evidence-run sources/outputs were restored before
+landing; the complete bindings are in the implementation handoff. Sequential
+and actual annotated Alex consumption remain unverified. This is not whole-FFI
+or MCU acceptance; MCU retention policy remains open. G4 signed and Boolean rows reach their source markers but stop
 at the Rocq compiler/standard-library mismatch. The unsigned diagnostic records
 `UNSIGNED-EXACTCALL-SSA-IDENTITY`; exact temporary source and output restoration
 does not establish correspondence success. F3 and broader architectural
@@ -760,7 +776,7 @@ history. These are the current closure groups, not a second requirements owner:
 | --- | --- |
 | Portable fat pointers and flat closures | Callable rows and several Phase B source-demand/readiness increments are accepted in bounded scopes. Reader binding, formation/lifetime and native reconstruction controls remain in §§6 and11. |
 | Native entry and foreign invocation | Explicit Linux AMD64 libc write/snapshot and relational labs fixtures have bounded accepted native realization. General ABI, host loading, address and execution authority remain separate open tranches. Source rooting or a portable callable row grants none of them. |
-| Aggregate and scalar marshaling | Existing source/receipt controls are credited; native aggregate/Assign readers, target conversions and required lifetime/ownership evidence remain open. |
+| Aggregate and scalar marshaling | Clef `9aa171ba` closes the bounded MMIO unsigned transaction-meet producer, including exact annotation operand identity, with Fable-accepted owner9/9, seven mutations and scoped guest LLVM consumers (October26 checkpoint above). MCU retention, Sequential and actual annotated Alex consumption remain open, alongside native aggregate/Assign readers, other target conversions and required lifetime/ownership evidence. |
 | Runtime string/byte borrows | Q3 samples18–23 retain explicit borrow/residence/lifetime refusals. The next slice extends existing source owners with complete evidence; it does not admit a borrow by suppressing its refusal. |
 | Binding generation and regeneration | Farscape and BAREWire vocabulary, descriptor provenance, pilot/annotation refusals and Fidelity.Platform regeneration require coordinated acceptance. Legacy desktop bindings retain their existing freeze. C++ template mapping through BAREWire is a later scoped row, with no delivery claimed. |
 | Differential claim and artifact reuse | D5 stable provenance, validity keys, consumed-proof dependencies and restart policy remain open. Accepted current-pipeline NodeId checks are not durable discharge reuse. |

@@ -13,16 +13,101 @@ This is the implementer's operating brief. Maintain capability decisions and
 scoped acceptance in the [FFI compendium](ffi-correction-compendium.md).
 
 Codex owns sequencing across repositories, task boundaries, integration,
-checkpoint synchronization and the evidence packet for the selected auditor.
+critical implementation, checkpoint synchronization and production of the
+gate evidence. The independent auditor owns the key evidence checks and
+acceptance, including binding, scope and any earned regression.
+Codex assigns Z13, ONE, TWO and THREE directly as peer workers, selecting each
+for its available resources and capabilities. Z13 is not a dispatch layer for
+the LAN workers in this workflow; that hierarchy belongs to Beancounter.
 Keep the closure account in compendium §11.1: each remaining designed profile
 needs its existing owner, affected consumers, accepted evidence and open exit
 conditions. Local and LAN workers receive bounded questions or candidate
 changes with exact source identities; retrieval supplies cited context, not
-acceptance. Preserve the unfinished checkouts before assigning edits. Resume
-the approved guest MMIO meet-producer increment first; keep MCU retention
-policy and the Rocq toolchain mismatch separately tracked, then return to the
-remaining designed FFI profiles. This role change neither expands those
+acceptance. Preserve the unfinished checkouts before assigning edits. The
+guest MMIO meet-producer increment is landed below; continue its bounded
+source/consumer residuals, keeping MCU retention policy and the Rocq toolchain
+mismatch separately tracked, then return to the remaining designed FFI
+profiles. This role change neither expands those
 profiles nor changes any earlier acceptance scope.
+
+## October 26 MMIO transaction-operand increment
+
+The guest MMIO increment advanced beyond Opus34's initial approval. The
+retained Opus42 execution on ONE built successfully and ran nine owner
+controls: **eight passed, one failed, none skipped**. The annotation case
+expected transaction operand `NodeId11701` but received meet operand
+`NodeId11700`. No mutations or Z13 consumer cases followed. All three staged
+source files and all 156 saved original DLL/PDB paths were restored exactly;
+G0a and ClosedCallback work was preserved. This is a failed candidate gate,
+not acceptance of the meet producer. Binding:
+`artifacts/ffi-resume-20261020/guest42-one-execution/handoff.md` and
+`final-binding.json`.
+
+The successor preserves `meetInto`'s existing classification and binds only
+`deviceAccess`'s operand to the exact transaction argument. ONE's owner gate
+passed **9/9, zero skipped**, including annotation carrier and published Data
+shape premises. All seven registered mutations produced their exact required
+failures. The first f mutation failed to compile because its replaced guard
+left an unused binder; that is not a kill. Fable approved the binder-only
+successor, which passed its discriminator, followed by g's annotation identity
+discriminator. The original three sources and 156 outputs were restored.
+
+Z13 rebuilt the frozen DeviceAccess dependency closure: the CLI and test
+assemblies match, including compiler, PSG and Alex producer outputs. Individually
+selected `guest64_bound`, `guest64_high_address` and
+`guest64_pointer_overflow` passed; both guest positives reached optimized LLVM
+volatile-access/address checks. `mcu_bound` still failed CLI integrity with
+eight `Codata.Mmio.Binding` missing-held-node lines plus `and 22 more`
+(CLI exit 1; harness exit 134). MCU is not accepted. Both original producer
+sources and 737 original build-output files were restored, preserving the
+pre-existing dirty closure. No baseline or full-suite rerun occurred.
+
+Bindings: `guest-20261026/attempt03/` holds the owner gate and a–e;
+`attempt03/mutations-fg/` holds the successor registration, raw TRX and restoration;
+`/home/hhh/repos/Composer/artifacts/ffi-guest-20261026/` holds consumer inputs,
+assembly digests, original logs, grants/releases and restoration receipts.
+The first local `lease.fsx` invocation stopped before admission on the existing
+Bozzetto draft's `AgentWorkBoard.Capacity` codec mismatch. The documented MCP
+lease path admitted the subsequent bounded commands; every grant was released.
+No MCP renewal is claimed. Native Fable 5.1 accepted the seven mutation
+discriminators and the scoped consumers, retaining MCU as a refusal and the
+annotated Alex input as unobserved. It required one additional owner build/run
+on exact landing bytes with the unrelated G0a draft excluded. That build passed
+in 58.57 seconds; all nine controls passed, zero skipped, in 2m5s. The original
+three sources and 156 outputs were restored. `attempt03/landing02/` binds this
+gate; Fable accepted its clean landing binding in `fable-landing-return.md`.
+The first landing preflight
+stopped before build on differing Git diff header styles; explicit identical
+rendering corrected that evidence-only mismatch without a source change.
+
+Open residuals: F3 wrapper held-width assertion, Sequential source coverage,
+actual annotated Alex input observation, MCU predicate retention and the
+separate Rocq compiler/standard-library mismatch. Committed growth
+is 20 lines in the existing Meets/NativeService owners plus 242 MMIO test lines
+in the existing test file; unrelated G0a/ClosedCallback drafts stay separate.
+The private test fixture owns construction of these source/publication controls;
+production facts retain their existing owner.
+
+**Landed and pushed:** clef
+`0070eec357ba1397437bb70d2aeba940fa2a51c3` →
+`9aa171ba1c100fb2f341d212ef530c6e877abe1c`;
+`git diff --shortstat 0070eec3..9aa171ba` is **3 files changed, 262 insertions**.
+All three committed blobs and source digests equal the audited landing bytes;
+`attempt03/landing02/commit-binding.txt` binds parent, commit, verdict and
+retained evidence. Other repository source drafts remain outside this commit.
+
+Retrieval used fresh generation 29 snapshot
+`48a18774ad818f83b3d59840d460e62324747a07079294b78c6cf9c6634fe6dc`,
+with pinned find→pgq→sources. Direct reads covered ignored retained evidence,
+uncommitted diffs, operational/hash metadata and bounded confirmation of
+retrieved lines. The named historical `FFI_Increment_Handoff_Template.md` is
+absent; `docs/development.md:160–190` supplies the current handoff fields.
+After the compiler push, fresh generation 30 snapshot
+`4e74f0a6b1cf60229f92d4de138970f9eb5c3e074401c32f6ec789113d8c52ad`
+and renewed find→pgq→sources bound the closure-table update (Bozzetto
+`ac6999c3`, compendium721–820).
+Ignored execution receipts provide provenance; no new production file, owner
+or dependency was added.
 
 ## October 21 engineering checkpoint
 
