@@ -262,17 +262,31 @@ let alexBoundary : Analyzer<CliContext> = fun context -> async {
       diagnostics.Add { Type = "Alex analysis incomplete"; Message = reason; Code = "AXA000"; Severity = Severity.Error; Range = Range.mkRange context.FileName position position; Fixes = [] }
     | Ok () -> ()
     let bindings = System.Collections.Generic.Dictionary<FSharpMemberOrFunctionOrValue, FSharpExpr>()
-    let rec containsName (expression: FSharpExpr) =
-      match expression with
-      | FSharpFieldGet(_, _, field) when field.Name = "Name" &&
-          (field.DeclaringEntity |> Option.exists (fun entity -> entity.TryFullName = Some "Fidelity.PSG.NominalTypeIdentity" && entity.Assembly.SimpleName = "Fidelity.PSG")) -> true
-      | Call(_, called, _, _, _) when not (called.CompiledName.StartsWith("op_")) -> false
-      | _ -> expression.ImmediateSubExpressions |> Seq.exists containsName
-    let predicateUsesName (expression: FSharpExpr) =
-      containsName expression ||
-      match expression with
-      | Value value -> match bindings.TryGetValue value with | true, binding -> containsName binding | _ -> false
-      | _ -> false
+    let rec predicateEvidence visited (expression: FSharpExpr) =
+      try
+        match expression with
+        | FSharpFieldGet(_, _, field) when field.Name = "Name" &&
+            (field.DeclaringEntity |> Option.exists (fun entity -> entity.TryFullName = Some "Fidelity.PSG.NominalTypeIdentity" && entity.Assembly.SimpleName = "Fidelity.PSG")) -> true, []
+        | Call(_, called, _, _, _) when not (called.CompiledName.StartsWith("op_")) -> false, []
+        | Application _ | Lambda _ -> false, []
+        | Sequential(_, second) -> predicateEvidence visited second
+        | Let((value, binding, _), body) ->
+          bindings[value] <- binding
+          predicateEvidence visited body
+        | TupleGet(_, _, Value _) | FSharpFieldGet(Some (Value _), _, _) | UnionCaseGet(Value _, _, _, _) -> false, []
+        | Value value ->
+          match bindings.TryGetValue value with
+          | true, _ when value.IsMember -> false, []
+          | true, _ when value.IsMutable -> false, [ sprintf "Cannot establish nominal predicate provenance through mutable local '%s'." value.DisplayName ]
+          | true, _ when visited |> List.exists ((=) value) -> false, [ sprintf "Cyclic nominal predicate provenance at local '%s'." value.DisplayName ]
+          | true, binding -> predicateEvidence (value :: visited) binding
+          | _ -> false, []
+        | _ ->
+          expression.ImmediateSubExpressions
+          |> Seq.fold (fun (found, errors) child ->
+            let nextFound, nextErrors = predicateEvidence visited child
+            found || nextFound, errors @ nextErrors) (false, [])
+      with error -> false, [ sprintf "Cannot inspect nominal predicate provenance: %s" error.Message ]
     let walker =
       { new TypedTreeCollectorBase() with
           override _.WalkLet value binding _ = bindings[value] <- binding
@@ -281,8 +295,11 @@ let alexBoundary : Analyzer<CliContext> = fun context -> async {
               called.DisplayName = "ensure" &&
               (called.DeclaringEntity |> Option.exists (fun entity -> entity.TryFullName = Some "Alex.XParsec.PSGCombinators" && entity.Assembly.SimpleName = "Alex"))
             match isEnsure, arguments with
-            | true, predicate :: _ when predicateUsesName predicate ->
-              diagnostics.Add { Type = "Alex published graph boundary"; Message = "Alex must not derive an admission predicate from a nominal declaration name."; Code = "AXA002"; Severity = Severity.Error; Range = range; Fixes = [] }
+            | true, predicate :: _ ->
+              let found, errors = predicateEvidence [] predicate
+              if found then diagnostics.Add { Type = "Alex published graph boundary"; Message = "Alex must not derive an admission predicate from a nominal declaration name."; Code = "AXA002"; Severity = Severity.Error; Range = range; Fixes = [] }
+              for error in errors |> List.distinct do
+                diagnostics.Add { Type = "Alex analysis incomplete"; Message = error; Code = "AXA000"; Severity = Severity.Error; Range = range; Fixes = [] }
             | _ -> ()
           override _.WalkNewRecord recordType _ range =
             if recordType.HasTypeDefinition &&

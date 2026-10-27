@@ -45,6 +45,26 @@ printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nl
 printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = ensure (c.Declaration.Module = "M") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-module.fsx"
 printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: CaptureInfo) = ensure (c.Name = "Mmio8") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/other-name-field.fsx"
 printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = let a = c.Declaration.Name = "Mmio8" in let b = a in ensure b "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-two-hop.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = let a = c.Declaration.Name = "Mmio8" in let b = a in let d = b in ensure d "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-three-hop.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) bits = let a = c.Declaration.Name = "Mmio8" in ensure (a && bits = 8) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-nested-and.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) bits = let a = c.Declaration.Name = "Mmio8" in ensure (if a then true else bits = 8) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-nested-if.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (t: TypeIdentity) = let a = match t with TypeIdentity.Application(c, []) -> c.Declaration.Name = "Mmio8" | _ -> false in ensure a "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-local-match.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = let a = true in let result = a in let a = c.Declaration.Name = "Mmio8" in ensure result "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-shadow.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) bits = let name, width = c.Declaration.Name, bits in ensure (width = 8) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-destructured-width.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) bits = let name, width = c.Declaration.Name, bits in ensure (name = "Mmio8") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-destructured-name.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = let mutable decision = c.Declaration.Name = "Mmio8" in ensure decision "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-mutable-local.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet nameIs (c: ConstructorIdentity) = c.Declaration.Name = "Mmio8"\nlet check c = let a = nameIs c in ensure a "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-helper-local.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = ensure (not (c.Declaration.Name = "Mmio8")) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-not.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) bits = let name = c.Declaration.Name in ensure (bits = 8) name\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-message-local.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) bits = let a = (ignore c.Declaration.Name; bits = 8) in ensure a "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-logged-local.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) bits = let a = ((c.Declaration.Name = "Mmio8"); bits = 8) in ensure a "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-discarded-bool.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) bits = ensure (ignore c.Declaration.Name; bits = 8) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-logged-direct.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) bits = let a = (let unused = c.Declaration.Name in bits = 8) in ensure a "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-unused-let.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = let nameIs (x: ConstructorIdentity) = x.Declaration.Name = "Mmio8" in ensure (nameIs c) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-local-function.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet nameIs (c: ConstructorIdentity) = c.Declaration.Name = "Mmio8"\nlet check c = ensure (c |> nameIs) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-helper-piped.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nlet display (c: ConstructorIdentity) = let name = c.Declaration.Name in name\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-display-local.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet decision = ({ Module = "M"; Name = "Mmio8" }: NominalTypeIdentity).Name = "Mmio8"\nlet check () = ensure decision "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-module-value.fsx"
+printf '#r "%s"\n#r "%s"\nopen Alex.XParsec.PSGCombinators\nlet check (flag: bool) = ensure flag "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-parameter.fsx"
 printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) table = let row = Map.tryFind c.Declaration.Name table in ensure row.IsSome "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-lookup.fsx"
 printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) table = ensure (Map.tryFind c.Declaration.Name table |> Option.isSome) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-lookup-direct.fsx"
 printf 'let value: string = null\n' > "$scratch/null.fsx"
@@ -97,6 +117,7 @@ run_case() {
       case "$expected" in
         AXA001) reason='Alex must not construct or update published PSG records.' ;;
         AXA000) reason='The referenced Fidelity.PSG contract must define Revision, SemanticNode and NominalTypeIdentity.Name.' ;;
+        AXA000-mutable) expected=AXA000; reason="Cannot establish nominal predicate provenance through mutable local 'decision'." ;;
         AXA002) reason='Alex must not derive an admission predicate from a nominal declaration name.' ;;
         AXC001) reason='Clef production code must not use null.' ;;
         AXC002) reason='Clef production code must not depend on .NET library APIs:' ;;
@@ -143,7 +164,27 @@ run_case nominal-impostor clean
 run_case nominal-method known-miss
 run_case nominal-module known-miss
 run_case other-name-field clean
-run_case nominal-two-hop known-miss
+run_case nominal-two-hop AXA002 '5,90'
+run_case nominal-three-hop AXA002 '5,103'
+run_case nominal-nested-and AXA002 '5,82'
+run_case nominal-nested-if AXA002 '5,82'
+run_case nominal-local-match AXA002 '5,131'
+run_case nominal-shadow clean
+run_case nominal-destructured-width clean
+run_case nominal-destructured-name known-miss
+run_case nominal-mutable-local AXA000-mutable '5,92'
+run_case nominal-helper-local known-miss
+run_case nominal-not known-miss
+run_case nominal-message-local clean
+run_case nominal-logged-local clean
+run_case nominal-discarded-bool clean
+run_case nominal-logged-direct clean
+run_case nominal-unused-let clean
+run_case nominal-local-function known-miss
+run_case nominal-helper-piped known-miss
+run_case nominal-display-local clean
+run_case nominal-module-value known-miss
+run_case nominal-parameter clean
 run_case nominal-lookup clean
 run_case nominal-lookup-direct clean
 run_case pure clean
@@ -210,7 +251,7 @@ run_case stream-reader AXC002 '1,18 1,42'
 run_case invalid type-error
 [[ $executed -gt 0 ]] || { printf 'No truth case matched.\n' >&2; exit 1; }
 if [[ -z ${ALEX_ANALYZER_ONLY:-} ]]; then
-  [[ $executed -eq 83 ]] || { printf 'Expected 83 registered cases, ran %s.\n' "$executed" >&2; exit 1; }
+  [[ $executed -eq 103 ]] || { printf 'Expected 103 registered cases, ran %s.\n' "$executed" >&2; exit 1; }
   printf '{"executed":%s,"cases":[' "$executed" > "$scratch/truth.json"
   separator=''
   for case_name in "${cases[@]}"; do printf '%s"%s"' "$separator" "$case_name" >> "$scratch/truth.json"; separator=','; done
