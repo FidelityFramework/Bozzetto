@@ -706,6 +706,37 @@ representation, and multidimensional fields lose later dimensions. Those outputs
 are unchanged by this checkpoint; no dynamic-array or complete declarator
 representation is claimed.
 
+**Declarator refusal accepted, October 27.** Farscape `49caaa3..fd88130`
+replaces the field parser's first-bracket truncation with one explicit
+classification shared by descriptor emission. Unsupported multidimensional,
+pointer-to-array and callback-array spellings remain intact until consumption,
+where a located refusal precedes shape resolution. Ordinary trailing arrays,
+function-pointer fields and measured opaque unions remain admitted. Native Fable
+accepted 122/122 focused cases, seven discriminating mutations and the committed
+default unfiltered **1025/1025** gate. Three existing files, +151/-28; no new
+product file, dependency or owner. The small `FieldDeclarator` union preserves
+an explicit unsupported result and removes duplicated decomposition. Evidence:
+`Farscape/artifacts/array-declarator-20261027/`, including the committed binding
+and `fable-committed-return.md`. Representation of these complex arrays,
+contradictory direct field metadata and the remaining type-parser duplication
+remain open; rejection does not establish support for those representations.
+
+**Declared nesting refusal accepted, October 27.** Farscape `fd88130..187ed8b`
+removes the descriptor owner's depth-limit zero-extent path. Real headers showed
+72-byte and 76-byte records emitted as 68 bytes, still labelled `Declared`.
+The existing limit now refuses an unmeasured nested extent with its struct,
+field and nested type; an available measurement may terminate that traversal.
+A measured outer record does not authorize an unmeasured nested field count.
+Native Fable accepted 139/139 focused cases, six discriminating mutations and
+the committed default unfiltered **1042/1042** gate. The real-header candidate
+probe preserves the valid boundary case, refuses the truncated cases and uses
+the measured leaf correctly. Two existing files, +150/-19; no new product file,
+dependency or owner. Evidence and final binding verdict:
+`Farscape/artifacts/depth-limit-descriptor-20261027/`. The public depth argument,
+the descriptor's depth-one restart, measurement provenance and native aggregate
+ABI remain explicit residuals. Both increments restored sources, dependencies,
+ambient drafts and build outputs; neither claims complete FFI closure.
+
 **Exact string-predicate crossing accepted, October 27.** Bozzetto `3d0367a0`
 extends AXA002 through resolved `System.String.StartsWith` in an admission
 predicate, inspecting receiver and arguments while preserving other call stops.
