@@ -19,9 +19,9 @@ the October 20 assignment. Earlier verdicts retain only their recorded scopes. T
 next deliverable and review protocol; it introduces no additional FFI requirements.
 
 **B3 nominal MMIO width authority removed, October 20.** Alex `6d228cb`
-removes the three production lines that inferred access width from a handle's
-declaration name. Native Claude accepts the bound two-file component with
-follow-ups after ONE's clean Release build and 86/86 filtered pattern controls;
+removes the three-line admission predicate that compared a handle's declaration
+name with the already published access width. Native Claude accepts the bound
+two-file component with follow-ups after ONE's clean Release build and 86/86 filtered pattern controls;
 the historical discriminating mutation is reused at identical source hashes.
 ONE, TWO and THREE checked out this commit. Production growth is +0/-3,
 tests +23/-8; no new file, owner or dependency. Evidence and remaining limits
