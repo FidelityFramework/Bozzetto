@@ -221,18 +221,19 @@ let agentWorkTests =
       let finished = AgentWork.report epoch alice JoinableRole.Implementer { report with Sequence = 4L; Status = "completed" } newer |> accepted
       AgentWork.report epoch alice JoinableRole.Implementer { report with Sequence = 5L } finished |> Expect.equal "cannot revive terminal run" (Error AgentWork.TerminalRun)
     }
-    test "bounded activity, known zero, missing usage and capacity" {
+    test "complete activity, known zero, missing usage and retained runs" {
       let zero = { report.Usage.Value with Input = 0L; Output = 0L; CacheRead = 0L; CacheWrite = 0L; Total = 0L; EstimateUsd = Some 0. }
       let first = AgentWork.report epoch alice JoinableRole.Implementer { report with Usage = Some zero } AgentWork.empty |> accepted
       let latest = (first, [2L..40L]) ||> List.fold (fun state seq -> AgentWork.report epoch alice JoinableRole.Implementer { report with Sequence = seq; Usage = Some zero } state |> accepted)
-      latest.Runs.[report.Run].Activity.Length |> Expect.equal "history bound" 16
-      latest.Runs.[report.Run].OmittedActivity |> Expect.equal "history omissions" 24L
+      latest.Runs.[report.Run].Activity.Length |> Expect.equal "every reported operation is retained" 40
+      latest.Runs.[report.Run].OmittedActivity |> Expect.equal "no operation is omitted" 0L
       let full = (AgentWork.empty, [1..256]) ||> List.fold (fun state n -> AgentWork.report epoch alice JoinableRole.Implementer { report with Run = string n; Usage = None } state |> accepted)
-      AgentWork.report epoch alice JoinableRole.Implementer { report with Run = "257" } full |> Expect.equal "retained run keys never evict and become takeovers" (Error AgentWork.Capacity)
-      AgentWork.report epoch bob JoinableRole.Implementer { report with Run = "257"; Status = "completed" } full
-      |> Expect.equal "terminal reports still obey the retained run limit" (Error AgentWork.Capacity)
+      let extended = AgentWork.report epoch alice JoinableRole.Implementer { report with Run = "257" } full |> accepted
+      extended.Runs.Count |> Expect.equal "retained run keys never evict; a new run key is admitted beyond 256" 257
+      let terminal = AgentWork.report epoch bob JoinableRole.Implementer { report with Run = "258"; Status = "completed" } extended |> accepted
+      terminal.Runs.Count |> Expect.equal "a terminal report is retained without a run limit" 258
     }
-    test "active capacity correction preserves the retained byte limit" {
+    test "large reports are retained without a byte capacity refusal" {
       let large =
         { report with Session = String.replicate 128 "s"; Name = String.replicate 128 "n"
                       Model = String.replicate 128 "m"; Endpoint = String.replicate 256 "e"
@@ -243,7 +244,7 @@ let agentWorkTests =
         ||> List.fold (fun state (run, sequence) ->
           state |> Result.bind (AgentWork.report epoch alice JoinableRole.Implementer
             { large with Run = string run; Sequence = sequence }))
-      result |> Expect.equal "retained bytes remain bounded even for one active member" (Error AgentWork.ByteCapacity)
+      (result |> Result.map (fun state -> state.Runs.Count)) |> Expect.equal "every large report is retained for one active member" (Ok 256)
     }
     test "terminal member history does not occupy active reporting capacity" {
       for status in ["completed"; "failed"; "aborted"; "disconnected"; "unknown"] do
@@ -255,26 +256,26 @@ let agentWorkTests =
         next.Runs.Count |> Expect.equal "more than 64 historical members still permit a new active member" 66
         next.Runs |> Map.remove report.Run |> Expect.equal "terminal history is retained exactly" history.Runs
     }
-    test "active member capacity refuses only a new active member" {
+    test "active members are admitted without a member capacity" {
       let full =
         (AgentWork.empty, [1..64]) ||> List.fold (fun state n ->
           AgentWork.report epoch (MemberId.Mcp (string n)) JoinableRole.Implementer
             { report with Run = string n } state |> accepted)
-      AgentWork.report epoch alice JoinableRole.Implementer report full
-      |> Expect.equal "the 65th active member is refused" (Error AgentWork.Capacity)
+      let admitted65 = AgentWork.report epoch alice JoinableRole.Implementer report full |> accepted
+      admitted65.Runs.Count |> Expect.equal "the 65th active member is admitted" 65
       let updated = AgentWork.report epoch (MemberId.Mcp "1") JoinableRole.Implementer
-                      { report with Run = "1"; Sequence = 2L } full |> accepted
+                      { report with Run = "1"; Sequence = 2L } admitted65 |> accepted
       updated.Runs.["1"].Report.Sequence |> Expect.equal "an existing active run can report progress" 2L
-      let sameMember = AgentWork.report epoch (MemberId.Mcp "1") JoinableRole.Implementer report updated |> accepted
-      sameMember.Runs.Count |> Expect.equal "another run of the same active member needs no member slot" 65
+      let sameMember = AgentWork.report epoch (MemberId.Mcp "1") JoinableRole.Implementer { report with Run = "second" } updated |> accepted
+      sameMember.Runs.Count |> Expect.equal "another run of the same active member is admitted" 66
       let terminal = AgentWork.report epoch alice JoinableRole.Implementer
                        { report with Run = "terminal"; Status = "completed" } sameMember |> accepted
-      terminal.Runs.Count |> Expect.equal "a new terminal report needs no active member slot" 66
-      AgentWork.report epoch bob JoinableRole.Implementer { report with Run = "another" } terminal
-      |> Expect.equal "a terminal report does not release another member's active slot" (Error AgentWork.Capacity)
-      let departed = AgentWork.disconnect epoch (MemberId.Mcp "1") terminal
-      let admitted = AgentWork.report epoch bob JoinableRole.Implementer { report with Run = "another" } departed |> accepted
-      admitted.Runs.Count |> Expect.equal "disconnect releases the member slot without deleting its runs" 67
+      terminal.Runs.Count |> Expect.equal "a new terminal report is admitted" 67
+      let another = AgentWork.report epoch bob JoinableRole.Implementer { report with Run = "another" } terminal |> accepted
+      another.Runs.Count |> Expect.equal "a further active member is admitted" 68
+      let departed = AgentWork.disconnect epoch (MemberId.Mcp "1") another
+      departed.Runs.Count |> Expect.equal "disconnect retains the departed member's runs" 68
+      departed.Runs.["1"].Report.Status |> Expect.equal "a departed member's running run is marked disconnected" "disconnected"
     }
     test "publication survives epoch recycling and preserves nonempty wire projection" {
       let publication = Bozzetto.Server.ResourceGraph.AgentPublication.create()
@@ -299,7 +300,6 @@ let agentWorkTests =
         "incarnation", Fidelity.Data.JSON.JsonValue.String decoded.Incarnation
         "sequence", Fidelity.Data.JSON.JsonValue.String (string decoded.Sequence)
         "executionHost", Fidelity.Data.JSON.JsonValue.String decoded.ExecutionHost
-        "capacity", Fidelity.Data.JSON.JsonValue.ofInt64 (int64 decoded.Capacity)
       ] do
         Fidelity.Data.JSON.JsonValue.prop field sourceJson
         |> Expect.equal "MCP and typed bridge expose the same owner identity" (Some expected)

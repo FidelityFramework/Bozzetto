@@ -5,7 +5,7 @@ the full cross-repository FFI closure; Codex coordinates the handoff and
 integration; Sage-A1.5 through local Pi on Z13 and Pi on ONE/TWO/THREE carry
 scoped work; native Claude Code supplies one independent adversarial auditor
 per increment. Prefer Fable 5.1; select Opus 5.5 when the review's complexity
-warrants it.** This supersedes the earlier October 26 role assignment.
+warrants it.** This supersedes the earlier October 26 role assignment. **October 27 owner direction:** Fable 5.1 is the principal implementer and coordinator on Z13 with ONE/TWO/THREE as peers, and Codex running GPT-6.1 Terra at `ultra` effort, read-only, is the independent auditor; the owner commits every changeset. The compendium records this.
 The organizing requirement is sound marshaling for every generated C and C++
 binding: representation, calling convention, callbacks, buffers, ownership and
 lifetimes must have complete boundary evidence or an explicit refusal. Baker

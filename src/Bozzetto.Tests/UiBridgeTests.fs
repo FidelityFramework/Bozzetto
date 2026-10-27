@@ -206,8 +206,8 @@ let private events = [
   Resources {
     Sequence = 1L; Status = "complete"; SampledAtMs = 123L; IntervalMs = 2000.; SampleCostMs = 12.5
     Metrics = [||]; Processes = [||]; ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = "test" }
-  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Capacity = 256; Runs = [||]; Presence = [||] }
-  AgentWork { Incarnation = "daemon-b"; Sequence = 2L; ExecutionHost = "local"; Capacity = 256; Runs = [||]
+  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Runs = [||]; Presence = [||] }
+  AgentWork { Incarnation = "daemon-b"; Sequence = 2L; ExecutionHost = "local"; Runs = [||]
               Presence = [| { Name = "pi"; Source = "lease"; Member = "pi · /repo/clef"; Project = "/repo/clef"; Detail = "holds full_build"; SinceMs = 1759420800000L } |] }
 ]
 

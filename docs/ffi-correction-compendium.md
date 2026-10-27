@@ -27,9 +27,11 @@ lifetimes. It does not judge whether a C algorithm computes the correct answer.
 A check on a returned value cannot undo a write that native code has already
 performed; the guarantees depend on the actual access and execution contract.
 
-Fable 5.1 is the primary implementer. Codex coordinates the work; Opus 5.5 is
-the separate auditor for Fable-authored increments. Z13, ONE, TWO and THREE are
-peers for scoped work. Use their existing primary checkouts, preserve local
+Fable 5.1 (Claude Code) is the primary implementer and coordinates the work from
+Z13; Codex running GPT-6.1 Terra at reasoning effort `ultra`, read-only, is the
+independent auditor for each increment (owner direction, October 27). The owner
+reviews and commits every changeset. Z13, ONE, TWO and THREE are peers for
+scoped work. Use their existing primary checkouts, preserve local
 drafts, and route earned builds to available machines. Push useful reviewed
 checkpoints so that the workers and retrieval index have a shared revision.
 
@@ -144,17 +146,104 @@ identities, advance only safely, and bind the granted/renewed/released lease and
 results. Do not reset or overwrite drafts. Read-only probe receipts are in
 `artifacts/ffi-resume-20261020/closure-20261026/lan-build-readiness/`.
 
+## Resumed — October 27, 2026 (afternoon)
+
+### Workstation controller and lease client
+
+The workstation daemon was found stopped at 09:15 (last healthy probe 09:05,
+PID 1065220; no implementer command stopped it) and was relaunched per the
+AGENTS procedure at 09:20:56 (PID 4029319, release
+`20261017-ffi-segmentation-restore-pair`, Composer configured, no component
+failures). `tools/build/lease.fsx` could not compile at Bozzetto HEAD 447b27d8:
+that commit removed `Capacity` from `AgentWorkBoard` and the AgentWork bounds
+but left `src/bozzetto-web/src/Shared/BinaryCodec.fs` and four consumers
+referencing them. The repair (5 existing files, +29/−31, no new owner) is in the
+working tree: Bozzetto.Tests builds clean, "Agent work" 10/10 and "UiBridge"
+42/42 (both `NarrowedRun`), the web codec round trip 270 checks/0 failures, and
+the lease client admits and journals commands again (durable records in
+`~/.bozzetto/operations.db`). Codex (terra01) returned **changes required** on
+two seam findings that are owner decisions, recorded with code facts and exit
+tests in `artifacts/codec-capacity-20261027/owner-decisions.md`: an accepted
+board can now exceed the codec's 65,536-item/4 MiB limits, and the changed
+AgentWork wire shape still carries protocol version 10. Do not fast-forward
+ONE/TWO/THREE's Bozzetto checkouts (at a697e43f, where `lease.fsx` compiles)
+until this repair lands.
+
+### LAN readiness
+
+Through the existing lab adapter, ONE, TWO and THREE answered read-only
+readiness delegations at 09:33–09:36 (`artifacts/codec-capacity-20261027/lan-readiness-20261027/`):
+each has SDK 10.0.401, a healthy local controller (PIDs 2387/2373/2374, started
+October 19), `lease.fsx` present, and checkouts behind the pushed heads
+(Farscape 23edcf07, clef 9aa171ba, PSG e50bd74a, Alex 832fbb3e, Composer
+ee0e5817, Bozzetto a697e43f); ONE's Farscape has 7 dirty files and ONE/THREE's
+Alex 25. No LAN gate was needed for this increment.
+
+### Farscape measurement provenance — corrected, second audit recorded
+
+The unreviewed multi-header observation is corrected at its owner.
+`BindingGenerator.measurementUnits` measures each ABI-critical entry's record in
+the unit of every pilot header whose own filtered list defines it (and, for a
+`typedef` entry, declares that typedef), requires the merged declaration of that
+record and of every record nested in it by value to match the measuring
+header's own declarations, requires every typedef their field spellings depend
+on to be declared there with the merged spelling, and `agreeMeasurements`
+requires one effective layout across declaring units; undeclared entries are
+not probed. The former refusal
+"requires a measured layout; header probe did not provide it" for a storage
+declared only by a later header was a misattributed cause and that case is now
+admitted; the October 26 `required-layout-later*` receipts recorded that refusal
+as intended. Candidate (uncommitted, base c155a09): 3 existing files
++518/−8, no new owner. Gates on Z13 under renewing leases (chain script
+`run-gate-chain.sh` and `gate-chain-v6.log` in
+`Farscape/artifacts/layout-provenance-20261027/`): focused 45/45, twelve
+mutations each killed with byte-exact restoration (`mutations/kill-map.txt`;
+the first-hop-only, tags-as-typedefs, entry-first-hop and candidates-only
+mutants are killed solely by their dedicated controls while every neighbouring
+control passes under them), unfiltered Farscape.Tests 1171/1171 (baseline
+1149/1149, +22 rows), a 67-entry strict-checked binding manifest
+(`binding-v6.sha256`; earlier rounds archived with strict-checked manifests and
+documented in `EVIDENCE-NOTE.md`), and the consumer gate regenerating the four
+maintained pilots requesting `abi_critical_structs` with baseline and candidate
+CLIs: pthread, wayland and resvg byte-identical (7, 13 and 3 files); the
+experimental pthread pilot refused identically by both (pre-existing
+`experimental_native_pointer_surface` refusal); Fidelity.Platform clean before
+and after by repository-identified receipts. Codex terra01 returned changes
+required on five findings (nested records, typedef-bound records, pack widths, a
+missing discriminating control, the earned consumer gate), terra02 on four
+(field typedef dependencies, the manifest, the addendum, a stale growth figure),
+terra03 on three (multi-hop typedef chains with the emitted representation, the
+platform receipt, file counts), terra04 on two (tag names mistaken for typedef
+dependencies, the overwritten v3 diff) and terra05 on three (the requested
+typedef's chain validated only at its first spelling, headers declaring the
+typedef without the record escaping validation, the archived v4 manifest); all
+are answered in v6, which also records an internal adversarial panel's result.
+The terra06 verdict is in
+`Farscape/artifacts/layout-provenance-20261027/audit/terra06-result.md`.
+Residuals: no declaration origin file (identical shapes in different files are
+one declaration, now fenced by effective-layout equality); descriptor
+documentation names the stratum, not the unit; tag-versus-typedef layout keys.
+An independent read-only audit of the same defect class recorded four further
+owner items: inferred enum widths, the profile scalar table consulted before the
+unit's typedef chain, C++-detected headers probed as C, and macros merged by
+bare name across units.
+
 ## Resumption
 
-1. Review the Farscape observation independently and settle the smallest
-   provenance correction in the existing owner, including real pilot behavior,
-   positive and exact-refusal controls, and a discriminating mutation.
+1. Farscape provenance correction: implemented and gated (above); owner commit
+   of the Farscape working tree after the terra02 verdict, then push so the index
+   and the LAN checkouts can follow. Owner decisions D1 (carry the declaring
+   file on `StructDecl`) and D2 (name the measured unit in descriptor
+   documentation) remain open; the four further leak-audit items need owners.
 2. Resume the analyzer candidate from its verified patch only when ready; bind
    its v8 controls and required real-project gate, and resolve the LAN gate scope
    with the auditor. Preserve the stated red findings and coverage limits.
 3. Continue cross-project FFI closure by capability: implementation, proof and
    differential dependencies, and synchronized consumers each need evidence.
    Do not infer completion from a commit, a single gate or a percentage estimate.
+4. Bozzetto: owner decisions B1 (agent-board encoding bound) and B2 (protocol
+   version for the changed AgentWork shape, coupled to the next matching
+   daemon/worker deployment), then commit the lease-client repair.
 
 Other historic owner decisions and residuals remain in the preserved prior
 compendium and their governing specifications. Reconcile them with current

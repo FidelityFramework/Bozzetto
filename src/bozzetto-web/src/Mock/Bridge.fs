@@ -133,7 +133,7 @@ let private agentWork () =
                             ReportSequence = int64 stage + 1L; UpdatedAtMs = int64 startedAt + int64 stage
                             Operation = operation; Activity = [| operation; "read" |] }
   AgentWork {
-    Incarnation = "mock-incarnation"; Sequence = 4L + int64 stage; ExecutionHost = "mock-host"; Capacity = 256
+    Incarnation = "mock-incarnation"; Sequence = 4L + int64 stage; ExecutionHost = "mock-host"
     Runs = [|
       implementation
       run "mock-audit" "mock:verifier" "Mock verifier" "Verifier" None "completed" -2000L

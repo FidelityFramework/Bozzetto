@@ -791,17 +791,15 @@ let private agentWorkBoard : Codec<AgentWorkBoard> = {
     text.Write w value.Incarnation
     wide.Write w value.Sequence
     text.Write w value.ExecutionHost
-    whole.Write w value.Capacity
     (array agentRun).Write w value.Runs
     (array agentPresence).Write w value.Presence
   Read = fun r ->
     let f0 = text.Read r
     let f1 = wide.Read r
     let f2 = text.Read r
-    let f3 = whole.Read r
-    let f4 = (array agentRun).Read r
-    let f5 = (array agentPresence).Read r
-    { AgentWorkBoard.Incarnation = f0; Sequence = f1; ExecutionHost = f2; Capacity = f3; Runs = f4; Presence = f5 }
+    let f3 = (array agentRun).Read r
+    let f4 = (array agentPresence).Read r
+    { AgentWorkBoard.Incarnation = f0; Sequence = f1; ExecutionHost = f2; Runs = f3; Presence = f4 }
 }
 
 let private operationCompiler : Codec<OperationCompiler> = {

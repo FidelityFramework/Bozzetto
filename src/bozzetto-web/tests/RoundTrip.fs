@@ -119,8 +119,8 @@ let private completions = [
 ]
 
 let private baseEvents = [
-  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Capacity = 256; Runs = [||]; Presence = [||] }
-  AgentWork { Incarnation = "daemon-b"; Sequence = 9007199254740993L; ExecutionHost = "local"; Capacity = 256
+  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Runs = [||]; Presence = [||] }
+  AgentWork { Incarnation = "daemon-b"; Sequence = 9007199254740993L; ExecutionHost = "local"
               Presence = [| { Name = "pi ü"; Source = "lease"; Member = "pi ü · /repo/clef"; Project = "/repo/clef"; Detail = "holds full_build"; SinceMs = 9007199254740993L }
                             { Name = "mcp:two"; Source = "member"; Member = "mcp:two"; Project = ""; Detail = "Verifier member · no report yet"; SinceMs = -1L } |]
               Runs = [| { Id = "run"; Member = "mcp:one"; Role = "Observer"; Name = "same"; Session = "pi"
