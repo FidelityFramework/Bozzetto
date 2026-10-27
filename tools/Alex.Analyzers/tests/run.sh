@@ -42,6 +42,19 @@ printf '#r "%s"\n#r "%s"\nopen Alex.XParsec.PSGCombinators\nlet check bits = ens
 printf '#r "%s"\n#r "%s"\nopen Alex.XParsec.PSGCombinators\nlet check (operation: string) = ensure (operation.StartsWith "reg") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/published-string.fsx"
 printf '#r "%s"\n#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = ensure (c.Declaration.Name = "Mmio8") "bad"\n' "$psg_dll" "$impostor_dll" "$alex_dll" > "$scratch/nominal-impostor.fsx"
 printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = ensure (c.Declaration.Name.StartsWith "Mmio") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = let n = c.Declaration.Name in ensure (n.StartsWith "M") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-local.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = ensure ("Mmio8".StartsWith c.Declaration.Name) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-arg.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = ensure (c.Declaration.Name.StartsWith("M", System.StringComparison.Ordinal)) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-overload.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = ensure (not (c.Declaration.Name.StartsWith "M")) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-not.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) bits = ensure (bits = 8 && c.Declaration.Name.StartsWith "M") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-and.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = let mutable n = c.Declaration.Name in ensure (n.StartsWith "M") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-mutable.fsx"
+printf '#r "%s"\n#r "%s"\nopen Alex.XParsec.PSGCombinators\nlet check () = ensure ("abc".StartsWith "a") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-literal.fsx"
+printf '#r "%s"\n#r "%s"\nopen Alex.XParsec.PSGCombinators\nlet check (operation: string) x = let value, _ = operation, x in ensure (value.StartsWith "reg") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-published-local.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = ensure true (string (c.Declaration.Name.StartsWith "M"))\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-message.fsx"
+printf '#r "%s"\nopen Fidelity.PSG\nlet display (c: ConstructorIdentity) = c.Declaration.Name.StartsWith "M"\n' "$psg_dll" > "$scratch/nominal-method-display.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = ensure ((sprintf "%%s" c.Declaration.Name).StartsWith "M") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-format.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) (table: Map<string, string>) = ensure ((Map.find c.Declaration.Name table).StartsWith "M") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-lookup.fsx"
+printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\ntype Flag = { On: bool } with member f.StartsWith (_: string) = f.On\nlet check (c: ConstructorIdentity) (f: Flag) = ensure (f.StartsWith c.Declaration.Name) "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-method-lookalike.fsx"
 printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = ensure (c.Declaration.Module = "M") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-module.fsx"
 printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: CaptureInfo) = ensure (c.Name = "Mmio8") "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/other-name-field.fsx"
 printf '#r "%s"\n#r "%s"\nopen Fidelity.PSG\nopen Alex.XParsec.PSGCombinators\nlet check (c: ConstructorIdentity) = let a = c.Declaration.Name = "Mmio8" in let b = a in ensure b "bad"\n' "$psg_dll" "$alex_dll" > "$scratch/nominal-two-hop.fsx"
@@ -130,6 +143,7 @@ run_case() {
         AXA000) reason='The referenced Fidelity.PSG contract must define Revision, SemanticNode and NominalTypeIdentity.Name.' ;;
         AXA000-mutable) expected=AXA000; reason="Cannot establish nominal predicate provenance through mutable local 'decision'." ;;
         AXA000-mutable-a) expected=AXA000; reason="Cannot establish nominal predicate provenance through mutable local 'a'." ;;
+        AXA000-mutable-n) expected=AXA000; reason="Cannot establish nominal predicate provenance through mutable local 'n'." ;;
         AXA002) reason='Alex must not derive an admission predicate from a nominal declaration name.' ;;
         AXC001) reason='Clef production code must not use null.' ;;
         AXC002) reason='Clef production code must not depend on .NET library APIs:' ;;
@@ -173,7 +187,20 @@ run_case nominal-lookalike clean
 run_case published-width clean
 run_case published-string clean
 run_case nominal-impostor clean
-run_case nominal-method known-miss
+run_case nominal-method AXA002 '5,37'
+run_case nominal-method-local AXA002 '5,67'
+run_case nominal-method-arg AXA002 '5,37'
+run_case nominal-method-overload AXA002 '5,37'
+run_case nominal-method-not AXA002 '5,37'
+run_case nominal-method-and AXA002 '5,42'
+run_case nominal-method-mutable AXA000-mutable-n '5,75'
+run_case nominal-method-literal clean
+run_case nominal-method-published-local clean
+run_case nominal-method-message clean
+run_case nominal-method-display clean
+run_case nominal-method-format known-miss
+run_case nominal-method-lookup policy-pending
+run_case nominal-method-lookalike known-miss
 run_case nominal-module known-miss
 run_case other-name-field clean
 run_case nominal-two-hop AXA002 '5,90'
@@ -192,7 +219,7 @@ run_case nominal-local-not AXA002 '5,83'
 run_case nominal-not-nested AXA002 '5,42'
 run_case nominal-not-mutable AXA000-mutable-a '5,85'
 run_case nominal-not-lookalike clean
-run_case nominal-not-lookup clean
+run_case nominal-not-lookup policy-pending
 run_case nominal-not-helper clean
 run_case nominal-not-message clean
 run_case nominal-not-pure clean
@@ -210,8 +237,8 @@ run_case nominal-helper-piped known-miss
 run_case nominal-display-local clean
 run_case nominal-module-value known-miss
 run_case nominal-parameter clean
-run_case nominal-lookup clean
-run_case nominal-lookup-direct clean
+run_case nominal-lookup policy-pending
+run_case nominal-lookup-direct policy-pending
 run_case pure clean
 run_case generic-pure clean
 run_case interpolation-pure clean
@@ -276,7 +303,7 @@ run_case stream-reader AXC002 '1,18 1,42'
 run_case invalid type-error
 [[ $executed -gt 0 ]] || { printf 'No truth case matched.\n' >&2; exit 1; }
 if [[ -z ${ALEX_ANALYZER_ONLY:-} ]]; then
-  [[ $executed -eq 114 ]] || { printf 'Expected 114 registered cases, ran %s.\n' "$executed" >&2; exit 1; }
+  [[ $executed -eq 127 ]] || { printf 'Expected 127 registered cases, ran %s.\n' "$executed" >&2; exit 1; }
   printf '{"executed":%s,"cases":[' "$executed" > "$scratch/truth.json"
   separator=''
   for case_name in "${cases[@]}"; do printf '%s"%s"' "$separator" "$case_name" >> "$scratch/truth.json"; separator=','; done

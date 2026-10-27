@@ -270,6 +270,28 @@ let alexBoundary : Analyzer<CliContext> = fun context -> async {
         | Call(_, called, _, _, [argument]) when called.CompiledName = "Not" &&
             (called.DeclaringEntity |> Option.exists (fun entity -> entity.TryFullName = Some "Microsoft.FSharp.Core.Operators" && entity.Assembly.SimpleName = "FSharp.Core")) ->
           predicateEvidence visited argument
+        | Call(receiver, called, _, _, arguments) when called.CompiledName = "StartsWith" &&
+            (called.DeclaringEntity |> Option.exists (fun entity ->
+              let assembly = entity.Assembly.SimpleName
+              entity.TryFullName = Some "System.String" &&
+              (assembly = "mscorlib" || assembly = "netstandard" || assembly.StartsWith("System.")))) ->
+          let resultType = called.ReturnParameter.Type
+          let isBoolean =
+            if not resultType.HasTypeDefinition then false
+            else
+              let definition = resultType.TypeDefinition
+              if definition.TryFullName = Some "System.Boolean" then true
+              elif resultType.IsAbbreviation && definition.Assembly.SimpleName = "FSharp.Core" && definition.DisplayName = "bool" then
+                let target = definition.AbbreviatedType
+                target.HasTypeDefinition && target.TypeDefinition.TryFullName = Some "System.Boolean"
+              else false
+          match receiver with
+          | Some value when isBoolean ->
+            (value :: arguments)
+            |> List.fold (fun (found, errors) child ->
+              let nextFound, nextErrors = predicateEvidence visited child
+              found || nextFound, errors @ nextErrors) (false, [])
+          | _ -> false, [ "Cannot establish the shape of the System.String.StartsWith predicate." ]
         | Call(_, called, _, _, _) when not (called.CompiledName.StartsWith("op_")) -> false, []
         | Application _ | Lambda _ -> false, []
         | Sequential(_, second) -> predicateEvidence visited second
