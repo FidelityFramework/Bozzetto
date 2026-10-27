@@ -18,6 +18,41 @@ the October 20 assignment. Earlier verdicts retain only their recorded scopes. T
 [implementation handoff](ffi-implementation-handoff.md) owns the current heads,
 next deliverable and review protocol; it introduces no additional FFI requirements.
 
+**Bounded T4 checkpoint landed, October 27.** The owner approved landing
+with the 28 reproduced baseline failures retained. PSG `2a0025ad`, Clef
+`6c574a39`, Alex `adf6e304` and Composer `f95f4fb4` are pushed on `main`;
+sole Fable accepts their final committed binding at fresh retrieval generation
+59. All 28 committed files match the tested/staged candidate, and unrelated
+drafts remain byte-identical. Growth is PSG 11 files +409/-175, Clef 8
++658/-205, Alex 4 +39/-10 and Composer 5 +43/-15; no new product file,
+dependency or semantic owner. PSG schema 46 and its independent oracle landed
+together. This accepts the bounded source/public optional-callback contract;
+native conditional conversion remains explicitly refused. Tag projection,
+leaf conversions, SSA assignment and native dispatch/artifact acceptance stay
+open. The 28 baseline cases remain failures. Fable earns no T4 rerun, but
+retains a conditional check on the separate Alex package-allowance build
+receipt. Evidence and exact residuals are in
+`artifacts/ffi-resume-20261020/closure-20261026/t4-baseline-attribution/landing-preflight/`.
+
+**Inline field extents accepted, October 27.** Farscape
+`e3ae570923f1ef3d345c2b43962111aac9ddf9db` extends the existing descriptor
+owner to require each inline field's offset plus byte extent to fit inside
+the record storage. Declared layout and descriptor emission share the existing
+scalar extent arithmetic; nested fields consume their admitted child size.
+Representation, count, range and child-layout refusals retain precedence.
+Sole Fable accepts the committed binding: 20 new controls, focused 232/232,
+seven caught mutations and unfiltered 1135/1135. Exact-end, packed, natural
+padding, pointer, long-double and nested-array positives remain admitted.
+Two existing files change +130/-7, with no new product file, dependency or
+semantic owner. Gate, staged and committed bytes match; four retrieved spans
+match at fresh generation 58. No committed gate rerun was earned. All source,
+dependency, output and unrelated draft restoration checks pass. Evidence is in
+Farscape `artifacts/field-extent-consistency-20261027/`. The earlier full-field
+extent residual is closed; original opaque-union member offsets, measurement
+provenance, parser bit-range handling, C++ admission and native/SSA obligations
+remain open. Storage containment establishes no native ABI execution or
+complete FFI acceptance.
+
 **Measured record inputs accepted, October 27.** Farscape
 `6dbe082ab4a690d58a572fc5bcde4a91100e9bfe` extends the existing descriptor
 owner to admit whole-byte, representable, nonzero storage size and positive
