@@ -154,6 +154,36 @@ they do not replace the sole auditor's verdict or decide unsettled owner policy.
 Cross-repository increments use the one-page
 [development guide](docs/development.md).
 
+### Alex analyzer gate
+
+Agents changing Alex production code must run the combined shared and Alex
+analyzers before handoff. Bozzetto owns the isolated development tooling in
+`tools/Alex.Analyzers`; its Ionide/FCS dependencies must stay out of analyzed
+production projects. From this primary checkout, use:
+
+```bash
+ALEX_ANALYZER_PROJECT=/home/hhh/repos/Alex/src/Alex/Alex.fsproj \
+  bash tools/Alex.Analyzers/analyze-alex.sh
+```
+
+The command uses the existing renewing lease client, builds the tooling and
+controls, checks their receipt, and analyzes the evaluated authored source
+inputs. Preserve the exit status, diagnostics, source/tool bindings and actual
+coverage. A missing project, missing or stale receipt, type error, missing
+analyzer, or diagnostic is a failure. Resolve findings against the governing
+design and exact source shape; raw diagnostic counts are not adjudicated
+defects. `alex-boundary` is a narrowed development check and cannot replace
+the combined `alex` gate. Do not suppress rules or substitute a report-only run.
+
+The shared production boundary forbids System/BCL imports and API use, null,
+obj widening and task; dependencies must be approved dependency-free Fidelity
+projects or XParsec. FCS host representations of language primitives do not
+alone establish BCL use. Alex reads published PSG facts: zipper navigation may
+change its traversal state, but may not rewrite the graph or infer new semantic
+admission from nominal spelling. The analyzer's tested shapes do not establish
+complete enforcement of these architectural obligations; retain its documented
+coverage limits. Open SSA assignment design remains a separate obligation.
+
 ### The TRUST line
 
 Every tier runs through `TestInfrastructure.TrustSignal.run` and prints one

@@ -644,6 +644,23 @@ pipeline "bozzetto" {
       })
   }
 
+  stage "Alex analyzer tooling" {
+    workingDir (Path.Combine(rootDir, "tools", "Alex.Analyzers"))
+    run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet tool restore")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet build Alex.Analyzers.fsproj")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet build tests/ContractFixture/ContractFixture.fsproj")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet build tests/ImpostorFixture/ImpostorFixture.fsproj")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet build tests/AlexFixture/AlexFixture.fsproj")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet build tests/StaleContract/StaleContract.fsproj")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "bash tests/project-control.sh")
+    run (fun ctx -> leased "test_suite_run" ctx.RunCommand "bash tests/run.sh --pipeline")
+  }
+
+  stage "Alex component analysis" {
+    whenCmdArg "alex"
+    run (fun ctx -> leased "full_build" ctx.RunCommand "bash tools/Alex.Analyzers/check-project.sh alex")
+  }
+
   stage "test tiers" {
     // EVERY test tier, each once, whatever happens to the others — scheduled by
     // runTiers (longest expected first; concurrently in private copy-on-write
