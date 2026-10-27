@@ -1,20 +1,23 @@
 # FFI implementation handoff
 
-Owner-directed roles, October 26, 2026: **Codex manages the full cross-repository
-FFI closure; Sage-A1.5 through local Pi on Z13 and Pi on ONE/TWO/THREE carry
+Owner-directed roles, October 26, 2026: **Terra is the primary implementer for
+the full cross-repository FFI closure; Codex coordinates the handoff and
+integration; Sage-A1.5 through local Pi on Z13 and Pi on ONE/TWO/THREE carry
 scoped work; native Claude Code supplies one independent adversarial auditor
 per increment. Prefer Fable 5.1; select Opus 5.5 when the review's complexity
-warrants it.** This supersedes the October 20 role assignment.
-The immediate priority is architectural correction: Baker owns
-transformations, and Alex passively witnesses published facts through the Huet
-zipper. Audit the compendium and earlier acceptances against the governing
-architecture and current code; their recorded acceptance can conceal leaks.
+warrants it.** This supersedes the earlier October 26 role assignment.
+The organizing requirement is sound marshaling for every generated C and C++
+binding: representation, calling convention, callbacks, buffers, ownership and
+lifetimes must have complete boundary evidence or an explicit refusal. Baker
+owns transformations, and Alex passively witnesses published facts through the
+Huet zipper. Audit the compendium and earlier acceptances against those
+requirements and current code; recorded acceptance can conceal leaks.
 This is the implementer's operating brief. Maintain capability decisions and
 scoped acceptance in the [FFI compendium](ffi-correction-compendium.md).
 
-Codex owns sequencing across repositories, task boundaries, integration,
-critical implementation, checkpoint synchronization and production of the
-gate evidence. The independent auditor owns the key evidence checks and
+Terra owns implementation across the affected repositories and production of
+the gate evidence. Codex coordinates task boundaries, integration and checkpoint
+synchronization without making parallel implementation changes. The independent auditor owns the key evidence checks and
 acceptance, including binding, scope and any earned regression.
 Codex assigns Z13, ONE, TWO and THREE directly as peer workers, selecting each
 for its available resources and capabilities. Z13 is not a dispatch layer for
@@ -24,11 +27,19 @@ needs its existing owner, affected consumers, accepted evidence and open exit
 conditions. Local and LAN workers receive bounded questions or candidate
 changes with exact source identities; retrieval supplies cited context, not
 acceptance. Preserve the unfinished checkouts before assigning edits. The
-guest MMIO meet-producer increment is landed below; continue its bounded
-source/consumer residuals, keeping MCU retention policy and the Rocq toolchain
-mismatch separately tracked, then return to the remaining designed FFI
-profiles. This role change neither expands those
+guest MMIO meet-producer increment is landed below. Preserve its evidence and
+park its residual hardware work unless a direct FFI blocker is established.
+Continue the remaining designed FFI profiles, beginning with the accepted
+optional-callback selection design and its retained failing control. Adjacent
+lowering or differential-compilation changes belong here only when required to
+establish the generated-binding boundary guarantee. This role change neither expands those
 profiles nor changes any earlier acceptance scope.
+
+For the bounded optional-callback selection profile, a closed zero-argument
+entry has zero-byte component placement. The present and absent constructors
+must therefore occupy the same slot with equal byte size and alignment; unequal
+placement is refused. Selection evidence does not by itself authorize native
+tag projection, SSA assignment, or runtime dispatch.
 
 ## October 26 MMIO transaction-operand increment
 

@@ -1,6 +1,6 @@
 namespace Bozzetto
 
-/// Pure, bounded client-reported work facts. Membership/transport authentication
+/// Pure client-reported work facts. Membership/transport authentication
 /// belongs to the cohort and MCP boundaries; no process supervision or journal.
 module AgentWork =
   type Usage = {
@@ -105,11 +105,6 @@ module AgentWork =
           | Some run when r.Session <> run.Report.Session -> Some(InvalidField "session")
           | Some run when r.Name <> run.Report.Name -> Some(InvalidField "name")
           | Some run when regresses run.Report.Usage r.Usage -> Some RegressingUsage
-          | None when state.Runs.Count >= 256 -> Some Capacity
-          | None when not (terminal r.Status)
-                      && (state.Runs |> Map.toSeq
-                          |> Seq.choose (fun (_, run) -> if terminal run.Report.Status then None else Some run.Member)
-                          |> Set.ofSeq |> Set.add who |> Set.count) > 64 -> Some Capacity
           | _ -> None
     match refusal with
     | Some error -> Error error
@@ -120,15 +115,10 @@ module AgentWork =
         let activity, omitted =
           match existing with
           | None -> [r.Operation], 0L
-          | Some run -> r.Operation :: List.truncate 15 run.Activity, run.OmittedActivity + (if run.Activity.Length >= 16 then 1L else 0L)
+          | Some run -> r.Operation :: run.Activity, run.OmittedActivity
         let run = { Member = who; Role = role; Report = r; UpdatedAt = now; Activity = activity; OmittedActivity = omitted }
         let runs = Map.add r.Run run state.Runs
-        let retainedBytes = runs |> Map.toSeq |> Seq.sumBy (fun (_, item) ->
-          let labels = fields item.Report |> List.sumBy (fun (_, value, _) -> System.Text.Encoding.UTF8.GetByteCount value)
-          let activities = item.Activity |> List.sumBy System.Text.Encoding.UTF8.GetByteCount
-          2048 + 2 * (labels + activities))
-        if retainedBytes > 2 * 1024 * 1024 then Error ByteCapacity
-        else Ok { state with Sequence = state.Sequence + 1L; Runs = runs }
+        Ok { state with Sequence = state.Sequence + 1L; Runs = runs }
   let disconnect now who state =
     let runs = state.Runs |> Map.map (fun _ run ->
       if run.Member = who && run.Report.Status = "running" then
@@ -162,7 +152,6 @@ module AgentWork =
     obj [
       "incarnation", str state.Incarnation; "sequence", wide state.Sequence
       "executionHost", str System.Environment.MachineName
-      "capacity", Fidelity.Data.JSON.JsonValue.ofInt64 256L
       "runs", array [
         for KeyValue(key, run) in state.Runs ->
           let r = run.Report

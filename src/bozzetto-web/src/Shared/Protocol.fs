@@ -324,7 +324,7 @@ type AgentRun = {
 /// seen; `Detail` says what the fact is and `SinceMs` when it began.
 type AgentPresence = { Name: string; Source: string; Member: string; Project: string; Detail: string; SinceMs: int64 }
 type AgentWorkBoard = {
-  Incarnation: string; Sequence: int64; ExecutionHost: string; Capacity: int32
+  Incarnation: string; Sequence: int64; ExecutionHost: string
   Runs: AgentRun array
   Presence: AgentPresence array
 }

@@ -389,18 +389,13 @@ module CohortOwner =
       events: IEvent<CohortEvent<MemberId> list>,
       workPublication: AgentWork.Publication
     ) =
-    let workAdmission = new SemaphoreSlim(32)
     let admit command : Async<Result<int64, AgentWork.Refusal>> =
       Async.FromContinuations(fun (complete, _, _) ->
-        if not (workAdmission.Wait(0)) then complete (Error AgentWork.ReportingBusy)
-        else
-          // The owner, not cancellation of an observing caller, releases the
-          // admission slot once the queued command actually settles.
-          mailbox.Post(command (fun result ->
-            workAdmission.Release() |> ignore
-            complete result)))
+        // The existing mailbox serializes reports until each command settles.
+        // Cancellation of an observing caller does not discard queued facts.
+        mailbox.Post(command complete))
     member _.ReportWork(who, report) = admit (fun reply -> Command.ReportWork(who, report, reply))
-    /// Explicit bounded retry of the owner's retained committed snapshot.
+    /// Explicit retry of the owner's retained committed snapshot.
     member _.ReconcileWork() = admit Command.ReconcileWork
     member _.ReadWork() = workPublication.Read()
     member _.WorkChanged = workPublication.Changed

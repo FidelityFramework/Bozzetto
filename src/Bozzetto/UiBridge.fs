@@ -113,14 +113,14 @@ module Project =
   /// the publication that produced it, not by the owner's report count,
   /// because presence moves without a report.
   let agentBoard (revision: int64) (state: Bozzetto.AgentWork.State) (presence: AgentPresence array) : AgentWorkBoard =
-    { Incarnation = state.Incarnation; Sequence = revision; ExecutionHost = Environment.MachineName; Capacity = 256
+    { Incarnation = state.Incarnation; Sequence = revision; ExecutionHost = Environment.MachineName
       Presence = presence
       Runs = agentWorkRuns state }
 
   /// The reports alone, sequenced by the owner's own count: for a reader that
   /// has no presence facts to add.
   let agentWork (state: Bozzetto.AgentWork.State) : AgentWorkBoard =
-    { Incarnation = state.Incarnation; Sequence = state.Sequence; ExecutionHost = Environment.MachineName; Capacity = 256
+    { Incarnation = state.Incarnation; Sequence = state.Sequence; ExecutionHost = Environment.MachineName
       Presence = [||]
       Runs = agentWorkRuns state }
 
