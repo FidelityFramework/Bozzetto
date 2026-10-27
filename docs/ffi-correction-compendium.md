@@ -18,6 +18,25 @@ the October 20 assignment. Earlier verdicts retain only their recorded scopes. T
 [implementation handoff](ffi-implementation-handoff.md) owns the current heads,
 next deliverable and review protocol; it introduces no additional FFI requirements.
 
+**Measured record inputs accepted, October 27.** Farscape
+`6dbe082ab4a690d58a572fc5bcde4a91100e9bfe` extends the existing descriptor
+owner to admit whole-byte, representable, nonzero storage size and positive
+whole-byte alignment before consuming measured quantities. Consumed field
+offsets must be whole bytes within the record storage. Opaque union storage
+uses the admitted size; refused measurements never become declared layouts.
+Sole Fable accepts the committed binding: 25 new controls, focused 212/212,
+nine caught mutations, and unfiltered 1115/1115. An older synthetic nested
+fixture needed positive outer storage to reach its unchanged child refusal;
+the initial failure is retained. Three existing files change +131/-8, with no
+new product file, dependency or semantic owner. Gate, staged and committed
+bytes match, and five retrieved spans match at fresh generation 54; Fable
+ruled that no committed gate rerun was earned. Source, dependency, output and
+unrelated draft restoration checks pass. Evidence is in Farscape
+`artifacts/measured-layout-input-20261027/`. Full field extents, original union
+member offsets, measurement provenance, parser bit-range handling and the
+native/T4/SSA obligations remain open. This is bounded descriptor admission,
+not native ABI execution or complete FFI acceptance.
+
 **C record layout attributes accepted, October 27.** Farscape
 `846a4ba43757c69e7c7f594066ee3658cd3402a0` retains raw clang attributes on
 records and fields. The existing descriptor owner refuses unmeasured packed,
