@@ -8,6 +8,10 @@ open FSharp.Compiler.Symbols
 open FSharp.Compiler.Symbols.FSharpExprPatterns
 open FSharp.Compiler.Text
 
+type private AliasDependency =
+  | ObjectDependency
+  | BclDependency of FSharpEntity
+
 let private analyzeShared (context: CliContext) = async {
   let diagnostics = ResizeArray<Message>()
   match context.TypedTree with
@@ -47,10 +51,52 @@ let private analyzeShared (context: CliContext) = async {
         Range = range
         Fixes = []
       }
-    let checkEntity range entity =
-      match classifyEntity entity with
-      | Ok true -> rejectBcl range entity
-      | Ok false -> ()
+    let inspectAlias (alias: FSharpEntity) =
+      let rec walk depth (typ: FSharpType) =
+        if depth > 32 then Error (sprintf "type step %d exceeded the alias expansion limit" depth)
+        else
+          try
+            let children () =
+              typ.GenericArguments
+              |> Seq.fold (fun result child ->
+                match result, walk (depth + 1) child with
+                | Ok previous, Ok next -> Ok (previous @ next)
+                | Error reason, _ | _, Error reason -> Error reason) (Ok [])
+            if typ.IsGenericParameter || typ.IsMeasureType then Ok []
+            elif typ.IsTupleType || typ.IsFunctionType || typ.IsAnonRecordType then children ()
+            elif typ.HasTypeDefinition then
+              let definition = typ.TypeDefinition
+              let assembly = definition.Assembly.SimpleName
+              if definition.IsProvided then Error (sprintf "type step %d has an unsupported provided identity" depth)
+              elif typ.IsAbbreviation && assembly <> "FSharp.Core" then
+                match children (), walk (depth + 1) definition.AbbreviatedType with
+                | Ok arguments, Ok body -> Ok (arguments @ body)
+                | Error reason, _ | _, Error reason -> Error reason
+              elif typ.IsAbbreviation && assembly = "FSharp.Core" && definition.DisplayName = "obj" then
+                let target = definition.AbbreviatedType
+                if target.HasTypeDefinition && target.TypeDefinition.TryFullName = Some "System.Object" then Ok [ ObjectDependency ]
+                else Error (sprintf "type step %d cannot establish the intrinsic obj target" depth)
+              else
+                match children (), classifyEntity definition with
+                | Error reason, _ | _, Error reason -> Error reason
+                | Ok nested, Ok isBcl when isBcl && definition.TryFullName = Some "System.Object" -> Ok (ObjectDependency :: nested)
+                | Ok nested, Ok true -> Ok (BclDependency definition :: nested)
+                | Ok nested, Ok false -> Ok nested
+            else Error (sprintf "type step %d has an unrecognized shape" depth)
+          with error -> Error (sprintf "type step %d failed: %s" depth error.Message)
+      try walk 0 alias.AbbreviatedType with error -> Error error.Message
+    let checkEntity range (entity: FSharpEntity) =
+      let result =
+        if entity.IsFSharpAbbreviation && entity.Assembly.SimpleName <> "FSharp.Core" then
+          inspectAlias entity |> Result.mapError (fun reason -> sprintf "Cannot inspect alias '%s': %s" entity.DisplayName reason)
+        else classifyEntity entity |> Result.map (fun isBcl -> if isBcl then [ BclDependency entity ] else [])
+      match result with
+      | Ok dependencies ->
+        for dependency in dependencies do
+          match dependency with
+          | BclDependency target -> rejectBcl range target
+          | ObjectDependency ->
+            diagnostics.Add { Type = "Clef production boundary"; Message = sprintf "Clef production code must not declare obj types. %s resolves to System.Object." entity.DisplayName; Code = "AXC005"; Severity = Severity.Error; Range = range; Fixes = [] }
       | Error reason ->
         diagnostics.Add {
           Type = "Clef analysis incomplete"
@@ -70,7 +116,8 @@ let private analyzeShared (context: CliContext) = async {
         | :? FSharpEntity as entity -> Some entity
         | :? FSharpMemberOrFunctionOrValue as memberOrFunction -> memberOrFunction.DeclaringEntity
         | _ -> None
-      entity |> Option.iter (checkEntity symbolUse.Range)
+      entity |> Option.iter (fun value ->
+        if not (symbolUse.IsFromDefinition && value.IsFSharpAbbreviation) then checkEntity symbolUse.Range value)
     for declaration in context.CheckFileResults.OpenDeclarations do
       match declaration.Range with
       | Some range when not declaration.IsOwnNamespace ->

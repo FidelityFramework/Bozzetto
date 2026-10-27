@@ -652,6 +652,7 @@ pipeline "bozzetto" {
     run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet build tests/ImpostorFixture/ImpostorFixture.fsproj")
     run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet build tests/AlexFixture/AlexFixture.fsproj")
     run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet build tests/StaleContract/StaleContract.fsproj")
+    run (fun ctx -> leased "full_build" ctx.RunCommand "dotnet build tests/AliasFixture/AliasFixture.fsproj")
     run (fun ctx -> leased "full_build" ctx.RunCommand "bash tests/project-control.sh")
     run (fun ctx -> leased "test_suite_run" ctx.RunCommand "bash tests/run.sh --pipeline")
   }

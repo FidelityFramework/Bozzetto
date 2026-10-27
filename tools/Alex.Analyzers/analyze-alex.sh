@@ -14,6 +14,7 @@ lease full_build dotnet build tests/ContractFixture/ContractFixture.fsproj
 lease full_build dotnet build tests/ImpostorFixture/ImpostorFixture.fsproj
 lease full_build dotnet build tests/AlexFixture/AlexFixture.fsproj
 lease full_build dotnet build tests/StaleContract/StaleContract.fsproj
+lease full_build dotnet build tests/AliasFixture/AliasFixture.fsproj
 lease full_build bash tests/project-control.sh
 lease test_suite_run bash tests/run.sh --pipeline
 lease full_build bash check-project.sh alex-boundary

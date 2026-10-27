@@ -28,6 +28,10 @@ for required in "$tool_dir/tests/StaleContract/Contract.fs" "$tool_dir/tests/Sta
   binding=$(sha256sum "$required")
   rg -Fqx "$binding" "$receipt" || { printf 'Truth receipt does not bind %s.\n' "$required" >&2; exit 1; }
 done
+for required in "$tool_dir/tests/AliasFixture/Aliases.fs" "$tool_dir/tests/AliasFixture/AliasFixture.fsproj" "$tool_dir/tests/AliasFixture/packages.lock.json" "$tool_dir/tests/AliasFixture/bin/Debug/net10.0/AliasFixture.dll"; do
+  binding=$(sha256sum "$required")
+  rg -Fqx "$binding" "$receipt" || { printf 'Truth receipt does not bind %s.\n' "$required" >&2; exit 1; }
+done
 mkdir -p "$repo_dir/artifacts/alex-analyzers-tests"
 scratch=$(mktemp -d "$repo_dir/artifacts/alex-analyzers-tests/project.XXXXXXXX")
 dotnet msbuild "$project" -getItem:Compile > "$scratch/items.json"

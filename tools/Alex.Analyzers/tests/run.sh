@@ -14,11 +14,13 @@ psg_dll=${ALEX_ANALYZER_PSG_DLL:-$tool_dir/tests/ContractFixture/bin/Debug/net10
 impostor_dll=$tool_dir/tests/ImpostorFixture/bin/Debug/net10.0/Unrelated.Contract.dll
 alex_dll=$tool_dir/tests/AlexFixture/bin/Debug/net10.0/Alex.dll
 stale_dll=$tool_dir/tests/StaleContract/bin/Debug/net10.0/Fidelity.PSG.dll
+alias_dll=$tool_dir/tests/AliasFixture/bin/Debug/net10.0/AliasFixture.dll
 analyzers=${ALEX_ANALYZER_PATH:-$tool_dir/bin/Debug/net10.0}
 [[ -f "$psg_dll" ]] || { printf 'Missing PSG contract assembly: %s\n' "$psg_dll" >&2; exit 1; }
 [[ -f "$impostor_dll" ]] || { printf 'Missing impostor assembly: %s\n' "$impostor_dll" >&2; exit 1; }
 [[ -f "$alex_dll" ]] || { printf 'Missing Alex fixture assembly: %s\n' "$alex_dll" >&2; exit 1; }
 [[ -f "$stale_dll" ]] || { printf 'Missing stale contract assembly: %s\n' "$stale_dll" >&2; exit 1; }
+[[ -f "$alias_dll" ]] || { printf 'Missing alias fixture assembly: %s\n' "$alias_dll" >&2; exit 1; }
 if [[ -z ${ALEX_ANALYZER_ONLY:-} ]]; then
   sha256sum --check --status "$repo_dir/artifacts/alex-analyzers-tests/inproject-control/truth.sha256" || { printf 'In-project control receipt is missing or stale.\n' >&2; exit 1; }
 fi
@@ -74,6 +76,11 @@ printf 'let traverse (xs: int list) = xs |> List.map (fun x -> Some (x + 1))\nle
 printf 'let render x = sprintf "%%d" x\nlet consume xs = for x in xs do ignore x\n' > "$scratch/generic-pure.fsx"
 printf 'let consume (message: string) = message\nlet render (number: int) (reason: string) = consume $"Literal {number}: {reason}"\n' > "$scratch/interpolation-pure.fsx"
 printf 'let consume (value: obj) = ()\nlet render (number: int) = consume $"Literal {number}"\n' > "$scratch/interpolation-obj.fsx"
+for alias in Foreign ObjectAlias ObjectNominal Chain Builders Handler Pair Both Boxed Arr Text Names Lookup Function PurePair Optional Generic NestedObj NestedForeign Anonymous AnonymousObj Distance Ints UnitFunction Nat Resizable LazyValue Sequence LocalAlias ExceptionType BigInteger DecimalValue; do
+  type_name=$alias
+  case "$alias" in Boxed|Generic) type_name="$alias<int>" ;; esac
+  printf '#r "%s"\nlet x (v: AliasFixture.%s) = v\n' "$alias_dll" "$type_name" > "$scratch/alias-$alias.fsx"
+done
 printf 'let invalid =\n' > "$scratch/invalid.fsx"
 
 run_case() {
@@ -84,7 +91,7 @@ run_case() {
   case "$name" in forward|revision|semantic-node|breadcrumb|impostor|missing-contract|stale-contract|nominal-*|other-name-field|published-width|published-string) analyzer='Alex published boundary' ;; esac
   (cd "$tool_dir" && dotnet fsharp-analyzers --script "$scratch/$name.fsx" --analyzers-path "$analyzers" --include-analyzers "$analyzer" --fail-on-type-errors) > "$scratch/$name.log" 2>&1 || rc=$?
   case "$expected" in
-    clean|known-miss) [[ $rc -eq 0 ]] && ! rg -q 'AX[AC][0-9]+' "$scratch/$name.log" ;;
+    clean|known-miss|policy-pending) [[ $rc -eq 0 ]] && ! rg -q 'AX[AC][0-9]+' "$scratch/$name.log" ;;
     type-error) [[ $rc -ne 0 ]] && rg -Fq 'did not type check and --fail-on-type-errors was passed' "$scratch/$name.log" ;;
     *)
       case "$expected" in
@@ -107,16 +114,17 @@ run_case() {
         rg -Fq "$scratch/$name.fsx($position): Error AXC005 : Clef production code must not declare obj types." "$scratch/$name.log" || { printf 'FAIL %s obj diagnostic at %s (log %s)\n' "$name" "$position" "$scratch/$name.log" >&2; return 1; }
       done
       if [[ $expected == AXC002 ]]; then
-        [[ $(rg -c 'Error AXC002 : .+ \(assembly .+\)\.' "$scratch/$name.log" || true) -eq $count ]] || { printf 'FAIL %s missing resolved identity\n' "$name" >&2; return 1; }
+        [[ $(rg -c 'Error AXC002 : .+ \(assembly .+\)\.' "$scratch/$name.log" || true) -eq $(wc -w <<< "$positions") ]] || { printf 'FAIL %s missing resolved identity\n' "$name" >&2; return 1; }
       fi
       ;;
   esac || { printf 'FAIL %s %s (exit %s; log %s)\n' "$expected" "$name" "$rc" "$scratch/$name.log" >&2; return 1; }
-  if [[ $expected == known-miss ]]; then known_misses+=("$name"); printf 'KNOWN-MISS %s\n' "$name"; else printf 'PASS %s\n' "$name"; fi
+  if [[ $expected == known-miss ]]; then known_misses+=("$name"); printf 'KNOWN-MISS %s\n' "$name"; elif [[ $expected == policy-pending ]]; then policy_pending+=("$name"); printf 'POLICY-PENDING %s\n' "$name"; else printf 'PASS %s\n' "$name"; fi
 }
 
 executed=0
 cases=()
 known_misses=()
+policy_pending=()
 run_case forward clean
 run_case revision AXA001 '2,40'
 run_case semantic-node AXA001 '2,44'
@@ -164,21 +172,57 @@ run_case obj-declaration AXC005 '1,13 2,21'
 run_case obj-list-type AXC005 '1,12'
 run_case obj-lookalike clean
 run_case obj-primitives clean
+run_case alias-Foreign AXC002 '2,10'
+run_case alias-ObjectAlias AXC005 '2,10'
+run_case alias-ObjectNominal AXC005 '2,10'
+run_case alias-Chain AXC002 '2,10'
+run_case alias-Builders AXC002 '2,10'
+run_case alias-Handler AXC005 '2,10'
+run_case alias-Pair AXC005 '2,10'
+run_case alias-Both AXC002 '2,10' '2,10'
+run_case alias-Boxed AXC005 '2,10'
+run_case alias-Arr AXC002 '2,10'
+run_case alias-Text clean
+run_case alias-Names clean
+run_case alias-Lookup clean
+run_case alias-Function clean
+run_case alias-PurePair clean
+run_case alias-Optional clean
+run_case alias-Generic clean
+run_case alias-NestedObj AXC005 '2,10'
+run_case alias-NestedForeign AXC002 '2,10'
+run_case alias-Anonymous clean
+run_case alias-AnonymousObj AXC005 '2,10'
+run_case alias-Distance clean
+run_case alias-Ints clean
+run_case alias-UnitFunction clean
+run_case alias-Nat clean
+run_case alias-Resizable policy-pending
+run_case alias-LazyValue policy-pending
+run_case alias-Sequence policy-pending
+run_case alias-LocalAlias clean
+run_case alias-ExceptionType policy-pending
+run_case alias-BigInteger policy-pending
+run_case alias-DecimalValue policy-pending
 run_case file-reference AXC002 '1,21 1,11'
 run_case file-stream AXC002 '1,18 1,54 1,44'
 run_case stream-reader AXC002 '1,18 1,42'
 run_case invalid type-error
 [[ $executed -gt 0 ]] || { printf 'No truth case matched.\n' >&2; exit 1; }
 if [[ -z ${ALEX_ANALYZER_ONLY:-} ]]; then
-  [[ $executed -eq 51 ]] || { printf 'Expected 51 registered cases, ran %s.\n' "$executed" >&2; exit 1; }
+  [[ $executed -eq 83 ]] || { printf 'Expected 83 registered cases, ran %s.\n' "$executed" >&2; exit 1; }
   printf '{"executed":%s,"cases":[' "$executed" > "$scratch/truth.json"
   separator=''
   for case_name in "${cases[@]}"; do printf '%s"%s"' "$separator" "$case_name" >> "$scratch/truth.json"; separator=','; done
   printf '],"known_miss":[' >> "$scratch/truth.json"
   separator=''
   for case_name in "${known_misses[@]}"; do printf '%s"%s"' "$separator" "$case_name" >> "$scratch/truth.json"; separator=','; done
+  printf '],"policy_pending":[' >> "$scratch/truth.json"
+  separator=''
+  for case_name in "${policy_pending[@]}"; do printf '%s"%s"' "$separator" "$case_name" >> "$scratch/truth.json"; separator=','; done
   printf '],"sdk":"%s","analyzer_cli":"0.41.0"}\n' "$(dotnet --version)" >> "$scratch/truth.json"
   sha256sum "$analyzers/Alex.Analyzers.dll" "$tool_dir/Analyzer.fs" "$tool_dir/tests/run.sh" "$tool_dir/.config/dotnet-tools.json" "$psg_dll" "$impostor_dll" "$alex_dll" "$stale_dll" "$tool_dir/tests/ContractFixture/Contract.fs" "$tool_dir/tests/ContractFixture/ContractFixture.fsproj" "$tool_dir/tests/ImpostorFixture/ImpostorFixture.fsproj" "$tool_dir/tests/AlexFixture/Ensure.fs" "$tool_dir/tests/AlexFixture/AlexFixture.fsproj" "$tool_dir/tests/StaleContract/Contract.fs" "$tool_dir/tests/StaleContract/StaleContract.fsproj" "$tool_dir/tests/InProject/InProject.fsproj" "$tool_dir/tests/InProject/Ensure.fs" "$tool_dir/tests/InProject/Cases.fs" "$tool_dir/tests/project-control.sh" "$repo_dir/artifacts/alex-analyzers-tests/inproject-control/truth.sha256" "$tool_dir/analyze-alex.sh" "$tool_dir/check-project.sh" "$tool_dir/ProjectInputs.fsx" "$tool_dir/VerifyProjectLog.fsx" "$tool_dir/Alex.Analyzers.fsproj" "$tool_dir/Directory.Packages.props" "$tool_dir/packages.lock.json" "$tool_dir/NuGet.Config" "$scratch/truth.json" > "$scratch/truth.sha256"
+  sha256sum "$alias_dll" "$tool_dir/tests/AliasFixture/Aliases.fs" "$tool_dir/tests/AliasFixture/AliasFixture.fsproj" "$tool_dir/tests/AliasFixture/packages.lock.json" >> "$scratch/truth.sha256"
   cp "$scratch/truth.sha256" "${ALEX_ANALYZER_TRUTH_RECEIPT_OUT:-$repo_dir/artifacts/alex-analyzers-tests/latest-truth.sha256}"
   printf 'Truth receipt: %s\n' "$scratch/truth.sha256"
 fi
