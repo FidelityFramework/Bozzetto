@@ -691,6 +691,34 @@ and outputs were restored exactly. Flexible/zero-length arrays, the depth-limit
 path, layout provenance, multi-header forward-definition merging and native
 aggregate ABI remain open; these results establish no complete marshaling fence.
 
+**Array extent correction accepted, October 27.** Farscape `d6d841b..49caaa3`
+preserves flexible-array recognition in the existing parser and refuses missing
+or nonpositive counts in the descriptor owner, including measured layouts.
+Representation errors precede extent errors. Real C headers distinguish `[]`,
+`[0]` and `[3]`; pointers to records containing flexible members remain admitted.
+Native Fable accepted 93/93 focused cases, five discriminating mutations and
+the committed-source default unfiltered **996/996** gate. Three existing files,
++134/-13; no new product file, dependency or owner. The two initial build errors
+remain retained failures. Evidence and final verdict are in
+`Farscape/artifacts/array-extent-descriptor-20261027/`. Actual-header probes also
+confirm the next separate defect: pointer-to-array fields lose their pointer
+representation, and multidimensional fields lose later dimensions. Those outputs
+are unchanged by this checkpoint; no dynamic-array or complete declarator
+representation is claimed.
+
+**Exact string-predicate crossing accepted, October 27.** Bozzetto `3d0367a0`
+extends AXA002 through resolved `System.String.StartsWith` in an admission
+predicate, inspecting receiver and arguments while preserving other call stops.
+Native Fable verified the three-file +55/-6 committed binding, five mutations,
+and the 127-case receipt (`run.DofbD5iG`), which retains nine known misses and
+ten policy-pending cases (four lookup shapes and six abbreviations). The 93-file
+boundary check reports zero; the combined check remains **red**, 425 AXC002 and
+27 AXC005, with no AXA000. No new product file, dependency or owner. Evidence:
+`artifacts/ffi-resume-20261020/closure-20261026/analyzer-method-wrapper-validation/`
+and the matching `fable-method-*-return.md` reports. The subsequent assembly
+provenance probe is diagnostic evidence only; it establishes no dependency gate
+acceptance or complete architectural fence.
+
 **Analyzer provenance refinements accepted, October 26.** Bozzetto `3639a879`,
 `8f95f641` and `8897a232` extend the existing classifier through non-core type
 aliases and AXA002 through immutable local value chains and resolved Boolean
