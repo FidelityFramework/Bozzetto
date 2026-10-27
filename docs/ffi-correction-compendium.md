@@ -668,6 +668,43 @@ The owner's questions from that map: the next Baker construct (scalar calls, rea
 
 ### 11.1 Phase B, next
 
+**Measured binding layout correction accepted, October 26.** Farscape
+`23edcf0..581d634` binds field counts and requested declaration kinds to measured
+layouts, refuses failed required probes and declared-but-unmeasured records,
+and recognizes the observed Clang namespace markers. Concurrent layout calls
+now own distinct probe inputs: the shared filename demonstrably returned
+another caller's measurement for the same nominal name. Restoring that filename
+failed the discriminating control; both namespace-marker omissions also failed
+their controls. Native Fable 5.1 accepted the six-file checkpoint and its pushed
+binding after a default, unfiltered **927/927** run built from committed sources
+with the unrelated ProtocolParser draft excluded. That draft and all four
+output roots were restored exactly. Growth: six existing files, +149/-18;
+no new product file, dependency or owner. Evidence and sole-auditor verdict:
+`Farscape/artifacts/layout-probe-concurrency-20261027/`, including
+`committed-binding.json`, `committed-gate/execution.json` and
+`fable-committed-layout-return.md`; namespace mutations are in the sibling
+`nonnull-marker-mutations-20261027/`. Earlier failed gates remain failures.
+Equal field counts do not establish offset/provenance correctness or native
+aggregate ABI acceptance. Anonymous-record typedef admission, malformed layout
+handling and first-header-only probing remain bounded residuals.
+
+**Alex analyzer tooling checkpoint accepted, October 26.** Bozzetto `07920f26`
+and `4c53f032`, with Alex `8b324f8`, install isolated development tooling and the
+agent-required combined analyzer command. The existing shared classifier now
+also reports authored `obj` declarations. Native Fable accepted the bounded
+51-case truth matrix and committed bindings, including the reproduced and
+corrected interpolation-boxing false positive. The real 93-file Alex run is
+still **red**: 425 AXC002 and 27 AXC005 occurrences, unadjudicated, exit 254;
+the Alex-boundary-only check is narrower and reports zero. External type aliases,
+the documented nominal-predicate misses, foreign-dependency admission and the
+implicit-widening matrix remain open. This tooling acceptance establishes no
+complete architectural fence, production baseline pass, TRUST verdict or FFI
+capability. Bindings, raw findings, preservation and sole-auditor reports are in
+`artifacts/ffi-resume-20261020/closure-20261026/`, particularly
+`analyzer-handoff-draft.md`, `analyzer-obj-wrapper-validation/` and
+`fable-obj-binding-review-return.md`. Compiler projects acquire no tooling
+dependencies; the approved Ionide/FCS dependencies remain isolated in Bozzetto.
+
 **Architectural review status, October 20.** The [detailed remediation plan](ffi-drift-correction-plan.md) supersedes the ordering and audit assignment in the October 17 proposal below. Native Claude accepted the planning direction with changes but found the detailed remediation and implementation not ready: the authority map, independent correspondence model and semantic-versioning rule remain incomplete. D2 removes the nested segmentation `Version`; its former Alex-side gate is not an extension point. The MMIO candidate remains uncommitted, and its Composer positive source gate failed before witnessing. Prior component acceptances retain their recorded scope; they do not establish global passivity or justify the remaining ownership leaks. The current handoff records execution and Bozzetto tracking status.
 
 **Foreign-bearing region reuse, October 17 (plan accepted; first checkpoint landed).** The owner directed on October 17 that checked Console input is an off-ramp to the larger FFI remit and approved starting with generality in its proper scope. Sole auditor Sol accepted one increment (packets 02-v2 and 03 under `ffi-generality-2026-10-17/`): milestone "object reuse within one open session under current source and MLIR proof revalidation", the `labs` fixture as the proving case, no durable store, D5 identity or cross-restart reuse claimed. Its parts, in order: (1) restore scalar segmentation beside boundary declarations, landed as clef `09cab05` and deployed (section 10); (2) a boundary-declaration interface class in the existing `WitnessSegmentation` candidate builder modelled on `numericInterface`, with declaration identity, descriptor content, ABI identity and loading contract in the compute key and hypothesis identity, version and source in proof validity only; `supported` arms for the boundary Application and the callee VarRef to the import binding under the representation exemption; refusal of competing declarations; the original proposal coupled segmentation `Version = 2` to Alex `validateManifest` (superseded by D2 and the October 20 contract-ownership review); (3) a source site for the startup activation in the existing source-claim annotation owner, a derived role and path under the entry incarnation with no second annotation walk, so the invocation-context anchor stops falling back to a source range and `transient_foreign_result_` identities leave the fixtures; (4) Composer `consumedClaims` assigned by region membership with unique ownership and exact pair coverage, `encodeClaim` validity without raw node numbers, `Reusable` through the existing `ForeignResultCoverageModel` and `AbiIdentity`, a no-hypothesis `IntegerRepresentationCoverage` staying non-reusable; (5) an executed wrong-region mutation and the auditor's eight-row matrix, then a matching worker payload rebuild of CCS, Alex and Composer only. Console input (the approved API of section 1) follows T5 as the consumer-synchronization item; `Sys.readline`, `Sys.read` and the readln obligation recipes are replacement targets, not owners to extend. Governing spec: program-hypergraph §5 (witness correspondence) and §5.1 (affected region from changed facts and their complete dependencies), backend-lowering-architecture §2.1.1 item 4 and §7, ffi-boundary §3.4, §3.6 and §5.6.
