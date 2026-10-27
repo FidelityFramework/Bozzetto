@@ -267,6 +267,9 @@ let alexBoundary : Analyzer<CliContext> = fun context -> async {
         match expression with
         | FSharpFieldGet(_, _, field) when field.Name = "Name" &&
             (field.DeclaringEntity |> Option.exists (fun entity -> entity.TryFullName = Some "Fidelity.PSG.NominalTypeIdentity" && entity.Assembly.SimpleName = "Fidelity.PSG")) -> true, []
+        | Call(_, called, _, _, [argument]) when called.CompiledName = "Not" &&
+            (called.DeclaringEntity |> Option.exists (fun entity -> entity.TryFullName = Some "Microsoft.FSharp.Core.Operators" && entity.Assembly.SimpleName = "FSharp.Core")) ->
+          predicateEvidence visited argument
         | Call(_, called, _, _, _) when not (called.CompiledName.StartsWith("op_")) -> false, []
         | Application _ | Lambda _ -> false, []
         | Sequential(_, second) -> predicateEvidence visited second
