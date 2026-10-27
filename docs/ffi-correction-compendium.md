@@ -668,6 +668,50 @@ The owner's questions from that map: the next Baker construct (scalar calls, rea
 
 ### 11.1 Phase B, next
 
+**Descriptor representation refusals accepted, October 26.** Farscape
+`581d634..6ea8996` refuses bitfields and non-byte-aligned measured field offsets;
+`6ea8996..028fd8e` refuses unknown field representations;
+`028fd8e..d6d841b` refuses missing and fieldless nested record declarations,
+including a fieldless record with positive measured extent. The existing
+descriptor owner carries the resolved nested declaration into extent and
+emission; it no longer substitutes a zero-byte payload for these cases.
+Native Fable 5.1 accepted each committed binding after its selected controls,
+mutations and default unfiltered committed-source suite: **944/944**,
+**963/963** and **976/976**, respectively. The latest focused matrix passed
+73/73; four mutations failed exactly 2, 8, 1 and 2 refusal controls, while
+the positive controls stayed green. The real single-header forward declaration
+followed by its definition retains the correct nested extent. Each checkpoint
+changes the same two existing files, with growth +115/-7, +118/-14 and
++130/-16 respectively; no new product file, dependency or owner. Evidence is
+in Farscape's `artifacts/bitfield-descriptor-20261027/`,
+`unknown-field-descriptor-20261027/` and `nested-empty-descriptor-20261027/`,
+including their `committed-binding.json`, `committed/execution.json` and
+`fable-*-committed-return.md` records. Sources, dependencies, ambient drafts
+and outputs were restored exactly. Flexible/zero-length arrays, the depth-limit
+path, layout provenance, multi-header forward-definition merging and native
+aggregate ABI remain open; these results establish no complete marshaling fence.
+
+**Analyzer provenance refinements accepted, October 26.** Bozzetto `3639a879`,
+`8f95f641` and `8897a232` extend the existing classifier through non-core type
+aliases and AXA002 through immutable local value chains and resolved Boolean
+`not`. Mutable claimed chains refuse with AXA000. The final truth receipt
+contains 114 executed cases, including eight labeled known misses and six
+policy-pending FSharp.Core abbreviations; these categories are not converted
+to passing rule coverage. Native Fable verified the committed bindings.
+The real-Alex boundary-only observation still reports zero diagnostics across
+93 files; the selected combined observation still exits 254 with **425 AXC002
+and 27 AXC005**, and no AXA000. Those production findings remain unadjudicated.
+The current receipt is `artifacts/alex-analyzers-tests/run.unmqEUil/`; evidence
+and verdicts are under `artifacts/ffi-resume-20261020/closure-20261026/`, notably
+`analyzer-not-combined-observation/` and `fable-not-binding-review-return.md`.
+No pipeline run on the final commit or full architectural fence is claimed.
+Growth for the three increments is ten files +160/-15 (three new test-only
+alias-fixture files), three existing files +74/-16, and three existing files
++31/-3. The new fixture supplies the cross-assembly alias discriminator; it
+adds no production dependency or rule owner. Arbitrary helper/method crossings,
+the six abbreviation policies, foreign-assembly admission, implicit widening,
+native SSA and complete FFI closure remain open.
+
 **Measured binding layout correction accepted, October 26.** Farscape
 `23edcf0..581d634` binds field counts and requested declaration kinds to measured
 layouts, refuses failed required probes and declared-but-unmeasured records,
