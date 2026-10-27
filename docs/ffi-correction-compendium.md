@@ -34,6 +34,22 @@ retains a conditional check on the separate Alex package-allowance build
 receipt. Evidence and exact residuals are in
 `artifacts/ffi-resume-20261020/closure-20261026/t4-baseline-attribution/landing-preflight/`.
 
+**Measured-layout parsing accepted, October 27.** Farscape
+`c155a09d128f905cf9f3225fb777e0d1a68d4dea` makes the existing clang layout
+parser return a contextual error for an empty, malformed or out-of-range marked
+block instead of silently omitting it. Preamble remains ignored, and a failed
+probe cannot return a partial layout map. Sole Fable accepts the committed
+binding: focused 246/246, unfiltered 1149/1149 and seven caught mutations,
+including one diagnostic-reason control. Two existing files change +176/-76;
+there is no new product file, dependency or semantic owner. Candidate, staged
+and committed bytes match, and fresh retrieval generation 61 confirms the
+committed source. Original renewing lease IDs were not printed and are not
+inferred. Evidence and the final review are in Farscape
+`artifacts/measured-bit-range-20261027/`. The parser bit-range residual is
+closed for marked blocks; anonymous-record identity, multiheader merging,
+unsupported representation semantics and C++ layout remain open. This does
+not establish native ABI or runtime safety.
+
 **Inline field extents accepted, October 27.** Farscape
 `e3ae570923f1ef3d345c2b43962111aac9ddf9db` extends the existing descriptor
 owner to require each inline field's offset plus byte extent to fit inside
