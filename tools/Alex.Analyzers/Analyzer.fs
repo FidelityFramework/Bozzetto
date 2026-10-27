@@ -149,9 +149,32 @@ let private analyzeShared (context: CliContext) = async {
   return diagnostics |> Seq.distinctBy (fun diagnostic -> diagnostic.Code, diagnostic.Range.StartLine, diagnostic.Range.StartColumn) |> List.ofSeq
 }
 
+let private objectDeclarations (context: CliContext) = async {
+  let diagnostics = ResizeArray<Message>()
+  match context.TypedTree with
+  | None -> () // analyzeShared owns the missing-tree refusal for this entry point.
+  | Some _ ->
+    for symbolUse in context.GetAllSymbolUsesOfFile() do
+      match symbolUse.Symbol with
+      | :? FSharpEntity as entity when entity.DisplayName = "obj" && entity.Assembly.SimpleName = "FSharp.Core" && entity.IsFSharpAbbreviation ->
+        let target =
+          try
+            let typ = entity.AbbreviatedType
+            if typ.HasTypeDefinition then typ.TypeDefinition.TryFullName else None
+          with _ -> None
+        if target = Some "System.Object" then
+          diagnostics.Add { Type = "Clef production boundary"; Message = "Clef production code must not declare obj types."; Code = "AXC005"; Severity = Severity.Error; Range = symbolUse.Range; Fixes = [] }
+        else
+          diagnostics.Add { Type = "Clef analysis incomplete"; Message = "Cannot establish the target of the obj abbreviation."; Code = "AXA000"; Severity = Severity.Error; Range = symbolUse.Range; Fixes = [] }
+      | _ -> ()
+  return diagnostics |> Seq.distinctBy (fun diagnostic -> diagnostic.Code, diagnostic.Range.StartLine, diagnostic.Range.StartColumn) |> List.ofSeq
+}
+
 [<CliAnalyzer("Clef production baseline")>]
 let clefBaseline : Analyzer<CliContext> = fun context -> async {
-  return! analyzeShared context
+  let! baseline = analyzeShared context
+  let! objects = objectDeclarations context
+  return baseline @ objects
 }
 
 [<CliAnalyzer("Alex published boundary")>]

@@ -63,6 +63,10 @@ printf 'let consume (value: obj) = ()\nlet result = consume 1\n' > "$scratch/imp
 printf 'type Row = { Value: obj }\nlet row = { Value = 1 }\n' > "$scratch/implicit-field.fsx"
 printf 'let values: obj list = [1; 2]\n' > "$scratch/implicit-list.fsx"
 printf 'let identity (x: obj) = x\n' > "$scratch/object-identity.fsx"
+printf 'type Alias = obj\nlet identity (value: obj) = value\n' > "$scratch/obj-declaration.fsx"
+printf 'let values: obj list = []\n' > "$scratch/obj-list-type.fsx"
+printf 'type obj = int\nlet identity (value: obj) = value\n' > "$scratch/obj-lookalike.fsx"
+printf 'let identity (value: int) : int option = Some (value + 1)\nlet text: string = "ok"\n' > "$scratch/obj-primitives.fsx"
 printf 'let read = System.IO.File.ReadAllText\n' > "$scratch/file-reference.fsx"
 printf 'let make () = new System.IO.FileStream("x", System.IO.FileMode.Open)\n' > "$scratch/file-stream.fsx"
 printf 'let make (stream: System.IO.Stream) = new System.IO.StreamReader(stream)\n' > "$scratch/stream-reader.fsx"
@@ -73,7 +77,7 @@ printf 'let consume (value: obj) = ()\nlet render (number: int) = consume $"Lite
 printf 'let invalid =\n' > "$scratch/invalid.fsx"
 
 run_case() {
-  local name=$1 expected=$2 positions=${3:-} reason count rc=0 analyzer='Clef production baseline'
+  local name=$1 expected=$2 positions=${3:-} object_positions=${4:-} reason count rc=0 analyzer='Clef production baseline'
   if [[ -n ${ALEX_ANALYZER_ONLY:-} && "$name" != "$ALEX_ANALYZER_ONLY" ]]; then return 0; fi
   executed=$((executed + 1))
   cases+=("$name")
@@ -91,12 +95,16 @@ run_case() {
         AXC002) reason='Clef production code must not depend on .NET library APIs:' ;;
         AXC003) reason='Clef production code must not use task computation expressions.' ;;
         AXC004) reason='Clef production code must not widen a value to obj.' ;;
+        AXC005) reason='Clef production code must not declare obj types.' ;;
         *) printf 'Unknown expected diagnostic %s\n' "$expected" >&2; return 1 ;;
       esac
       count=$(rg -c 'Error AX[AC][0-9]+' "$scratch/$name.log" || true)
-      [[ $rc -ne 0 && $count -eq $(wc -w <<< "$positions") ]] || { printf 'FAIL %s diagnostic count (exit %s; log %s)\n' "$name" "$rc" "$scratch/$name.log" >&2; return 1; }
+      [[ $rc -ne 0 && $count -eq $(( $(wc -w <<< "$positions") + $(wc -w <<< "$object_positions") )) ]] || { printf 'FAIL %s diagnostic count (exit %s; log %s)\n' "$name" "$rc" "$scratch/$name.log" >&2; return 1; }
       for position in $positions; do
         rg -Fq "$scratch/$name.fsx($position): Error $expected : $reason" "$scratch/$name.log" || { printf 'FAIL %s diagnostic at %s (log %s)\n' "$name" "$position" "$scratch/$name.log" >&2; return 1; }
+      done
+      for position in $object_positions; do
+        rg -Fq "$scratch/$name.fsx($position): Error AXC005 : Clef production code must not declare obj types." "$scratch/$name.log" || { printf 'FAIL %s obj diagnostic at %s (log %s)\n' "$name" "$position" "$scratch/$name.log" >&2; return 1; }
       done
       if [[ $expected == AXC002 ]]; then
         [[ $(rg -c 'Error AXC002 : .+ \(assembly .+\)\.' "$scratch/$name.log" || true) -eq $count ]] || { printf 'FAIL %s missing resolved identity\n' "$name" >&2; return 1; }
@@ -133,7 +141,7 @@ run_case nominal-lookup-direct clean
 run_case pure clean
 run_case generic-pure clean
 run_case interpolation-pure clean
-run_case interpolation-obj AXC004 '2,35'
+run_case interpolation-obj AXC004 '2,35' '1,20'
 run_case null AXC001 '1,20'
 run_case null-pattern AXC001 '1,37'
 run_case system-open AXC002 '1,5'
@@ -147,18 +155,22 @@ run_case box AXC004 '1,12'
 run_case box-alias AXC004 '1,12'
 run_case box-qualified AXC004 '1,12'
 run_case box-lookalike clean
-run_case upcast AXC004 '1,13'
-run_case implicit-argument AXC004 '2,21'
-run_case implicit-field AXC004 '2,20'
-run_case implicit-list AXC004 '1,24 1,27'
-run_case object-identity clean
+run_case upcast AXC004 '1,13' '1,20'
+run_case implicit-argument AXC004 '2,21' '1,20'
+run_case implicit-field AXC004 '2,20' '1,20'
+run_case implicit-list AXC004 '1,24 1,27' '1,12'
+run_case object-identity AXC005 '1,17'
+run_case obj-declaration AXC005 '1,13 2,21'
+run_case obj-list-type AXC005 '1,12'
+run_case obj-lookalike clean
+run_case obj-primitives clean
 run_case file-reference AXC002 '1,21 1,11'
 run_case file-stream AXC002 '1,18 1,54 1,44'
 run_case stream-reader AXC002 '1,18 1,42'
 run_case invalid type-error
 [[ $executed -gt 0 ]] || { printf 'No truth case matched.\n' >&2; exit 1; }
 if [[ -z ${ALEX_ANALYZER_ONLY:-} ]]; then
-  [[ $executed -eq 47 ]] || { printf 'Expected 47 registered cases, ran %s.\n' "$executed" >&2; exit 1; }
+  [[ $executed -eq 51 ]] || { printf 'Expected 51 registered cases, ran %s.\n' "$executed" >&2; exit 1; }
   printf '{"executed":%s,"cases":[' "$executed" > "$scratch/truth.json"
   separator=''
   for case_name in "${cases[@]}"; do printf '%s"%s"' "$separator" "$case_name" >> "$scratch/truth.json"; separator=','; done

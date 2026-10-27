@@ -176,9 +176,11 @@ defects. `alex-boundary` is a narrowed development check and cannot replace
 the combined `alex` gate. Do not suppress rules or substitute a report-only run.
 
 The shared production boundary forbids System/BCL imports and API use, null,
-obj widening and task; dependencies must be approved dependency-free Fidelity
-projects or XParsec. FCS host representations of language primitives do not
-alone establish BCL use. Alex reads published PSG facts: zipper navigation may
+obj widening, authored `obj` type declarations and task; `obj` reached through
+external aliases is not yet detected. Dependencies must be approved
+dependency-free Fidelity projects or XParsec. FCS host representations of
+language primitives do not alone establish BCL use. Alex reads published PSG
+facts: zipper navigation may
 change its traversal state, but may not rewrite the graph or infer new semantic
 admission from nominal spelling. The analyzer's tested shapes do not establish
 complete enforcement of these architectural obligations; retain its documented
