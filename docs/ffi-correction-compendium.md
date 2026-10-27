@@ -737,6 +737,25 @@ the descriptor's depth-one restart, measurement provenance and native aggregate
 ABI remain explicit residuals. Both increments restored sources, dependencies,
 ambient drafts and build outputs; neither claims complete FFI closure.
 
+**Descriptor arithmetic refusal accepted, October 27.** Farscape
+`187ed8b..42a5ea5` prevents overflow in field extents, aligned offsets, final
+sizes and nested byte counts. Real C records of 2,147,483,648 bytes previously
+produced negative sizes labelled `Declared`; arithmetic now widens before
+narrowing to the existing descriptor range and refuses with the located
+quantity. The exact upper boundary remains admitted. Native Fable accepted
+21 new shape controls, 160/160 focused cases, nine discriminating mutations
+and the committed default unfiltered **1063/1063** gate, including public union
+generation. Two existing files, +168/-10; no new product file, dependency or
+owner. Sources, dependencies, ambient drafts and outputs were restored.
+Evidence: `Farscape/artifacts/extent-overflow-descriptor-20261027/`, with final
+binding in `fable-committed-return.md`. A separate probe confirms that the
+measurement parser omits layouts at 268,435,456 bytes because its quantities
+are stored in signed 32-bit bits. The pilot consumer already refuses missing
+measurements for requested declared ABI-critical records; the remaining
+parser range and omission issue does not establish silent pilot fallback.
+Measurement provenance, malformed direct inputs and native aggregate ABI
+remain open; this checkpoint does not claim complete FFI closure.
+
 **Exact string-predicate crossing accepted, October 27.** Bozzetto `3d0367a0`
 extends AXA002 through resolved `System.String.StartsWith` in an admission
 predicate, inspecting receiver and arguments while preserving other call stops.
