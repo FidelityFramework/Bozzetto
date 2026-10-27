@@ -20,7 +20,7 @@ These twelve documents form the documentation set; the compendium beneath them c
 | [binary-format-spec.md](binary-format-spec.md) | Durable `.bozzettofm` validation and typed direct interchange, linking owner-maintained PSG/BAREWire schemas rather than copying their authority. |
 | [Bozzetto_Diagnostic_Sink.md](Bozzetto_Diagnostic_Sink.md) | Independent MailboxProcessor-driven sink, binary PSG capture, bounded persistence and Fidelity.Data JSON export only. |
 | [development.md](development.md) | Owner-focused validation, differential controls, mutation checks, unfiltered TRUST acceptance and the one-page handoff. |
-| [ffi-correction-compendium.md](ffi-correction-compendium.md) | The standing record of the FFI correction (callable aggregates, Phase B): rulings in force, designs, the six questions, increments, remaining tranches. Continuing work, not a contract of the controller. |
+| [ffi-correction-compendium.md](ffi-correction-compendium.md) | Current FFI scope, accepted boundaries, open work and handoff; the detailed historical record remains in Git. |
 
 ## Current versus planned
 
