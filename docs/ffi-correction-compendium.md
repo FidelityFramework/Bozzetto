@@ -18,6 +18,25 @@ the October 20 assignment. Earlier verdicts retain only their recorded scopes. T
 [implementation handoff](ffi-implementation-handoff.md) owns the current heads,
 next deliverable and review protocol; it introduces no additional FFI requirements.
 
+**C record layout attributes accepted, October 27.** Farscape
+`846a4ba43757c69e7c7f594066ee3658cd3402a0` retains raw clang attributes on
+records and fields. The existing descriptor owner refuses unmeasured packed,
+explicitly aligned and pragma-packed records, including nested field extents;
+unclassified attributes receive a distinct refusal. Measured layouts remain
+usable, and field validity errors retain precedence. The neutral allow-list
+starts empty. No pack value or offset is inferred from attribute spelling.
+Sole Fable accepts the committed binding: 27 new controls, focused 187/187,
+ten discriminating mutations, and unfiltered candidate and committed gates
+1090/1090. The original composite precedence mutation is retained; its corrected
+form fails exactly three precedence controls. Seven existing files change
++199/-25, with no new product file, dependency or semantic owner. The fixed
+comment-only ProtocolParser draft and both documentation drafts remain unstaged;
+all source, dependency and output restoration checks pass. Evidence is in
+Farscape `artifacts/record-layout-attributes-20261027/`, including the final
+binding and Fable return. C++ record attributes and consumers, neutral-attribute
+classification, broader anonymous records and earlier residuals remain open.
+This establishes no native ABI execution or complete FFI claim.
+
 **B3 nominal MMIO width authority removed, October 20.** Alex `6d228cb`
 removes the three-line admission predicate that compared a handle's declaration
 name with the already published access width. Native Claude accepts the bound
