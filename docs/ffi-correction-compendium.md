@@ -706,6 +706,14 @@ The owner's questions from that map: the next Baker construct (scalar calls, rea
 
 ### 11.1 Phase B, next
 
+#### Alex analyzer dependency provenance checkpoint
+
+Bozzetto `f5cf246c` and Alex `a93ffcf` deliver the bounded Stage A project dependency check. Bozzetto changed six files (+919/−21); the only new file, `tools/Alex.Analyzers/tests/DependencyControls.fsx`, extends the existing project-control test owner with SDK and reference-identity controls. Alex changed only `src/Alex/Alex.fsproj` (+4) to declare the permitted packages. The unrelated staged T4 changes were preserved byte-for-byte.
+
+The real-Alex G1 wrapper validated a three-project, 171-reference dependency closure; G2 refused the three selected environment overrides with their exact reasons. The combined analyzer remained red: 425 AXC002 and 27 AXC005 findings, unadjudicated. Shell truth covered 127 cases with 9 known misses and 10 policy-pending cases; project control recorded 48 passes and the package-DLL-byte known miss. These results are not a TRUST or clean-project claim. Twenty-six output roots were restored with no mismatch. Capture initially yielded before lease release; a complete revalidation under lease preceded the gates. The renewing client did not print granted gate lease IDs, so none were inferred.
+
+Fable 5.1 confirmed the committed binding at this scope in `artifacts/ffi-resume-20261020/closure-20261026/fable-dependency-committed-binding-20261027-return.md`; the gate packet is `dependency-final-wrapper-preservation/gate-binding.json` in the same artifact directory. Analyzer-loader reference identity, authored-symbol provenance, extracted package DLL integrity, host/PATH trust, the missing-SDK production-branch control, P1/P2/P-dep4 and native SSA remain open. The red combined gate remains open.
+
 **Descriptor representation refusals accepted, October 26.** Farscape
 `581d634..6ea8996` refuses bitfields and non-byte-aligned measured field offsets;
 `6ea8996..028fd8e` refuses unknown field representations;
