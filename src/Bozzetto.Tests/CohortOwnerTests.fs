@@ -221,6 +221,16 @@ let agentWorkTests =
       let finished = AgentWork.report epoch alice JoinableRole.Implementer { report with Sequence = 4L; Status = "completed" } newer |> accepted
       AgentWork.report epoch alice JoinableRole.Implementer { report with Sequence = 5L } finished |> Expect.equal "cannot revive terminal run" (Error AgentWork.TerminalRun)
     }
+    test "report fields require valid Unicode scalars without rejecting valid pairs" {
+      let first = AgentWork.report epoch alice JoinableRole.Implementer report AgentWork.empty |> accepted
+      for invalid in [ string (char 0xD800); string (char 0xDC00); "a" + string (char 0xD800) + "b" ] do
+        AgentWork.report epoch alice JoinableRole.Implementer { report with Sequence = 2L; Focus = invalid } first
+        |> Expect.equal "unpaired surrogate refused at the reporting owner" (Error (AgentWork.InvalidField "focus"))
+      let pair = "score 🎼"
+      let next = AgentWork.report epoch alice JoinableRole.Implementer { report with Sequence = 2L; Focus = pair } first |> accepted
+      next.Runs[report.Run].Report.Focus |> Expect.equal "valid supplementary scalar retained" pair
+      first.Runs[report.Run].Report.Focus |> Expect.equal "rejected attempts never change prior state" report.Focus
+    }
     test "complete activity, known zero, missing usage and retained runs" {
       let zero = { report.Usage.Value with Input = 0L; Output = 0L; CacheRead = 0L; CacheWrite = 0L; Total = 0L; EstimateUsd = Some 0. }
       let first = AgentWork.report epoch alice JoinableRole.Implementer { report with Usage = Some zero } AgentWork.empty |> accepted

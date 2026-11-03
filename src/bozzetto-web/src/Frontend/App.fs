@@ -600,15 +600,20 @@ let AgentsPanel (model: ModelView) =
           "Presence rows derive from facts the daemon owns, a lease held or queued and cohort membership, so an agent that never reports is still seen."
           "Identity, progress and usage are participant-reported; unknown usage and cost are not zero."
           "Execution host: " + model.executionHost + " · publication " + model.agentSequence
-          "This board retains up to 64 reporting participants and 256 runs during the current daemon lifetime."
+          "The daemon retains its full history; the dashboard may omit oldest terminal runs to fit the wire."
         |])
       }
+      if model.agentOmittedRuns <> "0" then
+        p (class' = "text-xs opacity-70") { model.agentOmittedRuns + " older terminal runs omitted from this board." }
+      if model.agentRefusal <> "" then
+        p (class' = "text-xs text-error") { model.agentRefusal }
       Show (
         when' = (model.agents |> Array.exists currentAgent || model.presence.Length > 0),
         fallback = (p (class' = "text-xs opacity-50") {
           // Absence is claimed only from a received board; before one arrives the
           // daemon has said nothing about agents.
-          if model.agentIncarnation = "" then "No agent board received from the daemon yet."
+          if model.agentRefusal <> "" then "Agent work is unavailable; the daemon could not publish the complete active board."
+          elif model.agentIncarnation = "" then "No agent board received from the daemon yet."
           else "No agents present: no lease held or queued, no cohort member, no running report."
         })
       ) {

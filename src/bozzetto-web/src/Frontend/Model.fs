@@ -161,6 +161,8 @@ type ModelView =
     agentIncarnation: string
     agentSequence: string
     executionHost: string
+    agentOmittedRuns: string
+    agentRefusal: string
     nodes: NodeWorkView array
     nodesRevision: string
     nodeFocus: string
@@ -257,6 +259,8 @@ let create () : Stores =
         agentIncarnation = ""
         agentSequence = ""
         executionHost = ""
+        agentOmittedRuns = "0"
+        agentRefusal = ""
         nodes = Array.empty<NodeWorkView>
         nodesRevision = ""
         nodeFocus = ""
@@ -609,6 +613,8 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       setSlice stores "agentIncarnation" (box "")
       setSlice stores "agentSequence" (box "")
       setSlice stores "executionHost" (box "")
+      setSlice stores "agentOmittedRuns" (box "0")
+      setSlice stores "agentRefusal" (box "")
       reconcileSlice stores "nodes" (box Array.empty<NodeWorkView>)
       setSlice stores "nodesRevision" (box "")
       focusNode stores "" ""
@@ -706,6 +712,8 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
         setSlice stores "agentIncarnation" (box board.Incarnation)
         setSlice stores "agentSequence" (box (string board.Sequence))
         setSlice stores "executionHost" (box board.ExecutionHost)
+        setSlice stores "agentOmittedRuns" (box (string board.OmittedRuns))
+        setSlice stores "agentRefusal" (box board.Refusal)
         reconcileSlice stores "agents" (box (board.Runs |> Array.map (fun r ->
           {| id = r.Id; memberId = r.Member; name = r.Name; role = r.Role; model = r.Model; endpoint = r.Endpoint; session = r.Session
              project = r.Project; focus = r.Focus; operation = r.Operation; status = r.Status

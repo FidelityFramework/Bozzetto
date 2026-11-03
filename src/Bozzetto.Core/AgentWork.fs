@@ -63,6 +63,7 @@ module AgentWork =
     | PublicationFailed -> "publication_failed"
     | ByteCapacity -> "agent_work_byte_capacity"
   let private terminal status = status <> "running"
+  let private strictUtf8 = System.Text.UTF8Encoding(false, true)
   let private fields (r: Report) =
     [ "run", r.Run, 128; "session", r.Session, 128; "name", r.Name, 128
       "model", r.Model, 128; "endpoint", r.Endpoint, 256; "project", r.Project, 512
@@ -83,8 +84,10 @@ module AgentWork =
   let report now who role (r: Report) state =
     let fieldError = fields r |> List.tryPick (fun (name, value, limit) ->
       if System.String.IsNullOrWhiteSpace value || (value |> Seq.exists System.Char.IsControl) then Some(InvalidField name)
-      elif System.Text.Encoding.UTF8.GetByteCount value > limit then Some(OversizedField name)
-      else None)
+      else
+        try
+          if strictUtf8.GetByteCount value > limit then Some(OversizedField name) else None
+        with :? System.Text.EncoderFallbackException -> Some(InvalidField name))
     let existing = Map.tryFind r.Run state.Runs
     let refusal =
       match existing with

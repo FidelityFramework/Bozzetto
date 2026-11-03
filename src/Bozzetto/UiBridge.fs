@@ -113,16 +113,48 @@ module Project =
   /// the publication that produced it, not by the owner's report count,
   /// because presence moves without a report.
   let agentBoard (revision: int64) (state: Bozzetto.AgentWork.State) (presence: AgentPresence array) : AgentWorkBoard =
-    { Incarnation = state.Incarnation; Sequence = revision; ExecutionHost = Environment.MachineName
-      Presence = presence
-      Runs = agentWorkRuns state }
+    let initial =
+      { Incarnation = state.Incarnation; Sequence = revision; ExecutionHost = Environment.MachineName
+        Presence = presence; Runs = agentWorkRuns state; OmittedRuns = 0L; Refusal = "" }
+    // A terminal row is shed whole; unknown stays visible as potentially active.
+    let terminal (run: AgentRun) = List.contains run.Status [ "completed"; "failed"; "aborted"; "disconnected" ]
+    let oldest = initial.Runs |> Array.filter terminal |> Array.sortBy (fun run -> run.UpdatedAtMs, run.Id)
+    let measure board =
+      try
+        Bozzetto.Web.Shared.BinaryCodec.encodeEvent (AgentWork board) |> ignore
+        Ok ()
+      with :? InvalidOperationException as error -> Error error.Message
+    let refuse reason =
+      { initial with Runs = [||]; Presence = [||]; OmittedRuns = 0L
+                     Refusal = "Agent work board unavailable: " + reason + "; full history remains in the daemon." }
+    let wireLimit error = error = "binary: frame too large" || error = "binary: array too large"
+    match measure initial with
+    | Ok () -> initial
+    | Error error when not (wireLimit error) -> refuse error
+    | Error _ ->
+      // Binary search the smallest oldest prefix that fits. Every candidate is
+      // measured using the actual codec, including its envelope and array sizes.
+      let candidate count =
+        let omitted = oldest |> Array.take count |> Array.map _.Id |> Set.ofArray
+        { initial with Runs = initial.Runs |> Array.filter (fun run -> not (Set.contains run.Id omitted))
+                       OmittedRuns = int64 count }
+      match measure (candidate oldest.Length) with
+      | Error error -> refuse error
+      | Ok () ->
+        let mutable low = 0
+        let mutable high = oldest.Length
+        let mutable problem = None
+        while low < high && Option.isNone problem do
+          let middle = low + (high - low) / 2
+          match measure (candidate middle) with
+          | Ok () -> high <- middle
+          | Error error when wireLimit error -> low <- middle + 1
+          | Error error -> problem <- Some error
+        match problem with Some error -> refuse error | None -> candidate low
 
-  /// The reports alone, sequenced by the owner's own count: for a reader that
-  /// has no presence facts to add.
+  /// The reports alone, sequenced by the owner's own count.
   let agentWork (state: Bozzetto.AgentWork.State) : AgentWorkBoard =
-    { Incarnation = state.Incarnation; Sequence = state.Sequence; ExecutionHost = Environment.MachineName
-      Presence = [||]
-      Runs = agentWorkRuns state }
+    agentBoard state.Sequence state [||]
 
   /// Compiler operations and leased process observations as a page shows them,
   /// stamped by the publication that produced it. The caller travels as the

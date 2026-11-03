@@ -178,7 +178,15 @@ let private capacity operation = task {
   let victim = client.RequestAsync(victimBody, cancellation.Token)
   let held = [|for index in 1..255 -> client.RequestAsync(request (string index), CancellationToken.None)|]
   let canceling = Task.Run(Action(fun () -> cancellation.Cancel()))
-  try
+  use cleanup =
+    { new IAsyncDisposable with
+        member _.DisposeAsync() =
+          ValueTask(task {
+            release.Set()
+            do! canceling.WaitAsync(TimeSpan.FromSeconds 20.)
+            do! client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.)
+          }) }
+  do! task {
     entered.Wait(TimeSpan.FromSeconds 20.) |> Expect.isTrue "Targeted cancellation reached its reserved-slot boundary."
     let! refused = task {
       try let! _ = client.RequestAsync(request "overflow", CancellationToken.None) |> bounded in return false
@@ -193,10 +201,7 @@ let private capacity operation = task {
     let! survivors = Task.WhenAll held |> bounded
     survivors |> Array.forall succeeded |> Expect.isTrue "All peers survive cancellation at capacity."
     client.IsAlive |> Expect.isTrue "Late victim reply is correlated and drained."
-  finally
-    release.Set()
-    canceling.WaitAsync(TimeSpan.FromSeconds 20.).GetAwaiter().GetResult()
-    client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.).GetAwaiter().GetResult()
+  }
 }
 
 let private cancellationPhase operation phase = task {
@@ -212,7 +217,14 @@ let private cancellationPhase operation phase = task {
       encoded <- encoded + 1
       encodingCancellation |> Option.iter _.Cancel()
   let! client = ComposerWorkerClient.startWithEncodingBoundary beforeEncode ignore beforeWrite ["--composer-worker-client-fixture"] (config ())
-  try
+  use cleanup =
+    { new IAsyncDisposable with
+        member _.DisposeAsync() =
+          ValueTask(task {
+            release.TrySetResult() |> ignore
+            do! client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.)
+          }) }
+  do! task {
     let peer = client.RequestAsync(request "peer", CancellationToken.None)
     let! barrier = client.RequestAsync(request "barrier", CancellationToken.None) |> bounded
     count barrier |> Expect.equal "Peer is physically held." 1
@@ -257,9 +269,7 @@ let private cancellationPhase operation phase = task {
     succeeded peerReply |> Expect.isTrue "Independent peer completes."
     let! final = client.RequestAsync(request "barrier", CancellationToken.None) |> bounded
     count final |> Expect.equal "All physical replies drained." 0
-  finally
-    release.TrySetResult() |> ignore
-    client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.).GetAwaiter().GetResult()
+  }
 }
 
 let private closeRetainsCallback operation = task {
@@ -275,7 +285,16 @@ let private closeRetainsCallback operation = task {
   let mutable canceling = Task.CompletedTask
   let mutable closing = Task.CompletedTask
   let mutable verified = false
-  try
+  use cleanup =
+    { new IAsyncDisposable with
+        member _.DisposeAsync() =
+          ValueTask(task {
+            release.Set()
+            do! canceling.WaitAsync(TimeSpan.FromSeconds 10.)
+            try do! client.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+            with _ when not verified -> ()
+          }) }
+  do! task {
     let! barrier = client.RequestAsync(request "barrier", CancellationToken.None) |> bounded
     count barrier |> Expect.equal "The child has received the owned request." 1
     canceling <- Task.Run(Action(fun () -> cancellation.Cancel()))
@@ -304,11 +323,7 @@ let private closeRetainsCallback operation = task {
     withdrawn |> Expect.isTrue "The withdrawn observer receives the stop refusal."
     client.IsAlive |> Expect.isFalse "Joined retirement cannot expose live worker authority."
     verified <- true
-  finally
-    release.Set()
-    canceling.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
-    try client.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
-    with _ when not verified -> ()
+  }
 }
 
 [<Tests>]
@@ -320,36 +335,41 @@ let tests = testList "Composer worker socket client" [
   for phase in ["initial"; "encoding"; "queued"; "writing"; "sent"] do
     testTask (phase + " cancellation drains owned work without consuming unrelated capacity") { do! cancellationPhase Operation.Build phase }
     testTask ("format " + phase + " cancellation drains owned work without consuming unrelated capacity") { do! cancellationPhase Operation.Format phase }
-  testCaseAsync "format cancellation targets one wire request when session and buffer are identical" (async {
-    let! client = start ignore (fun _ _ -> Task.CompletedTask) |> Async.AwaitTask
-    use cancellation = new CancellationTokenSource()
-    try
-      let body = ownedRequest Operation.Format "shared-session"
-      let victim = client.RequestAsync(body, cancellation.Token)
-      let peer = client.RequestAsync(body, CancellationToken.None)
-      let! before = client.RequestAsync(request "format-requests", CancellationToken.None) |> bounded |> Async.AwaitTask
-      count before |> Expect.equal "Both exact-buffer requests have reached the worker." 2
-      cancellation.Cancel()
-      let! detached = canceled victim |> Async.AwaitTask
-      detached |> Expect.isTrue "Caller cancellation completes after its targeted withdrawal acknowledgement."
-      let! remaining = client.RequestAsync(request "format-requests", CancellationToken.None) |> bounded |> Async.AwaitTask
-      count remaining |> Expect.equal "Only the canceled request is withdrawn at the worker boundary." 1
-      let! withdrawals = client.RequestAsync(request "withdrawals", CancellationToken.None) |> bounded |> Async.AwaitTask
-      count withdrawals |> Expect.equal "The worker received one exact request cancellation." 1
-      peer.IsCompleted |> Expect.isFalse "The other observer remains attached to its result."
-      let! released = client.RequestAsync(request "release", CancellationToken.None) |> bounded |> Async.AwaitTask
-      count released |> Expect.equal "Both physical responses are still correlated and drained." 2
-      let! survived = peer |> bounded |> Async.AwaitTask
-      match survived.Outcome with
-      | Result.Ok(Formatted preview) ->
-        preview.Document |> Expect.equal "The peer keeps its immutable document identity." formatBuffer.Document
-        preview.Formatted |> Expect.equal "The peer receives its requested preview." formatBuffer.Source
-      | outcome -> failtestf "The uncanceled formatter observer did not complete: %A" outcome
-      let! final = client.RequestAsync(request "barrier", CancellationToken.None) |> bounded |> Async.AwaitTask
-      count final |> Expect.equal "No physical request remains held." 0
-      client.IsAlive |> Expect.isTrue "Targeted withdrawal preserves the shared worker."
-    finally client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.).GetAwaiter().GetResult()
-  })
+  testTask "format cancellation targets one wire request when session and buffer are identical" {
+    do! task {
+      let! client = start ignore (fun _ _ -> Task.CompletedTask)
+      use cancellation = new CancellationTokenSource()
+      use cleanup =
+        { new IAsyncDisposable with
+            member _.DisposeAsync() = ValueTask(client.StopAsync().WaitAsync(TimeSpan.FromSeconds 15.)) }
+      do! task {
+        let body = ownedRequest Operation.Format "shared-session"
+        let victim = client.RequestAsync(body, cancellation.Token)
+        let peer = client.RequestAsync(body, CancellationToken.None)
+        let! before = client.RequestAsync(request "format-requests", CancellationToken.None) |> bounded
+        count before |> Expect.equal "Both exact-buffer requests have reached the worker." 2
+        cancellation.Cancel()
+        let! detached = canceled victim
+        detached |> Expect.isTrue "Caller cancellation completes after its targeted withdrawal acknowledgement."
+        let! remaining = client.RequestAsync(request "format-requests", CancellationToken.None) |> bounded
+        count remaining |> Expect.equal "Only the canceled request is withdrawn at the worker boundary." 1
+        let! withdrawals = client.RequestAsync(request "withdrawals", CancellationToken.None) |> bounded
+        count withdrawals |> Expect.equal "The worker received one exact request cancellation." 1
+        peer.IsCompleted |> Expect.isFalse "The other observer remains attached to its result."
+        let! released = client.RequestAsync(request "release", CancellationToken.None) |> bounded
+        count released |> Expect.equal "Both physical responses are still correlated and drained." 2
+        let! survived = peer |> bounded
+        match survived.Outcome with
+        | Result.Ok(Formatted preview) ->
+          preview.Document |> Expect.equal "The peer keeps its immutable document identity." formatBuffer.Document
+          preview.Formatted |> Expect.equal "The peer receives its requested preview." formatBuffer.Source
+        | outcome -> failtestf "The uncanceled formatter observer did not complete: %A" outcome
+        let! final = client.RequestAsync(request "barrier", CancellationToken.None) |> bounded
+        count final |> Expect.equal "No physical request remains held." 0
+        client.IsAlive |> Expect.isTrue "Targeted withdrawal preserves the shared worker."
+      }
+    }
+  }
   testTask "close terminates the owned socket child and drains diagnostics" {
     let! (client: IComposerWorker) = start ignore (fun _ _ -> Task.CompletedTask)
     let pid = client.ProcessId

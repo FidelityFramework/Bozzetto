@@ -5,7 +5,7 @@ module Bozzetto.Web.Shared.Protocol
 
 /// Binary envelope and vocabulary version, also carried in Welcome.
 [<Literal>]
-let ProtocolVersion = 10
+let ProtocolVersion = 11
 
 /// Existing observation requests are unchanged; deployed v9 peers remain readable.
 [<Literal>]
@@ -327,6 +327,10 @@ type AgentWorkBoard = {
   Incarnation: string; Sequence: int64; ExecutionHost: string
   Runs: AgentRun array
   Presence: AgentPresence array
+  /// Complete oldest terminal rows omitted only from this bounded projection.
+  OmittedRuns: int64
+  /// Non-empty when the active runs and presence cannot be represented.
+  Refusal: string
 }
 
 /// A run's output as the daemon journaled it; `Dropped` marks a transcript

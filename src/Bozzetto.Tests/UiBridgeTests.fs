@@ -206,8 +206,8 @@ let private events = [
   Resources {
     Sequence = 1L; Status = "complete"; SampledAtMs = 123L; IntervalMs = 2000.; SampleCostMs = 12.5
     Metrics = [||]; Processes = [||]; ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = "test" }
-  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Runs = [||]; Presence = [||] }
-  AgentWork { Incarnation = "daemon-b"; Sequence = 2L; ExecutionHost = "local"; Runs = [||]
+  AgentWork { OmittedRuns = 0L; Refusal = ""; Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Runs = [||]; Presence = [||] }
+  AgentWork { OmittedRuns = 0L; Refusal = ""; Incarnation = "daemon-b"; Sequence = 2L; ExecutionHost = "local"; Runs = [||]
               Presence = [| { Name = "pi"; Source = "lease"; Member = "pi · /repo/clef"; Project = "/repo/clef"; Detail = "holds full_build"; SinceMs = 1759420800000L } |] }
 ]
 
@@ -559,9 +559,67 @@ let tests =
     testList "binary codec" [
       test "fixed command golden binds envelope and primitive byte order" {
         let frame = { CommandFrame.Correlation = 1; Command = RequestSnapshot }
-        let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 10uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+        let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 11uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
         Ui.encodeCommand frame |> Expect.equal "exact independently specified bytes" golden
         Codec.decodeCommand golden |> Expect.equal "golden decoded" (Ok frame)
+      }
+      test "version 9 agent board uses its historical capacity and version 10 is refused" {
+        // v9 envelope, AgentWork tag, incarnation d, sequence 1, host h,
+        // capacity 256, and empty run and presence arrays.
+        let v9 = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 9uy; 2uy; 9uy
+                    1uy; 100uy; 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy
+                    1uy; 104uy; 0uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+        let expected = AgentWork { Incarnation = "d"; Sequence = 1L; ExecutionHost = "h"; Runs = [||]
+                                   Presence = [||]; OmittedRuns = 0L; Refusal = "" }
+        Ui.decodeEvent v9 |> Expect.equal "historical layout decoded" (Ok expected)
+        let v10old = Array.copy v9
+        v10old[4] <- 10uy
+        let v10new = Codec.encodeEvent expected
+        v10new[4] <- 10uy
+        for frame in [v10old; v10new] do
+          match Ui.decodeEvent frame with
+          | Error message -> message |> Expect.stringContains "ambiguous version refused" "unsupported version"
+          | Ok _ -> failtest "ambiguous v10 accepted"
+      }
+      test "historical nonempty v9 board retains both usage shapes and presence; v10 refuses" {
+        let historicalRun id usage : AgentRun =
+          { Id = id; Member = "mcp:1"; Role = "Observer"; Name = "name"; Session = "session"; ReportSequence = 5L
+            Model = "model"; Endpoint = "endpoint"; Project = "project"; Focus = "focus"; Operation = "operation"
+            Status = "completed"; UpdatedAtMs = 100L; Activity = [|"new"; "old"|]; OmittedActivity = 3L; Usage = usage }
+        let historicalUsage = Some { AgentUsage.Input = 1L; Output = 2L; CacheRead = 3L; CacheWrite = 4L; Total = 10L; EstimateUsd = Some 0.5 }
+        let historicalExpected = AgentWork { Incarnation = "daemon"; Sequence = 42L; ExecutionHost = "host"
+                                             Runs = [|historicalRun "some" historicalUsage; historicalRun "none" None|]
+                                             Presence = [|{ Name = "pi"; Source = "lease"; Member = "mcp:1"; Project = "project"; Detail = "holding"; SinceMs = 123L }|]
+                                             OmittedRuns = 0L; Refusal = "" }
+        let historicalBytes = [|
+                  66uy; 90uy; 87uy; 49uy; 9uy; 2uy; 9uy; 6uy; 100uy; 97uy; 101uy; 109uy; 111uy; 110uy; 42uy; 0uy;
+                  0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 4uy; 104uy; 111uy; 115uy; 116uy; 0uy; 1uy; 0uy; 0uy; 2uy;
+                  4uy; 115uy; 111uy; 109uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy; 8uy; 79uy; 98uy; 115uy; 101uy;
+                  114uy; 118uy; 101uy; 114uy; 4uy; 110uy; 97uy; 109uy; 101uy; 7uy; 115uy; 101uy; 115uy; 115uy; 105uy; 111uy;
+                  110uy; 5uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 5uy; 109uy; 111uy; 100uy; 101uy; 108uy; 8uy;
+                  101uy; 110uy; 100uy; 112uy; 111uy; 105uy; 110uy; 116uy; 7uy; 112uy; 114uy; 111uy; 106uy; 101uy; 99uy; 116uy;
+                  5uy; 102uy; 111uy; 99uy; 117uy; 115uy; 9uy; 111uy; 112uy; 101uy; 114uy; 97uy; 116uy; 105uy; 111uy; 110uy;
+                  9uy; 99uy; 111uy; 109uy; 112uy; 108uy; 101uy; 116uy; 101uy; 100uy; 100uy; 0uy; 0uy; 0uy; 0uy; 0uy;
+                  0uy; 0uy; 2uy; 3uy; 110uy; 101uy; 119uy; 3uy; 111uy; 108uy; 100uy; 3uy; 0uy; 0uy; 0uy; 0uy;
+                  0uy; 0uy; 0uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 2uy; 0uy; 0uy; 0uy;
+                  0uy; 0uy; 0uy; 0uy; 3uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 4uy; 0uy; 0uy; 0uy;
+                  0uy; 0uy; 0uy; 0uy; 10uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 0uy; 0uy; 0uy;
+                  0uy; 0uy; 0uy; 224uy; 63uy; 4uy; 110uy; 111uy; 110uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy;
+                  8uy; 79uy; 98uy; 115uy; 101uy; 114uy; 118uy; 101uy; 114uy; 4uy; 110uy; 97uy; 109uy; 101uy; 7uy; 115uy;
+                  101uy; 115uy; 115uy; 105uy; 111uy; 110uy; 5uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 5uy; 109uy;
+                  111uy; 100uy; 101uy; 108uy; 8uy; 101uy; 110uy; 100uy; 112uy; 111uy; 105uy; 110uy; 116uy; 7uy; 112uy; 114uy;
+                  111uy; 106uy; 101uy; 99uy; 116uy; 5uy; 102uy; 111uy; 99uy; 117uy; 115uy; 9uy; 111uy; 112uy; 101uy; 114uy;
+                  97uy; 116uy; 105uy; 111uy; 110uy; 9uy; 99uy; 111uy; 109uy; 112uy; 108uy; 101uy; 116uy; 101uy; 100uy; 100uy;
+                  0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 2uy; 3uy; 110uy; 101uy; 119uy; 3uy; 111uy; 108uy; 100uy;
+                  3uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 2uy; 112uy; 105uy; 5uy; 108uy; 101uy;
+                  97uy; 115uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy; 7uy; 112uy; 114uy; 111uy; 106uy; 101uy; 99uy;
+                  116uy; 7uy; 104uy; 111uy; 108uy; 100uy; 105uy; 110uy; 103uy; 123uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy;
+                  0uy
+                |]
+        Ui.decodeEvent historicalBytes |> Expect.equal "historical v9 populated frame" (Ok historicalExpected)
+        let ambiguous = Array.copy historicalBytes
+        ambiguous[4] <- 10uy
+        Ui.decodeEvent ambiguous |> Expect.equal "ambiguous v10 refused" (Error "binary: unsupported version")
       }
       test "every command and event fixture round trips" {
         for command in ObserveNodeResources { Node = "one"; Seconds = 120 } :: commands do
@@ -646,7 +704,7 @@ let tests =
         Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest [|123uy;125uy|] |> Result.isError |> Expect.isTrue "no JSON fallback"
         Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest (Array.zeroCreate (MaxCommandObservationBytes + 1))
         |> Expect.equal "bounded before decoding" (Error "binary: frame too large")
-        let accepted = [|66uy;90uy;87uy;49uy;10uy;8uy;0uy;7uy;0uy;0uy;0uy;0uy;0uy;0uy;0uy|]
+        let accepted = [|66uy;90uy;87uy;49uy;11uy;8uy;0uy;7uy;0uy;0uy;0uy;0uy;0uy;0uy;0uy|]
         Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationReply (CommandObservationAccepted 7L) |> Expect.equal "independent reply golden" accepted
         Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationReply accepted |> Expect.equal "golden reply decode" (Ok(CommandObservationAccepted 7L))
       }
@@ -1352,7 +1410,144 @@ let tests =
 /// presence moves with leases and membership while the report count stands.
 [<Tests>]
 let boardSequenceTests =
+  let makeRun id status second activity : Bozzetto.AgentWork.Run =
+    { Member = Bozzetto.MemberTable.MemberId.Mcp id; Role = Bozzetto.Cohort.JoinableRole.Observer
+      Report = { Run = id; Session = "s"; Sequence = 1L; Name = id; Model = "m"; Endpoint = "e"; Project = "p"
+                 Focus = "f"; Operation = "o"; Status = status; Usage = None }
+      UpdatedAt = DateTime(2026, 11, 3, 0, 0, second, DateTimeKind.Utc)
+      Activity = activity; OmittedActivity = 0L }
+  let state runs = { Bozzetto.AgentWork.empty with Incarnation = "daemon"; Sequence = 2L; Runs = Map.ofList runs }
+  let large = String.replicate 800000 "x"
   testList "UiBridge.Project.agentBoard — sequenced by the publication" [
+    testCase "admitted report sequences reach omission and protected-row refusal" <| fun () ->
+      let who = Bozzetto.MemberTable.MemberId.Mcp "real-sequence"
+      let at = DateTime(2026, 11, 3, 0, 0, 0, DateTimeKind.Utc)
+      let operation = String.replicate 128 "a"
+      let mutable owner = { Bozzetto.AgentWork.empty with Incarnation = "valid-sequence" }
+      let submit run count status =
+        let report : Bozzetto.AgentWork.Report =
+          { Run = run; Session = "s"; Sequence = int64 count; Name = run; Model = "m"; Endpoint = "e"
+            Project = "p"; Focus = "f"; Operation = operation; Status = status; Usage = None }
+        match Bozzetto.AgentWork.report at who Bozzetto.Cohort.JoinableRole.Observer report owner with
+        | Ok next -> owner <- next
+        | Error refusal -> failtestf "valid report %s/%d refused: %A" run count refusal
+      for n in 1 .. 1000 do submit "old" n (if n = 1000 then "completed" else "running")
+      for n in 1 .. 32000 do submit "active" n "running"
+      let projected = Project.agentBoard 1L owner [||]
+      projected.Refusal |> Expect.equal "valid current activity fits when old terminal omitted" ""
+      projected.OmittedRuns |> Expect.equal "the one old terminal was omitted" 1L
+      let active = projected.Runs |> Array.find (fun row -> row.Id = "active")
+      active.Activity.Length |> Expect.equal "every admitted active operation is visible" 32000
+      active.Activity |> Array.forall ((=) operation) |> Expect.isTrue "operation bytes are intact"
+      owner.Runs.Count |> Expect.equal "both owner histories retained" 2
+      for n in 32001 .. 33000 do submit "active" n "running"
+      let refused = Project.agentBoard 2L owner [||]
+      refused.Refusal |> Expect.stringContains "actual admitted active history cannot fit" "binary: frame too large"
+      refused.OmittedRuns |> Expect.equal "refused board claims no omission" 0L
+      owner.Runs["active"].Activity.Length |> Expect.equal "all 33000 owner activities remain" 33000
+      Bozzetto.Web.Shared.BinaryCodec.decodeEvent (Bozzetto.Web.Shared.BinaryCodec.encodeEvent (AgentWork refused))
+      |> Expect.equal "the explicit refusal fits and round trips" (Ok (AgentWork refused))
+    testCase "the item bound publishes at 65,536 activities, refuses one more while active, sheds it whole once terminal and keeps publishing" <| fun () ->
+      // The codec admits at most 65,536 items per array, separately from its
+      // 4 MiB frame. Short operations reach that bound long before the frame
+      // bound, so this drives the array guard through the real reporting owner.
+      let who = Bozzetto.MemberTable.MemberId.Mcp "item-bound"
+      let at = DateTime(2026, 11, 3, 0, 0, 0, DateTimeKind.Utc)
+      let items = 65536
+      let mutable owner = { Bozzetto.AgentWork.empty with Incarnation = "item-bound" }
+      let submit run count status =
+        let report : Bozzetto.AgentWork.Report =
+          { Run = run; Session = "s"; Sequence = int64 count; Name = run; Model = "m"; Endpoint = "e"
+            Project = "p"; Focus = "f"; Operation = "o"; Status = status; Usage = None }
+        match Bozzetto.AgentWork.report at who Bozzetto.Cohort.JoinableRole.Observer report owner with
+        | Ok next -> owner <- next
+        | Error refusal -> failtestf "valid report %s/%d refused: %A" run count refusal
+      let frame board = Bozzetto.Web.Shared.BinaryCodec.encodeEvent (AgentWork board)
+      for n in 1 .. items do submit "active" n "running"
+      let edge = Project.agentBoard 1L owner [||]
+      edge.Refusal |> Expect.equal "exactly the item bound publishes" ""
+      edge.OmittedRuns |> Expect.equal "nothing is omitted at the bound" 0L
+      let row = edge.Runs |> Array.exactlyOne
+      row.Activity.Length |> Expect.equal "every admitted operation is on the wire" items
+      row.Activity |> Array.forall ((=) "o") |> Expect.isTrue "operation bytes are intact"
+      let edgeBytes = (frame edge).Length
+      (edgeBytes > items && edgeBytes < Bozzetto.Web.Shared.BinaryCodec.MaxFrameBytes / 2)
+      |> Expect.isTrue "the frame holds every item yet sits far below its byte bound, so the item bound is the operative guard"
+      submit "active" (items + 1) "running"
+      let refused = Project.agentBoard 2L owner [||]
+      refused.Refusal |> Expect.stringContains "one more active operation reaches the array guard" "binary: array too large"
+      refused.Runs |> Expect.isEmpty "a protected active row is refused, never truncated"
+      refused.OmittedRuns |> Expect.equal "the refusal claims no omission" 0L
+      owner.Runs["active"].Activity.Length |> Expect.equal "the owner keeps every admitted operation" (items + 1)
+      frame refused |> Bozzetto.Web.Shared.BinaryCodec.decodeEvent |> Expect.equal "the refusal round trips" (Ok (AgentWork refused))
+      submit "active" (items + 2) "completed"
+      let shed = Project.agentBoard 3L owner [||]
+      shed.Refusal |> Expect.equal "once terminal the oversized run is shed instead of refusing" ""
+      shed.OmittedRuns |> Expect.equal "the whole terminal row counts as omitted" 1L
+      shed.Runs |> Expect.isEmpty "no partial terminal row survives"
+      owner.Runs["active"].Activity.Length |> Expect.equal "authoritative history is untouched by shedding" (items + 2)
+      owner.Runs["active"].Report.Status |> Expect.equal "the owner holds the terminal status" "completed"
+      for n in 1 .. 2 do submit "next" n "running"
+      let later = Project.agentBoard 4L owner [||]
+      later.Refusal |> Expect.equal "later active work still publishes" ""
+      later.OmittedRuns |> Expect.equal "the omission count stays accurate" 1L
+      later.Runs |> Array.map (fun r -> r.Id, r.Activity.Length) |> Expect.equal "the new active run is complete" [| "next", 2 |]
+      owner.Runs.Count |> Expect.equal "both histories remain in the owner" 2
+      frame later |> Bozzetto.Web.Shared.BinaryCodec.decodeEvent |> Expect.equal "the published board round trips" (Ok (AgentWork later))
+    testCase "the exact frame limit keeps every row and the next byte sheds a terminal row" <| fun () ->
+      let terminal = makeRun "old" "completed" 1 ["terminal"]
+      let active = makeRun "active" "running" 2 (List.replicate 4 (String.replicate 1000000 "x") @ [String.replicate 180000 "z"])
+      let make extra =
+        let withExtra = { active with Activity = active.Activity |> List.mapi (fun i a -> if i = 4 then a + String.replicate extra "z" else a) }
+        state ["active", withExtra; "old", terminal]
+      let initial = Project.agentBoard 1L (make 0) [||]
+      let initialLength = Bozzetto.Web.Shared.BinaryCodec.encodeEvent (AgentWork initial) |> Array.length
+      let delta = Bozzetto.Web.Shared.BinaryCodec.MaxFrameBytes - initialLength
+      (delta > 0 && delta < 800000) |> Expect.isTrue "fixture can reach the edge without a string limit"
+      let edge = Project.agentBoard 2L (make delta) [||]
+      Bozzetto.Web.Shared.BinaryCodec.encodeEvent (AgentWork edge) |> Array.length
+      |> Expect.equal "complete wire envelope equals the limit" Bozzetto.Web.Shared.BinaryCodec.MaxFrameBytes
+      edge.OmittedRuns |> Expect.equal "no unnecessary omission" 0L
+      let over = Project.agentBoard 3L (make (delta + 1)) [||]
+      over.OmittedRuns |> Expect.equal "one byte over omits terminal" 1L
+      over.Refusal |> Expect.equal "protected row still fits" ""
+    testCase "oldest terminal rows alone are omitted and active activity and history are retained" <| fun () ->
+      let active = makeRun "active" "running" 5 [large; "active earlier"]
+      let uncertain = makeRun "unknown" "unknown" 6 ["uncertain activity"]
+      let runs = [ "active", active; "unknown", uncertain
+                   for i in 0..4 do
+                     let id = "terminal-" + string i
+                     id, makeRun id "completed" i [large] ]
+      let owner = state runs
+      let board = Project.agentBoard 7L owner [||]
+      board.Refusal |> Expect.equal "board published" ""
+      board.OmittedRuns |> Expect.equal "only the oldest necessary rows" 1L
+      board.Runs |> Array.map _.Id |> Array.contains "terminal-0" |> Expect.isFalse "oldest terminal omitted"
+      board.Runs |> Array.find (fun r -> r.Id = "active") |> fun row -> row.Activity |> Expect.equal "all active activity retained" [|large; "active earlier"|]
+      board.Runs |> Array.exists (fun r -> r.Id = "unknown") |> Expect.isTrue "unknown is protected"
+      owner.Runs.Count |> Expect.equal "authoritative history untouched" 7
+      Bozzetto.Web.Shared.BinaryCodec.encodeEvent (AgentWork board) |> Array.length
+      |> fun n -> n <= Bozzetto.Web.Shared.BinaryCodec.MaxFrameBytes |> Expect.isTrue "actual complete frame fits"
+    testCase "oversized active rows refuse rather than advertise an empty board" <| fun () ->
+      let tooLarge = makeRun "active" "running" 1 (List.replicate 6 large)
+      let board = Project.agentBoard 2L (state ["active", tooLarge]) [||]
+      board.Refusal |> Expect.stringContains "explicit protected-row refusal" "binary: frame too large"
+      board.Runs |> Expect.isEmpty "refusal has no misleading partial rows"
+      board.OmittedRuns |> Expect.equal "refusal does not claim omissions" 0L
+      Bozzetto.Web.Shared.BinaryCodec.decodeEvent (Bozzetto.Web.Shared.BinaryCodec.encodeEvent (AgentWork board))
+      |> Expect.equal "refusal traverses the wire" (Ok (AgentWork board))
+    testCase "invalid wire data refuses without pretending terminal history was shed for size" <| fun () ->
+      let malformed = makeRun "old" "completed" 1 [string (char 0xD800)]
+      let owner = state ["old", malformed]
+      let board = Project.agentBoard 2L owner [||]
+      board.Refusal |> Expect.stringContains "specific encoding failure" "invalid UTF-16"
+      board.OmittedRuns |> Expect.equal "no size omission claimed" 0L
+      owner.Runs.Count |> Expect.equal "owner retained the terminal fact" 1
+    testCase "oversized presence alone refuses explicitly" <| fun () ->
+      let row : AgentPresence = { Name = large; Source = "member"; Member = "m"; Project = "p"; Detail = "d"; SinceMs = 1L }
+      let board = Project.agentBoard 2L (state []) (Array.replicate 6 row)
+      board.Refusal |> Expect.stringContains "presence protected" "binary: frame too large"
+      board.Presence |> Expect.isEmpty "refusal is explicit rather than partial presence"
     testCase "two publications of one unchanged report state with different presence are ordered by the publication" <| fun () ->
       let state = { Bozzetto.AgentWork.empty with Incarnation = "daemon-x"; Sequence = 5L }
       let held = [| { AgentPresence.Name = "pi"; Source = "lease"; Member = "pi · /repo"; Project = "/repo"; Detail = "holds full_build"; SinceMs = 1L } |]

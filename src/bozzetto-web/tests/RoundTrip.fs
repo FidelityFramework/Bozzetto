@@ -119,8 +119,8 @@ let private completions = [
 ]
 
 let private baseEvents = [
-  AgentWork { Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Runs = [||]; Presence = [||] }
-  AgentWork { Incarnation = "daemon-b"; Sequence = 9007199254740993L; ExecutionHost = "local"
+  AgentWork { OmittedRuns = 0L; Refusal = ""; Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Runs = [||]; Presence = [||] }
+  AgentWork { OmittedRuns = 7L; Refusal = "explicit refusal"; Incarnation = "daemon-b"; Sequence = 9007199254740993L; ExecutionHost = "local"
               Presence = [| { Name = "pi ü"; Source = "lease"; Member = "pi ü · /repo/clef"; Project = "/repo/clef"; Detail = "holds full_build"; SinceMs = 9007199254740993L }
                             { Name = "mcp:two"; Source = "member"; Member = "mcp:two"; Project = ""; Detail = "Verifier member · no report yet"; SinceMs = -1L } |]
               Runs = [| { Id = "run"; Member = "mcp:one"; Role = "Observer"; Name = "same"; Session = "pi"
@@ -350,10 +350,58 @@ let private run () =
     check ("malformed event refused " + wire) (FrontendCodec.decodeEvent (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
   for wire in badCommands do
     check ("malformed command refused " + wire) (BackendCodec.decodeCommand (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
-  let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 10uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+  let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 11uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
   let frame = { CommandFrame.Correlation = 1; Command = RequestSnapshot }
   check "independent binary golden" (FrontendCodec.encodeCommand frame = golden)
   check "golden decode" (BackendCodec.decodeCommand golden = Ok frame)
+  // Historical v9 AgentWork had a capacity int32 before its two arrays.
+  let oldAgent = [| 66uy; 90uy; 87uy; 49uy; 9uy; 2uy; 9uy; 1uy; 100uy
+                    1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 104uy
+                    0uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+  let oldBoard = AgentWork { Incarnation = "d"; Sequence = 1L; ExecutionHost = "h"; Runs = [||]
+                             Presence = [||]; OmittedRuns = 0L; Refusal = "" }
+  check "deployed v9 agent board layout remains readable" (FrontendCodec.decodeEvent oldAgent = Ok oldBoard)
+  let ambiguous = Array.copy oldAgent
+  ambiguous[4] <- 10uy
+  check "ambiguous v10 agent board is refused" (FrontendCodec.decodeEvent ambiguous |> Result.isError)
+  let historicalRun id usage : AgentRun =
+    { Id = id; Member = "mcp:1"; Role = "Observer"; Name = "name"; Session = "session"; ReportSequence = 5L
+      Model = "model"; Endpoint = "endpoint"; Project = "project"; Focus = "focus"; Operation = "operation"
+      Status = "completed"; UpdatedAtMs = 100L; Activity = [|"new"; "old"|]; OmittedActivity = 3L; Usage = usage }
+  let historicalUsage = Some { AgentUsage.Input = 1L; Output = 2L; CacheRead = 3L; CacheWrite = 4L; Total = 10L; EstimateUsd = Some 0.5 }
+  let historicalExpected = AgentWork { Incarnation = "daemon"; Sequence = 42L; ExecutionHost = "host"
+                                       Runs = [|historicalRun "some" historicalUsage; historicalRun "none" None|]
+                                       Presence = [|{ Name = "pi"; Source = "lease"; Member = "mcp:1"; Project = "project"; Detail = "holding"; SinceMs = 123L }|]
+                                       OmittedRuns = 0L; Refusal = "" }
+  let historicalBytes = [|
+            66uy; 90uy; 87uy; 49uy; 9uy; 2uy; 9uy; 6uy; 100uy; 97uy; 101uy; 109uy; 111uy; 110uy; 42uy; 0uy;
+            0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 4uy; 104uy; 111uy; 115uy; 116uy; 0uy; 1uy; 0uy; 0uy; 2uy;
+            4uy; 115uy; 111uy; 109uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy; 8uy; 79uy; 98uy; 115uy; 101uy;
+            114uy; 118uy; 101uy; 114uy; 4uy; 110uy; 97uy; 109uy; 101uy; 7uy; 115uy; 101uy; 115uy; 115uy; 105uy; 111uy;
+            110uy; 5uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 5uy; 109uy; 111uy; 100uy; 101uy; 108uy; 8uy;
+            101uy; 110uy; 100uy; 112uy; 111uy; 105uy; 110uy; 116uy; 7uy; 112uy; 114uy; 111uy; 106uy; 101uy; 99uy; 116uy;
+            5uy; 102uy; 111uy; 99uy; 117uy; 115uy; 9uy; 111uy; 112uy; 101uy; 114uy; 97uy; 116uy; 105uy; 111uy; 110uy;
+            9uy; 99uy; 111uy; 109uy; 112uy; 108uy; 101uy; 116uy; 101uy; 100uy; 100uy; 0uy; 0uy; 0uy; 0uy; 0uy;
+            0uy; 0uy; 2uy; 3uy; 110uy; 101uy; 119uy; 3uy; 111uy; 108uy; 100uy; 3uy; 0uy; 0uy; 0uy; 0uy;
+            0uy; 0uy; 0uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 2uy; 0uy; 0uy; 0uy;
+            0uy; 0uy; 0uy; 0uy; 3uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 4uy; 0uy; 0uy; 0uy;
+            0uy; 0uy; 0uy; 0uy; 10uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 0uy; 0uy; 0uy;
+            0uy; 0uy; 0uy; 224uy; 63uy; 4uy; 110uy; 111uy; 110uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy;
+            8uy; 79uy; 98uy; 115uy; 101uy; 114uy; 118uy; 101uy; 114uy; 4uy; 110uy; 97uy; 109uy; 101uy; 7uy; 115uy;
+            101uy; 115uy; 115uy; 105uy; 111uy; 110uy; 5uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 5uy; 109uy;
+            111uy; 100uy; 101uy; 108uy; 8uy; 101uy; 110uy; 100uy; 112uy; 111uy; 105uy; 110uy; 116uy; 7uy; 112uy; 114uy;
+            111uy; 106uy; 101uy; 99uy; 116uy; 5uy; 102uy; 111uy; 99uy; 117uy; 115uy; 9uy; 111uy; 112uy; 101uy; 114uy;
+            97uy; 116uy; 105uy; 111uy; 110uy; 9uy; 99uy; 111uy; 109uy; 112uy; 108uy; 101uy; 116uy; 101uy; 100uy; 100uy;
+            0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 2uy; 3uy; 110uy; 101uy; 119uy; 3uy; 111uy; 108uy; 100uy;
+            3uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 2uy; 112uy; 105uy; 5uy; 108uy; 101uy;
+            97uy; 115uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy; 7uy; 112uy; 114uy; 111uy; 106uy; 101uy; 99uy;
+            116uy; 7uy; 104uy; 111uy; 108uy; 100uy; 105uy; 110uy; 103uy; 123uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy;
+            0uy
+          |]
+  check "populated v9 agent board preserves usage and presence" (FrontendCodec.decodeEvent historicalBytes = Ok historicalExpected)
+  let ambiguousPopulated = Array.copy historicalBytes
+  ambiguousPopulated[4] <- 10uy
+  check "populated ambiguous v10 agent board refuses" (FrontendCodec.decodeEvent ambiguousPopulated = Error "binary: unsupported version")
   let oldCommand = Array.copy golden
   oldCommand[4] <- 9uy
   check "deployed v9 command remains readable" (BackendCodec.decodeCommand oldCommand = Ok frame)
@@ -363,7 +411,7 @@ let private run () =
   let peers = [ PeerHello source; PeerWork peerWork; PeerResources peerResources; PeerUnavailable "closed"; PeerHeartbeat { UptimeMs = 33L } ]
   for value in peers do
     check "peer case round trip" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value) = Ok value)
-    check "new peer frames explicitly emit v10" ((Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value)[4] = 10uy)
+    check "new peer frames explicitly emit v11" ((Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value)[4] = 11uy)
   // Fixed deployed v9 Operations bytes: one real compiler run, no lease field.
   let oldOperations = [|
     66uy; 90uy; 87uy; 49uy; 9uy; 2uy; 10uy; 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 106uy; 1uy
@@ -405,7 +453,7 @@ let private run () =
     check "new observation refuses a fabricated legacy envelope" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest legacy = Error "binary: unsupported version")
     check "private observation is not a browser command" (Bozzetto.Web.Shared.BinaryCodec.decodeCommand bytes = Error "binary: wrong message family")
     check "observation rejects trailing bytes" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest (Array.append bytes [|0uy|]) |> Result.isError)
-  let acceptedGolden = [|66uy;90uy;87uy;49uy;10uy;8uy;0uy;7uy;0uy;0uy;0uy;0uy;0uy;0uy;0uy|]
+  let acceptedGolden = [|66uy;90uy;87uy;49uy;11uy;8uy;0uy;7uy;0uy;0uy;0uy;0uy;0uy;0uy;0uy|]
   check "observation accepted reply independent golden" (Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationReply (CommandObservationAccepted 7L) = acceptedGolden)
   check "observation accepted reply golden decode" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationReply acceptedGolden = Ok(CommandObservationAccepted 7L))
   let refused = CommandObservationRefused "lease_not_active"

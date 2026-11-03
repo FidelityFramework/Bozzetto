@@ -207,7 +207,14 @@ let private cleanupAcrossMonitorWindow knownPending () = task {
   let readEntered = completion<unit> ()
   let stopEntered = completion<unit> ()
   worker.BeforeStop <- fun () -> stopEntered.TrySetResult() |> ignore; Task.CompletedTask
-  try
+  use cleanup =
+    { new IAsyncDisposable with
+        member _.DisposeAsync() =
+          ValueTask(task {
+            heldFormat.TrySetException(OperationCanceledException "test cleanup") |> ignore
+            do! owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.)
+          }) }
+  do! task {
     let! session = openSession owner worker
     let mutable reads = 0
     let mutable expired = false
@@ -253,9 +260,7 @@ let private cleanupAcrossMonitorWindow knownPending () = task {
     | None -> ()
     let! view = snapshots owner
     snapshot session view |> assertWithdrawn
-  finally
-    heldFormat.TrySetException(OperationCanceledException "test cleanup") |> ignore
-    owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult()
+  }
 }
 
 let private lateReplyDuringReplacement holdRefresh () = task {
@@ -344,7 +349,10 @@ let tests =
     taskCase "typed archive revocation pushes the directory while stale and foreign notifications cannot restore or alter it" <| fun () -> task {
       let worker = Worker("archive-push", 123)
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true)
-      try
+      use cleanup =
+        { new IAsyncDisposable with
+            member _.DisposeAsync() = ValueTask(owner.StopAsync()) }
+      do! task {
         let! session = openSession owner worker
         let! _ = execute owner (request Operation.Reserve worker session)
         let! _ = execute owner (request Operation.Build worker session)
@@ -373,7 +381,7 @@ let tests =
         worker.PublishInputNotification { newerObservation with Authority = { notification.Authority with Host = "foreign" } }
         worker.PublishInputNotification { newerObservation with Authority = { notification.Authority with Generation = 0L } }
         pushes |> Expect.equal "duplicate, foreign and old-generation notifications are refused" 1
-      finally owner.StopAsync().GetAwaiter().GetResult()
+      }
     }
     taskCase "a session closed with its cleanup finished leaves the directory; a retired worker's sessions stay, withdrawn" <| fun () -> task {
       // Mutation caught: keep storing the Closed reply and the directory would list a card that is never fresh again.
@@ -720,7 +728,14 @@ let tests =
       let owner = ComposerSupervisor((fun () ->
         Interlocked.Increment &creations |> ignore
         Task.FromResult(worker :> IComposerWorker)), true)
-      try
+      use cleanup =
+        { new IAsyncDisposable with
+            member _.DisposeAsync() =
+              ValueTask(task {
+                worker.StopThrows <- false
+                do! owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.)
+              }) }
+      do! task {
         let! session = openSession owner worker
         worker.SetFormatterCleanup(session, true, Some "Formatter cleanup exceeded its deadline.")
         let! status = execute owner (request Operation.Status worker session)
@@ -734,9 +749,7 @@ let tests =
         let! retry = execute owner (request Operation.Open worker "")
         retry |> refused RefusalCode.ProviderUnavailable
         creations |> Expect.equal "failed retirement forbids a replacement process" 1
-      finally
-        worker.StopThrows <- false
-        owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult()
+      }
     }
 
     taskCase "late worker replies and late status refreshes cannot revive a retired compiler epoch" <| fun () -> task {
@@ -1010,7 +1023,14 @@ let tests =
           removeAllowed.Task :> Task
         else Task.CompletedTask
       let owner = ComposerSupervisor((fun () -> Task.FromResult(worker :> IComposerWorker)), true, beforeExit)
-      try
+      use cleanup =
+        { new IAsyncDisposable with
+            member _.DisposeAsync() =
+              ValueTask(task {
+                removeAllowed.TrySetResult() |> ignore
+                do! owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.)
+              }) }
+      do! task {
         let! session = openSession owner worker
         use subscription = owner.Changed.Subscribe(fun () ->
           if successorRead.Task.IsCompleted then settledNotice.TrySetResult() |> ignore)
@@ -1047,9 +1067,7 @@ let tests =
         let status = snapshot session view |> success
         (observed status).Busy |> Expect.isFalse "The successor published settled cleanup."
         (observed status).Current.IsSome |> Expect.equal "Reconciliation does not recreate execution authority." false
-      finally
-        removeAllowed.TrySetResult() |> ignore
-        owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.).GetAwaiter().GetResult()
+      }
     }
 
     taskCase "canceled busy work publishes its eventual settled status without observer polling" <| fun () -> task {
