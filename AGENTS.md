@@ -135,7 +135,7 @@ the risk it addresses.
    negative control that asserts the specific reason, and one mutation that a
    test catches.
 3. **Acceptance scope belongs to the auditor.** The current FFI role assignment
-   is recorded in [the implementation handoff](docs/ffi-implementation-handoff.md).
+   is recorded in the Farscape wiki's [FFI Working Agreements](https://forge.spkez.dev/FidelityFramework/Farscape/wiki/FFI-Working-Agreements).
    Preserve earlier acceptance evidence at its recorded scope and audit its
    architectural assumptions against current code. The auditor reviews
    the focused evidence and decides whether a
@@ -224,8 +224,9 @@ exists. Two rules follow:
 
 `ci-pipeline.fsx` places tier artifacts under
 `${XDG_CACHE_HOME:-$HOME/.cache}/bozzetto/tiers/<checkout-name>-<path-hash>/`.
-Keep generated scratch out of the checkout and out of `~/repos`. Preserve logs
-and trust ledgers that validation records cite before deleting artifacts.
+For the FFI milestone, keep build and test scratch under checkout
+`test-results/scratch/` as required by the current working agreement. Preserve
+logs and trust ledgers that validation records cite before deleting artifacts.
 
 ## Finding code
 

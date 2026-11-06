@@ -4,7 +4,7 @@ Bozzetto is the development controller for Clef/Composer work, outside the compi
 
 ## Navigation
 
-These twelve documents form the documentation set; the compendium beneath them carries the one piece of continuing work whose records were consolidated rather than kept. A link names the durable destination, not a claim that its rewrite or the capability it describes has been delivered.
+These twelve documents form the documentation set. The FFI programme that Bozzetto coordinates is planned and tracked on the Farscape forge: its [wiki](https://forge.spkez.dev/FidelityFramework/Farscape/wiki) holds the definition of done, the decision ledger and the working agreements, and its [issues](https://forge.spkez.dev/FidelityFramework/Farscape/issues) hold the work. A link names the durable destination, not a claim that its rewrite or the capability it describes has been delivered.
 
 | Document | Purpose |
 | --- | --- |
@@ -20,7 +20,6 @@ These twelve documents form the documentation set; the compendium beneath them c
 | [binary-format-spec.md](binary-format-spec.md) | Durable `.bozzettofm` validation and typed direct interchange, linking owner-maintained PSG/BAREWire schemas rather than copying their authority. |
 | [Bozzetto_Diagnostic_Sink.md](Bozzetto_Diagnostic_Sink.md) | Independent MailboxProcessor-driven sink, binary PSG capture, bounded persistence and Fidelity.Data JSON export only. |
 | [development.md](development.md) | Owner-focused validation, differential controls, mutation checks, unfiltered TRUST acceptance and the one-page handoff. |
-| [ffi-correction-compendium.md](ffi-correction-compendium.md) | Current FFI scope, accepted boundaries, open work and handoff; the detailed historical record remains in Git. |
 
 ## Current versus planned
 

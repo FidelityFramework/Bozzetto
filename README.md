@@ -137,7 +137,7 @@ The lease client waits in line, renews the lease while the command runs and rele
 | `src/bozzetto-web/` | The Partas.Solid browser application and the shared data types used by its bridge. |
 | `src/bozzetto-vscode/` | The VS Code extension. |
 | `src/Bozzetto.Tests/`, `src/Bozzetto.Composer.Tests/` | Expecto suites. |
-| `docs/` | The twelve documents of the [documentation index](docs/README.md) and the FFI correction compendium. |
+| `docs/` | The twelve documents of the [documentation index](docs/README.md). |
 | `tools/` | Build contracts, the pipeline's tier plan and lease client, the quality matrix, the agent skill and agent hooks. |
 
 Start with the [documentation index](docs/README.md) for Bozzetto's scope, its use of PSG, Fidelity.FSharp.Incremental and Ranvier, and the status of implemented and planned features. Dated checkpoints and audit records are kept separately from the current documentation.

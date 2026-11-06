@@ -37,7 +37,7 @@ If retrieval is unavailable, report that limitation. An unavailable service does
 
 Prefer extending or deleting at the owner. Each new file, dependency, abstraction or duplicated producer/reader rule needs a reason. No second authority, inferred replay or fallback may conceal a missing owner contract. Delegate bulk first-pass reading where workers are available; include retrieval and lease rules in every brief. Use one reviewer and one checklist.
 
-The owner's 2026-10-11 authorization lets the implementer coordinate agents and carry out settled implementation work without asking again for routine delegation. The [implementation handoff](ffi-implementation-handoff.md) records the current FFI role assignment. Preserve earlier acceptance evidence at its recorded scope while auditing its architectural assumptions against current code and governing clauses. LAN research and local design reviews supply leads and implementation checks; the auditor owns the acceptance verdict and the decision to widen regression. Unsettled owner decisions retain the boundary above.
+The owner's 2026-10-11 authorization lets the implementer coordinate agents and carry out settled implementation work without asking again for routine delegation. The Farscape wiki's [FFI Working Agreements](https://forge.spkez.dev/FidelityFramework/Farscape/wiki/FFI-Working-Agreements) record the current FFI role assignment. Preserve earlier acceptance evidence at its recorded scope while auditing its architectural assumptions against current code and governing clauses. LAN research and local design reviews supply leads and implementation checks; the auditor owns the acceptance verdict and the decision to widen regression. Unsettled owner decisions retain the boundary above.
 
 ### Authoring conventions
 
@@ -146,13 +146,13 @@ Current validation machinery contains drift that must not become the intended co
 
 Preserve existing receipts while removing these mechanisms at their owners. Do not hide failures or delete evidence to make the documentation agree with the remit. Binary transport, full foundation adoption, Ranvier-shaped settlement, native execution and authenticated distributed operation each need separate source and executed evidence before being called implemented. LLVM ORC JIT remains planned under `AGENTS.md`.
 
-Tier scratch is keyed by checkout path under `${XDG_CACHE_HOME:-$HOME/.cache}/bozzetto/tiers/<checkout-name>-<path-hash>/` (`ci-pipeline.fsx`, `tierWork`). The merged ledger/report currently live in checkout `test-results/`; preserve them and external tier logs before cleanup. Keep new scratch out of the checkout and `~/repos`.
+Tier scratch is keyed by checkout path under `${XDG_CACHE_HOME:-$HOME/.cache}/bozzetto/tiers/<checkout-name>-<path-hash>/` (`ci-pipeline.fsx`, `tierWork`). The merged ledger/report currently live in checkout `test-results/`; preserve them and external tier logs before cleanup. For the FFI milestone, keep build and test scratch under checkout `test-results/scratch/` as required by the current working agreement.
 
 ## One-page increment handoff
 
 Keep the filled handoff to one page. Put rationale in the governing specification or code, and link bulky matrices and receipts. This format applies to all three centerpiece contracts, not just FFI.
 
-This document holds the evidence binding and the handoff format; the dated checkpoints that once carried them are evidence outside the active documentation. The FFI correction, the one increment series still in progress, keeps its standing record in [ffi-correction-compendium.md](ffi-correction-compendium.md).
+This document holds the evidence binding and the handoff format; the dated checkpoints that once carried them are evidence outside the active documentation. The FFI correction, the one increment series still in progress, keeps its standing record on the Farscape forge: the [Definition of Done](https://forge.spkez.dev/FidelityFramework/Farscape/wiki/Definition-of-Done), the [Architectural Decision Ledger](https://forge.spkez.dev/FidelityFramework/Farscape/wiki/Architectural-Decision-Ledger) and its [work items](https://forge.spkez.dev/FidelityFramework/Farscape/issues).
 
 ```text
 Increment / date / implementer:
