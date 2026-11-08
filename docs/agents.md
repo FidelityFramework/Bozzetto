@@ -10,13 +10,13 @@ Three components define the forward contract:
 | **Fidelity.FSharp.Incremental** | Declared dependency bookkeeping and explicitly started work, with shared demand, withdrawal and joined lifetimes. Bozzetto retains client admission and process supervision. |
 | **Ranvier** | The signal/memo/effect reference shape for reactive observations, with one mutation owner and immutable input admission. This is not compiler settlement or physical-drain authority. |
 
-See [component contracts](Bozzetto_Fidelity_Component_Contracts.md), [foundation adoption](Bozzetto_Incremental_Foundation_Adoption.md) and [reactive push](reactive-push.md). These responsibilities are requirements, not a claim that every agent-facing path already implements them.
+See [component contracts](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/Bozzetto_Fidelity_Component_Contracts), [foundation adoption](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/Bozzetto_Incremental_Foundation_Adoption) and [reactive push](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/reactive-push). These responsibilities are requirements, not a claim that every agent-facing path already implements them.
 
-Implementation statements below are based on source reads, not a live connection or executed validation. The governing repository rules are in [`AGENTS.md`](../AGENTS.md), particularly **Daemon lifecycle**, **Clef and Composer work**, **Building and testing Bozzetto**, **Architecture** and **Multi-agent and worktree sessions**.
+Implementation statements below are based on source reads, not a live connection or executed validation. The governing repository rules are in [`AGENTS.md`](https://forge.spkez.dev/FidelityFramework/Bozzetto/src/branch/main/AGENTS.md), particularly **Daemon lifecycle**, **Clef and Composer work**, **Building and testing Bozzetto**, **Architecture** and **Multi-agent and worktree sessions**.
 
 ## Connect and establish current identity
 
-Use the shared installed daemon, independently of any individual client's lifetime. Port **47749** serves MCP, HTTP and the browser UI; **47750** is the control listener. Configure an MCP client for Streamable HTTP at `http://127.0.0.1:47749/`. Connection arguments and resources belong in [mcp-tools.md](mcp-tools.md).
+Use the shared installed daemon, independently of any individual client's lifetime. Port **47749** serves MCP, HTTP and the browser UI; **47750** is the control listener. Configure an MCP client for Streamable HTTP at `http://127.0.0.1:47749/`. Connection arguments and resources belong in [mcp-tools.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/mcp-tools).
 
 1. Make one bounded readiness probe:
 
@@ -24,12 +24,12 @@ Use the shared installed daemon, independently of any individual client's lifeti
    curl --fail --max-time 3 http://127.0.0.1:47749/health
    ```
 
-2. If the daemon is absent, start it as [operations.md](operations.md#installed-identity-and-bounded-readiness) shows, then make the bounded probe. Do not launch it in the foreground, wait for its lifetime or loop on health checks.
+2. If the daemon is absent, start it as [operations.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/operations#installed-identity-and-bounded-readiness) shows, then make the bounded probe. Do not launch it in the foreground, wait for its lifetime or loop on health checks.
 3. Confirm a live MCP connection exposes `get_daemon_status`, `composer_list_sessions` and `composer_open_project`. A configured server entry is not evidence of connection or availability.
 4. Inspect the installed daemon and worker identities and their readiness. A checkout change does not replace a loaded compiler distribution. Report exact version, type and protocol errors.
 5. Use `/work` for the human view and `composer://sessions` for the MCP session directory. Subscribe to supported resources rather than adding status polling.
 
-Current connection checks belong in [operations.md](operations.md): installed identity, readiness and the matching daemon and worker pair.
+Current connection checks belong in [operations.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/operations): installed identity, readiness and the matching daemon and worker pair.
 
 Development restarts are authorized by `AGENTS.md`, but check active leases and Composer work first. Never interrupt another caller's active work or replace unrelated compiler components. Keep the previous installed release available for rollback.
 
@@ -54,7 +54,7 @@ The prescribed workflow in `AGENTS.md` and the current Composer tool reference i
 
 1. Read `composer_list_sessions`. Open an explicit absolute `.fidproj` with `composer_open_project`.
 2. Retain the returned host, session and compiler epoch for subsequent operations.
-3. Coordinate overlapping edits with the cohort. Call `composer_reserve_edit` and receive success before changing source or dependency files. Keep the opaque reservation; its admitted-build and shared-observer semantics belong in [composer-workflow.md](composer-workflow.md) and [mcp-tools.md](mcp-tools.md), not a provider-wide single-use rule here.
+3. Coordinate overlapping edits with the cohort. Call `composer_reserve_edit` and receive success before changing source or dependency files. Keep the opaque reservation; its admitted-build and shared-observer semantics belong in [composer-workflow.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/composer-workflow) and [mcp-tools.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/mcp-tools), not a provider-wide single-use rule here.
 4. Make the edit, then pass that reservation to `composer_build`.
 5. Inspect compiler diagnostics, refusals and accepted evidence. Execute only through `composer_run_current`, passing arguments as individual strings.
 6. Read `composer_session_status` for pending withdrawal, cleanup and errors. Close your session with `composer_close_session` when finished, retaining responsibility for unresolved cleanup.
@@ -63,7 +63,7 @@ A cohort claim does not replace the Composer reservation. Enqueue acceptance, a 
 
 Human reservations, cancellation and worker retirement affect agents too. Coordinate `composer_retire_worker` before replacing a compiler distribution. A new epoch needs new session handles and reservations; cleanup failure is not permission to reuse the old ones.
 
-See [composer-workflow.md](composer-workflow.md) for conflicts, epochs and per-region witness/object validation. Fidelity.PSG evidence must retain compiler-owned scope and identity. Equal display summaries or unchanged row counts cannot prove that evidence remains valid.
+See [composer-workflow.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/composer-workflow) for conflicts, epochs and per-region witness/object validation. Fidelity.PSG evidence must retain compiler-owned scope and identity. Equal display summaries or unchanged row counts cannot prove that evidence remains valid.
 
 No embedded F# session hosting, REPL, FSI warmup or runtime patching belongs in this loop. LLVM ORC JIT remains planned. Retained F# tools in a catalog do not establish an execution service, and editor saves must not be assumed to build or run a Composer revision.
 
@@ -87,7 +87,7 @@ The implemented claim vocabulary in `src/Bozzetto.Core/Cohort.fs` is file or pro
 | `leave_cohort` | Remaining held claims become orphaned. Departure does not silently transfer ownership. |
 | `reassign_claim` | The conductor reassigns an orphaned claim to a present member. Reconcile the new fence before continuing. |
 
-These tool rules are described in [mcp-tools.md](mcp-tools.md); claim state and fence types are in `src/Bozzetto.Core/Cohort.fs`. Claims coordinate people and agents, not compiler proofs, work admission or physical process lifetime.
+These tool rules are described in [mcp-tools.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/mcp-tools); claim state and fence types are in `src/Bozzetto.Core/Cohort.fs`. Claims coordinate people and agents, not compiler proofs, work admission or physical process lifetime.
 
 The landing state machine and effect-dispatch seam exist, but do not advertise an available Composer landing verifier. `src/Bozzetto/McpCohortIntegration.fs` refuses `set_integration_ref` before changing worktrees, cohort heads or builds because its F# integration provider is retired. Its status text explicitly says Composer integration is not implemented. `CohortOwner.start` also supplies a nonperforming default landing performer. A queue entry is not evidence that a verification journey can complete.
 
@@ -97,7 +97,7 @@ The board holds bounded client-reported facts, not transcripts, tool payloads, p
 
 A report identifies a run, client session label, increasing report sequence, name, model, endpoint, project, focus, operation and status, with optional cumulative usage. Status is one of `running`, `completed`, `failed`, `aborted`, `disconnected` or `unknown`. Every status other than `running` is terminal in the current implementation.
 
-Use `report_agent_work` on the participant's enrolled connection. Read or reconcile with `get_agent_work`. Consult [mcp-tools.md](mcp-tools.md) for the current advertised argument shape; do not infer API availability solely from documentation.
+Use `report_agent_work` on the participant's enrolled connection. Read or reconcile with `get_agent_work`. Consult [mcp-tools.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/mcp-tools) for the current advertised argument shape; do not infer API availability solely from documentation.
 
 The implemented admission rules include:
 
@@ -125,7 +125,7 @@ BOZZETTO_AGENT=implementer BOZZETTO_PROJECT="$PWD" \
   dotnet fsi tools/build/lease.fsx test_suite_run dotnet <testDll> --summary
 ```
 
-Use a stable, distinct holder per agent/project; start only on grant, honor Wait/refusal, renew owned work, release on every terminal path and explicitly withdraw only when abandoning a queued ask. The detailed pool, wrapper and HTTP lifecycle contract belongs in [operations.md, Leases: admission, heartbeat and queues](operations.md#leases-admission-heartbeat-and-queues), with MCP lifecycle limits in [mcp-tools.md](mcp-tools.md). `tools/build/lease.fsx` keeps a deferred ask in line as the same ask and withdraws it after ten minutes.
+Use a stable, distinct holder per agent/project; start only on grant, honor Wait/refusal, renew owned work, release on every terminal path and explicitly withdraw only when abandoning a queued ask. The detailed pool, wrapper and HTTP lifecycle contract belongs in [operations.md, Leases: admission, heartbeat and queues](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/operations#leases-admission-heartbeat-and-queues), with MCP lifecycle limits in [mcp-tools.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/mcp-tools). `tools/build/lease.fsx` keeps a deferred ask in line as the same ask and withdraws it after ten minutes.
 
 If memory defers work, investigate available RAM and swap, process RSS with parents, and cgroup usage. Separate daemon and worker usage from leased builds, unrelated work and language servers. Ask before stopping processes you do not own or changing scheduling policy. Granted and queued compiler-related leases belong beside the worker on `/work`; the Dashboard keeps agents and machine resources, and its CPU figure covers only daemon and worker (`AGENTS.md`).
 
@@ -148,13 +148,13 @@ The required reactive plane admits immutable snapshots through one mutation doma
 
 Before a handoff, record checkout, project, connection/member context, host/session/epoch, claim/fence, outstanding reservation, lease or queued ask, and pending cleanup. Do not transfer a connection-bound capability by copying a display label. Release your claims and leases, withdraw abandoned asks, report terminal work honestly and identify anything still owned. Scope, scheduling, dependency and policy decisions remain with the owner.
 
-Delegated briefs must include the retrieval rule and lease lifecycle because sub-agents do not inherit `AGENTS.md`. Validation guidance and the one-page evidence handoff belong in [development.md](development.md): targeted inner-loop runs plus one unfiltered TRUST acceptance per increment. A board status or cohort matrix does not replace that ledger.
+Delegated briefs must include the retrieval rule and lease lifecycle because sub-agents do not inherit `AGENTS.md`. Validation guidance and the one-page evidence handoff belong in [development.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/development): targeted inner-loop runs plus one unfiltered TRUST acceptance per increment. A board status or cohort matrix does not replace that ledger.
 
 ## Binary protocol boundary and remaining drift
 
-Direct daemon-worker, daemon-browser and agent-owned interchange must use **typed binary contracts**. Domain types alone are not evidence of binary transport. Wire identities must preserve epoch, request, scope and sequence distinctions; reconnect must reconcile authoritative snapshots without reviving stale permissions. See [binary-format-spec.md](binary-format-spec.md) and [reactive-push.md](reactive-push.md).
+Direct daemon-worker, daemon-browser and agent-owned interchange must use **typed binary contracts**. Domain types alone are not evidence of binary transport. Wire identities must preserve epoch, request, scope and sequence distinctions; reconnect must reconcile authoritative snapshots without reviving stale permissions. See [binary-format-spec.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/binary-format-spec) and [reactive-push.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/reactive-push).
 
-MCP's externally standardized JSON-RPC transport is the sole external exception. JSON-shaped responses inside the MCP adapter do not authorize a second direct JSON API. Fidelity.Data belongs at JSON export edges and the independent, separate-process MailboxProcessor-driven [diagnostic sink](Bozzetto_Diagnostic_Sink.md), not as a serializer substitution for forbidden direct interchange.
+MCP's externally standardized JSON-RPC transport is the sole external exception. JSON-shaped responses inside the MCP adapter do not authorize a second direct JSON API. Fidelity.Data belongs at JSON export edges and the independent, separate-process MailboxProcessor-driven [diagnostic sink](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/Bozzetto_Diagnostic_Sink), not as a serializer substitution for forbidden direct interchange.
 
 The inspected source still exposes drift:
 

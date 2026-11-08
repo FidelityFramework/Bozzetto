@@ -77,6 +77,7 @@ let private genCommand : Gen<CohortCommand<MemberId>> =
     Gen.map3 (fun m s p -> CohortCommand.AcquireClaim(m, s, p)) genMember genScope (Gen.constant "purpose")
     Gen.map3 (fun m c f -> CohortCommand.ReleaseClaim(m, c, f)) genMember genClaimId genFence
     Gen.map3 (fun by c t -> CohortCommand.ReassignClaim(by, c, t)) genMember genClaimId genMember
+    Gen.map3 (fun m c f -> CohortCommand.ReclaimClaim(m, c, f)) genMember genClaimId genFence
     Gen.map2 (fun by t -> CohortCommand.DelegateConductor(by, t)) genMember genMember
     Gen.map2 (fun m p -> CohortCommand.ObserveSave(m, p)) genMember (Gen.elements [ "P.fs"; "Q.fs" ])
     (gen {

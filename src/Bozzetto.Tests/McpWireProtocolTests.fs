@@ -87,6 +87,7 @@ let mcpToolRegistrationTests = testList "MCP tool registration" [
       "plan_ripple"
       "preview_what_if"
       "reassign_claim"
+      "reclaim_claim"
       "release_claim"
       "report_agent_work"
       "report_friction"

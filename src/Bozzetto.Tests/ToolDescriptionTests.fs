@@ -86,6 +86,7 @@ let requiredParamsByTool =
     "acquire_claim", set ["agentName"; "scope"; "purpose"]
     "release_claim", set ["agentName"; "claimId"; "fence"]
     "reassign_claim", set ["agentName"; "claimId"; "toMember"]
+    "reclaim_claim", set ["agentName"; "claimId"; "fence"]
     "request_landing", set ["agentName"; "claims"; "commits"; "statement"]
     // Item 14c: both args required — v1 has no optional routing here either.
     "set_integration_ref", set ["agentName"; "integrationRef"] ]

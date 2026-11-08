@@ -22,12 +22,13 @@ let tests = testList "Checkout" [
       |> Expect.equal "should classify as MainCheckout" (Checkout.Checkout.MainCheckout tmp)
     finally Directory.Delete(tmp, true)
 
-  testCase "WHY — a directory with no .git anywhere up the tree is NotAGitCheckout" <| fun () ->
-    let tmp = Directory.CreateTempSubdirectory("bozzetto-none-").FullName
-    try
-      Checkout.classify tmp
-      |> Expect.equal "should classify as NotAGitCheckout" Checkout.Checkout.NotAGitCheckout
-    finally Directory.Delete(tmp, true)
+  testCase "WHY — a path with no .git anywhere up the tree is NotAGitCheckout" <| fun () ->
+    let root = Path.GetPathRoot(Directory.GetCurrentDirectory())
+    let path = Path.Combine(root, $"bozzetto-none-{System.Guid.NewGuid():N}", "nested")
+    Checkout.hasCheckoutMarker root |> Expect.isFalse "filesystem root must not be a checkout"
+    Directory.Exists path |> Expect.isFalse "the uncreated path must not already exist"
+    Checkout.classify path
+    |> Expect.equal "should classify as NotAGitCheckout" Checkout.Checkout.NotAGitCheckout
 
   testCase "WHY — a git worktree's .git FILE classifies as Worktree with its OWN branch, not the main checkout's" <| fun () ->
     let tmp = Directory.CreateTempSubdirectory("bozzetto-wt-").FullName

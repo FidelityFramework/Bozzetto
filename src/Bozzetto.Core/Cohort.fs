@@ -230,6 +230,8 @@ module Cohort =
   /// fact. `SupersededBy` names the claim that now covers the same scope.
   [<RequireQualifiedAccess>]
   type ClaimPruneReason =
+    /// Recorded by ledgers written before Bozzetto #24; no longer produced,
+    /// because an orphan blocks until it is reassigned or reclaimed.
     | OrphanedPastRetention of since: DateTime
     | ReleasedPastRetention of at: DateTime
     | SupersededBy of ClaimId
@@ -354,9 +356,10 @@ module Cohort =
   let leaseWindow = TimeSpan.FromMinutes 30.0
 
   /// How long SETTLED history stays in `CohortState` before `Retention.sweep`
-  /// (run by every `Tick`) removes it: an orphaned claim (the conductor's
-  /// window to `ReassignClaim` it), a released claim, a departed member, a
-  /// settled (Blocked/Landed/Withdrawn) landing. Before this existed none of
+  /// (run by every `Tick`) removes it: a released claim, a departed member no
+  /// claim or landing still names, a settled (Blocked/Landed/Withdrawn)
+  /// landing. An orphaned claim is not settled: it blocks its scope until it
+  /// is reassigned or reclaimed (Bozzetto #24). Before this existed none of
   /// them was ever removed — the dashboard and `get_cohort_status` listed
   /// 43 orphaned claims, 4 departed members and 9 blocked landings, hours
   /// old. One window for all of them so a member's seat and the claims that
@@ -415,6 +418,11 @@ module Cohort =
     /// by state = Authority.Conductor _` (Phase 1 item 8) — refused with
     /// `CohortError.NotConductor` otherwise.
     | ReassignClaim of by: 'm * claimId: ClaimId * toMember: 'm
+    /// The ORIGINAL holder of an `Orphaned` claim takes it back after
+    /// rejoining (Bozzetto #24), presenting the claim's last fence (as
+    /// `get_cohort_status` shows it). Anyone else is refused; the conductor's
+    /// `ReassignClaim` remains the only other way out of `Orphaned`.
+    | ReclaimClaim of who: 'm * claimId: ClaimId * fence: int64<fence>
     /// Conductor action: rebind `Conductor` to another Present member (§4.2's
     /// "delegate conductor to member X rebinds it"). Gated the same way as
     /// `ReassignClaim`.
@@ -526,6 +534,9 @@ module Cohort =
     | DuplicateJoin of 'm
     | MemberNotPresent of 'm
     | ClaimConflict of ClaimScope * holder: 'm
+    /// The scope overlaps an `Orphaned` claim (Bozzetto #24): it still blocks
+    /// until the conductor reassigns it or its previous holder reclaims it.
+    | OrphanedClaimConflict of ClaimScope * claimId: ClaimId * previousHolder: 'm
     | NotClaimHolder of ClaimId * requester: 'm
     | UnknownClaim of ClaimId
     | ClaimNotOrphaned of ClaimId
@@ -692,8 +703,10 @@ module Cohort =
 
     /// Claims to remove, with why. An orphan is dead weight the moment ANOTHER
     /// claim covers the same scope (a live `Held` one, or a newer orphan) — the
-    /// conductor has nothing left to reassign — otherwise it lives out the
-    /// window. A released claim is history and lives out the window.
+    /// conductor has nothing left to reassign. Otherwise an orphan is NOT
+    /// history: it still blocks its scope (Bozzetto #24) until the conductor
+    /// reassigns it or its holder reclaims it, so age never removes it. A
+    /// released claim is history and lives out the window.
     let claimsToPrune (now: DateTime) (claims: Map<ClaimId, Claim<'m>>) : (ClaimId * ClaimPruneReason) list =
       let winners : Map<ClaimScope, Claim<'m>> =
         claims
@@ -713,10 +726,9 @@ module Cohort =
           | ClaimState.Held _ -> ()
           | ClaimState.Released(_, at) ->
             if aged now at then yield id, ClaimPruneReason.ReleasedPastRetention at
-          | ClaimState.Orphaned(_, since) ->
+          | ClaimState.Orphaned _ ->
             let winner = Map.find c.Scope winners
-            if winner.Id <> id then yield id, ClaimPruneReason.SupersededBy winner.Id
-            elif aged now since then yield id, ClaimPruneReason.OrphanedPastRetention since ]
+            if winner.Id <> id then yield id, ClaimPruneReason.SupersededBy winner.Id ]
 
     /// Settled landings to remove. A landing vetoed and awaiting the conductor
     /// is an outstanding DECISION, not history, so it stays until resolved.
@@ -855,18 +867,27 @@ module Cohort =
         match Purpose.tryCreate purposeRaw with
         | Error e -> Error(CohortError.InvalidPurpose e)
         | Ok purpose ->
-          let conflict =
-            state.Claims
-            |> Map.toList
-            |> List.tryPick (fun (_, c) ->
+          // An Orphaned claim still blocks (Bozzetto #24): its holder went
+          // silent, which proves nothing about whether its edits are done.
+          // Only a conductor `ReassignClaim` or the holder's own fenced
+          // `ReclaimClaim` ends it. A Held conflict is named first.
+          let overlapping = state.Claims |> Map.toList |> List.filter (fun (_, c) -> ClaimScope.overlaps c.Scope scope)
+          let heldConflict =
+            overlapping |> List.tryPick (fun (_, c) ->
               match c.State with
-              | ClaimState.Held holder when ClaimScope.overlaps c.Scope scope -> Some holder
-              | ClaimState.Held _
+              | ClaimState.Held holder -> Some holder
               | ClaimState.Orphaned _
               | ClaimState.Released _ -> None)
-          match conflict with
-          | Some holder -> Error(CohortError.ClaimConflict(scope, holder))
-          | None ->
+          let orphanConflict =
+            overlapping |> List.tryPick (fun (cid, c) ->
+              match c.State with
+              | ClaimState.Orphaned(previous, _) -> Some(cid, previous)
+              | ClaimState.Held _
+              | ClaimState.Released _ -> None)
+          match heldConflict, orphanConflict with
+          | Some holder, _ -> Error(CohortError.ClaimConflict(scope, holder))
+          | None, Some(cid, previous) -> Error(CohortError.OrphanedClaimConflict(scope, cid, previous))
+          | None, None ->
             let claimId = Ids.mintClaimId entropy
             if Map.containsKey claimId state.Claims then
               Error(CohortError.DuplicateClaimId claimId)
@@ -928,6 +949,41 @@ module Cohort =
       // default policy: only a bound Conductor may reassign a claim — every
       // other Authority (Member, Anonymous) is refused.
       | _ -> Error(CohortError.NotConductor by)
+
+    | CohortCommand.ReclaimClaim(who, claimId, presentedFence) ->
+      if not (isPresent state who) then Error(CohortError.MemberNotPresent who)
+      else
+        match Map.tryFind claimId state.Claims with
+        | None -> Error(CohortError.UnknownClaim claimId)
+        | Some claim ->
+          match claim.State with
+          | ClaimState.Orphaned(previous, _) when previous <> who -> Error(CohortError.NotClaimHolder(claimId, who))
+          | ClaimState.Orphaned _ when presentedFence <> claim.Fence ->
+            Error(CohortError.StaleClaimFence(claimId, presentedFence, claim.Fence))
+          | ClaimState.Orphaned _ ->
+            // Same exclusivity ReassignClaim keeps: never a second Held claim
+            // over an overlapping scope.
+            let conflict =
+              state.Claims
+              |> Map.toList
+              |> List.tryPick (fun (otherId, c) ->
+                match c.State with
+                | ClaimState.Held holder when otherId <> claimId && ClaimScope.overlaps c.Scope claim.Scope -> Some holder
+                | ClaimState.Held _
+                | ClaimState.Orphaned _
+                | ClaimState.Released _ -> None)
+            match conflict with
+            | Some holder -> Error(CohortError.ClaimConflict(claim.Scope, holder))
+            | None ->
+              let fence = state.NextFence + 1L<fence>
+              let updated = { claim with Fence = fence; State = ClaimState.Held who }
+              let newState = { state with NextFence = fence; Claims = Map.add claimId updated state.Claims }
+              // The ledger entry's command says it was a reclaim; the event is
+              // the same "claim is Held by this member at this fence" fact a
+              // reassignment records.
+              Ok(newState, [ CohortEvent.ClaimReassigned(claimId, who, fence) ], [])
+          | ClaimState.Held _
+          | ClaimState.Released _ -> Error(CohortError.ClaimNotOrphaned claimId)
 
     | CohortCommand.DelegateConductor(by, toMember) ->
       match Authority.present by state with

@@ -7,7 +7,7 @@ sits outside the compiler pipeline: compiler work is accepted on component
 gates, and Bozzetto adapts on its own track.
 
 Embedded F# session hosting is retired in this checkout
-([architecture](docs/architecture.md)).
+([architecture](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/architecture)).
 No F# REPL service is part of any workflow. LLVM ORC JIT is the intended future
 Clef execution backend and is not implemented.
 
@@ -73,9 +73,9 @@ The daemon is long-running; intentional development restarts are normal.
   execute. Give one an explicit owner and time limit.
 - **The dashboard's CPU figure covers the daemon and its worker only.** It does
   not show leased builds or tests
-  ([operations](docs/operations.md)).
+  ([operations](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/operations)).
 
-Read `docs/operations.md` (installed identity and readiness) before assuming an
+Read [operations](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/operations) (installed identity and readiness) before assuming an
 agent is connected.
 
 ## Clef and Composer work
@@ -152,7 +152,7 @@ settled work. LAN first-pass reading and local design reviews support that work;
 they do not replace the sole auditor's verdict or decide unsettled owner policy.
 
 Cross-repository increments use the one-page
-[development guide](docs/development.md).
+[development guide](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/development).
 
 ### Alex analyzer gate
 
@@ -313,10 +313,10 @@ Composer is a **differential compiler**: it recompiles what a change affects.
 - **Shared foundation.** Fidelity.FSharp.Incremental owns dependency
   bookkeeping and explicitly started work across Bozzetto and the
   Clef/CCS/Baker/Composer pipeline. Follow the
-  [adoption contract](docs/Bozzetto_Incremental_Foundation_Adoption.md). Do not
+  [adoption contract](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/Bozzetto_Incremental_Foundation_Adoption). Do not
   grow separate invalidation or work-lifetime mechanisms. Record identities and
   acceptance evidence in the
-  [development guide](docs/development.md) and the increment's evidence manifest.
+  [development guide](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/development) and the increment's evidence manifest.
 - **Shape.** CQRS read and write models; features as vertical slices in single
   files; clients (VS Code, Neovim, MCP, browser) use session-scoped contracts,
   with `/api/composer/*` as the HTTP client contract.
@@ -336,7 +336,7 @@ Composer is a **differential compiler**: it recompiles what a change affects.
 | `src/Bozzetto.Simulation/` | Deterministic simulations the suites drive |
 | `tools/build/` | Contract props, the pipeline's tier plan and its lease client (`lease.fsx`) |
 | `tools/quality/`, `tools/skills/`, `tools/agent-hooks/` | The definition-of-done matrix, the agent skill, agent hooks |
-| `docs/` | Design records, checkpoints and the documentation site |
+| `docs/` | `agents.md` and `mcp-tools.md`, read by `RetiredToolNameTests`; design records are on the [Bozzetto wiki](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki) |
 
 The disconnected `Bozzetto.Gui` Raylib frontend, the Visual Studio extension,
 the SageTUI proof of concept, the demo recorder and the samples have been

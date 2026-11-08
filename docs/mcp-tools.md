@@ -8,7 +8,7 @@ This is the supported-remit reference, not a reproduction of every inherited too
 
 ## Transport and ownership boundary
 
-Connect an MCP client using Streamable HTTP at `http://127.0.0.1:47749/`. Complete the client's MCP initialization, then inspect `tools/list` and `resources/list`. A configured URL is not evidence of a live connection, configured compiler worker or available operation. Use `get_daemon_status` and `composer_list_sessions` to inspect those facts. Connection and deployment procedures belong in [operations.md](operations.md).
+Connect an MCP client using Streamable HTTP at `http://127.0.0.1:47749/`. Complete the client's MCP initialization, then inspect `tools/list` and `resources/list`. A configured URL is not evidence of a live connection, configured compiler worker or available operation. Use `get_daemon_status` and `composer_list_sessions` to inspect those facts. Connection and deployment procedures belong in [operations.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/operations).
 
 **MCP's external JSON-RPC standard is the one external exception to the no-JSON direct-interchange rule.** MCP arguments, structured results and resource content below are representations at that adapter only. They do not define the daemon-worker, daemon-browser or agent-owned direct protocol. Do not copy these representations into a second internal wire contract.
 
@@ -17,7 +17,7 @@ Connect an MCP client using Streamable HTTP at `http://127.0.0.1:47749/`. Comple
 | External MCP | JSON-RPC through the MCP SDK. `ComposerTools.fs` constructs typed provider requests and projects replies into MCP content. `McpServer.fs` registers the HTTP transport. |
 | Daemon and Composer worker | `AGENTS.md` requires the matching typed binary contract in `Bozzetto.Composer.Protocol`. The tools use its request types; this source audit does not independently establish transport conformance or the installed pair's compatibility. |
 | Direct HTTP, browser and agent-owned interchange | Typed binary is required. `McpServer.fs` still reads and writes JSON for direct lease HTTP operations. `ComposerClientJson.fs` also contains a direct client request parser, and `UiBridgeCodec.fs` explicitly implements an interim JSON browser wire. These are current implementation drift to remove, not additional exceptions. |
-| Diagnostic export | Fidelity.Data JSON export belongs at the independent, MailboxProcessor-driven sink process. The local MCP friction tools are not evidence that this process boundary has been delivered. See [Bozzetto_Diagnostic_Sink.md](Bozzetto_Diagnostic_Sink.md). |
+| Diagnostic export | Fidelity.Data JSON export belongs at the independent, MailboxProcessor-driven sink process. The local MCP friction tools are not evidence that this process boundary has been delivered. See [Bozzetto_Diagnostic_Sink.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/Bozzetto_Diagnostic_Sink). |
 
 Changing the serializer does not satisfy the typed-binary requirement. Existing use of Fidelity.Data at a direct JSON wire remains drift.
 
@@ -27,13 +27,13 @@ The three centerpiece contracts constrain every adapter:
 - **Fidelity.FSharp.Incremental** owns declared dependency bookkeeping and explicitly started work. An Offer is eligibility, not permission to reuse proof, publish PSG or execute an artifact. Complete declared reads, shared demand and physical drain remain distinct obligations.
 - **Ranvier** supplies the signal/memo/effect reference shape for reactive presentation under one mutation domain. It is not a delivery claim for these MCP handlers. Equal display values cannot erase compiler proof identity, and effect cleanup cannot certify physical drain. The foundation does not dynamically discover reads.
 
-See [Bozzetto_Fidelity_Component_Contracts.md](Bozzetto_Fidelity_Component_Contracts.md), [Bozzetto_Incremental_Foundation_Adoption.md](Bozzetto_Incremental_Foundation_Adoption.md) and [reactive-push.md](reactive-push.md).
+See [Bozzetto_Fidelity_Component_Contracts.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/Bozzetto_Fidelity_Component_Contracts), [Bozzetto_Incremental_Foundation_Adoption.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/Bozzetto_Incremental_Foundation_Adoption) and [reactive-push.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/reactive-push).
 
 ## Identity, discovery and refusals
 
 Caller identity is bound to the MCP transport session. `agentName` is a label, not an authority credential. Two connections supplying the same label are different members and lease holders. Reconnecting does not transfer the previous connection's claims or leases. `src/Bozzetto/Mcp.fs`, `memberIdFor` and `resolvedKey`, implement that binding; `McpServer.fs`, `createServerCaptureFilter`, supplies it before a tool body runs.
 
-Composer uses explicit `host`, `session` and `epoch` handles. These are not inherited F# session IDs and do not depend on a connection's active-session selection. Checkout-aware routing for retained session operations is a separate concern. In particular, a worktree without its own session must not fall back to the main checkout, and creating an inherited F# session is not a remedy for a Composer failure. See `AGENTS.md`, **Multi-agent and worktree sessions**, and [agents.md](agents.md).
+Composer uses explicit `host`, `session` and `epoch` handles. These are not inherited F# session IDs and do not depend on a connection's active-session selection. Checkout-aware routing for retained session operations is a separate concern. In particular, a worktree without its own session must not fall back to the main checkout, and creating an inherited F# session is not a remedy for a Composer failure. See `AGENTS.md`, **Multi-agent and worktree sessions**, and [agents.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/agents).
 
 Registration does not guarantee admission:
 
@@ -82,7 +82,7 @@ The edit/build/run loop is:
 4. Execute only through `composer_run_current` after an accepted build.
 5. Close and inspect pending cleanup or failures.
 
-A timed-out or cancelled observer is not proof that an operation never committed. Do not authorize a source write from mere enqueue receipt or blindly replay a lost reservation request. Request reconciliation across a transport failure needs an explicit contract; the existence of `requestId` in a reply does not establish durable retry semantics. See [composer-workflow.md](composer-workflow.md).
+A timed-out or cancelled observer is not proof that an operation never committed. Do not authorize a source write from mere enqueue receipt or blindly replay a lost reservation request. Request reconciliation across a transport failure needs an explicit contract; the existence of `requestId` in a reply does not establish durable retry semantics. See [composer-workflow.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/composer-workflow).
 
 ### Composer replies and evidence
 
@@ -130,7 +130,7 @@ A lease is a heartbeat, not a command deadline. Current default lifetimes are 10
 
 No renewal or withdrawal MCP tool is registered. Current direct HTTP renewal uses `holder` and `leaseId`; withdrawal uses `holder` and `kind`, at `/api/lease/renew` and `/api/lease/withdraw`. Their JSON bodies in `McpServer.fs` are drift requiring typed-binary replacement. A caller-supplied HTTP holder is not the MCP connection binding. Do not mix holders or claim that MCP acquisition alone supplies an automatic heartbeat. `scripts/work-lease run` manages renewal for caller-owned commands; its current direct wire has the same migration obligation.
 
-Follow wait/refused decisions without bypassing accounting. Investigate memory deferrals rather than polling blindly or stopping another owner's processes. Lease grants and queued Clef/Composer work belong on `/work`; the Dashboard's CPU figure covers only the daemon and its worker, not external leased processes. See [operations.md](operations.md) and [development.md](development.md) for validation under `net10.0` and the unfiltered TRUST acceptance rule.
+Follow wait/refused decisions without bypassing accounting. Investigate memory deferrals rather than polling blindly or stopping another owner's processes. Lease grants and queued Clef/Composer work belong on `/work`; the Dashboard's CPU figure covers only the daemon and its worker, not external leased processes. See [operations.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/operations) and [development.md](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/development) for validation under `net10.0` and the unfiltered TRUST acceptance rule.
 
 ## Cohort coordination
 

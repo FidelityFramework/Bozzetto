@@ -30,7 +30,9 @@ module CohortStatusText =
     for i in memberView.Shown do
       let seat =
         match frame.MemberSeat.[i] with
-        | Cohort.SeatState.Present -> "present"
+        // The renewal time lets a holder show continuous membership across a
+        // tranche (Bozzetto #24).
+        | Cohort.SeatState.Present -> sprintf "present renewed %s" (frame.MemberRenewal.[i].ToString "u")
         | Cohort.SeatState.Departed since -> sprintf "departed %s" (since.ToString "u")
       sb.AppendLine(sprintf "  - %s [%A] %s" (MemberTable.MemberId.display frame.MemberIds.[i]) frame.MemberRole.[i] seat) |> ignore
     if memberView.HiddenTotal > 0 then

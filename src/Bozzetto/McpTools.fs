@@ -612,17 +612,17 @@ OUTPUT FORMAT: Each entry shows a timestamp, cell index, duration, whether it su
     [<McpServerTool>]
     [<Description("Acquire a lease for a caller-owned full build. The lease kind is fixed by this tool; use it only when Bozzetto will not run the build itself.")>]
     member _.acquire_full_build_lease() : Task<string> =
-        Task.FromResult(acquireWorkLease "mcp" Bozzetto.ExpensiveWorkLease.Kind.FullBuild) |> withEcho ctx "acquire_full_build_lease"
+        Task.FromResult(acquireWorkLease ctx.ActivityTracker "mcp" Bozzetto.ExpensiveWorkLease.Kind.FullBuild) |> withEcho ctx "acquire_full_build_lease"
 
     [<McpServerTool>]
     [<Description("Acquire a lease before a caller-owned unfiltered test-suite run. For Bozzetto F# changes, run the built Bozzetto.Tests DLL with --summary and require TRUST verdict=Trusted, then release_work_lease with the granted leaseId. Filters are for iteration only; follow wait/refused lease decisions without bypassing daemon accounting.")>]
     member _.acquire_test_suite_lease() : Task<string> =
-        Task.FromResult(acquireWorkLease "mcp" Bozzetto.ExpensiveWorkLease.Kind.TestSuiteRun) |> withEcho ctx "acquire_test_suite_lease"
+        Task.FromResult(acquireWorkLease ctx.ActivityTracker "mcp" Bozzetto.ExpensiveWorkLease.Kind.TestSuiteRun) |> withEcho ctx "acquire_test_suite_lease"
 
     [<McpServerTool>]
     [<Description("Acquire a lease for a caller-owned external run-app process. Native Composer execution uses composer_run_current.")>]
     member _.acquire_run_app_lease() : Task<string> =
-        Task.FromResult(acquireWorkLease "mcp" Bozzetto.ExpensiveWorkLease.Kind.RunApp) |> withEcho ctx "acquire_run_app_lease"
+        Task.FromResult(acquireWorkLease ctx.ActivityTracker "mcp" Bozzetto.ExpensiveWorkLease.Kind.RunApp) |> withEcho ctx "acquire_run_app_lease"
 
     [<McpServerTool>]
     [<Description("Release a caller-owned lease returned by one of the acquisition tools. A lease held by another connection is never released.")>]
@@ -1801,6 +1801,30 @@ OUTPUT: Confirmation text, or an error (not conductor / claim not orphaned / tar
             | Error err -> sprintf "Error: %s" (Bozzetto.BozzettoError.describeForAgent err), Some err
         }
         |> withEchoOutcome ctx "reassign_claim"
+
+    [<McpServerTool>]
+    [<Description("""Take back an ORPHANED claim you held before your membership lapsed. An orphaned claim keeps blocking its scope until its previous holder reclaims it here or the conductor reassigns it.
+
+WHEN TO USE: You rejoined the cohort and get_cohort_status shows a claim you held as Orphaned. Present that claim's current fence; a stale fence, or a claim someone else held, is refused.
+
+OUTPUT: Confirmation text with the claim's new fence, or an error naming why the reclaim was refused.""")>]
+    member _.reclaim_claim(
+        [<Description("Your agent or model name — must match the name you joined with.")>]
+        agentName: string,
+        [<Description("The orphaned claim's id (from your acquire_claim output or get_cohort_status).")>]
+        claimId: string,
+        [<Description("The claim's current fence (from get_cohort_status) — a stale value is refused.")>]
+        fence: int64
+    ) : Task<string> =
+        logger.LogDebug("MCP-TOOL: reclaim_claim called by {AgentName}, claim={ClaimId}", agentName, claimId)
+        task {
+          let! result = Bozzetto.McpTools.reclaimClaim ctx agentName claimId fence
+          return
+            match result with
+            | Ok text -> text, None
+            | Error err -> sprintf "Error: %s" (Bozzetto.BozzettoError.describeForAgent err), Some err
+        }
+        |> withEchoOutcome ctx "reclaim_claim"
 
     [<McpServerTool>]
     [<Description("""Retained cohort landing queue contract. Production verification depended on the retired embedded F# integration session, so the full landing journey is unavailable in this checkout. Composer integration verification is not implemented. General cohort status and claims remain available.

@@ -120,8 +120,9 @@ let private claimMentions (m: string) (c: Claim<string>) =
 let private boundedViolations (now: DateTime) (st: CohortState<string>) : string list =
   let aged (since: DateTime) = now - since >= retention
   [ for KeyValue(id, c) in st.Claims do
+      // An orphan is never "past retention": it blocks until reassigned or
+      // reclaimed (Bozzetto #24), so only superseded orphans are prunable.
       match c.State with
-      | ClaimState.Orphaned(_, since) when aged since -> yield sprintf "orphaned claim %A past retention" id
       | ClaimState.Released(_, at) when aged at -> yield sprintf "released claim %A past retention" id
       | _ -> ()
     let scopes = st.Claims |> Map.toList |> List.groupBy (fun (_, c) -> c.Scope)
@@ -179,21 +180,26 @@ let private staleScene (n: int) : CohortState<string> * DateTime =
 let retentionTests =
   testList "Cohort retention — settled artifacts are pruned (Tick → Retention.sweep)" [
 
-    test "an orphaned claim survives inside the retention window and is pruned once it elapses" {
+    test "an orphaned claim is not aged out: it still blocks its scope long after the retention window (Bozzetto #24)" {
       let s, silent = staleScene 1
       let cid = claimIdOf s (ClaimScope.File "/r/agent-1.fs")
       match s.Claims.[cid].State with
       | ClaimState.Orphaned _ -> ()
       | other -> failtestf "scene should have orphaned the claim, got %A" other
-      let justInside, _ = ok (silent + retention - second) 901 s CohortCommand.Tick
-      justInside.Claims |> Map.containsKey cid
-      |> Expect.isTrue "still inside the window, the conductor may yet reassign it"
-      let atExpiry, events = ok (silent + retention) 902 s CohortCommand.Tick
-      atExpiry.Claims |> Map.containsKey cid
-      |> Expect.isFalse "at the end of the window the orphaned claim must be gone"
+      let later = silent + retention + retention + second
+      let aged, events = ok later 902 s CohortCommand.Tick
+      match aged.Claims |> Map.tryFind cid |> Option.map _.State with
+      | Some (ClaimState.Orphaned _) -> ()
+      | other -> failtestf "an orphan must survive the retention window until reassigned or reclaimed, got %A" other
       events
-      |> List.exists (function CohortEvent.ClaimPruned(c, ClaimPruneReason.OrphanedPastRetention _) -> c = cid | _ -> false)
-      |> Expect.isTrue "the prune must be a recorded event carrying WHY"
+      |> List.exists (function CohortEvent.ClaimPruned(c, _) -> c = cid | _ -> false)
+      |> Expect.isFalse "no prune event for a blocking orphan"
+      let joined, _ = ok later 903 aged (CohortCommand.Join("newcomer", JoinableRole.Implementer, None))
+      match decide later (ent 904) joined (CohortCommand.AcquireClaim("newcomer", ClaimScope.File "/r/agent-1.fs", "taking over")) with
+      | Error(CohortError.OrphanedClaimConflict(_, blocking, previous)) ->
+        blocking |> Expect.equal "the refusal names the blocking orphan" cid
+        previous |> Expect.equal "and its previous holder" "agent-1"
+      | other -> failtestf "the aged orphan must still block acquisition, got %A" other
     }
 
     test "a released claim stops lingering after the window (Released was never removed from state)" {
@@ -207,25 +213,28 @@ let retentionTests =
       s4.Claims |> Map.isEmpty |> Expect.isTrue "a released claim past the window is dead weight"
     }
 
-    test "THE LIVE SCENE: 43 orphaned claims, departed members and blocked landings all drain after the window" {
+    test "THE LIVE SCENE: blocked landings drain after the window; the 43 orphaned claims keep blocking with their holders' seats" {
       let s, silent = staleScene 43
       (s.Claims |> Map.count) |> Expect.equal "the scene really has 43 orphaned claims" 43
       (s.Landings |> Map.count) |> Expect.equal "and 43 landings" 43
       let drained, _ = ok (silent + retention) 903 s CohortCommand.Tick
-      drained.Claims |> Map.count |> Expect.equal "no orphaned claim outlives the window" 0
+      drained.Claims |> Map.count |> Expect.equal "every orphan still blocks until reassigned or reclaimed" 43
       drained.Landings |> Map.count |> Expect.equal "no settled landing outlives the window" 0
-      // only the conductor's own seat may remain (Authority hangs off it)
-      drained.Members |> Map.toList |> List.map fst
-      |> Expect.equal "only the conductor's seat survives" [ "agent-1" ]
+      // every departed holder is still named by its orphan, so it can rejoin and reclaim
+      drained.Members |> Map.count |> Expect.equal "the orphans' previous holders keep their seats" 43
     }
 
-    test "a new Held claim on the same file supersedes the old orphan immediately, without waiting out the window" {
+    test "a Held claim an older daemon recorded over an orphan supersedes it on the next Tick" {
       let s, silent = staleScene 1
       let orphan = claimIdOf s (ClaimScope.File "/r/agent-1.fs")
       let later = silent + TimeSpan.FromMinutes 1.0
       let s1, _ = ok later 10 s (CohortCommand.Join("newcomer", JoinableRole.Implementer, None))
-      let s2, _ = ok later 11 s1 (CohortCommand.AcquireClaim("newcomer", ClaimScope.File "/r/agent-1.fs", "taking over"))
-      let fresh = s2.Claims |> Map.toList |> List.pick (fun (id, c) -> match c.State with ClaimState.Held _ -> Some id | _ -> None)
+      // Ledgers written before Bozzetto #24 hold claims acquired over orphans;
+      // the state is built directly because decide no longer grants one.
+      let fresh = ClaimId "c-legacy"
+      let legacy : Claim<string> =
+        { s1.Claims.[orphan] with Id = fresh; Fence = s1.NextFence + 1L<Bozzetto.Measures.fence>; State = ClaimState.Held "newcomer"; Since = later }
+      let s2 = { s1 with Claims = Map.add fresh legacy s1.Claims; NextFence = legacy.Fence }
       let s3, events = ok later 12 s2 CohortCommand.Tick
       s3.Claims |> Map.containsKey orphan |> Expect.isFalse "the shadowed orphan is dead weight the moment a live claim covers the same file"
       s3.Claims |> Map.containsKey fresh |> Expect.isTrue "the live claim is untouched"
@@ -241,8 +250,12 @@ let retentionTests =
       let s2, _ = ok t 3 s1 (CohortCommand.AcquireClaim("a", ClaimScope.File "/r/f.fs", "first"))
       let first = claimIdOf s2 (ClaimScope.File "/r/f.fs")
       let s3, _ = ok t 4 s2 (CohortCommand.Depart "a")
-      let s4, _ = ok t 5 s3 (CohortCommand.AcquireClaim("b", ClaimScope.File "/r/f.fs", "second"))
-      let second' = s4.Claims |> Map.toList |> List.pick (fun (id, c) -> if id <> first then Some id else None)
+      // An older daemon granted b's claim over a's orphan; decide no longer
+      // does (Bozzetto #24), so the legacy state is built directly.
+      let second' = ClaimId "c-legacy"
+      let legacy : Claim<string> =
+        { s3.Claims.[first] with Id = second'; Fence = s3.NextFence + 1L<Bozzetto.Measures.fence>; State = ClaimState.Held "b"; Since = t }
+      let s4 = { s3 with Claims = Map.add second' legacy s3.Claims; NextFence = legacy.Fence }
       let s5, _ = ok t 6 s4 (CohortCommand.Depart "b")
       let s6, _ = ok t 7 s5 CohortCommand.Tick
       s6.Claims |> Map.toList |> List.map fst
@@ -287,7 +300,7 @@ let retentionTests =
       twinEvents |> Expect.isEmpty "the twin emits nothing — it is the old behavior"
       boundedViolations later twin
       |> List.isEmpty
-      |> Expect.isFalse "43 orphans past the window remain: the frozen old behavior violates BOUNDED"
+      |> Expect.isFalse "43 settled landings past the window remain: the frozen old behavior violates BOUNDED"
       let real, _ = Retention.sweep later s
       boundedViolations later real |> Expect.isEmpty "the real sweep leaves nothing prunable behind"
     }

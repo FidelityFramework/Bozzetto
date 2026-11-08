@@ -217,6 +217,7 @@ module CohortJson =
     | CohortCommand.AcquireClaim (a, b, c) -> variant "AcquireClaim" [memberValue a; scopeValue b; text c]
     | CohortCommand.ReleaseClaim (a, b, c) -> variant "ReleaseClaim" [memberValue a; claimIdValue b; fence c]
     | CohortCommand.ReassignClaim (a, b, c) -> variant "ReassignClaim" [memberValue a; claimIdValue b; memberValue c]
+    | CohortCommand.ReclaimClaim (a, b, c) -> variant "ReclaimClaim" [memberValue a; claimIdValue b; fence c]
     | CohortCommand.DelegateConductor (a, b) -> variant "DelegateConductor" [memberValue a; memberValue b]
     | CohortCommand.ObserveSave (a, b) -> variant "ObserveSave" [memberValue a; text b]
     | CohortCommand.RequestLanding (a, b, c, d) -> variant "RequestLanding" [memberValue a; claims b; (array text) c; text d]
@@ -240,6 +241,7 @@ module CohortJson =
       | "AcquireClaim", [a; b; c] -> map3 (fun a b c -> CohortCommand.AcquireClaim(a, b, c)) (readMember a) (readScope b) (readText c)
       | "ReleaseClaim", [a; b; c] -> map3 (fun a b c -> CohortCommand.ReleaseClaim(a, b, c)) (readMember a) (readClaimId b) (readFence c)
       | "ReassignClaim", [a; b; c] -> map3 (fun a b c -> CohortCommand.ReassignClaim(a, b, c)) (readMember a) (readClaimId b) (readMember c)
+      | "ReclaimClaim", [a; b; c] -> map3 (fun a b c -> CohortCommand.ReclaimClaim(a, b, c)) (readMember a) (readClaimId b) (readFence c)
       | "DelegateConductor", [a; b] -> map2 (fun a b -> CohortCommand.DelegateConductor(a, b)) (readMember a) (readMember b)
       | "ObserveSave", [a; b] -> map2 (fun a b -> CohortCommand.ObserveSave(a, b)) (readMember a) (readText b)
       | "RequestLanding", [a; b; c; d] -> map4 (fun a b c d -> CohortCommand.RequestLanding(a, b, c, d)) (readMember a) (readClaims b) ((readArray readText) c) (readText d)

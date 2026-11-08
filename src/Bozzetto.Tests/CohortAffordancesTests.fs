@@ -143,10 +143,10 @@ let cohortAffordancesTests =
     ]
 
     testList "CohortTool.toToolName" [
-      test "names exactly the 8 cohort MCP tool names — no more, no fewer" {
+      test "names exactly the 9 cohort MCP tool names — no more, no fewer" {
         let expected =
           set [ "join_cohort"; "leave_cohort"; "acquire_claim"; "release_claim"
-                "reassign_claim"; "request_landing"; "get_cohort_status"; "set_integration_ref" ]
+                "reassign_claim"; "reclaim_claim"; "request_landing"; "get_cohort_status"; "set_integration_ref" ]
         Affordances.CohortTool.all
         |> List.map Affordances.CohortTool.toToolName
         |> Set.ofList

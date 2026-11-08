@@ -159,6 +159,52 @@ let private releaseClaim (client: McpClient) (agentName: string) (claimId: strin
 let private reassignClaim (client: McpClient) (agentName: string) (claimId: string) (toMember: string) =
   callTool client "reassign_claim" [ "agentName", box agentName; "claimId", box claimId; "toMember", box toMember ]
 
+let private reclaimClaim (client: McpClient) (agentName: string) (claimId: string) (fence: int64) =
+  callTool client "reclaim_claim" [ "agentName", box agentName; "claimId", box claimId; "fence", box fence ]
+
+let private leaveCohort (client: McpClient) (agentName: string) =
+  callTool client "leave_cohort" [ "agentName", box agentName ]
+
+/// "Joined cohort as mcp:XXXX (Implementer)..." → "mcp:XXXX", the display
+/// name `reassign_claim` takes as its recipient.
+let private memberFromJoinResult (text: string) : string =
+  let m = Text.RegularExpressions.Regex.Match(text, @"Joined cohort as (\S+) \(")
+  if not m.Success then failwithf "join_cohort did not report a member: %s" text
+  m.Groups.[1].Value
+
+/// The `fence=` and `state=` get_cohort_status prints for one claim id.
+let private claimRow (status: string) (claimId: string) : int64 * string =
+  let m = Text.RegularExpressions.Regex.Match(status, Text.RegularExpressions.Regex.Escape claimId + @" .* fence=(\d+) state=(\w+)")
+  if not m.Success then failwithf "status does not list claim %s:\n%s" claimId status
+  int64 m.Groups.[1].Value, m.Groups.[2].Value
+
+/// The renewal time get_cohort_status prints for the one present member
+/// with `role` ("[Implementer] present renewed 2026-11-08 01:02:03Z").
+let private renewalOf (status: string) (role: string) : DateTime =
+  let m = Text.RegularExpressions.Regex.Match(status, Text.RegularExpressions.Regex.Escape(sprintf "[%s] present renewed " role) + @"(\S+ \S+)")
+  if not m.Success then failwithf "status shows no renewal for a present %s:\n%s" role status
+  DateTime.Parse(m.Groups.[1].Value, Globalization.CultureInfo.InvariantCulture, Globalization.DateTimeStyles.AdjustToUniversal)
+
+/// One lease decision as the daemon wired it: (decision, retryAfterSeconds,
+/// queue position from the reason, leaseId).
+type private LeaseReply = { Decision: string; RetryAfter: float; Position: int option; LeaseId: string option; Raw: string }
+
+let private requestLease (client: McpClient) : Task<LeaseReply> = task {
+  let! text = callTool client "acquire_full_build_lease" []
+  use doc = Text.Json.JsonDocument.Parse text
+  let root = doc.RootElement
+  let str (name: string) = match root.TryGetProperty name with | true, v -> Some (v.GetString()) | _ -> None
+  let retry = match root.TryGetProperty "retryAfterSeconds" with | true, v -> v.GetDouble() | _ -> 0.0
+  let position =
+    str "reason" |> Option.bind (fun reason ->
+      let m = Text.RegularExpressions.Regex.Match(reason, @"you are #(\d+) in queue")
+      if m.Success then Some (int m.Groups.[1].Value) else None)
+  return { Decision = defaultArg (str "decision") "?"; RetryAfter = retry; Position = position; LeaseId = str "leaseId"; Raw = text }
+}
+
+let private releaseLease (client: McpClient) (leaseId: string) =
+  callTool client "release_work_lease" [ "lease_id", box leaseId ]
+
 /// "Acquired claim c-XXXX over ..." → "c-XXXX". Fragile-string-averse: this
 /// parses OUR OWN tool's documented output shape (McpTools.fs's
 /// acquire_claim description), not an unrelated format.
@@ -333,6 +379,132 @@ let cohortMcpToolsTests =
         let! reassignResult = reassignClaim nonConductor "not-the-conductor" claimId "the-conductor"
         reassignResult
         |> Expect.stringContains "a non-conductor's reassign must be refused by the role gate" "does not permit it"
+      })
+    }
+    // Bozzetto #22 and #24 over real MCP sessions against this isolated daemon
+    // (never the shared one): a waiter that stops polling (a killed client
+    // sends no withdraw and no DELETE) holds the head of the queue only until
+    // its entry expires; the live waiters behind it keep their places and are
+    // granted in order; and a cohort member whose only traffic is that lease
+    // poll is renewed, so its membership and claim survive the wait. Real
+    // intervals: the daemon has no injectable clock, and the shortest queue
+    // lifetime is ExpensiveWorkLease.queuedAskLifetime (two minutes).
+    testTask "a killed lease waiter expires, live waiters keep FIFO places and are granted in order, and a waiting member stays present (Bozzetto #22 #24)" {
+      do! withDaemon (fun port -> task {
+        let clients = ResizeArray<McpClient>()
+        let open' () = task {
+          let! c = connect port
+          clients.Add c
+          return c }
+        try
+          let! b = open' ()
+          let! _ = joinCohort b "waiter-b" "Implementer"
+          let! acquired = acquireClaim b "waiter-b" "project:Bozzetto/src/Bozzetto.Core/Bozzetto.Core.fsproj" "held across a lease wait"
+          let claimId = claimIdFromAcquireResult acquired
+          let! atJoin = getCohortStatus b
+          let renewedAtJoin = renewalOf atJoin "Implementer"
+          // Fill whatever cap the machine's memory pressure allows (4, 1, or 0).
+          let holders = ResizeArray<McpClient * string>()
+          let mutable firstWaiter = None
+          while firstWaiter.IsNone do
+            if holders.Count > Bozzetto.ExpensiveWorkLease.maxConcurrentFor Bozzetto.MemoryPressure.Normal then
+              failtest "more grants than the Normal cap: the pool is not admitting by cap"
+            let! c = open' ()
+            let! reply = requestLease c
+            match reply.Decision, reply.LeaseId with
+            | "granted", Some id -> holders.Add((c, id))
+            | "wait", _ -> firstWaiter <- Some (c, reply)
+            | _ -> failtestf "unexpected lease reply: %s" reply.Raw
+          if holders.Count = 0 then
+            failtestf "the machine is at critical memory pressure (cap 0), so no lease can be granted and the acceptance cannot be observed: %s" (snd firstWaiter.Value).Raw
+          let a, aFirst = firstWaiter.Value
+          aFirst.Position |> Expect.equal "the killed-to-be waiter heads the queue" (Some 1)
+          let! bFirst = requestLease b
+          bFirst.Position |> Expect.equal "the member queues second" (Some 2)
+          let! c = open' ()
+          let! cFirst = requestLease c
+          cFirst.Position |> Expect.equal "a third live waiter queues third" (Some 3)
+          // A's last poll; from here it is gone. Then free all capacity.
+          let! aLast = requestLease a
+          let killedAt = DateTime.UtcNow
+          aLast.Position |> Expect.equal "a retry keeps the head position" (Some 1)
+          for holder, id in holders do
+            let! released = releaseLease holder id
+            released |> Expect.stringContains "the holder's own lease is released" "released"
+          // B and C poll concurrently at the advised interval, as the client does.
+          let poll (client: McpClient) (first: LeaseReply) (onGrant: string -> Task<unit>) = task {
+            let log = ResizeArray<DateTime * LeaseReply>()
+            let mutable reply = first
+            let deadline = killedAt + Bozzetto.ExpensiveWorkLease.queuedAskLifetime + TimeSpan.FromMinutes 2.0
+            while reply.Decision = "wait" && DateTime.UtcNow < deadline do
+              do! Task.Delay(TimeSpan.FromSeconds(Math.Ceiling reply.RetryAfter))
+              let! next = requestLease client
+              log.Add((DateTime.UtcNow, next))
+              reply <- next
+            match reply.Decision, reply.LeaseId with
+            | "granted", Some id -> do! onGrant id
+            | _ -> ()
+            return log
+          }
+          let bGrantedAt = ref DateTime.MaxValue
+          let cGrantedAt = ref DateTime.MaxValue
+          let grantedThenRelease (client: McpClient) (at: DateTime ref) (id: string) = task {
+            at.Value <- DateTime.UtcNow
+            let! _ = releaseLease client id
+            return () }
+          let bTask = poll b bFirst (grantedThenRelease b bGrantedAt)
+          let cTask = poll c cFirst (grantedThenRelease c cGrantedAt)
+          let! bLog = bTask
+          let! cLog = cTask
+          let positions (log: ResizeArray<DateTime * LeaseReply>) = log |> Seq.choose (fun (_, r) -> r.Position) |> List.ofSeq
+          (bGrantedAt.Value < DateTime.MaxValue) |> Expect.isTrue (sprintf "the surviving member is granted once the abandoned head expires; polls: %A" (positions bLog))
+          (cGrantedAt.Value < DateTime.MaxValue) |> Expect.isTrue (sprintf "the third waiter is granted too; polls: %A" (positions cLog))
+          (bGrantedAt.Value <= cGrantedAt.Value) |> Expect.isTrue "grants follow arrival order: the member before the third waiter"
+          positions bLog |> List.forall (fun p -> p <= 2) |> Expect.isTrue (sprintf "the member never loses its place: %A" (positions bLog))
+          positions cLog |> List.forall (fun p -> p <= 3) |> Expect.isTrue (sprintf "the third waiter never loses its place: %A" (positions cLog))
+          positions bLog |> List.contains 2 |> Expect.isTrue "with capacity free, the abandoned head still blocked the member until it expired"
+          (bGrantedAt.Value - killedAt >= Bozzetto.ExpensiveWorkLease.queuedAskLifetime - TimeSpan.FromSeconds 5.0)
+          |> Expect.isTrue (sprintf "the head is held for its lifetime, not dropped early (granted %O after the kill)" (bGrantedAt.Value - killedAt))
+          // Bozzetto #24: the member's only traffic was the lease poll.
+          let! afterWait = getCohortStatus b
+          (renewalOf afterWait "Implementer" > renewedAtJoin)
+          |> Expect.isTrue (sprintf "lease polls renewed the waiting member (joined %O):\n%s" renewedAtJoin afterWait)
+          claimRow afterWait claimId |> snd |> Expect.equal "its claim is still held" "Held"
+        finally
+          for client in clients do
+            try (client :> IAsyncDisposable).DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds 5.0) |> ignore with _ -> ()
+      })
+    }
+
+    testTask "an orphaned claim blocks others; its holder reclaims with the last fence; the conductor can still reassign (Bozzetto #24)" {
+      do! withDaemon (fun port -> task {
+        use! conductor = connect port
+        use! holder = connect port
+        use! other = connect port
+        let! _ = joinCohort conductor "the-conductor" "Implementer"
+        let! _ = joinCohort holder "holder" "Implementer"
+        let! otherJoin = joinCohort other "other" "Implementer"
+        let otherMember = memberFromJoinResult otherJoin
+        let! acquired = acquireClaim holder "holder" "project:Bozzetto/src/Bozzetto.Core/Bozzetto.Core.fsproj" "editing Core"
+        let claimId = claimIdFromAcquireResult acquired
+        let! _ = leaveCohort holder "holder"
+        let! orphaned = getCohortStatus conductor
+        let lastFence, state = claimRow orphaned claimId
+        state |> Expect.equal "leaving orphans the holder's claim" "Orphaned"
+        let! blocked = acquireClaim other "other" "file:Bozzetto/src/Bozzetto.Core/Cohort.fs" "editing Cohort.fs"
+        blocked |> Expect.stringContains "the orphan blocks an overlapping acquire" (sprintf "overlaps orphaned claim %s" claimId)
+        let! stranger = reclaimClaim other "other" claimId lastFence
+        stranger |> Expect.stringContains "only the previous holder may reclaim" "does not hold claim"
+        let! _ = joinCohort holder "holder" "Implementer"
+        let! stale = reclaimClaim holder "holder" claimId (lastFence - 1L)
+        stale |> Expect.stringContains "a wrong fence is refused" "stale"
+        let! reclaimed = reclaimClaim holder "holder" claimId lastFence
+        reclaimed |> Expect.stringContains "the holder reclaims with the last fence" (sprintf "Reclaimed claim %s" claimId)
+        let! held = getCohortStatus conductor
+        claimRow held claimId |> snd |> Expect.equal "the claim is held again" "Held"
+        let! _ = leaveCohort holder "holder"
+        let! reassigned = reassignClaim conductor "the-conductor" claimId otherMember
+        reassigned |> Expect.stringContains "the conductor reassigns an orphan" (sprintf "Reassigned claim %s to %s" claimId otherMember)
       })
     }
   ]

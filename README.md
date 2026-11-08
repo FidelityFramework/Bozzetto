@@ -4,7 +4,7 @@
 
 People and agents use Bozzetto to edit, build and run a shared Clef project. Clients explicitly open Composer project sessions and reserve edits before changing files. Composer is a differential compiler, so builds recompile only what a change affects. Composer allows execution only if the compiler has accepted the artifact. MCP clients, the browser and command-line tools share sessions under Composer's authority. The browser shows daemon health, leases and the agents at work. The operations journal shows settled non-status Composer operations from all callers, including refusals and bounded run output ([journal owner](src/Bozzetto/ComposerJournal.fs), [supervisor](src/Bozzetto/ComposerSupervisor.fs), [page](src/bozzetto-web/src/Frontend/App.fs)).
 
-[Architecture](docs/architecture.md) · [Composer workflow](docs/composer-workflow.md) · [Operations](docs/operations.md) · [Get started](#get-started) · [Documentation](docs/README.md)
+[Architecture](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/architecture) · [Composer workflow](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/composer-workflow) · [Operations](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/operations) · [Get started](#get-started) · [Documentation](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/README)
 
 ## The Name
 
@@ -47,8 +47,8 @@ Composer must revalidate an artifact before execution, regardless of its reporte
 ### Fidelity.PSG, Fidelity.FSharp.Incremental and Ranvier
 
 - **Fidelity.PSG** provides the compiler's semantic data and the identifiers attached to it. Bozzetto displays this data with its source, target and revision identifiers without adding conclusions the compiler did not provide.
-- Bozzetto and the Clef/CCS/Baker/Composer pipeline use **Fidelity.FSharp.Incremental** to track dependencies and explicitly trigger work, including self-hosting work. Bozzetto has no invalidation mechanism of its own, and the data the daemon sends to the browser is derived with this library ([adoption contract](docs/Bozzetto_Incremental_Foundation_Adoption.md)).
-- Bozzetto follows **Ranvier**'s update design: data owners publish immutable values, views that depend on those values update, and effects deliver the results. These steps take place within a single mutation domain ([reactive push](docs/reactive-push.md)). Bozzetto uses Ranvier as a design reference without depending on its code.
+- Bozzetto and the Clef/CCS/Baker/Composer pipeline use **Fidelity.FSharp.Incremental** to track dependencies and explicitly trigger work, including self-hosting work. Bozzetto has no invalidation mechanism of its own, and the data the daemon sends to the browser is derived with this library ([adoption contract](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/Bozzetto_Incremental_Foundation_Adoption)).
+- Bozzetto follows **Ranvier**'s update design: data owners publish immutable values, views that depend on those values update, and effects deliver the results. These steps take place within a single mutation domain ([reactive push](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/reactive-push)). Bozzetto uses Ranvier as a design reference without depending on its code.
 
 ### Client connections
 
@@ -69,7 +69,7 @@ The host and compiler worker run on .NET. Their contracts allow native host and 
 | Lattice | Language and proof tooling for editors, navigation and linked source/evidence views. |
 | Atelier | An editing and workbench environment for the shared workspace, with its own controls and views. |
 
-The [component contracts](docs/Bozzetto_Fidelity_Component_Contracts.md) define each component's responsibilities. The [architecture](docs/architecture.md) describes the daemon and worker, the planned move to native hosting and the requirements for distributed lab nodes.
+The [component contracts](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/Bozzetto_Fidelity_Component_Contracts) define each component's responsibilities. The [architecture](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/architecture) describes the daemon and worker, the planned move to native hosting and the requirements for distributed lab nodes.
 
 ## Get Started
 
@@ -77,7 +77,7 @@ The [component contracts](docs/Bozzetto_Fidelity_Component_Contracts.md) define 
 
 ### 1. Install
 
-Bozzetto is built from source and published to the project's Forgejo package registry rather than NuGet.org. The installed `boz` command launches the daemon and its matching Composer worker from the same release directory. To develop the host, use the SDK pinned in `global.json` and follow [the contributing guide](CONTRIBUTING.md) and the [development instructions](docs/development.md). Building the host does not change the compiler distribution used by a session.
+Bozzetto is built from source and published to the project's Forgejo package registry rather than NuGet.org. The installed `boz` command launches the daemon and its matching Composer worker from the same release directory. To develop the host, use the SDK pinned in `global.json` and follow [the contributing guide](CONTRIBUTING.md) and the [development instructions](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/development). Building the host does not change the compiler distribution used by a session.
 
 ### 2. Start the shared daemon
 
@@ -101,12 +101,12 @@ curl --fail --max-time 3 http://127.0.0.1:47749/health
 | Interface | Address |
 |---|---|
 | Dashboard: health, machine resources, agents at work | `http://127.0.0.1:47749/dashboard` |
-| Work: compiler worker, sessions and leases, plus Activity and Run output from all callers through the [operations journal](docs/composer-workflow.md#operations-journal) (`src/bozzetto-web/src/Frontend/App.fs`, `OutputPane`) | `http://127.0.0.1:47749/work` |
+| Work: compiler worker, sessions and leases, plus Activity and Run output from all callers through the [operations journal](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/composer-workflow#operations-journal) (`src/bozzetto-web/src/Frontend/App.fs`, `OutputPane`) | `http://127.0.0.1:47749/work` |
 | Streamable HTTP MCP | `http://127.0.0.1:47749/` |
 | Composer session resource | `composer://sessions` through MCP |
 | Control listener | `http://127.0.0.1:47750/api/daemon-info` |
 
-A connected agent can use `composer_list_sessions` and `composer_open_project`, as described in [agents](docs/agents.md) and the [MCP reference](docs/mcp-tools.md).
+A connected agent can use `composer_list_sessions` and `composer_open_project`, as described in [agents](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/agents) and the [MCP reference](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/mcp-tools).
 
 ### 4. Open, reserve, build and run
 
@@ -123,7 +123,7 @@ dotnet fsi tools/build/lease.fsx full_build dotnet build
 dotnet fsi tools/build/lease.fsx test_suite_run dotnet <testDll> --summary
 ```
 
-The lease client waits in line, renews the lease while the command runs and releases it at the end. Read the `TRUST` line a suite prints, not its exit code ([development instructions](docs/development.md)).
+The lease client waits in line, renews the lease while the command runs and releases it at the end. Read the `TRUST` line a suite prints, not its exit code ([development instructions](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/development)).
 
 ## Repository Layout
 
@@ -137,14 +137,14 @@ The lease client waits in line, renews the lease while the command runs and rele
 | `src/bozzetto-web/` | The Partas.Solid browser application and the shared data types used by its bridge. |
 | `src/bozzetto-vscode/` | The VS Code extension. |
 | `src/Bozzetto.Tests/`, `src/Bozzetto.Composer.Tests/` | Expecto suites. |
-| `docs/` | The twelve documents of the [documentation index](docs/README.md). |
+| `docs/` | `agents.md` and `mcp-tools.md`, kept because `RetiredToolNameTests` reads them. The documentation itself is on the [Bozzetto wiki](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki), starting at the [documentation index](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/README). |
 | `tools/` | Build contracts, the pipeline's tier plan and lease client, the quality matrix, the agent skill and agent hooks. |
 
-Start with the [documentation index](docs/README.md) for Bozzetto's scope, its use of PSG, Fidelity.FSharp.Incremental and Ranvier, and the status of implemented and planned features. Dated checkpoints and audit records are kept separately from the current documentation.
+Start with the [documentation index](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/README) for Bozzetto's scope, its use of PSG, Fidelity.FSharp.Incremental and Ranvier, and the status of implemented and planned features. Dated checkpoints and audit records are kept separately from the current documentation.
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for repository standards and workflows, then check the [architecture](docs/architecture.md) and [component contracts](docs/Bozzetto_Fidelity_Component_Contracts.md) to decide which component a change belongs in. Keep feature proposals separate from the test results and other evidence that show whether their acceptance criteria have been met.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for repository standards and workflows, then check the [architecture](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/architecture) and [component contracts](https://forge.spkez.dev/FidelityFramework/Bozzetto/wiki/Bozzetto_Fidelity_Component_Contracts) to decide which component a change belongs in. Keep feature proposals separate from the test results and other evidence that show whether their acceptance criteria have been met.
 
 <a id="fork-status"></a>
 <a id="hard-fork-lineage"></a>

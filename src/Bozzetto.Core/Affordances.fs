@@ -206,6 +206,7 @@ let private gatingDomain : Map<string, ToolGate> =
     "acquire_claim", ToolGate.AlwaysAvailable
     "release_claim", ToolGate.AlwaysAvailable
     "reassign_claim", ToolGate.AlwaysAvailable
+    "reclaim_claim", ToolGate.AlwaysAvailable
     "request_landing", ToolGate.AlwaysAvailable
     "get_cohort_status", ToolGate.AlwaysAvailable
     "report_agent_work", ToolGate.AlwaysAvailable
@@ -297,6 +298,8 @@ type CohortTool =
   | AcquireClaim
   | ReleaseClaim
   | ReassignClaim
+  /// Bozzetto #24: the previous holder takes back its orphaned claim.
+  | ReclaimClaim
   | RequestLanding
   | GetStatus
   /// Item 14c: configure the cohort's integration ref/worktree/branch.
@@ -305,7 +308,7 @@ type CohortTool =
   | SetIntegrationRef
 
 module CohortTool =
-  /// The exact MCP tool names the 8 cohort tools are registered under
+  /// The exact MCP tool names the 9 cohort tools are registered under
   /// (`Affordances.fs`'s own `gatingDomain` "Cohort tools v1" entries above —
   /// all `AlwaysAvailable` there at the per-SESSION-state layer; this module
   /// is the authority-aware refinement layered on top for Slice 3/item 14c).
@@ -316,6 +319,7 @@ module CohortTool =
     | CohortTool.AcquireClaim -> "acquire_claim"
     | CohortTool.ReleaseClaim -> "release_claim"
     | CohortTool.ReassignClaim -> "reassign_claim"
+    | CohortTool.ReclaimClaim -> "reclaim_claim"
     | CohortTool.RequestLanding -> "request_landing"
     | CohortTool.GetStatus -> "get_cohort_status"
     | CohortTool.SetIntegrationRef -> "set_integration_ref"
@@ -326,6 +330,7 @@ module CohortTool =
       CohortTool.AcquireClaim
       CohortTool.ReleaseClaim
       CohortTool.ReassignClaim
+      CohortTool.ReclaimClaim
       CohortTool.RequestLanding
       CohortTool.GetStatus
       CohortTool.SetIntegrationRef ]
@@ -387,7 +392,7 @@ module RetiredTool =
 ///   Anonymous                    -> status only
 ///   Member(_, Observer)          -> status only
 ///   Member(_, Verifier)          -> status only
-///   Member(_, Implementer)       -> status, join, leave, claim/release, request_landing
+///   Member(_, Implementer)       -> status, join, leave, claim/release/reclaim, request_landing
 ///   Conductor _                  -> every tool, including reassign_claim
 ///                                    and set_integration_ref (item 14c)
 ///
@@ -407,6 +412,7 @@ let cohortTools (authority: Cohort.Authority<'m>) : Set<CohortTool> =
           CohortTool.Leave
           CohortTool.AcquireClaim
           CohortTool.ReleaseClaim
+          CohortTool.ReclaimClaim
           CohortTool.RequestLanding ]
   | Cohort.Authority.Conductor _ ->
     Set.ofList CohortTool.all

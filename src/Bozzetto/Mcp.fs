@@ -1225,7 +1225,15 @@ module McpTools =
         ["decision", text "refused"; "reason", text reason]
     object (("kind", text kindName) :: fields) |> render
 
-  let acquireWorkLease (agent: string) (kind: Bozzetto.ExpensiveWorkLease.Kind) : string =
+  /// A caller re-polling for a lease is present (Bozzetto #24): it is
+  /// waiting, not gone. Recorded as member activity, which the daemon's cohort
+  /// reaper turns into a membership renewal, so a long lease wait never
+  /// expires the member and orphans its claims.
+  let recordLeasePoll (tracker: AgentActivityTracker.Tracker) (who: MemberTable.MemberId) (kind: Bozzetto.ExpensiveWorkLease.Kind) (now: DateTime) : unit =
+    AgentActivityTracker.recordMemberActivity tracker who "" None (Some (sprintf "lease poll: %s" (Bozzetto.ExpensiveWorkLease.Kind.toToken kind))) now
+
+  let acquireWorkLease (tracker: AgentActivityTracker.Tracker) (agent: string) (kind: Bozzetto.ExpensiveWorkLease.Kind) : string =
+    recordLeasePoll tracker (memberIdFor agent) kind DateTime.UtcNow
     let holder = resolvedKey agent
     let decision = (Bozzetto.Server.HealthTick.sample () |> ignore; Bozzetto.Features.LeaseWatch.request holder kind)
     leaseDecisionJson kind decision
@@ -4127,6 +4135,10 @@ module McpTools =
       failed
         (sprintf "The scope %s is already claimed by %s." (scopeStr scope) (mid holder))
         "Coordinate with the current holder, or acquire a different, non-overlapping scope."
+    | Cohort.CohortError.OrphanedClaimConflict(scope, Cohort.ClaimId cid, previous) ->
+      failed
+        (sprintf "The scope %s overlaps orphaned claim %s, last held by %s; an orphaned claim still blocks its scope." (scopeStr scope) cid (mid previous))
+        "Ask the cohort conductor to reassign_claim it, or its previous holder to rejoin and reclaim_claim it with its current fence."
     | Cohort.CohortError.NotClaimHolder(Cohort.ClaimId cid, requester) ->
       failed
         (sprintf "%s does not hold claim %s." (mid requester) cid)
@@ -4360,6 +4372,22 @@ module McpTools =
       let target = resolveMemberByDisplay ctx toMember
       let! result = commitCohort ctx (Cohort.CohortCommand.ReassignClaim(by, Cohort.ClaimId claimId, target))
       return result |> Result.map (fun _ -> sprintf "Reassigned claim %s to %s." claimId (MemberTable.MemberId.display target))
+    }
+
+  /// The previous holder of an orphaned claim takes it back after rejoining,
+  /// presenting the claim's current fence (Bozzetto #24). The caller is the
+  /// bound identity, never a self-declared one.
+  let reclaimClaim (ctx: McpContext) (agentName: string) (claimId: string) (fence: int64) : Task<Result<string, BozzettoError>> =
+    task {
+      let who = memberIdFor agentName
+      let fenceMeasure = LanguagePrimitives.Int64WithMeasure<Measures.fence> fence
+      let! result = commitCohort ctx (Cohort.CohortCommand.ReclaimClaim(who, Cohort.ClaimId claimId, fenceMeasure))
+      return
+        result
+        |> Result.bind (fun (events, _) ->
+          match events |> List.tryPick (function Cohort.CohortEvent.ClaimReassigned(_, _, f) -> Some f | _ -> None) with
+          | Some f -> Ok (sprintf "Reclaimed claim %s (fence=%d)." claimId (int64 f))
+          | None -> Error (BozzettoError.Unexpected (exn "reclaim_claim committed with no ClaimReassigned event")))
     }
 
   /// `claims` is "claimId:fence,claimId:fence,..." (empty string = no

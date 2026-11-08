@@ -234,6 +234,43 @@ let private fillNormalCap state =
 [<Tests>]
 let queuedAskTests =
   testList "ExpensiveWorkLease — a queued ask is a claim held by a live caller" [
+    testCase "abandoned head expires while live waiters retain FIFO positions" <| fun () ->
+      let held, grant = request epoch MemoryPressure.Tight empty "holder" Kind.FullBuild
+      let id = match grant with Decision.Granted(id, _) -> id | other -> failtestf "expected grant, got %A" other
+      let head, _ = request epoch MemoryPressure.Tight held "abandoned" Kind.FullBuild
+      let second, _ = request epoch MemoryPressure.Tight head "second" Kind.FullBuild
+      let third, _ = request epoch MemoryPressure.Tight second "third" Kind.FullBuild
+      let retryTime = epoch.AddSeconds 90.0
+      let secondRetry, _ = request retryTime MemoryPressure.Tight third "second" Kind.FullBuild
+      let thirdRetry, _ = request retryTime MemoryPressure.Tight secondRetry "third" Kind.FullBuild
+      thirdRetry.Queue |> List.map _.Holder |> Expect.equal "retries preserve order" [ "abandoned"; "second"; "third" ]
+      let freed, _ = release id thirdRetry
+      let later = epoch + queuedAskLifetime
+      let blocked, decision = request later MemoryPressure.Tight freed "third" Kind.FullBuild
+      match decision with
+      | Decision.Wait (_, reason) -> reason |> Expect.stringContains "second remains ahead" "#2 in queue"
+      | other -> failtestf "third must wait for second, got %A" other
+      let after, next = request later MemoryPressure.Tight blocked "second" Kind.FullBuild
+      let secondId = match next with Decision.Granted(id, _) -> id | other -> failtestf "expected second granted, got %A" other
+      let released, _ = release secondId after
+      match snd (request later MemoryPressure.Tight released "third" Kind.FullBuild) with
+      | Decision.Granted _ -> ()
+      | other -> failtestf "expected third granted next, got %A" other
+      let _, mutant = requestNeverExpiresTwin later MemoryPressure.Tight freed "second" Kind.FullBuild
+      match mutant with
+      | Decision.Wait (_, reason) -> reason |> Expect.stringContains "no-expiry mutation leaves the abandoned head" "#2 in queue"
+      | other -> failtestf "expiry-disabled mutation must be caught, got %A" other
+
+    testCase "a long advised retry remains live beyond the minimum lifetime" <| fun () ->
+      let queued =
+        [ 1 .. 250 ]
+        |> List.fold (fun state i -> fst (request epoch MemoryPressure.Critical state (sprintf "waiter-%d" i) Kind.FullBuild)) empty
+      let longWaiter = queued.Queue |> List.find (fun q -> q.ExpiresAt > epoch + queuedAskLifetime + TimeSpan.FromSeconds 10.0)
+      let refreshed, decision = request (epoch + queuedAskLifetime) MemoryPressure.Critical queued longWaiter.Holder Kind.FullBuild
+      match decision with Decision.Wait _ -> () | other -> failtestf "critical pressure must wait, got %A" other
+      let retained = refreshed.Queue |> List.find (fun q -> q.Holder = longWaiter.Holder)
+      retained.Seq |> Expect.equal "long advised wait retains its original place" longWaiter.Seq
+
     testCase "a waiting caller that withdraws leaves the line" <| fun () ->
       let full = fillNormalCap empty
       let queued, decision = request epoch MemoryPressure.Normal full "late" Kind.FullBuild

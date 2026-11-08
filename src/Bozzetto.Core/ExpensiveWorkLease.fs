@@ -121,6 +121,7 @@ module ExpensiveWorkLease =
     /// The holder's most recent retry. A queued ask is a claim held by a
     /// live caller; this is what proves the caller is still there.
     LastAskedAt: DateTimeOffset
+    ExpiresAt: DateTimeOffset
   }
 
   [<RequireQualifiedAccess>]
@@ -195,9 +196,7 @@ module ExpensiveWorkLease =
   /// caller told to `Wait` is expected back inside its `retryAfter`; one
   /// that never returns (it exited, crashed, or was told to wait and gave
   /// up) must not keep a place in line forever, or every later asker is
-  /// behind a ghost. The window is well past any retry-after this module
-  /// hands out (seconds to tens of seconds), so a live retrier is never
-  /// aged out.
+  /// behind a ghost. This is the minimum; long advised retries extend it.
   let queuedAskLifetime = TimeSpan.FromMinutes 2.0
 
   /// The real reclaim: drop every lease whose `ExpiresAt` has passed, and
@@ -207,7 +206,7 @@ module ExpensiveWorkLease =
   let private reapExpired (now: DateTimeOffset) (state: PoolState) : PoolState =
     { state with
         Active = state.Active |> List.filter (fun l -> l.ExpiresAt > now)
-        Queue = state.Queue |> List.filter (fun q -> now - q.LastAskedAt < queuedAskLifetime) }
+        Queue = state.Queue |> List.filter (fun q -> q.ExpiresAt > now) }
 
   /// `reap` is injected so the never-expiring TWIN below can share every
   /// other line of the real decision logic — the only difference between
@@ -256,7 +255,7 @@ module ExpensiveWorkLease =
           q.Seq, state.Queue |> List.map (fun e -> if e.Seq = q.Seq then { e with LastAskedAt = now } else e), state.NextSeq
         | None ->
           let seq = state.NextSeq
-          seq, state.Queue @ [ { Holder = holder; Kind = kind; Seq = seq; FirstAskedAt = now; LastAskedAt = now } ], state.NextSeq + 1L
+          seq, state.Queue @ [ { Holder = holder; Kind = kind; Seq = seq; FirstAskedAt = now; LastAskedAt = now; ExpiresAt = now + queuedAskLifetime } ], state.NextSeq + 1L
       let sortedQueue = queueWithMine |> List.sortBy (fun q -> q.Seq)
       let cap = maxConcurrentFor pressure
       let capacityAvailable = List.length state.Active < cap
@@ -275,6 +274,11 @@ module ExpensiveWorkLease =
         let position = sortedQueue |> List.findIndex (fun q -> q.Seq = mySeq)
         let computed = baseBackoff pressure + TimeSpan.FromSeconds(float position * 3.0)
         let retryAfter = withJitter holder kind mySeq computed
+        // Wire clients may round retryAfter up to whole seconds. Allow two
+        // such intervals plus a margin, retaining the existing minimum.
+        let advisedSeconds = Math.Ceiling retryAfter.TotalSeconds
+        let lifetime = max queuedAskLifetime (TimeSpan.FromSeconds(2.0 * advisedSeconds + 10.0))
+        let queue = sortedQueue |> List.map (fun q -> if q.Seq = mySeq then { q with ExpiresAt = now + lifetime } else q)
         let reason =
           sprintf
             "%d lease(s) active (cap %d at %s pressure) — you are #%d in queue for %s"
@@ -283,7 +287,7 @@ module ExpensiveWorkLease =
             (MemoryPressure.describe pressure)
             (position + 1)
             (Kind.describe kind)
-        { state with Queue = sortedQueue; NextSeq = nextSeq }, Decision.Wait(retryAfter, reason)
+        { state with Queue = queue; NextSeq = nextSeq }, Decision.Wait(retryAfter, reason)
 
   /// The one decision function. Pure: same `now`/`pressure`/`state`/
   /// `holder`/`kind` in, same `(state', Decision)` out, every time —

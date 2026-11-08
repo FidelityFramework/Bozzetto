@@ -63,6 +63,7 @@ module Linearizability =
     | DuplicateJoin
     | MemberNotPresent
     | ClaimConflict
+    | OrphanedClaimConflict
     | NotClaimHolder
     | UnknownClaim
     | ClaimNotOrphaned
@@ -82,6 +83,7 @@ module Linearizability =
     | CohortError.DuplicateJoin _ -> ErrorKind.DuplicateJoin
     | CohortError.MemberNotPresent _ -> ErrorKind.MemberNotPresent
     | CohortError.ClaimConflict _ -> ErrorKind.ClaimConflict
+    | CohortError.OrphanedClaimConflict _ -> ErrorKind.OrphanedClaimConflict
     | CohortError.NotClaimHolder _ -> ErrorKind.NotClaimHolder
     | CohortError.UnknownClaim _ -> ErrorKind.UnknownClaim
     | CohortError.ClaimNotOrphaned _ -> ErrorKind.ClaimNotOrphaned
