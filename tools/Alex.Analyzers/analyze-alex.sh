@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-tool_dir=$(cd "$(dirname "$0")" && pwd)
+tool_dir=$(cd -P "$(dirname "$0")" && pwd)
 repo_dir=$(git -C "$tool_dir" rev-parse --show-toplevel)
 : "${ALEX_ANALYZER_PROJECT:?set ALEX_ANALYZER_PROJECT to the absolute Alex production project}"
 [[ "$ALEX_ANALYZER_PROJECT" = /* && -f "$ALEX_ANALYZER_PROJECT" ]] || { printf 'Alex project must be an existing absolute path.\n' >&2; exit 2; }

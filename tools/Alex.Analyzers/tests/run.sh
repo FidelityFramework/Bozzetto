@@ -8,7 +8,7 @@ if [[ "$pipeline" == --pipeline && -n ${ALEX_ANALYZER_ONLY:-} ]]; then
   exit 2
 fi
 
-tool_dir=$(cd "$(dirname "$0")/.." && pwd)
+tool_dir=$(cd -P "$(dirname "$0")/.." && pwd)
 repo_dir=$(git -C "$tool_dir" rev-parse --show-toplevel)
 psg_dll=${ALEX_ANALYZER_PSG_DLL:-$tool_dir/tests/ContractFixture/bin/Debug/net10.0/Fidelity.PSG.dll}
 impostor_dll=$tool_dir/tests/ImpostorFixture/bin/Debug/net10.0/Unrelated.Contract.dll

@@ -6,8 +6,23 @@ open System.Reflection
 open System.Xml.Linq
 open System.Security.Cryptography
 
-let tool = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, ".."))
-let root = Path.GetFullPath(Path.Combine(tool, "../.."))
+let canonical path =
+  let start = ProcessStartInfo("realpath")
+  start.ArgumentList.Add("-e")
+  start.ArgumentList.Add("--")
+  start.ArgumentList.Add(path)
+  start.RedirectStandardOutput <- true
+  start.RedirectStandardError <- true
+  use command = Process.Start(start)
+  if isNull command then failwith "cannot start realpath"
+  let result = command.StandardOutput.ReadToEnd().Trim()
+  let error = command.StandardError.ReadToEnd()
+  command.WaitForExit()
+  if command.ExitCode <> 0 || String.IsNullOrWhiteSpace result then failwith ("cannot resolve path " + path + ": " + error.Trim())
+  result
+
+let tool = canonical (Path.Combine(__SOURCE_DIRECTORY__, ".."))
+let root = canonical (Path.Combine(tool, "../.."))
 let scratch = Path.Combine(root, "artifacts/alex-analyzers-tests/dependency-control")
 Directory.CreateDirectory(scratch) |> ignore
 let obj entries =
@@ -466,7 +481,8 @@ if String.IsNullOrEmpty selected || selected = "validator-preprocess-changed" th
   let executable = Path.Combine(fakeBin, "realpath")
   let quote (value: string) = "'" + value.Replace("'", "'\\''") + "'"
   File.WriteAllText(executable, sprintf "#!/bin/sh\nif [ -f %s ] && [ -f %s ] && [ ! -f %s ]; then\n  printf '%%s' '<Project><PropertyGroup><FixtureImported>changed</FixtureImported></PropertyGroup></Project>' > %s\n  touch %s\nfi\nexec /usr/bin/realpath \"$@\"\n" (quote before) (quote scrubbed) (quote marker) (quote imported) (quote marker))
-  File.SetUnixFileMode(executable, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+  // Worker NFSv4 mounts map owner uid while .NET PATH search checks execute permissions for the local process uid.
+  File.SetUnixFileMode(executable, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute ||| UnixFileMode.GroupRead ||| UnixFileMode.GroupExecute ||| UnixFileMode.OtherRead ||| UnixFileMode.OtherExecute)
   let oldPath = Environment.GetEnvironmentVariable("PATH")
   try
     File.WriteAllText(imported, "<Project><PropertyGroup><FixtureImported>before</FixtureImported></PropertyGroup></Project>")

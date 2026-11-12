@@ -2,7 +2,7 @@
 set -euo pipefail
 export MSBUILDDISABLENODEREUSE=1
 
-tool_dir=$(cd "$(dirname "$0")" && pwd)
+tool_dir=$(cd -P "$(dirname "$0")" && pwd)
 repo_dir=$(git -C "$tool_dir" rev-parse --show-toplevel)
 mode=${1:?expected alex, alex-boundary or clef}
 project=${2:-${ALEX_ANALYZER_PROJECT:?set ALEX_ANALYZER_PROJECT or supply an absolute F# project path}}

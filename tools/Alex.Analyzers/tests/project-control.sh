@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-tool_dir=$(cd "$(dirname "$0")/.." && pwd)
+tool_dir=$(cd -P "$(dirname "$0")/.." && pwd)
 repo_dir=$(git -C "$tool_dir" rev-parse --show-toplevel)
 evidence="$repo_dir/artifacts/alex-analyzers-tests/inproject-control"
 mkdir -p "$evidence"
