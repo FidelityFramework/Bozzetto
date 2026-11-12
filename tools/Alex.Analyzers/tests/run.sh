@@ -126,6 +126,11 @@ for alias in Foreign ObjectAlias ObjectNominal Chain Builders Handler Pair Both 
   printf '#r "%s"\nlet x (v: AliasFixture.%s) = v\n' "$alias_dll" "$type_name" > "$scratch/alias-$alias.fsx"
 done
 printf 'let invalid =\n' > "$scratch/invalid.fsx"
+printf 'let values: bigint list = [0I; 1I; -1I; 18446744073709551615I]\nlet compare x = x > 0I\n' > "$scratch/integer-literals.fsx"
+printf 'let value = 0I\nopen System\n' > "$scratch/integer-literal-open.fsx"
+printf 'let value = 0I\nlet n = System.Numerics.BigInteger(1)\n' > "$scratch/integer-literal-constructor.fsx"
+printf 'let value = 0I\nlet n = System.Numerics.BigInteger.Parse("1")\n' > "$scratch/integer-literal-parse.fsx"
+printf 'module NumericLiteralI =\n  let FromZero () = System.Numerics.BigInteger.Zero\nlet value = 0I\n' > "$scratch/integer-literal-custom.fsx"
 
 run_case() {
   local name=$1 expected=$2 positions=${3:-} object_positions=${4:-} reason count rc=0 analyzer='Clef production baseline'
@@ -240,6 +245,11 @@ run_case nominal-parameter clean
 run_case nominal-lookup policy-pending
 run_case nominal-lookup-direct policy-pending
 run_case pure clean
+run_case integer-literals clean
+run_case integer-literal-open AXC002 '2,5'
+run_case integer-literal-constructor AXC002 '2,8'
+run_case integer-literal-parse AXC002 '2,8 2,24'
+run_case integer-literal-custom AXC002 '2,20 2,36'
 run_case generic-pure clean
 run_case interpolation-pure clean
 run_case interpolation-obj AXC004 '2,35' '1,20'
@@ -303,7 +313,7 @@ run_case stream-reader AXC002 '1,18 1,42'
 run_case invalid type-error
 [[ $executed -gt 0 ]] || { printf 'No truth case matched.\n' >&2; exit 1; }
 if [[ -z ${ALEX_ANALYZER_ONLY:-} ]]; then
-  [[ $executed -eq 127 ]] || { printf 'Expected 127 registered cases, ran %s.\n' "$executed" >&2; exit 1; }
+  [[ $executed -eq 132 ]] || { printf 'Expected 132 registered cases, ran %s.\n' "$executed" >&2; exit 1; }
   printf '{"executed":%s,"cases":[' "$executed" > "$scratch/truth.json"
   separator=''
   for case_name in "${cases[@]}"; do printf '%s"%s"' "$separator" "$case_name" >> "$scratch/truth.json"; separator=','; done
