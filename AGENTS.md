@@ -157,13 +157,12 @@ Cross-repository increments use the one-page
 ### Alex analyzer gate
 
 Agents changing Alex production code must run the combined shared and Alex
-analyzers before handoff. Bozzetto owns the isolated development tooling in
-`tools/Alex.Analyzers`; its Ionide/FCS dependencies must stay out of analyzed
-production projects. From this primary checkout, use:
+analyzers owned by `Alex` (`tools/Alex.Analyzers/` inside the `Alex`
+repository); Ionide/FCS dependencies must stay out of analyzed production
+projects. From `/home/hhh/repos/Alex`, use:
 
 ```bash
-ALEX_ANALYZER_PROJECT=/home/hhh/repos/Alex/src/Alex/Alex.fsproj \
-  bash tools/Alex.Analyzers/analyze-alex.sh
+bash tools/Alex.Analyzers/analyze-alex.sh
 ```
 
 The command uses the existing renewing lease client, builds the tooling and
