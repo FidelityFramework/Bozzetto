@@ -30,15 +30,6 @@
           "FSharp.Core": "4.7.0"
         }
       },
-      "FSharp.SystemTextJson": {
-        "type": "Direct",
-        "requested": "[1.4.36, )",
-        "resolved": "1.4.36",
-        "contentHash": "1xLk0SBF1nedD74B77rcArjD2d+DeZwbNI7BVCAyKwIBERo1VoX8Mf4AtX0OV2L3ZeM/XS1b6BuhXCyoh0KBnw==",
-        "dependencies": {
-          "FSharp.Core": "4.7.0"
-        }
-      },
       "FsToolkit.ErrorHandling": {
         "type": "Direct",
         "requested": "[5.2.0, )",

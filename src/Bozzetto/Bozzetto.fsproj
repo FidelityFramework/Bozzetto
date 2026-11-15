@@ -155,7 +155,6 @@
         <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
         <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
         <PackageReference Include="Serilog.Extensions.Logging.File" />
-        <PackageReference Include="FSharp.SystemTextJson" />
         <PackageReference Include="FSharp.Data.Adaptive" />
         <PackageReference Include="Fidelity.FSharp.Incremental.Hosting" />
         <PackageReference Include="ModelContextProtocol" />

@@ -61,15 +61,6 @@
           "FSharp.Core": "5.0.2"
         }
       },
-      "FSharp.SystemTextJson": {
-        "type": "Direct",
-        "requested": "[1.4.36, )",
-        "resolved": "1.4.36",
-        "contentHash": "1xLk0SBF1nedD74B77rcArjD2d+DeZwbNI7BVCAyKwIBERo1VoX8Mf4AtX0OV2L3ZeM/XS1b6BuhXCyoh0KBnw==",
-        "dependencies": {
-          "FSharp.Core": "4.7.0"
-        }
-      },
       "Microsoft.NET.Test.Sdk": {
         "type": "Direct",
         "requested": "[18.0.1, )",
@@ -394,7 +385,6 @@
           "Bozzetto.Composer.Protocol": "[0.1.0, )",
           "Bozzetto.Core": "[0.1.0, )",
           "FSharp.Data.Adaptive": "[1.2.26, )",
-          "FSharp.SystemTextJson": "[1.4.36, )",
           "Fidelity.Data": "[1.0.0, )",
           "Fidelity.FSharp.Incremental.Hosting": "[0.1.0-preview.6, )",
           "Fidelity.PSG": "[1.0.0, )",
@@ -424,7 +414,6 @@
         "dependencies": {
           "FSharp.Compiler.Service": "[43.13.101-preview7.26381.103, )",
           "FSharp.Data.Adaptive": "[1.2.26, )",
-          "FSharp.SystemTextJson": "[1.4.36, )",
           "Fantomas.Core": "[8.0.0-alpha-002, )",
           "Fidelity.Data": "[1.0.0, )",
           "FsToolkit.ErrorHandling": "[5.2.0, )",

@@ -548,7 +548,6 @@
         <PackageReference Include="YoloDev.Expecto.TestSdk" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" />
         <PackageReference Include="Fantomas.Core" />
-        <PackageReference Include="FSharp.SystemTextJson" />
         <PackageReference Include="Verify.Expecto" />
         <PackageReference Include="Microsoft.Playwright" />
         <FrameworkReference Include="Microsoft.AspNetCore.App" />

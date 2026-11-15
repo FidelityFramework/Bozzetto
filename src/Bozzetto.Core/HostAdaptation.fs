@@ -29,7 +29,7 @@ module HostAdaptation =
 
   /// The API-compatible library families (host loads the project's version).
   let apiCompatibleLibraries =
-    [ "FSharp.Core"; "FSharp.Compiler.Service"; "FSharp.SystemTextJson"; "FSharp.Data.Adaptive" ]
+    [ "FSharp.Core"; "FSharp.Compiler.Service"; "Fidelity.Data"; "FSharp.Data.Adaptive" ]
 
   /// Read the assembly identities (simple name + version) from a bin dir.
   /// Best-effort: a DLL that fails to load as an assembly identity is skipped

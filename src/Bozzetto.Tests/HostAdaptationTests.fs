@@ -15,10 +15,10 @@ let tests =
 
     testCase "API-compatible libs load the project's pinned version" <| fun _ ->
       let plan =
-        HostAdaptation.plan [ ("FSharp.Core", "10.0.0"); ("FSharp.SystemTextJson", "1.2.0") ]
+        HostAdaptation.plan [ ("FSharp.Core", "10.0.0"); ("Fidelity.Data", "1.2.0") ]
 
       plan |> Expect.contains "FSharp.Core pin loads the project's version" (HostAdaptation.LoadProjectVersion("FSharp.Core", "10.0.0"))
-      plan |> Expect.contains "SystemTextJson pin loads the project's version" (HostAdaptation.LoadProjectVersion("FSharp.SystemTextJson", "1.2.0"))
+      plan |> Expect.contains "Fidelity.Data pin loads the project's version" (HostAdaptation.LoadProjectVersion("Fidelity.Data", "1.2.0"))
 
     testCase "API-coupled libs select the version-matched variant" <| fun _ ->
       let plan = HostAdaptation.plan [ ("Fantomas", "6.0.0") ]

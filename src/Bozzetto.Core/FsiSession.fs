@@ -83,7 +83,7 @@ let private captureLiveValueSnapshotJson (session: FsiEvaluationSession) (genera
         (bv.Name, typeSig, value))
     let generation = Interlocked.Increment(&generationRef.contents)
     let snap = LiveValueTree.buildSnapshot "" generation boundValues
-    // Use WorkerProtocol.Serialization (FSharp.SystemTextJson) so the NodeKind DU and other F# types serialize correctly.
+    // Use WorkerProtocol.Serialization (Fidelity.Data.JSON) so the NodeKind DU and other F# types serialize correctly.
     WorkerProtocol.Serialization.serialize snap
   with ex ->
     Log.warn "[FsiSession] Live value snapshot capture failed: %s\n%s" ex.Message (ex.StackTrace |> Option.ofObj |> Option.defaultValue "")
