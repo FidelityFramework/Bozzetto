@@ -6,7 +6,7 @@ module Bozzetto.Tests.McpWireProtocolTests
 
 open System
 open System.Reflection
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open Bozzetto
@@ -130,9 +130,39 @@ let mcpToolRegistrationTests = testList "MCP tool registration" [
 
 // ─── SessionEvent Serialization ───────────────────────────────────
 
+let private getProp (name: string) (v: JsonValue) =
+  match JsonValue.prop name v with
+  | Some p -> p
+  | None -> failtestf "missing property '%s' in %s" name (Json.serialize v)
+
+let private getStr (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asString with
+  | Some s -> s
+  | None -> failtestf "property '%s' is not a string" name
+
+let private getInt (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asInt with
+  | Some n -> int n
+  | None -> failtestf "property '%s' is not an int" name
+
+let private getInt64 (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asInt with
+  | Some n -> n
+  | None -> failtestf "property '%s' is not an int64" name
+
+let private getBool (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asBool with
+  | Some b -> b
+  | None -> failtestf "property '%s' is not a bool" name
+
+let private getArr (name: string) (v: JsonValue) =
+  match getProp name v with
+  | JsonValue.Array items -> items
+  | _ -> failtestf "property '%s' is not an array" name
+
 let private expectJsonField (json: string) (field: string) (expected: string) =
-  let doc = JsonDocument.Parse(json)
-  let actual = doc.RootElement.GetProperty(field).GetString()
+  let root = Json.parseOrFail json
+  let actual = getStr field root
   actual |> Expect.equal (sprintf "field '%s'" field) expected
 
 let private minimalWarmup : WarmupContext =
@@ -150,11 +180,11 @@ let sessionEventSerializationTests = testList "SessionEvent serialization" [
     let json = SseEvent.toJson evt
     expectJsonField json "type" "warmup_context_snapshot"
     expectJsonField json "sessionId" "sess-1"
-    let doc = JsonDocument.Parse(json)
-    let ctx = doc.RootElement.GetProperty("context")
-    ctx.GetProperty("sourceFilesScanned").GetInt32()
+    let root = Json.parseOrFail json
+    let ctx = getProp "context" root
+    getInt "sourceFilesScanned" ctx
     |> Expect.equal "files scanned" 5
-    ctx.GetProperty("warmupDurationMs").GetInt64()
+    getInt64 "warmupDurationMs" ctx
     |> Expect.equal "duration" 100L
   }
 
@@ -166,18 +196,18 @@ let sessionEventSerializationTests = testList "SessionEvent serialization" [
         FailedOpens = [{ Name = "Bad"; Kind = OpenableKind.Namespace; ErrorMessage = "err"; Diagnostics = []; RetryCount = 1; DurationMs = 0.0 }]
     })
     let json = SseEvent.toJson evt
-    let doc = JsonDocument.Parse(json)
-    let ctx = doc.RootElement.GetProperty("context")
-    let asms = ctx.GetProperty("assembliesLoaded")
-    asms.GetArrayLength() |> Expect.equal "1 assembly" 1
-    asms.[0].GetProperty("name").GetString() |> Expect.equal "name" "A"
-    asms.[0].GetProperty("namespaceCount").GetInt32() |> Expect.equal "ns count" 10
-    let nss = ctx.GetProperty("namespacesOpened")
-    nss.GetArrayLength() |> Expect.equal "1 namespace" 1
-    nss.[0].GetProperty("isModule").GetBoolean() |> Expect.isFalse "not module"
-    let fails = ctx.GetProperty("failedOpens")
-    fails.GetArrayLength() |> Expect.equal "1 failed" 1
-    fails.[0].GetProperty("name").GetString() |> Expect.equal "fail name" "Bad"
+    let root = Json.parseOrFail json
+    let ctx = getProp "context" root
+    let asms = getArr "assembliesLoaded" ctx
+    asms.Length |> Expect.equal "1 assembly" 1
+    getStr "name" asms.[0] |> Expect.equal "name" "A"
+    getInt "namespaceCount" asms.[0] |> Expect.equal "ns count" 10
+    let nss = getArr "namespacesOpened" ctx
+    nss.Length |> Expect.equal "1 namespace" 1
+    getBool "isModule" nss.[0] |> Expect.isFalse "not module"
+    let fails = getArr "failedOpens" ctx
+    fails.Length |> Expect.equal "1 failed" 1
+    getStr "name" fails.[0] |> Expect.equal "fail name" "Bad"
   }
 
 
@@ -191,10 +221,12 @@ let sessionEventSerializationTests = testList "SessionEvent serialization" [
   test "SessionCreated serializes project names" {
     let json = SseEvent.toJson (SessionCreated("s1", ["P1"; "P2"]))
     expectJsonField json "type" "session_created"
-    let doc = JsonDocument.Parse(json)
-    let projects = doc.RootElement.GetProperty("projectNames")
-    projects.GetArrayLength() |> Expect.equal "2 projects" 2
-    projects.[1].GetString() |> Expect.equal "second project" "P2"
+    let root = Json.parseOrFail json
+    let projects = getArr "projectNames" root
+    projects.Length |> Expect.equal "2 projects" 2
+    match JsonValue.asString projects.[1] with
+    | Some p -> p |> Expect.equal "second project" "P2"
+    | None -> failtestf "Expected string at projectNames.[1]"
   }
 
   test "SessionStopped has type and sessionId" {
@@ -212,8 +244,8 @@ let sessionEventSerializationTests = testList "SessionEvent serialization" [
     ]
     for evt in events do
       let json = SseEvent.toJson evt
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("type").GetString()
+      let root = Json.parseOrFail json
+      getStr "type" root
       |> Expect.isNotNull "type field exists"
   }
 ]

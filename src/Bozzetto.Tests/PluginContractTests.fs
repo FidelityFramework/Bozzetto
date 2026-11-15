@@ -4,7 +4,7 @@ module Bozzetto.Tests.PluginContractTests
 /// Every test proven in Bozzetto REPL first, then persisted here.
 
 open System
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open Bozzetto
@@ -14,6 +14,31 @@ open Bozzetto.Affordances
 open Bozzetto.AppState
 open Bozzetto.Features.Diagnostics
 open Bozzetto.Features.AutoCompletion
+
+let private getProp (name: string) (v: JsonValue) =
+  match JsonValue.prop name v with
+  | Some p -> p
+  | None -> failtestf "missing property '%s' in %s" name (Json.serialize v)
+
+let private getStr (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asString with
+  | Some s -> s
+  | None -> failtestf "property '%s' is not a string" name
+
+let private getInt (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asInt with
+  | Some n -> int n
+  | None -> failtestf "property '%s' is not an int" name
+
+let private getBool (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asBool with
+  | Some b -> b
+  | None -> failtestf "property '%s' is not a bool" name
+
+let private getArr (name: string) (v: JsonValue) =
+  match getProp name v with
+  | JsonValue.Array items -> items
+  | _ -> failtestf "property '%s' is not an array" name
 
 // ─── Helpers ───────────────────────────────────────────────────────
 
@@ -167,15 +192,15 @@ let evalJsonTests =
     testCase "success result has success=true" <| fun _ ->
       let resp: EvalResponse = { EvaluationResult = Ok "val it: int = 42"; Diagnostics = [||]; EvaluatedCode = "21 * 2;;"; Metadata = Map.empty }
       let json = McpAdapter.formatEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("success").GetBoolean()
+      let root = Json.parseOrFail json
+      getBool "success" root
       |> Expect.isTrue "success is true"
 
     testCase "success result includes result text" <| fun _ ->
       let resp: EvalResponse = { EvaluationResult = Ok "val it: int = 42"; Diagnostics = [||]; EvaluatedCode = "21 * 2;;"; Metadata = Map.empty }
       let json = McpAdapter.formatEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("result").GetString()
+      let root = Json.parseOrFail json
+      getStr "result" root
       |> Expect.equal "result text" "val it: int = 42"
 
     testCase "error result has success=false" <| fun _ ->
@@ -185,8 +210,8 @@ let evalJsonTests =
           EvaluatedCode = """let x: int = "no";;"""
           Metadata = Map.empty }
       let json = McpAdapter.formatEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("success").GetBoolean()
+      let root = Json.parseOrFail json
+      getBool "success" root
       |> Expect.isFalse "success is false on error"
 
     testCase "error result includes diagnostics array" <| fun _ ->
@@ -196,15 +221,15 @@ let evalJsonTests =
           EvaluatedCode = "bad code"
           Metadata = Map.empty }
       let json = McpAdapter.formatEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("diagnostics").GetArrayLength()
+      let root = Json.parseOrFail json
+      (getArr "diagnostics" root).Length
       |> Expect.equal "1 diagnostic" 1
 
     testCase "code field preserved in output" <| fun _ ->
       let resp: EvalResponse = { EvaluationResult = Ok "done"; Diagnostics = [||]; EvaluatedCode = "let x = 1;;"; Metadata = Map.empty }
       let json = McpAdapter.formatEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("code").GetString()
+      let root = Json.parseOrFail json
+      getStr "code" root
       |> Expect.equal "code preserved" "let x = 1;;"
   ]
 
@@ -285,13 +310,12 @@ let startupInfoTests =
         StartupProfileLoaded = None
       }
       let json = McpAdapter.formatStartupInfoJson config
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      root.GetProperty("workingDirectory").GetString()
+      let root = Json.parseOrFail json
+      getStr "workingDirectory" root
       |> Expect.equal "working dir" "/code"
-      root.GetProperty("aspireDetected").GetBoolean()
+      getBool "aspireDetected" root
       |> Expect.isFalse "the declared startup flag is preserved"
-      root.TryGetProperty("hotReloadEnabled") |> fst
+      JsonValue.prop "hotReloadEnabled" root |> Option.isSome
       |> Expect.isFalse "removed patching capability is not advertised"
 
     testCase "includes loaded projects array" <| fun _ ->
@@ -306,8 +330,8 @@ let startupInfoTests =
         StartupProfileLoaded = None
       }
       let json = McpAdapter.formatStartupInfoJson config
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("loadedProjects").GetArrayLength()
+      let root = Json.parseOrFail json
+      (getArr "loadedProjects" root).Length
       |> Expect.equal "2 projects" 2
   ]
 
@@ -389,16 +413,16 @@ let completionJsonTests =
         { DisplayText = "Length"; ReplacementText = "Length"; Kind = CompletionKind.Property; GetDescription = None }
       ]
       let result = McpAdapter.formatCompletionsJson items
-      use doc = System.Text.Json.JsonDocument.Parse(result)
-      doc.RootElement.GetProperty("completions").GetArrayLength()
+      let root = Json.parseOrFail result
+      (getArr "completions" root).Length
       |> Expect.equal "2 completions" 2
-      doc.RootElement.GetProperty("count").GetInt32()
+      getInt "count" root
       |> Expect.equal "count is 2" 2
 
     testCase "empty list returns empty completions" <| fun _ ->
       let result = McpAdapter.formatCompletionsJson []
-      use doc = System.Text.Json.JsonDocument.Parse(result)
-      doc.RootElement.GetProperty("completions").GetArrayLength()
+      let root = Json.parseOrFail result
+      (getArr "completions" root).Length
       |> Expect.equal "0 completions" 0
 
     testCase "completion items have label, kind, insertText" <| fun _ ->
@@ -406,13 +430,13 @@ let completionJsonTests =
         { DisplayText = "Foo"; ReplacementText = "FooBar"; Kind = CompletionKind.Property; GetDescription = None }
       ]
       let result = McpAdapter.formatCompletionsJson items
-      use doc = System.Text.Json.JsonDocument.Parse(result)
-      let first = doc.RootElement.GetProperty("completions").EnumerateArray() |> Seq.head
-      first.GetProperty("label").GetString()
+      let root = Json.parseOrFail result
+      let first = getArr "completions" root |> List.head
+      getStr "label" first
       |> Expect.equal "label is Foo" "Foo"
-      first.GetProperty("kind").GetString()
+      getStr "kind" first
       |> Expect.equal "kind is Property" "Property"
-      first.GetProperty("insertText").GetString()
+      getStr "insertText" first
       |> Expect.equal "insertText is FooBar" "FooBar"
   ]
 
@@ -423,10 +447,10 @@ let explorationJsonTests =
   testList "formatExplorationResultJson" [
     testCase "empty result returns zero count" <| fun _ ->
       let result = McpAdapter.formatExplorationResultJson "System.IO" []
-      use doc = System.Text.Json.JsonDocument.Parse(result)
-      doc.RootElement.GetProperty("name").GetString()
+      let root = Json.parseOrFail result
+      getStr "name" root
       |> Expect.equal "name is System.IO" "System.IO"
-      doc.RootElement.GetProperty("totalCount").GetInt32()
+      getInt "totalCount" root
       |> Expect.equal "count is 0" 0
 
     testCase "groups items by kind" <| fun _ ->
@@ -436,10 +460,10 @@ let explorationJsonTests =
         { DisplayText = "Length"; ReplacementText = "Length"; Kind = CompletionKind.Property; GetDescription = None }
       ]
       let result = McpAdapter.formatExplorationResultJson "System.String" items
-      use doc = System.Text.Json.JsonDocument.Parse(result)
-      doc.RootElement.GetProperty("totalCount").GetInt32()
+      let root = Json.parseOrFail result
+      getInt "totalCount" root
       |> Expect.equal "total is 3" 3
-      doc.RootElement.GetProperty("groups").GetArrayLength()
+      (getArr "groups" root).Length
       |> Expect.equal "2 groups" 2
   ]
 
@@ -457,21 +481,21 @@ let diagnosticsJsonTests =
         ErrorNumber = 1
       }
       let result = McpAdapter.formatDiagnosticsResultJson [| diag |]
-      use doc = JsonDocument.Parse(result)
-      doc.RootElement.GetProperty("count").GetInt32()
+      let root = Json.parseOrFail result
+      getInt "count" root
       |> Expect.equal "count 1" 1
-      let first = doc.RootElement.GetProperty("diagnostics").EnumerateArray() |> Seq.head
-      first.GetProperty("severity").GetString()
+      let first = getArr "diagnostics" root |> List.head
+      getStr "severity" first
       |> Expect.equal "severity is error" "error"
-      first.GetProperty("message").GetString()
+      getStr "message" first
       |> Expect.equal "message matches" "Type mismatch"
-      first.GetProperty("startLine").GetInt32()
+      getInt "startLine" first
       |> Expect.equal "line 5" 5
 
     testCase "empty diagnostics returns zero count" <| fun _ ->
       let result = McpAdapter.formatDiagnosticsResultJson [||]
-      use doc = JsonDocument.Parse(result)
-      doc.RootElement.GetProperty("count").GetInt32()
+      let root = Json.parseOrFail result
+      getInt "count" root
       |> Expect.equal "count 0" 0
 
     testCase "message with quotes produces valid JSON" <| fun _ ->
@@ -483,8 +507,8 @@ let diagnosticsJsonTests =
         ErrorNumber = 0
       }
       let result = McpAdapter.formatDiagnosticsResultJson [| diag |]
-      use doc = JsonDocument.Parse(result)
-      let first = doc.RootElement.GetProperty("diagnostics").EnumerateArray() |> Seq.head
-      first.GetProperty("message").GetString()
+      let root = Json.parseOrFail result
+      let first = getArr "diagnostics" root |> List.head
+      getStr "message" first
       |> Expect.stringContains "has int" "int"
   ]

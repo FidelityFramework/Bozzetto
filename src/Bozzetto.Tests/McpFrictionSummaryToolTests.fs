@@ -1,7 +1,7 @@
 module Bozzetto.Tests.McpFrictionSummaryToolTests
 
 open System
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open FsCheck
@@ -10,6 +10,26 @@ open Bozzetto.Server.McpTools
 open Bozzetto.Tests.TestInfrastructure
 open Bozzetto.Features.FrictionTelemetryTypes
 open Bozzetto.Features.ObservedFrictionTypes
+
+let private getProp (name: string) (v: JsonValue) =
+  match JsonValue.prop name v with
+  | Some p -> p
+  | None -> failtestf "missing property '%s' in %s" name (Json.serialize v)
+
+let private getStr (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asString with
+  | Some s -> s
+  | None -> failtestf "property '%s' is not a string" name
+
+let private getInt (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asInt with
+  | Some n -> int n
+  | None -> failtestf "property '%s' is not an int" name
+
+let private getArr (name: string) (v: JsonValue) =
+  match getProp name v with
+  | JsonValue.Array items -> items
+  | _ -> failtestf "property '%s' is not an array" name
 
 let private ok = function
   | Ok value -> value
@@ -87,39 +107,39 @@ let tests =
       let! _ = tools.report_friction("run_tests", "needed_another_tool", "Exact test name was not obvious.", "list_tests")
       let! reportJson = tools.get_friction_report()
 
-      let doc = JsonDocument.Parse(reportJson)
-      doc.RootElement.GetProperty("TotalFeedbackItems").GetInt32()
+      let root = Json.parseOrFail reportJson
+      getInt "TotalFeedbackItems" root
       |> Expect.equal "report should expose feedback count" 1
 
-      let topTools = doc.RootElement.GetProperty("HighestPriorityTools")
-      (topTools.GetArrayLength(), 0)
+      let topTools = getArr "HighestPriorityTools" root
+      (topTools.Length, 0)
       |> Expect.isGreaterThan "report should expose at least one actionable tool"
 
       let top = topTools[0]
-      top.GetProperty("Tool").GetString()
+      getStr "Tool" top
       |> Expect.equal "feedback-heavy complained-about tool should rise to the top" "run_tests"
-      top.GetProperty("SuggestedFixTarget").GetString()
+      getStr "SuggestedFixTarget" top
       |> Expect.stringContains "top remediation target should reflect the resolving follow-up" "list_tests"
 
-      let recentFeedback = doc.RootElement.GetProperty("RecentFeedback")
-      (recentFeedback.GetArrayLength(), 0)
+      let recentFeedback = getArr "RecentFeedback" root
+      (recentFeedback.Length, 0)
       |> Expect.isGreaterThan "report should expose recent explicit complaints"
 
       let firstFeedback = recentFeedback[0]
-      firstFeedback.GetProperty("Tool").GetString()
+      getStr "Tool" firstFeedback
       |> Expect.equal "recent feedback should preserve the complained-about tool" "run_tests"
-      firstFeedback.GetProperty("LatestAlternative").GetString()
+      getStr "LatestAlternative" firstFeedback
       |> Expect.equal "recent feedback should preserve the resolving alternative" "list_tests"
 
-      let recommended = doc.RootElement.GetProperty("RecommendedWorkItems")
-      (recommended.GetArrayLength(), 0)
+      let recommended = getArr "RecommendedWorkItems" root
+      (recommended.Length, 0)
       |> Expect.isGreaterThan "report should expose recommended work items"
       let firstWorkItem = recommended[0]
-      firstWorkItem.GetProperty("TargetTool").GetString()
+      getStr "TargetTool" firstWorkItem
       |> Expect.equal "first recommended work item should point at the complained-about tool" "run_tests"
-      firstWorkItem.GetProperty("LikelyFixType").GetString()
+      getStr "LikelyFixType" firstWorkItem
       |> Expect.equal "recommended work item should classify the fix shape" "workflow-linking"
-      firstWorkItem.GetProperty("SuggestedAction").GetString()
+      getStr "SuggestedAction" firstWorkItem
       |> Expect.stringContains "recommended action should preserve the resolving alternative" "list_tests"
     }
 
@@ -156,32 +176,31 @@ let tests =
         { Signal = value; Scope = SignalScope.Agent escaped; Confidence = SignalConfidence.Strong }
       let signals = List.map (fun (value, _, _) -> signal value) cases
       let signals = signals @ [ signal (FrictionSignal.Abandonment(tool, BlockerKind.InvalidRequest)) ]
-      use doc = JsonDocument.Parse(frictionReportJson report signals)
-      let root = doc.RootElement
-      root.GetProperty("TotalEvents").GetInt32()
+      let root = Json.parseOrFail (frictionReportJson report signals)
+      getInt "TotalEvents" root
       |> Expect.equal "Counts retain their exact integer value." Int32.MaxValue
-      let top = root.GetProperty("HighestPriorityTools")[0]
+      let top = (getArr "HighestPriorityTools" root)[0]
       for field in [ "MostCommonBlocker"; "MostCommonFollowUp"; "MostCommonAlternative" ] do
-        top.GetProperty(field).ValueKind |> Expect.equal "Absent choices are explicit JSON null." JsonValueKind.Null
-      let feedback = root.GetProperty("RecentFeedback")[0]
-      feedback.GetProperty("LatestReason").GetString()
+        getProp field top |> Expect.equal "Absent choices are explicit JSON null." JsonValue.Null
+      let feedback = (getArr "RecentFeedback" root)[0]
+      getStr "LatestReason" feedback
       |> Expect.equal "Feedback is escaped by the JSON library." escaped
-      feedback.GetProperty("LatestAlternative").ValueKind
-      |> Expect.equal "Missing feedback alternatives remain null." JsonValueKind.Null
-      let workItem = root.GetProperty("RecommendedWorkItems")[0]
-      workItem.GetProperty("TargetTool").ValueKind
-      |> Expect.equal "A work item may apply to no particular tool." JsonValueKind.Null
-      let observed = root.GetProperty("ObservedSignals")
-      observed.GetArrayLength() |> Expect.equal "All nine signal cases have a schema." 9
+      getProp "LatestAlternative" feedback
+      |> Expect.equal "Missing feedback alternatives remain null." JsonValue.Null
+      let workItem = (getArr "RecommendedWorkItems" root)[0]
+      getProp "TargetTool" workItem
+      |> Expect.equal "A work item may apply to no particular tool." JsonValue.Null
+      let observed = getArr "ObservedSignals" root
+      observed.Length |> Expect.equal "All nine signal cases have a schema." 9
       for index, (value, field, expected) in List.indexed cases do
-        observed[index].GetProperty("Id").GetString()
+        getStr "Id" observed[index]
         |> Expect.equal "Signal identity stays stable." (FrictionSignal.id value)
-        observed[index].GetProperty(field).GetInt32() |> Expect.equal "Evidence is not stringified." expected
-        observed[index].GetProperty("Scope").GetString()
+        getInt field observed[index] |> Expect.equal "Evidence is not stringified." expected
+        getStr "Scope" observed[index]
         |> Expect.equal "Scope text is escaped verbatim." ("Agent:" + escaped)
-      observed[0].GetProperty("EventCount").GetInt32() |> Expect.equal "Window evidence is retained." 13
-      observed[3].GetProperty("RawTool").GetString() |> Expect.equal "Unattributed names are escaped." escaped
-      observed[8].GetProperty("LastBlocker").GetString()
+      getInt "EventCount" observed[0] |> Expect.equal "Window evidence is retained." 13
+      getStr "RawTool" observed[3] |> Expect.equal "Unattributed names are escaped." escaped
+      getStr "LastBlocker" observed[8]
       |> Expect.equal "Abandonment retains its blocker." "InvalidRequest"
 
     // ── B7 — observed signals surfaced through the daemon read model ──
@@ -218,10 +237,10 @@ let tests =
       | Error err -> failwithf "reportDirect failed: %s" err
       | Ok bundle ->
         let json = frictionReportJson bundle.Report bundle.ObservedSignals
-        let doc = JsonDocument.Parse(json)
-        let observed = doc.RootElement.GetProperty("ObservedSignals")
+        let root = Json.parseOrFail json
+        let observed = getArr "ObservedSignals" root
         let ids =
-          [ for i in 0 .. observed.GetArrayLength() - 1 -> observed[i].GetProperty("Id").GetString() ]
+          [ for item in observed -> getStr "Id" item ]
 
         ids
         |> Expect.containsAll

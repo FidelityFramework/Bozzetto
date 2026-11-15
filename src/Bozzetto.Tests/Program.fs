@@ -186,7 +186,14 @@ let runTests argv =
       match Environment.GetEnvironmentVariable var with
       | null | "" -> Map.empty
       | path ->
-        try System.Text.Json.JsonSerializer.Deserialize<Map<string, float>>(File.ReadAllText path)
+        try
+          match Fidelity.Data.JSON.Json.parse (File.ReadAllText path) with
+          | Ok (Fidelity.Data.JSON.JsonValue.Object props) ->
+            props
+            |> List.choose (fun (k, v) ->
+              Fidelity.Data.JSON.JsonValue.asNumber v |> Option.map (fun n -> k, n))
+            |> Map.ofList
+          | _ -> Map.empty
         with _ -> Map.empty
     let mine, tierName =
       match shard with
@@ -213,9 +220,9 @@ let runTests argv =
             | _ :: suite :: _ -> Some (suite, summary.duration.TotalSeconds)
             | _ -> None)
           |> List.groupBy fst
-          |> List.map (fun (suite, xs) -> suite, xs |> List.sumBy snd)
-          |> Map.ofList
-        try File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize timings) with _ -> ()
+          |> List.map (fun (suite, xs) -> suite, Fidelity.Data.JSON.JsonValue.Number (xs |> List.sumBy snd))
+          |> Fidelity.Data.JSON.JsonValue.Object
+        try File.WriteAllText(path, Fidelity.Data.JSON.Json.serialize timings) with _ -> ()
     let result =
       Bozzetto.Tests.TestInfrastructure.TrustSignal.runObserved
         Bozzetto.Tests.TestInfrastructure.TrustSignal.record recordSuiteTimings tierName hostArgv hostIntegrationTests

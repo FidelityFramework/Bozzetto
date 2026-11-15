@@ -7,7 +7,7 @@ open System.Net
 open System.Net.Http
 open System.Net.Sockets
 open System.Text
-open System.Text.Json
+open Fidelity.Data.JSON
 open System.Threading
 open System.Threading.Tasks
 open Expecto
@@ -169,9 +169,29 @@ let startDaemonWithArgs (port: int) (workingDir: string) (args: string list) = t
 let startDaemon (port: int) =
   startDaemonWithArgs port repoRoot []
 
+let rec private toJsonValue (v: obj) : JsonValue =
+  match v with
+  | null -> JsonValue.Null
+  | :? JsonValue as j -> j
+  | :? string as s -> JsonValue.String s
+  | :? bool as b -> JsonValue.Bool b
+  | :? int as n -> JsonValue.Number (float n)
+  | :? int64 as n -> JsonValue.Number (float n)
+  | :? uint64 as n -> JsonValue.Number (float n)
+  | :? float as n -> JsonValue.Number n
+  | :? Collections.IDictionary as d ->
+    JsonValue.Object [ for k in d.Keys -> string k, toJsonValue d[k] ]
+  | :? Collections.IEnumerable as seq ->
+    JsonValue.Array [ for item in seq -> toJsonValue item ]
+  | _ ->
+    JsonValue.Object [
+      for p in v.GetType().GetProperties() ->
+        p.Name, toJsonValue (p.GetValue v)
+    ]
+
 /// POST JSON to a path, return (statusCode, body).
 let postJson (client: HttpClient) (path: string) (payload: obj) = task {
-  let json = JsonSerializer.Serialize(payload)
+  let json = toJsonValue payload |> Json.serialize
   use content = new StringContent(json, Encoding.UTF8, "application/json")
   let! resp = client.PostAsync(path, content)
   let! body = resp.Content.ReadAsStringAsync()
@@ -209,13 +229,19 @@ let waitForReadySession (client: HttpClient) (targetDir: string) (timeout: TimeS
     let! status, body = getJson client "/api/sessions"
     lastBody <- body
     if status = 200 then
-      use doc = JsonDocument.Parse(body)
+      let root = Json.parseOrFail body
+      let sessions =
+        match JsonValue.prop "sessions" root with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
       ready <-
-        doc.RootElement.GetProperty("sessions").EnumerateArray()
-        |> Seq.exists (fun session ->
-          let sessionDir = session.GetProperty("workingDirectory").GetString() |> normalizeDir
-          sessionDir = expectedDir
-          && session.GetProperty("status").GetString() = "Ready")
+        sessions
+        |> List.exists (fun session ->
+          match JsonValue.prop "workingDirectory" session |> Option.bind JsonValue.asString,
+                JsonValue.prop "status" session |> Option.bind JsonValue.asString with
+          | Some dir, Some sessionStatus ->
+            normalizeDir dir = expectedDir && sessionStatus = "Ready"
+          | _ -> false)
 
   return ready, lastBody
 }
@@ -258,24 +284,36 @@ let getLiveTestingStatusSnapshot (client: HttpClient) (fileFilter: string option
   if status <> 200 then
     failwith (sprintf "Expected 200 from %s, got %d with body: %s" path status body)
 
-  use doc = JsonDocument.Parse(body)
-  let root = doc.RootElement
-  let summary = root.GetProperty("Summary")
+  let root = Json.parseOrFail body
+  let summary =
+    match JsonValue.prop "Summary" root with
+    | Some s -> s
+    | None -> failtestf "Expected 'Summary' in %s" body
   let failedTests =
-    match root.TryGetProperty("FailedTests") with
-    | true, tests ->
-      tests.EnumerateArray()
-      |> Seq.map (fun entry -> entry.GetProperty("Name").GetString())
-      |> Seq.toList
-    | false, _ -> []
+    match JsonValue.prop "FailedTests" root with
+    | Some (JsonValue.Array tests) ->
+      tests
+      |> List.map (fun entry ->
+        match JsonValue.prop "Name" entry |> Option.bind JsonValue.asString with
+        | Some name -> name
+        | None -> failtestf "Expected string 'Name' in FailedTests entry")
+    | _ -> failtestf "Expected array 'FailedTests' in %s" body
+  let getIntProp name obj =
+    match JsonValue.prop name obj |> Option.bind JsonValue.asInt with
+    | Some i -> int i
+    | None -> failtestf "Expected int '%s' in Summary" name
+  let discoveryState =
+    match JsonValue.prop "DiscoveryState" root |> Option.bind JsonValue.asString with
+    | Some s -> s
+    | None -> failtestf "Expected string 'DiscoveryState' in %s" body
 
   let snapshot = {
-    DiscoveryState = root.GetProperty("DiscoveryState").GetString()
-    Total = summary.GetProperty("Total").GetInt32()
-    Passed = summary.GetProperty("Passed").GetInt32()
-    Failed = summary.GetProperty("Failed").GetInt32()
-    Stale = summary.GetProperty("Stale").GetInt32()
-    Running = summary.GetProperty("Running").GetInt32()
+    DiscoveryState = discoveryState
+    Total = getIntProp "Total" summary
+    Passed = getIntProp "Passed" summary
+    Failed = getIntProp "Failed" summary
+    Stale = getIntProp "Stale" summary
+    Running = getIntProp "Running" summary
     FailedTests = failedTests
   }
 

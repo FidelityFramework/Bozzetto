@@ -82,10 +82,12 @@ module BozzettoBinary =
 module DaemonIdentity =
   /// Does a /api/daemon-info body name this pid?
   let reportsPid (body: string) (pid: int) =
-    try
-      use doc = System.Text.Json.JsonDocument.Parse body
-      doc.RootElement.GetProperty("pid").GetInt32() = pid
-    with _ -> false
+    match Fidelity.Data.JSON.Json.parse body with
+    | Ok root ->
+      match Fidelity.Data.JSON.JsonValue.prop "pid" root |> Option.bind Fidelity.Data.JSON.JsonValue.asInt with
+      | Some p -> int p = pid
+      | None -> false
+    | Error _ -> false
 
 /// The one port allocator every real-daemon-spawning test harness goes
 /// through. A daemon binds two ports — the MCP port it is given, and the
@@ -574,7 +576,20 @@ module TrustSignal =
     match System.Environment.GetEnvironmentVariable LedgerEnvironmentVariable with
     | null | "" -> ()
     | path ->
-      let line = System.Text.Json.JsonSerializer.Serialize row
+      let line =
+        Fidelity.Data.JSON.JsonValue.Object [
+          "Tier", Fidelity.Data.JSON.JsonValue.String row.Tier
+          "Registered", Fidelity.Data.JSON.JsonValue.Number (float row.Registered)
+          "Ran", Fidelity.Data.JSON.JsonValue.Number (float row.Ran)
+          "Passed", Fidelity.Data.JSON.JsonValue.Number (float row.Passed)
+          "Failed", Fidelity.Data.JSON.JsonValue.Number (float row.Failed)
+          "Errored", Fidelity.Data.JSON.JsonValue.Number (float row.Errored)
+          "Ignored", Fidelity.Data.JSON.JsonValue.Number (float row.Ignored)
+          "Verdict", Fidelity.Data.JSON.JsonValue.String row.Verdict
+          "Detail", Fidelity.Data.JSON.JsonValue.String row.Detail
+          "ExitCode", Fidelity.Data.JSON.JsonValue.Number (float row.ExitCode)
+        ]
+        |> Fidelity.Data.JSON.Json.serialize
       lock LedgerEnvironmentVariable (fun () -> System.IO.File.AppendAllText(path, line + "\n"))
 
   let rowOf (tier: string) (registered: int) (tally: Tally) (verdict: Verdict) (exitCode: int) =

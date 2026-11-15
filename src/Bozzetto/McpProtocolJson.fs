@@ -13,3 +13,6 @@ module McpProtocolJson =
 
   let ofElement (value: System.Text.Json.JsonElement) =
     Json.parseOrFail (value.GetRawText())
+
+  let toNode (value: JsonValue) =
+    System.Text.Json.Nodes.JsonNode.Parse(Json.serialize value)

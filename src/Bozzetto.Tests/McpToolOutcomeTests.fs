@@ -53,7 +53,7 @@ module Bozzetto.Tests.McpToolOutcomeTests
 
 open System
 open System.IO
-open System.Text.Json
+open Fidelity.Data.JSON
 open System.Threading
 open System.Threading.Tasks
 open Expecto
@@ -79,9 +79,8 @@ let private samplePath = Path.Combine(fixtureDir, "Sample.fs")
 /// (a real, deliberate feature — the agent should see it). Naively
 /// concatenating every block (the pattern CohortMcpToolsIntegrationTests.fs
 /// uses, safe there because its tools return plain prose) corrupts JSON:
-/// discovered directly by this test failing with 'System.Text.Json.
-/// JsonReaderException: 0xF0 is invalid after a single JSON value' the
-/// moment a warmup/test-result event landed between calls.
+/// discovered directly by this test failing on trailing text after a single
+/// JSON value the moment a warmup/test-result event landed between calls.
 let private textOf (result: CallToolResult) : string =
   result.Content
   |> Seq.choose (function :? TextContentBlock as t -> Some t.Text | _ -> None)
@@ -128,10 +127,32 @@ let private pollToolUntil
   }
 
 let private hasIntPropertyAtLeast (propertyName: string) (minValue: int) (text: string) : bool =
-  try
-    use doc = JsonDocument.Parse text
-    doc.RootElement.GetProperty(propertyName).GetInt32() >= minValue
-  with _ -> false
+  match Json.parse text with
+  | Ok root ->
+    match JsonValue.prop propertyName root |> Option.bind JsonValue.asInt with
+    | Some n -> int n >= minValue
+    | None -> false
+  | Error _ -> false
+
+let private getProp (name: string) (v: JsonValue) =
+  match JsonValue.prop name v with
+  | Some p -> p
+  | None -> failtestf "missing property '%s' in %s" name (Json.serialize v)
+
+let private getStr (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asString with
+  | Some s -> s
+  | None -> failtestf "property '%s' is not a string" name
+
+let private getInt (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asInt with
+  | Some n -> int n
+  | None -> failtestf "property '%s' is not an int" name
+
+let private getArr (name: string) (v: JsonValue) =
+  match getProp name v with
+  | JsonValue.Array items -> items
+  | _ -> failtestf "property '%s' is not an array" name
 
 /// The tail of the gate — coverage_intel and suggest_repair.
 ///
@@ -162,30 +183,33 @@ let private runToolOutcomeTail
         //    "Bozzetto.Tests.Fixtures.McpToolOutcome.Sample.subtract",...]}] ──
         let! coverageRaw =
           pollToolUntil client "coverage_intel" [] (TimeSpan.FromSeconds 15.0) (fun raw ->
-            try JsonDocument.Parse(raw: string).RootElement.GetArrayLength() > 0
-            with _ -> false)
-        let coverageDoc = JsonDocument.Parse(coverageRaw: string)
-        let coverageReports = [ for e in coverageDoc.RootElement.EnumerateArray() -> e ]
+            match Json.parse (raw: string) with
+            | Ok (JsonValue.Array items) -> not items.IsEmpty
+            | _ -> false)
+        let coverageReports =
+          match Json.parseOrFail (coverageRaw: string) with
+          | JsonValue.Array items -> items
+          | _ -> []
         coverageReports
         |> Expect.isNonEmpty (sprintf "coverage_intel should report coverage for at least the one failing test. Raw: %s" coverageRaw)
 
         let subtractCoverage =
           coverageReports
-          |> List.tryFind (fun r -> r.GetProperty("TestName").GetString() = "subtract computes the difference")
+          |> List.tryFind (fun r -> getStr "TestName" r = "subtract computes the difference")
         subtractCoverage
         |> Expect.isSome (sprintf "coverage_intel should report on the test that just failed. Raw: %s" coverageRaw)
         let subtractReport = subtractCoverage.Value
 
-        (subtractReport.GetProperty("TotalBranches").GetInt32(), 0)
+        (getInt "TotalBranches" subtractReport, 0)
         |> Expect.isGreaterThan "coverage_intel should carry a real IL-instrumented branch count for this compiled fixture, not zero"
 
-        [ for e in subtractReport.GetProperty("BlindSpots").EnumerateArray() -> e ]
+        getArr "BlindSpots" subtractReport
         |> Expect.isNonEmpty "coverage_intel should list uncovered branch locations for a test with 0% coverage"
 
-        [ for s in subtractReport.GetProperty("CausalSymbols").EnumerateArray() -> s.GetString() ]
+        getArr "CausalSymbols" subtractReport
+        |> List.choose JsonValue.asString
         |> List.exists (fun s -> s.Contains "subtract")
         |> Expect.isTrue (sprintf "coverage_intel's causal symbols should name the function that actually changed. Raw: %s" coverageRaw)
-        coverageDoc.Dispose()
 
         // ── suggest_repair: composes explain_test_failure → causal symbol →
         //    ripple plan. Live-verified real, non-vacuous output for this
@@ -208,19 +232,17 @@ let private runToolOutcomeTail
         // this test exists — suggest_repair reads the SAME cached
         // narrative, so its data is ready on the first call.
         let! repairRaw = callTool client "suggest_repair" [ "test_name", box "subtract computes the difference" ]
-        let repairDoc = JsonDocument.Parse(repairRaw: string)
-        let repairRoot = repairDoc.RootElement
-        repairRoot.GetProperty("TestName").GetString()
+        let repairRoot = Json.parseOrFail (repairRaw: string)
+        getStr "TestName" repairRoot
         |> Expect.equal (sprintf "suggest_repair should name the test it was asked about. Raw: %s" repairRaw) "subtract computes the difference"
-        [ for e in repairRoot.GetProperty("CausalChanges").EnumerateArray() -> e ]
+        getArr "CausalChanges" repairRoot
         |> Expect.isNonEmpty (sprintf "suggest_repair should carry the same causal changes explain_test_failure reported. Raw: %s" repairRaw)
-        repairRoot.GetProperty("Suggestion").GetString()
+        getStr "Suggestion" repairRoot
         |> Expect.isNotEmpty (sprintf "suggest_repair should always produce a human-readable suggestion, even without a ripple plan. Raw: %s" repairRaw)
-        repairRoot.GetProperty("RipplePlan").ValueKind
+        getProp "RipplePlan" repairRoot
         |> Expect.equal
              "RipplePlan is honestly null for a compiled-project session with no FSI eval history — see this block's header comment"
-             JsonValueKind.Null
-        repairDoc.Dispose()
+             JsonValue.Null
   }
 
 /// The gate's assertions, with NO try/finally anywhere in the computation
@@ -360,17 +382,16 @@ let private runToolOutcomeBody
         |> hasIntPropertyAtLeast "MatchCount" 1
         |> Expect.isTrue (
           sprintf "explain_test_failure should find a narrative for the test that just failed. Raw: %s" explainRaw)
-        let explainDoc = JsonDocument.Parse(explainRaw: string)
-        let explainRoot = explainDoc.RootElement
+        let explainRoot = Json.parseOrFail (explainRaw: string)
 
-        let narratives = [ for e in explainRoot.GetProperty("Narratives").EnumerateArray() -> e ]
+        let narratives = getArr "Narratives" explainRoot
         narratives
-        |> List.exists (fun n -> n.GetProperty("DisplayName").GetString().Contains "subtract")
+        |> List.exists (fun n -> (getStr "DisplayName" n).Contains "subtract")
         |> Expect.isTrue "explain_test_failure's narrative should name the failing test"
 
         let causalChanges =
           [ for n in narratives do
-              for c in n.GetProperty("CausalChanges").EnumerateArray() -> c ]
+              for c in getArr "CausalChanges" n -> c ]
         causalChanges
         |> Expect.isNonEmpty "explain_test_failure should report at least one causal change, not an empty narrative"
 
@@ -382,11 +403,10 @@ let private runToolOutcomeBody
         |> hasIntPropertyAtLeast "FailureCount" 1
         |> Expect.isTrue (
           sprintf "diagnose should report the same failure list_tests/explain_test_failure just saw. Raw: %s" diagnoseRaw)
-        let diagnoseDoc = JsonDocument.Parse(diagnoseRaw: string)
-        let diagnoseRoot = diagnoseDoc.RootElement
+        let diagnoseRoot = Json.parseOrFail (diagnoseRaw: string)
 
         let diagnoseNames =
-          [ for f in diagnoseRoot.GetProperty("Failures").EnumerateArray() -> f.GetProperty("TestName").GetString() ]
+          [ for f in getArr "Failures" diagnoseRoot -> getStr "TestName" f ]
         diagnoseNames
         |> Expect.contains "diagnose's Failures list should name the same test explain_test_failure narrated" "subtract computes the difference"
 

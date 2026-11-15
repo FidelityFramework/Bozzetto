@@ -436,7 +436,32 @@ let tests =
       result |> Expect.stringContains "has avg" "Avg:"
   ]
 
-open System.Text.Json
+open Fidelity.Data.JSON
+
+let private getProp (name: string) (v: JsonValue) =
+  match JsonValue.prop name v with
+  | Some p -> p
+  | None -> failtestf "missing property '%s' in %s" name (Json.serialize v)
+
+let private getStr (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asString with
+  | Some s -> s
+  | None -> failtestf "property '%s' is not a string" name
+
+let private getInt (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asInt with
+  | Some n -> int n
+  | None -> failtestf "property '%s' is not an int" name
+
+let private getBool (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asBool with
+  | Some b -> b
+  | None -> failtestf "property '%s' is not a bool" name
+
+let private getArr (name: string) (v: JsonValue) =
+  match getProp name v with
+  | JsonValue.Array items -> items
+  | _ -> failtestf "property '%s' is not an array" name
 
 [<Tests>]
 let structuredOutputTests =
@@ -451,10 +476,9 @@ let structuredOutputTests =
         Metadata = Map.empty
       }
       let json = McpAdapter.formatEvalResultJson response
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      Expect.isTrue "success should be true" (root.GetProperty("success").GetBoolean())
-      root.GetProperty("result").GetString() |> Expect.equal "result value" "val x: int = 42"
+      let root = Json.parseOrFail json
+      Expect.isTrue "success should be true" (getBool "success" root)
+      getStr "result" root |> Expect.equal "result value" "val x: int = 42"
 
     testCase "formatEvalResultJson returns valid JSON for error"
     <| fun _ ->
@@ -466,10 +490,9 @@ let structuredOutputTests =
         Metadata = Map.empty
       }
       let json = McpAdapter.formatEvalResultJson response
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      Expect.isFalse "success should be false" (root.GetProperty("success").GetBoolean())
-      root.GetProperty("error").GetString() |> Expect.stringContains "error message" "foo"
+      let root = Json.parseOrFail json
+      Expect.isFalse "success should be false" (getBool "success" root)
+      getStr "error" root |> Expect.stringContains "error message" "foo"
 
     testCase "formatEvalResultJson includes diagnostics"
     <| fun _ ->
@@ -488,15 +511,14 @@ let structuredOutputTests =
         Metadata = Map.empty
       }
       let json = McpAdapter.formatEvalResultJson response
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      let diagnostics = root.GetProperty("diagnostics")
-      diagnostics.GetArrayLength() |> Expect.equal "one diagnostic" 1
+      let root = Json.parseOrFail json
+      let diagnostics = getArr "diagnostics" root
+      diagnostics.Length |> Expect.equal "one diagnostic" 1
       let d = diagnostics.[0]
-      d.GetProperty("severity").GetString() |> Expect.equal "severity" "error"
-      d.GetProperty("message").GetString() |> Expect.equal "message" "Undefined value"
-      d.GetProperty("startLine").GetInt32() |> Expect.equal "startLine" 1
-      d.GetProperty("startColumn").GetInt32() |> Expect.equal "startColumn" 0
+      getStr "severity" d |> Expect.equal "severity" "error"
+      getStr "message" d |> Expect.equal "message" "Undefined value"
+      getInt "startLine" d |> Expect.equal "startLine" 1
+      getInt "startColumn" d |> Expect.equal "startColumn" 0
 
     testCase "formatEvalResultJson includes stdout when present"
     <| fun _ ->
@@ -507,9 +529,8 @@ let structuredOutputTests =
         Metadata = Map.ofList [ "stdout", box "hello\n" ]
       }
       let json = McpAdapter.formatEvalResultJson response
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      root.GetProperty("stdout").GetString() |> Expect.equal "stdout captured" "hello\n"
+      let root = Json.parseOrFail json
+      getStr "stdout" root |> Expect.equal "stdout captured" "hello\n"
 
     testCase "formatEvalResultJson omits null fields"
     <| fun _ ->
@@ -520,11 +541,9 @@ let structuredOutputTests =
         Metadata = Map.empty
       }
       let json = McpAdapter.formatEvalResultJson response
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      let mutable ignored = Unchecked.defaultof<JsonElement>
-      Expect.isFalse "no error field when success" (root.TryGetProperty("error", &ignored))
-      Expect.isFalse "no stdout field when empty" (root.TryGetProperty("stdout", &ignored))
+      let root = Json.parseOrFail json
+      Expect.isFalse "no error field when success" (JsonValue.prop "error" root |> Option.isSome)
+      Expect.isFalse "no stdout field when empty" (JsonValue.prop "stdout" root |> Option.isSome)
 
     testCase "formatEvalResultJson includes evaluated code"
     <| fun _ ->
@@ -535,9 +554,8 @@ let structuredOutputTests =
         Metadata = Map.empty
       }
       let json = McpAdapter.formatEvalResultJson response
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      root.GetProperty("code").GetString() |> Expect.equal "code field" "let x = 42;;"
+      let root = Json.parseOrFail json
+      getStr "code" root |> Expect.equal "code field" "let x = 42;;"
   ]
 
 [<Tests>]
@@ -548,19 +566,19 @@ let jsonFormatVariantTests =
       testCase "empty events returns zero count"
       <| fun _ ->
         let result = McpAdapter.formatEventsJson []
-        let doc = JsonDocument.Parse(result)
-        doc.RootElement.GetProperty("count").GetInt32()
+        let root = Json.parseOrFail result
+        getInt "count" root
         |> Expect.equal "should be 0" 0
 
       testCase "events have timestamp, source, text"
       <| fun _ ->
         let now = DateTime(2024, 1, 15, 10, 30, 0, DateTimeKind.Utc)
         let result = McpAdapter.formatEventsJson [(now, "system", "started")]
-        let doc = JsonDocument.Parse(result)
-        let first = doc.RootElement.GetProperty("events").EnumerateArray() |> Seq.head
-        first.GetProperty("source").GetString()
+        let root = Json.parseOrFail result
+        let first = getArr "events" root |> List.head
+        getStr "source" first
         |> Expect.equal "source should be system" "system"
-        first.GetProperty("text").GetString()
+        getStr "text" first
         |> Expect.equal "text should be started" "started"
 
       testCase "count matches number of events"
@@ -568,16 +586,16 @@ let jsonFormatVariantTests =
         let now = DateTime.UtcNow
         let events = [(now, "a", "1"); (now, "b", "2"); (now, "c", "3")]
         let result = McpAdapter.formatEventsJson events
-        let doc = JsonDocument.Parse(result)
-        doc.RootElement.GetProperty("count").GetInt32()
+        let root = Json.parseOrFail result
+        getInt "count" root
         |> Expect.equal "should be 3" 3
 
       testCase "special characters escaped in JSON"
       <| fun _ ->
         let now = DateTime.UtcNow
         let result = McpAdapter.formatEventsJson [(now, "eval", "line1\nline2")]
-        let doc = JsonDocument.Parse(result)
-        doc.RootElement.GetProperty("events").GetArrayLength()
+        let root = Json.parseOrFail result
+        (getArr "events" root).Length
         |> Expect.equal "should have 1 event" 1
     ]
 
@@ -585,22 +603,22 @@ let jsonFormatVariantTests =
       testCase "includes sessionId"
       <| fun _ ->
         let result = McpAdapter.formatStatusJson "test-123" 10 SessionState.Ready None
-        let doc = JsonDocument.Parse(result)
-        doc.RootElement.GetProperty("sessionId").GetString()
+        let root = Json.parseOrFail result
+        getStr "sessionId" root
         |> Expect.equal "should be test-123" "test-123"
 
       testCase "includes state"
       <| fun _ ->
         let result = McpAdapter.formatStatusJson "x" 0 SessionState.Evaluating None
-        let doc = JsonDocument.Parse(result)
-        doc.RootElement.GetProperty("state").GetString()
+        let root = Json.parseOrFail result
+        getStr "state" root
         |> Expect.equal "should be Evaluating" "Evaluating"
 
       testCase "includes tools array"
       <| fun _ ->
         let result = McpAdapter.formatStatusJson "x" 0 SessionState.Ready None
-        let doc = JsonDocument.Parse(result)
-        let toolCount = doc.RootElement.GetProperty("tools").GetArrayLength()
+        let root = Json.parseOrFail result
+        let toolCount = (getArr "tools" root).Length
         Expect.isGreaterThan "should have tools" (toolCount, 0)
 
       testCase "includes eval stats when present"
@@ -611,16 +629,15 @@ let jsonFormatVariantTests =
           |> Affordances.EvalStats.record (TimeSpan.FromMilliseconds 200.0)
           |> Affordances.EvalStats.record (TimeSpan.FromMilliseconds 300.0)
         let result = McpAdapter.formatStatusJson "x" 0 SessionState.Ready (Some stats)
-        let doc = JsonDocument.Parse(result)
-        doc.RootElement.GetProperty("evalStats").GetProperty("count").GetInt32()
+        let root = Json.parseOrFail result
+        getProp "evalStats" root |> getInt "count"
         |> Expect.equal "should be 3" 3
 
       testCase "omits eval stats when None"
       <| fun _ ->
         let result = McpAdapter.formatStatusJson "x" 0 SessionState.Ready None
-        let doc = JsonDocument.Parse(result)
-        let mutable dummy = Unchecked.defaultof<JsonElement>
-        doc.RootElement.TryGetProperty("evalStats", &dummy)
+        let root = Json.parseOrFail result
+        JsonValue.prop "evalStats" root |> Option.isSome
         |> Expect.isFalse "should not have evalStats"
     ]
 
@@ -634,11 +651,12 @@ let jsonFormatVariantTests =
           StartupProfileLoaded = None; StartupTimestamp = DateTime.UtcNow
         }
         let result = McpAdapter.formatEnhancedStatusJson "x" 0 SessionState.Ready None (Some cfg)
-        let doc = JsonDocument.Parse(result)
-        let projects = doc.RootElement.GetProperty("projects")
-        projects.GetArrayLength() |> Expect.equal "should have 1 project" 1
-        (projects.EnumerateArray() |> Seq.head).GetString()
-        |> Expect.equal "should be Test.fsproj" "Test.fsproj"
+        let root = Json.parseOrFail result
+        let projects = getArr "projects" root
+        projects.Length |> Expect.equal "should have 1 project" 1
+        match projects |> List.head |> JsonValue.asString with
+        | Some p -> p |> Expect.equal "should be Test.fsproj" "Test.fsproj"
+        | None -> failtestf "Expected string in projects array"
 
       testCase "includes startup section"
       <| fun _ ->
@@ -649,16 +667,16 @@ let jsonFormatVariantTests =
           StartupProfileLoaded = None; StartupTimestamp = DateTime.UtcNow
         }
         let result = McpAdapter.formatEnhancedStatusJson "x" 0 SessionState.Ready None (Some cfg)
-        let doc = JsonDocument.Parse(result)
-        let startup = doc.RootElement.GetProperty("startup")
-        startup.GetProperty("workflow").GetString()
+        let root = Json.parseOrFail result
+        let startup = getProp "startup" root
+        getStr "workflow" startup
         |> Expect.equal "retains the actual supported workflow" "Interactive"
 
       testCase "projects empty when no config"
       <| fun _ ->
         let result = McpAdapter.formatEnhancedStatusJson "x" 0 SessionState.Ready None None
-        let doc = JsonDocument.Parse(result)
-        doc.RootElement.GetProperty("projects").GetArrayLength()
+        let root = Json.parseOrFail result
+        (getArr "projects" root).Length
         |> Expect.equal "should be 0" 0
     ]
   ]
@@ -670,32 +688,32 @@ let workerEvalJsonTests =
     <| fun _ ->
       let resp = WorkerProtocol.WorkerResponse.EvalResult("r1", Ok "val x: int = 42", [], Map.empty)
       let json = McpAdapter.formatWorkerEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("success").GetBoolean()
+      let root = Json.parseOrFail json
+      getBool "success" root
       |> Expect.isTrue "should be success"
 
     testCase "success result includes result text"
     <| fun _ ->
       let resp = WorkerProtocol.WorkerResponse.EvalResult("r1", Ok "val x: int = 42", [], Map.empty)
       let json = McpAdapter.formatWorkerEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("result").GetString()
+      let root = Json.parseOrFail json
+      getStr "result" root
       |> Expect.equal "result text" "val x: int = 42"
 
     testCase "error result has success=false"
     <| fun _ ->
       let resp = WorkerProtocol.WorkerResponse.EvalResult("r1", Error (BozzettoError.EvalFailed "type mismatch"), [], Map.empty)
       let json = McpAdapter.formatWorkerEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("success").GetBoolean()
+      let root = Json.parseOrFail json
+      getBool "success" root
       |> Expect.isFalse "should not be success"
 
     testCase "error result includes error message"
     <| fun _ ->
       let resp = WorkerProtocol.WorkerResponse.EvalResult("r1", Error (BozzettoError.EvalFailed "type mismatch"), [], Map.empty)
       let json = McpAdapter.formatWorkerEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("error").GetString()
+      let root = Json.parseOrFail json
+      getStr "error" root
       |> Expect.stringContains "should contain error message" "type mismatch"
 
     testCase "diagnostics are included as array"
@@ -706,8 +724,8 @@ let workerEvalJsonTests =
           ErrorNumber = 0 }
       let resp = WorkerProtocol.WorkerResponse.EvalResult("r1", Ok "done", [diag], Map.empty)
       let json = McpAdapter.formatWorkerEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("diagnostics").GetArrayLength()
+      let root = Json.parseOrFail json
+      (getArr "diagnostics" root).Length
       |> Expect.equal "one diagnostic" 1
 
     testCase "diagnostic has severity, message, and location"
@@ -718,25 +736,25 @@ let workerEvalJsonTests =
           ErrorNumber = 0 }
       let resp = WorkerProtocol.WorkerResponse.EvalResult("r1", Ok "done", [diag], Map.empty)
       let json = McpAdapter.formatWorkerEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      let d0 = doc.RootElement.GetProperty("diagnostics").[0]
-      d0.GetProperty("severity").GetString() |> Expect.equal "severity" "warning"
-      d0.GetProperty("message").GetString() |> Expect.equal "message" "unused binding"
-      d0.GetProperty("startLine").GetInt32() |> Expect.equal "startLine" 3
+      let root = Json.parseOrFail json
+      let d0 = (getArr "diagnostics" root).[0]
+      getStr "severity" d0 |> Expect.equal "severity" "warning"
+      getStr "message" d0 |> Expect.equal "message" "unused binding"
+      getInt "startLine" d0 |> Expect.equal "startLine" 3
 
     testCase "WorkerError response has success=false"
     <| fun _ ->
       let resp = WorkerProtocol.WorkerResponse.WorkerError (BozzettoError.PipeClosed)
       let json = McpAdapter.formatWorkerEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("success").GetBoolean()
+      let root = Json.parseOrFail json
+      getBool "success" root
       |> Expect.isFalse "should not be success"
 
     testCase "quotes in result are escaped"
     <| fun _ ->
       let resp = WorkerProtocol.WorkerResponse.EvalResult("r1", Ok """val s: string = "hello" """, [], Map.empty)
       let json = McpAdapter.formatWorkerEvalResultJson resp
-      JsonDocument.Parse(json) |> ignore
+      Json.parseOrFail json |> ignore
       json |> Expect.stringContains "contains escaped quote" "\\\""
 
     testCase "WHY — formatWorkerEvalResultJson — strips ANSI escape codes from the result text, because raw color codes are noise to a human and corrupt a JSON-parsing agent (issue #143)"
@@ -747,8 +765,8 @@ let workerEvalJsonTests =
       let raw = "\x1b[37m[\x1b[37m12:05:27 \x1b[37mINF\x1b[37m] \x1b[37mEXPECTO? Running tests...\x1b[0m"
       let resp = WorkerProtocol.WorkerResponse.EvalResult("r1", Ok raw, [], Map.empty)
       let json = McpAdapter.formatWorkerEvalResultJson resp
-      let doc = JsonDocument.Parse(json)
-      let result = doc.RootElement.GetProperty("result").GetString()
+      let root = Json.parseOrFail json
+      let result = getStr "result" root
       result.Contains("\x1b") |> Expect.isFalse "result must contain no raw ESC bytes"
       result |> Expect.stringContains "the real text survives stripping" "EXPECTO? Running tests..."
 
@@ -814,8 +832,8 @@ let workerEvalJsonTests =
         | false ->
           let escaped = McpAdapter.escapeJson s
           let json = sprintf """{"v":"%s"}""" escaped
-          use doc = System.Text.Json.JsonDocument.Parse(json)
-          let roundtripped = doc.RootElement.GetProperty("v").GetString()
+          let root = Json.parseOrFail json
+          let roundtripped = getStr "v" root
           roundtripped |> Expect.equal "roundtrip should preserve value" s
     ]
 
@@ -887,9 +905,9 @@ let evalStructuredContentTests =
     testCase "success payload has success=true and the result text"
     <| fun _ ->
       let json = McpAdapter.formatEvalStructuredSuccess "val x: int = 42" []
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("success").GetBoolean() |> Expect.isTrue "should be success"
-      doc.RootElement.GetProperty("result").GetString() |> Expect.equal "result text" "val x: int = 42"
+      let root = Json.parseOrFail json
+      getBool "success" root |> Expect.isTrue "should be success"
+      getStr "result" root |> Expect.equal "result text" "val x: int = 42"
 
     testCase "success payload carries diagnostics with spans, not flattened text"
     <| fun _ ->
@@ -898,23 +916,23 @@ let evalStructuredContentTests =
           Message = "unused binding"; StartLine = 3; StartColumn = 4; EndLine = 3; EndColumn = 10
           ErrorNumber = 0 }
       let json = McpAdapter.formatEvalStructuredSuccess "val x: int = 42" [diag]
-      let doc = JsonDocument.Parse(json)
-      let d0 = doc.RootElement.GetProperty("diagnostics").[0]
-      d0.GetProperty("startLine").GetInt32() |> Expect.equal "startLine span" 3
-      d0.GetProperty("startColumn").GetInt32() |> Expect.equal "startColumn span" 4
-      d0.GetProperty("endLine").GetInt32() |> Expect.equal "endLine span" 3
-      d0.GetProperty("endColumn").GetInt32() |> Expect.equal "endColumn span" 10
+      let root = Json.parseOrFail json
+      let d0 = (getArr "diagnostics" root).[0]
+      getInt "startLine" d0 |> Expect.equal "startLine span" 3
+      getInt "startColumn" d0 |> Expect.equal "startColumn span" 4
+      getInt "endLine" d0 |> Expect.equal "endLine span" 3
+      getInt "endColumn" d0 |> Expect.equal "endColumn span" 10
 
     testCase "failure payload is the full BozzettoError algebra, not a flattened message"
     <| fun _ ->
       let err = BozzettoError.EvalFailed "type mismatch"
       let json = McpAdapter.formatEvalStructuredError err
-      let doc = JsonDocument.Parse(json)
+      let root = Json.parseOrFail json
       // Same shape as McpServer.structuredToolErrorResult / BozzettoError.toJson:
       // case / message / suggestedAction — never just an "error" string.
-      doc.RootElement.GetProperty("case").GetString() |> Expect.equal "case token" "EvalFailed"
-      doc.RootElement.GetProperty("message").GetString() |> Expect.stringContains "message" "type mismatch"
-      doc.RootElement.TryGetProperty("suggestedAction") |> fst |> Expect.isTrue "must carry a suggestedAction"
+      getStr "case" root |> Expect.equal "case token" "EvalFailed"
+      getStr "message" root |> Expect.stringContains "message" "type mismatch"
+      JsonValue.prop "suggestedAction" root |> Option.isSome |> Expect.isTrue "must carry a suggestedAction"
   ]
 
 /// roast-7 §13/§16 item 13: the only enforced size limit before this was

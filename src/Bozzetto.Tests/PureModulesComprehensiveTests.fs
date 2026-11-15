@@ -17,7 +17,27 @@ open Bozzetto.Features.LiveTesting
 open Bozzetto.Watchdog
 open Bozzetto.RestartPolicy
 open System
-open System.Text.Json
+open Fidelity.Data.JSON
+
+let private getProp (name: string) (v: JsonValue) =
+  match JsonValue.prop name v with
+  | Some p -> p
+  | None -> failtestf "missing property '%s' in %s" name (Json.serialize v)
+
+let private getStr (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asString with
+  | Some s -> s
+  | None -> failtestf "property '%s' is not a string" name
+
+let private getInt (name: string) (v: JsonValue) =
+  match getProp name v |> JsonValue.asInt with
+  | Some n -> int n
+  | None -> failtestf "property '%s' is not an int" name
+
+let private getArr (name: string) (v: JsonValue) =
+  match getProp name v with
+  | JsonValue.Array items -> items
+  | _ -> failtestf "property '%s' is not an array" name
 
 // ═══════════════════════════════════════════════════════════
 let completionKindOfGlyphTests = testList "CompletionKind.ofGlyph" [
@@ -357,11 +377,9 @@ let escapeJsonProducesValidJson =
     <| fun (s: NonEmptyString) ->
       let escaped = escapeJson s.Get
       let json = sprintf "\"%s\"" escaped
-      try
-        use doc = JsonDocument.Parse(json)
-        doc.RootElement.GetString() |> ignore
-        true
-      with _ -> false
+      match Json.parse json with
+      | Ok(JsonValue.String _) -> true
+      | _ -> false
 
 let escapeJsonRoundtripPreservesContent =
   testPropertyWithConfig escapeJsonPropertyCfg
@@ -369,24 +387,24 @@ let escapeJsonRoundtripPreservesContent =
     <| fun (s: NonEmptyString) ->
       let escaped = escapeJson s.Get
       let json = sprintf "\"%s\"" escaped
-      use doc = JsonDocument.Parse(json)
-      doc.RootElement.GetString() = s.Get
+      let root = Json.parseOrFail json
+      JsonValue.asString root = Some s.Get
 
 let escapeJsonControlCharExamples = testList "escapeJson: control character examples" [
   test "backspace is escaped" {
     let result = escapeJson "hello\bworld"
-    use doc = JsonDocument.Parse(sprintf "\"%s\"" result)
-    doc.RootElement.GetString() |> Expect.equal "roundtrip" "hello\bworld"
+    let root = Json.parseOrFail (sprintf "\"%s\"" result)
+    JsonValue.asString root |> Expect.equal "roundtrip" (Some "hello\bworld")
   }
   test "form feed is escaped" {
     let result = escapeJson "page\x0Cbreak"
-    use doc = JsonDocument.Parse(sprintf "\"%s\"" result)
-    doc.RootElement.GetString() |> Expect.equal "roundtrip" "page\x0Cbreak"
+    let root = Json.parseOrFail (sprintf "\"%s\"" result)
+    JsonValue.asString root |> Expect.equal "roundtrip" (Some "page\x0Cbreak")
   }
   test "null byte is escaped" {
     let result = escapeJson "null\x00here"
-    use doc = JsonDocument.Parse(sprintf "\"%s\"" result)
-    doc.RootElement.GetString() |> Expect.equal "roundtrip" "null\x00here"
+    let root = Json.parseOrFail (sprintf "\"%s\"" result)
+    JsonValue.asString root |> Expect.equal "roundtrip" (Some "null\x00here")
   }
   test "all standard escapes present" {
     let input = "\"\\\n\r\t\b\x0C"
@@ -602,27 +620,25 @@ let parseConfigLinesNeverCrashes =
 let formatEventsJsonTests = testList "formatEventsJson: MCP protocol contract" [
   test "empty events produces valid JSON with count 0" {
     let result = formatEventsJson []
-    use doc = JsonDocument.Parse(result)
-    let root = doc.RootElement
-    root.GetProperty("count").GetInt32() |> Expect.equal "count" 0
-    root.GetProperty("events").GetArrayLength() |> Expect.equal "array" 0
+    let root = Json.parseOrFail result
+    getInt "count" root |> Expect.equal "count" 0
+    (getArr "events" root).Length |> Expect.equal "array" 0
   }
   test "single event produces correct JSON shape" {
     let ts = DateTime(2025, 1, 15, 10, 30, 0, DateTimeKind.Utc)
     let result = formatEventsJson [(ts, "mcp:test", "hello world")]
-    use doc = JsonDocument.Parse(result)
-    let root = doc.RootElement
-    root.GetProperty("count").GetInt32() |> Expect.equal "count" 1
-    let ev = root.GetProperty("events").[0]
-    ev.GetProperty("source").GetString() |> Expect.equal "source" "mcp:test"
-    ev.GetProperty("text").GetString() |> Expect.equal "text" "hello world"
-    ev.GetProperty("timestamp").GetString().Length > 0 |> Expect.isTrue "has timestamp"
+    let root = Json.parseOrFail result
+    getInt "count" root |> Expect.equal "count" 1
+    let ev = (getArr "events" root).[0]
+    getStr "source" ev |> Expect.equal "source" "mcp:test"
+    getStr "text" ev |> Expect.equal "text" "hello world"
+    (getStr "timestamp" ev).Length > 0 |> Expect.isTrue "has timestamp"
   }
   test "special characters in text are properly escaped" {
     let ts = DateTime(2025, 1, 15, 10, 30, 0, DateTimeKind.Utc)
     let result = formatEventsJson [(ts, "src", "line1\nline2\ttab\"quote")]
-    use doc = JsonDocument.Parse(result)
-    let text = doc.RootElement.GetProperty("events").[0].GetProperty("text").GetString()
+    let root = Json.parseOrFail result
+    let text = getStr "text" (getArr "events" root).[0]
     text |> Expect.equal "roundtrip" "line1\nline2\ttab\"quote"
   }
 ]
@@ -630,10 +646,9 @@ let formatEventsJsonTests = testList "formatEventsJson: MCP protocol contract" [
 let formatCompletionsJsonTests = testList "formatCompletionsJson: MCP protocol contract" [
   test "empty completions produces valid JSON with count 0" {
     let result = formatCompletionsJson []
-    use doc = JsonDocument.Parse(result)
-    let root = doc.RootElement
-    root.GetProperty("count").GetInt32() |> Expect.equal "count" 0
-    root.GetProperty("completions").GetArrayLength() |> Expect.equal "array" 0
+    let root = Json.parseOrFail result
+    getInt "count" root |> Expect.equal "count" 0
+    (getArr "completions" root).Length |> Expect.equal "array" 0
   }
   test "completion item has label, kind, insertText fields" {
     let item = {
@@ -643,11 +658,11 @@ let formatCompletionsJsonTests = testList "formatCompletionsJson: MCP protocol c
       GetDescription = None
     }
     let result = formatCompletionsJson [item]
-    use doc = JsonDocument.Parse(result)
-    let comp = doc.RootElement.GetProperty("completions").[0]
-    comp.GetProperty("label").GetString() |> Expect.equal "label" "myFunction"
-    comp.GetProperty("kind").GetString() |> Expect.equal "kind" "Method"
-    comp.GetProperty("insertText").GetString() |> Expect.equal "insert" "myFunction"
+    let root = Json.parseOrFail result
+    let comp = (getArr "completions" root).[0]
+    getStr "label" comp |> Expect.equal "label" "myFunction"
+    getStr "kind" comp |> Expect.equal "kind" "Method"
+    getStr "insertText" comp |> Expect.equal "insert" "myFunction"
   }
   test "special characters in display text are properly escaped" {
     let item = {
@@ -657,8 +672,8 @@ let formatCompletionsJsonTests = testList "formatCompletionsJson: MCP protocol c
       GetDescription = None
     }
     let result = formatCompletionsJson [item]
-    use doc = JsonDocument.Parse(result)
-    let label = doc.RootElement.GetProperty("completions").[0].GetProperty("label").GetString()
+    let root = Json.parseOrFail result
+    let label = getStr "label" (getArr "completions" root).[0]
     label |> Expect.equal "roundtrip" "func<'a>"
   }
 ]
@@ -1790,8 +1805,8 @@ let mcpAdapterPureTests = testList "McpAdapter pure" [
   testList "formatDiagnosticsResultJson" [
     test "empty diagnostics produces valid JSON" {
       let json = McpAdapter.formatDiagnosticsResultJson [||]
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("count").GetInt32() |> Expect.equal "count" 0
+      let root = Json.parseOrFail json
+      getInt "count" root |> Expect.equal "count" 0
     }
     test "single diagnostic has required JSON fields" {
       let diag = {
@@ -1802,11 +1817,11 @@ let mcpAdapterPureTests = testList "McpAdapter pure" [
         ErrorNumber = 1
       }
       let json = McpAdapter.formatDiagnosticsResultJson [| diag |]
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("count").GetInt32() |> Expect.equal "count" 1
-      let first = doc.RootElement.GetProperty("diagnostics").EnumerateArray() |> Seq.head
-      first.GetProperty("message").GetString() |> Expect.equal "msg" "test error"
-      first.GetProperty("severity").GetString() |> Expect.equal "sev" "error"
+      let root = Json.parseOrFail json
+      getInt "count" root |> Expect.equal "count" 1
+      let first = getArr "diagnostics" root |> List.head
+      getStr "message" first |> Expect.equal "msg" "test error"
+      getStr "severity" first |> Expect.equal "sev" "error"
     }
     test "count matches array length" {
       let mkDiag msg = {
@@ -1817,8 +1832,8 @@ let mcpAdapterPureTests = testList "McpAdapter pure" [
         ErrorNumber = 0
       }
       let json = McpAdapter.formatDiagnosticsResultJson [| mkDiag "a"; mkDiag "b"; mkDiag "c" |]
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("count").GetInt32() |> Expect.equal "count" 3
+      let root = Json.parseOrFail json
+      getInt "count" root |> Expect.equal "count" 3
     }
   ]
 ]

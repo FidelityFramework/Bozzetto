@@ -153,11 +153,15 @@ module GetStartupInfoTests =
           // Startup info is per-session since the session-architecture
           // unification (the daemon no longer holds one global StartupConfig):
           // the JSON carries the session identity, not FSI command-line args.
-          use doc = System.Text.Json.JsonDocument.Parse result
-          let root = doc.RootElement
-          (root.GetProperty("sessionId").GetString()) |> Expect.equal "Should identify the session" ctx.SessionMap.["test"]
-          (root.TryGetProperty("workingDirectory") |> fst) |> Expect.isTrue "Should carry the working directory"
-          (root.TryGetProperty("status") |> fst) |> Expect.isTrue "Should carry the session status"
+          let root = Fidelity.Data.JSON.Json.parseOrFail result
+          let getStr k =
+            match Fidelity.Data.JSON.JsonValue.prop k root |> Option.bind Fidelity.Data.JSON.JsonValue.asString with
+            | Some s -> s
+            | None -> failtestf "Expected string property '%s'" k
+          getStr "sessionId"
+          |> Expect.equal "Should identify the session" ctx.SessionMap.["test"]
+          Fidelity.Data.JSON.JsonValue.prop "workingDirectory" root |> Option.isSome |> Expect.isTrue "Should carry the working directory"
+          Fidelity.Data.JSON.JsonValue.prop "status" root |> Option.isSome |> Expect.isTrue "Should carry the session status"
         }
         |> Async.AwaitTask
         |> Async.RunSynchronously

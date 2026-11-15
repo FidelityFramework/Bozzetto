@@ -18,7 +18,7 @@ module Bozzetto.Tests.McpResourcesTests
 /// assert VALUES.
 
 open System
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open Bozzetto.Tests.TestInfrastructure
@@ -39,7 +39,25 @@ let private joinAndClaim () =
   |> fun s -> applyOk s (Bozzetto.Cohort.CohortCommand.Join(alice, Bozzetto.Cohort.JoinableRole.Implementer, Some "sess-1"))
   |> fun s -> applyOk s (Bozzetto.Cohort.CohortCommand.AcquireClaim(alice, Bozzetto.Cohort.ClaimScope.File "src/Foo.fs", "testing"))
 
-let private getProp (name: string) (el: JsonElement) = el.GetProperty(name)
+let private getProp (name: string) (el: JsonValue) =
+  match JsonValue.prop name el with
+  | Some p -> p
+  | None -> failtestf "missing property '%s' in %s" name (Json.serialize el)
+
+let private getArr (name: string) (el: JsonValue) =
+  match getProp name el with
+  | JsonValue.Array items -> items
+  | _ -> failtestf "property '%s' is not an array" name
+
+let private getStr (name: string) (el: JsonValue) =
+  match getProp name el |> JsonValue.asString with
+  | Some s -> s
+  | None -> failtestf "property '%s' is not a string" name
+
+let private getInt64 (name: string) (el: JsonValue) =
+  match getProp name el |> JsonValue.asInt with
+  | Some n -> n
+  | None -> failtestf "property '%s' is not an int64" name
 
 let private mkSessionInfo (name: string) (workingDirectory: string) : Bozzetto.WorkerProtocol.SessionInfo =
   { Id = Bozzetto.WorkerProtocol.SessionId.newId ()
@@ -72,13 +90,12 @@ let mcpResourcesTests = testList "MCP resources (item 12)" [
         StaleTests = [] }
     let frame = Bozzetto.Cohort.project head [| snapshot |]
     let json = Bozzetto.SseWriter.cohortFrameJson jsonOpts frame
-    use doc = JsonDocument.Parse(json)
-    let root = doc.RootElement
-    root |> getProp "version" |> fun p -> p.GetInt64() |> Expect.equal "version should be the ledger seq the frame was projected from" 5L
-    let members = root |> getProp "members" |> fun p -> p.EnumerateArray() |> Seq.toList
+    let root = Json.parseOrFail json
+    getInt64 "version" root |> Expect.equal "version should be the ledger seq the frame was projected from" 5L
+    let members = getArr "members" root
     members |> List.length |> Expect.equal "one member joined" 1
-    members.[0] |> getProp "id" |> fun p -> p.GetString() |> Expect.equal "member id displayed verbatim" "alice"
-    let claims = root |> getProp "claims" |> fun p -> p.EnumerateArray() |> Seq.toList
+    getStr "id" members.[0] |> Expect.equal "member id displayed verbatim" "alice"
+    let claims = getArr "claims" root
     claims |> List.length |> Expect.equal "one claim acquired" 1
 
   testCase "cohortFrameJson is stable/empty for an empty cohort (no members ever joined)" <| fun () ->
@@ -87,11 +104,11 @@ let mcpResourcesTests = testList "MCP resources (item 12)" [
     let json1 = Bozzetto.SseWriter.cohortFrameJson jsonOpts frame
     let json2 = Bozzetto.SseWriter.cohortFrameJson jsonOpts frame
     json1 |> Expect.equal "same input frame must always project the same JSON (property 10: frame identity is (Version, SessionGens))" json2
-    use doc = JsonDocument.Parse(json1)
-    doc.RootElement.GetProperty("version").GetInt64() |> Expect.equal "version should be 0 for an untouched ledger" 0L
-    doc.RootElement.GetProperty("members").GetArrayLength() |> Expect.equal "no members yet" 0
-    doc.RootElement.GetProperty("claims").GetArrayLength() |> Expect.equal "no claims yet" 0
-    doc.RootElement.GetProperty("rows").GetArrayLength() |> Expect.equal "no session rows yet" 0
+    let root = Json.parseOrFail json1
+    getInt64 "version" root |> Expect.equal "version should be 0 for an untouched ledger" 0L
+    (getArr "members" root).Length |> Expect.equal "no members yet" 0
+    (getArr "claims" root).Length |> Expect.equal "no claims yet" 0
+    (getArr "rows" root).Length |> Expect.equal "no session rows yet" 0
 
   testCase "formatCohortMatrixEvent's SSE data payload is byte-identical to cohortFrameJson" <| fun () ->
     // Proves the extraction changed nothing observable about the existing
@@ -110,25 +127,25 @@ let mcpResourcesTests = testList "MCP resources (item 12)" [
   testCase "sessionsToJson round-trips id/name/workingDirectory/status/workflow/projects" <| fun () ->
     let info = mkSessionInfo "my-session" "/repo/checkout"
     let json = Bozzetto.SessionOperations.sessionsToJson jsonOpts [ info ]
-    use doc = JsonDocument.Parse(json)
-    let sessions = doc.RootElement |> getProp "sessions" |> fun p -> p.EnumerateArray() |> Seq.toList
+    let root = Json.parseOrFail json
+    let sessions = getArr "sessions" root
     sessions |> List.length |> Expect.equal "one session" 1
     let s0 = sessions.[0]
-    s0 |> getProp "id" |> fun p -> p.GetString() |> Expect.equal "id should be the session id" (Bozzetto.WorkerProtocol.SessionId.value info.Id)
+    getStr "id" s0 |> Expect.equal "id should be the session id" (Bozzetto.WorkerProtocol.SessionId.value info.Id)
     // SessionInfo.displayName derives from SolutionRoot/WorkingDirectory's
     // last path segment (WorkerProtocol.fs), NOT the `Name` field — the same
     // behavior formatSessionInfo/list_sessions already reports, so
     // sessionsToJson must match it exactly rather than surfacing `Name`.
-    s0 |> getProp "name" |> fun p -> p.GetString() |> Expect.equal "name should be the display name (last segment of workingDirectory, no SolutionRoot set)" "checkout"
-    s0 |> getProp "workingDirectory" |> fun p -> p.GetString() |> Expect.equal "workingDirectory should round-trip" "/repo/checkout"
-    s0 |> getProp "workflow" |> fun p -> p.GetString() |> Expect.equal "workflow should be the label for Interactive" "REPL"
-    let projects = s0 |> getProp "projects" |> fun p -> p.EnumerateArray() |> Seq.map (fun x -> x.GetString()) |> Seq.toList
+    getStr "name" s0 |> Expect.equal "name should be the display name (last segment of workingDirectory, no SolutionRoot set)" "checkout"
+    getStr "workingDirectory" s0 |> Expect.equal "workingDirectory should round-trip" "/repo/checkout"
+    getStr "workflow" s0 |> Expect.equal "workflow should be the label for Interactive" "REPL"
+    let projects = getArr "projects" s0 |> List.choose JsonValue.asString
     projects |> Expect.equal "projects should round-trip" [ "Foo.fsproj" ]
 
   testCase "sessionsToJson is stable/empty for no active sessions" <| fun () ->
     let json = Bozzetto.SessionOperations.sessionsToJson jsonOpts []
-    use doc = JsonDocument.Parse(json)
-    doc.RootElement.GetProperty("sessions").GetArrayLength() |> Expect.equal "no sessions" 0
+    let root = Json.parseOrFail json
+    (getArr "sessions" root).Length |> Expect.equal "no sessions" 0
 
   // ── sessionsListVersion: the sessions://list McpResourceGate key ──
 
@@ -197,8 +214,8 @@ let mcpResourcesTests = testList "MCP resources (item 12)" [
     let ctxWithCohort = { ctx with CohortOwner = Some cohortOwner }
     let resources = Bozzetto.Server.McpResources.BozzettoResources(ctxWithCohort)
     let json = resources.CohortStatus()
-    let doc = JsonDocument.Parse(json)
-    let members = doc.RootElement |> getProp "members" |> fun p -> p.EnumerateArray() |> Seq.toList
+    let root = Json.parseOrFail json
+    let members = getArr "members" root
     members |> List.length |> Expect.equal "alice should have joined the cohort" 1
   }
 
@@ -207,15 +224,15 @@ let mcpResourcesTests = testList "MCP resources (item 12)" [
     let ctx = sharedCtxWith sessionId
     let resources = Bozzetto.Server.McpResources.BozzettoResources(ctx)
     let json = resources.CohortStatus()
-    use doc = JsonDocument.Parse(json)
-    doc.RootElement.GetProperty("members").GetArrayLength() |> Expect.equal "no cohort owner -> no members, not an error" 0
+    let root = Json.parseOrFail json
+    (getArr "members" root).Length |> Expect.equal "no cohort owner -> no members, not an error" 0
 
   testTask "BozzettoResources.SessionsList reads the session list as JSON" {
     let sessionId = Bozzetto.WorkerProtocol.SessionId.newId ()
     let ctx = sharedCtxWith sessionId
     let resources = Bozzetto.Server.McpResources.BozzettoResources(ctx)
     let! (json: string) = resources.SessionsList()
-    let doc = JsonDocument.Parse(json)
-    doc.RootElement.TryGetProperty("sessions") |> fst |> Expect.isTrue "sessions://list content must be a JSON object with a sessions array"
+    let root = Json.parseOrFail json
+    JsonValue.prop "sessions" root |> Option.isSome |> Expect.isTrue "sessions://list content must be a JSON object with a sessions array"
   }
 ]

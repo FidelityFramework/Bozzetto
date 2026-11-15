@@ -3,7 +3,7 @@ module Bozzetto.Tests.McpServerOversizedRequestTests
 open System
 open System.IO
 open System.Text
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open Microsoft.AspNetCore.Http
@@ -30,14 +30,15 @@ let private expectTooLargeResponse (ctx: HttpContext) =
   ctx.Response.ContentType
   |> Expect.equal "should return JSON content type" "application/json"
 
-  use doc = JsonDocument.Parse(responseBody ctx)
-  let root = doc.RootElement
+  let root = Json.parseOrFail (responseBody ctx)
 
-  root.GetProperty("success").GetBoolean()
-  |> Expect.isFalse "should mark the request as unsuccessful"
+  match JsonValue.prop "success" root |> Option.bind JsonValue.asBool with
+  | Some b -> b |> Expect.isFalse "should mark the request as unsuccessful"
+  | None -> failtestf "Expected bool property 'success'"
 
-  root.GetProperty("error").GetString()
-  |> Expect.equal "should explain the body size failure" "Request body too large"
+  match JsonValue.prop "error" root |> Option.bind JsonValue.asString with
+  | Some s -> s |> Expect.equal "should explain the body size failure" "Request body too large"
+  | None -> failtestf "Expected string property 'error'"
 
 [<Tests>]
 let tests =

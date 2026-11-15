@@ -11,7 +11,7 @@ open System.IO
 open System.Net.Sockets
 open System.Security.Cryptography
 open System.Text
-open System.Text.Json
+open Fidelity.Data.JSON
 open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
@@ -42,22 +42,46 @@ let private evidenceRoot () =
   printfn "Native provider evidence: %s" directory
   directory
 
-let private field name (value: JsonElement) = value.GetProperty(name: string)
-let private stringField name value = (field name value).GetString()
+let private field name (value: JsonValue) =
+  match JsonValue.prop (name: string) value with
+  | Some p -> p
+  | None -> failtestf "missing field '%s' in %s" name (Json.serialize value)
+
+let private boolField name value =
+  match field name value |> JsonValue.asBool with
+  | Some b -> b
+  | None -> failtestf "field '%s' is not a bool in %s" name (Json.serialize value)
+
+let private intField name value =
+  match field name value |> JsonValue.asInt with
+  | Some n -> int n
+  | None -> failtestf "field '%s' is not an int in %s" name (Json.serialize value)
+
+let private int64Field name value =
+  match field name value |> JsonValue.asInt with
+  | Some n -> n
+  | None -> failtestf "field '%s' is not an int64 in %s" name (Json.serialize value)
+
+let private stringField name value =
+  match field name value |> JsonValue.asString with
+  | Some s -> s
+  | None -> failtestf "field '%s' is not a string in %s" name (Json.serialize value)
+
 let private succeeded response =
-  (field "success" response).GetBoolean() |> Expect.isTrue ("request succeeded: " + response.GetRawText())
+  boolField "success" response |> Expect.isTrue ("request succeeded: " + Json.serialize response)
   field "result" response
 let private refused code response =
-  (field "success" response).GetBoolean() |> Expect.isFalse ("request refused: " + response.GetRawText())
+  boolField "success" response |> Expect.isFalse ("request refused: " + Json.serialize response)
   stringField "code" (field "error" response) |> Expect.equal "refusal classification" code
 
 let private stringArray name value =
-  (field name value).EnumerateArray() |> Seq.map (fun item -> item.GetString()) |> Seq.toList
+  match field name value with
+  | JsonValue.Array items -> items |> List.choose JsonValue.asString
+  | _ -> failtestf "field '%s' is not an array in %s" name (Json.serialize value)
 
 // Read the public JSON through an independent consumer, as the browser does.
 let private clientJson reply =
-  use document = JsonDocument.Parse(reply |> ComposerClientJson.wireReply |> Fidelity.Data.JSON.Json.serialize)
-  document.RootElement.Clone()
+  reply |> ComposerClientJson.wireReply |> Json.serialize |> Json.parseOrFail
 
 /// Independent read/drain loops prevent compiler logging from blocking protocol
 /// responses. Each request has its own correlation slot and bounded lifetime.
@@ -271,12 +295,12 @@ let private build client session label = buildReserved client session (reserve c
 
 let private run (client: Client) session expected =
   let result = client.Call("run", session, []) |> succeeded
-  (field "exitCode" result).GetInt32() |> Expect.equal "native exit code" 0
+  intField "exitCode" result |> Expect.equal "native exit code" 0
   stringField "standardOutput" result |> Expect.equal "native stdout" expected
 
 let private noCurrent (client: Client) session =
   let status = client.Call("status", session, []) |> succeeded
-  (field "current" status).ValueKind |> Expect.equal "refusal withdrew accepted metadata" JsonValueKind.Null
+  field "current" status |> Expect.equal "refusal withdrew accepted metadata" JsonValue.Null
 
 let private expectAuthority (client: Client) session generation response =
   let identity = field "authority" response
@@ -284,7 +308,7 @@ let private expectAuthority (client: Client) session generation response =
   stringField "session" identity |> Expect.equal "response preserves owning session" session
   stringField "provider" identity |> Expect.equal "response preserves provider" "clef-composer"
   stringField "epoch" identity |> Expect.equal "response preserves compiler epoch" client.Epoch
-  (field "generation" identity).GetInt64() |> Expect.equal "response preserves operation revision" generation
+  int64Field "generation" identity |> Expect.equal "response preserves operation revision" generation
 
 let private leaseHeld path =
   try
@@ -294,10 +318,10 @@ let private leaseHeld path =
 
 let private expectCleanupFailureStatus (client: Client) session =
   let status = client.Call("status", session, []) |> succeeded
-  (field "closed" status).GetBoolean() |> Expect.isTrue "cleanup failure leaves session logically retired"
-  (field "current" status).ValueKind |> Expect.equal "retired session has no accepted artifact" JsonValueKind.Null
-  (field "cleanupPending" status).GetBoolean() |> Expect.isTrue "failed cleanup is never reported complete"
-  (field "cleanupError" status).ValueKind |> Expect.equal "original cleanup failure remains visible" JsonValueKind.String
+  boolField "closed" status |> Expect.isTrue "cleanup failure leaves session logically retired"
+  field "current" status |> Expect.equal "retired session has no accepted artifact" JsonValue.Null
+  boolField "cleanupPending" status |> Expect.isTrue "failed cleanup is never reported complete"
+  (field "cleanupError" status |> JsonValue.asString |> Option.isSome) |> Expect.isTrue "original cleanup failure remains visible"
   stringField "cleanupError" status |> String.IsNullOrWhiteSpace |> Expect.isFalse "cleanup failure has an explanation"
   status
 
@@ -305,17 +329,18 @@ let private objects directory label accepted =
   let manifestPath = stringField "objectManifest" accepted
   let content = File.ReadAllText manifestPath
   File.WriteAllText(Path.Combine(directory, label + "-objects.json"), content)
-  use document = JsonDocument.Parse content
-  field "linkedObjects" document.RootElement
-  |> fun rows -> rows.EnumerateArray()
-  |> Seq.map (fun row ->
+  let document = Json.parseOrFail content
+  match field "linkedObjects" document with
+  | JsonValue.Array rows -> rows
+  | _ -> failtestf "linkedObjects is not an array in %s" content
+  |> List.map (fun row ->
     let identity = stringField "Identity" row
     let path = stringField "ObjectPath" row
     let expected = stringField "ObjectSha256" row
     let actual = File.ReadAllBytes path |> SHA256.HashData |> Convert.ToHexString
     String.Equals(expected, actual, StringComparison.OrdinalIgnoreCase) |> Expect.isTrue ("actual object digest: " + identity)
     identity, (path, actual))
-  |> Map.ofSeq
+  |> Map.ofList
 
 [<Tests>]
 let tests =
@@ -512,7 +537,7 @@ let tests =
       let selfTarget = client.NextRequestId
       let canceled = client.Call("cancel_request", "", [ "targetRequestId", box selfTarget ])
       expectAuthority client "" 0L canceled
-      (canceled |> succeeded |> field "cancellationRequested").GetBoolean()
+      (canceled |> succeeded |> boolField "cancellationRequested")
       |> Expect.isTrue "request cancellation is installed before the handler dispatches"
       let first = openProject client fixture.Project
       let second = openProject client fixture.Project
@@ -522,7 +547,7 @@ let tests =
       client.Call("status", first, [ "epoch", box "foreign-epoch" ]) |> refused "wrong_authority"
       let token = reserve client first "first edit"
       let missing = client.Call("cancel_request", "", [ "targetRequestId", box "no-such-request" ]) |> succeeded
-      (field "cancellationRequested" missing).GetBoolean() |> Expect.isFalse "missing target is an idempotent no-op"
+      boolField "cancellationRequested" missing |> Expect.isFalse "missing target is an idempotent no-op"
       client.Call("status", first, []) |> expectAuthority client first 1L
       buildReserved client second token |> refused "invalid_reservation"
       let queries =
@@ -542,7 +567,7 @@ let tests =
       let fixture = fixture directory
       use oldWorker = new Client(directory, "retired")
       let hello = oldWorker.Hello() |> succeeded
-      (field "inMemoryPatchAllowed" hello).GetBoolean() |> Expect.isFalse "in-memory patching is unsupported"
+      boolField "inMemoryPatchAllowed" hello |> Expect.isFalse "in-memory patching is unsupported"
       let session = openProject oldWorker fixture.Project
       oldWorker.Call("prepare_compiler_change", "", []) |> succeeded |> ignore
       oldWorker.Call("reserve", session, [ "label", box "late edit" ]) |> refused "closed"
@@ -593,9 +618,9 @@ let tests =
         for owned in [ first; second ] do
           let statusReply = client.Call("status", owned, [])
           let status = succeeded statusReply
-          (field "closed" status).GetBoolean() |> Expect.isTrue "every session retires even when one disposal fails"
-          (field "current" status).ValueKind |> Expect.equal "retirement withdraws every cached artifact" JsonValueKind.Null
-          let revision = (field "generation" (field "authority" statusReply)).GetInt64()
+          boolField "closed" status |> Expect.isTrue "every session retires even when one disposal fails"
+          field "current" status |> Expect.equal "retirement withdraws every cached artifact" JsonValue.Null
+          let revision = int64Field "generation" (field "authority" statusReply)
           let refusedRun = client.Call("run", owned, [])
           refusedRun |> refused "closed"
           expectAuthority client owned revision refusedRun
@@ -606,8 +631,15 @@ let tests =
         // Acquire the actual exclusive OS-backed FileStream lease; adapter
         // Closed=true alone cannot establish resource release.
         use released = new FileStream(leasePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
-        File.WriteAllText(Path.Combine(directory, "lease-release.json"),
-          JsonSerializer.Serialize {| session = first; leasePath = leasePath; heldBeforeFailure = true; acquiredAfterFailedDisposal = true |})
+        let leaseEvidence =
+          JsonValue.Object [
+            "session", JsonValue.String first
+            "leasePath", JsonValue.String leasePath
+            "heldBeforeFailure", JsonValue.Bool true
+            "acquiredAfterFailedDisposal", JsonValue.Bool true
+          ]
+          |> Json.serialize
+        File.WriteAllText(Path.Combine(directory, "lease-release.json"), leaseEvidence)
       finally
         if Directory.Exists manifest then Directory.Delete manifest
 
@@ -615,17 +647,17 @@ let tests =
       // writing into a directory which a replacement may now own. Repairing the
       // path must not turn repeated disposal into a false success.
       let closing = client.Call("close", first, [])
-      if (field "success" closing).GetBoolean() then
+      if boolField "success" closing then
         let status = succeeded closing
-        (field "closed" status).GetBoolean() |> Expect.isTrue "close acknowledges logical retirement"
-        (field "cleanupPending" status).GetBoolean() |> Expect.isTrue "asynchronous close does not promise successful cleanup"
-        (field "cleanupError" status).ValueKind |> Expect.equal "pending close retains its existing error" JsonValueKind.String
+        boolField "closed" status |> Expect.isTrue "close acknowledges logical retirement"
+        boolField "cleanupPending" status |> Expect.isTrue "asynchronous close does not promise successful cleanup"
+        (field "cleanupError" status |> JsonValue.asString |> Option.isSome) |> Expect.isTrue "pending close retains its existing error"
       else closing |> refused "cleanup_failed"
       client.Call("prepare_compiler_change", "", []) |> refused "cleanup_failed"
       expectCleanupFailureStatus client first |> ignore
       let secondStatus = client.Call("status", second, []) |> succeeded
-      (field "cleanupPending" secondStatus).GetBoolean() |> Expect.isFalse "unaffected session cleanup completed despite peer failure"
-      (field "cleanupError" secondStatus).ValueKind |> Expect.equal "unaffected session has no fabricated cleanup error" JsonValueKind.Null
+      boolField "cleanupPending" secondStatus |> Expect.isFalse "unaffected session cleanup completed despite peer failure"
+      field "cleanupError" secondStatus |> Expect.equal "unaffected session has no fabricated cleanup error" JsonValue.Null
       use releasedAgain = new FileStream(leasePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
       client.Call("run", second, []) |> refused "closed"
   

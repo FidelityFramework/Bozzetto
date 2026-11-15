@@ -15,7 +15,7 @@ module Bozzetto.Tests.WorkflowRouteHttpTests
 open System
 open System.Net.Http
 open System.Text
-open System.Text.Json
+open Fidelity.Data.JSON
 open System.Threading.Tasks
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
@@ -138,6 +138,14 @@ let private postRaw (url: string) (body: string option) : Task<int * string> = t
 
 [<Tests>]
 let workflowRouteHttpTests =
+  let getStr k v =
+    match JsonValue.prop k v |> Option.bind JsonValue.asString with
+    | Some s -> s
+    | None -> failtestf "Expected string property '%s'" k
+  let getBool k v =
+    match JsonValue.prop k v |> Option.bind JsonValue.asBool with
+    | Some b -> b
+    | None -> failtestf "Expected bool property '%s'" k
   testList "Workflow switch HTTP route" [
     testTask "POST /api/sessions/{sid}/workflow with a recognized target returns 200 with the new workflow's label" {
       let! (app: WebApplication), baseUrl = startTestServer fakeOps
@@ -145,10 +153,10 @@ let workflowRouteHttpTests =
         let! (status: int), (body: string) =
           postRaw (sprintf "%s/api/sessions/%s/workflow" baseUrl (SessionId.value sid)) (Some """{"workflow":"livetesting"}""")
         status |> Expect.equal "switching to a recognized workflow returns 200" 200
-        let doc = JsonDocument.Parse(body)
-        doc.RootElement.GetProperty("success").GetBoolean()
+        let root = Json.parseOrFail body
+        getBool "success" root
         |> Expect.isTrue "success should be true"
-        doc.RootElement.GetProperty("workflow").GetString()
+        getStr "workflow" root
         |> Expect.equal "response should carry the target workflow's label" "Live Testing"
       finally (app :> IDisposable).Dispose()
     }
@@ -160,8 +168,8 @@ let workflowRouteHttpTests =
           let! (status: int), (body: string) =
             postRaw (sprintf "%s/api/sessions/%s/workflow" baseUrl (SessionId.value sid)) (Some (sprintf """{"workflow":"%s"}""" alias))
           status |> Expect.equal (sprintf "'%s' should be a recognized workflow" alias) 200
-          let doc = JsonDocument.Parse(body)
-          doc.RootElement.GetProperty("workflow").GetString()
+          let root = Json.parseOrFail body
+          getStr "workflow" root
           |> Expect.equal (sprintf "'%s' should resolve to the %s workflow" alias expectedLabel) expectedLabel
       finally (app :> IDisposable).Dispose()
     }
@@ -172,10 +180,10 @@ let workflowRouteHttpTests =
         let! (status: int), (body: string) =
           postRaw (sprintf "%s/api/sessions/%s/workflow" baseUrl (SessionId.value sid)) (Some """{"workflow":"hotreoad"}""")
         status |> Expect.equal "an unrecognized workflow string returns 400" 400
-        let doc = JsonDocument.Parse(body)
-        doc.RootElement.GetProperty("success").GetBoolean()
+        let root = Json.parseOrFail body
+        getBool "success" root
         |> Expect.isFalse "success should be false"
-        doc.RootElement.GetProperty("error").GetString()
+        getStr "error" root
         |> Expect.stringContains "the error should name the bad value" "hotreoad"
       finally (app :> IDisposable).Dispose()
     }
@@ -195,8 +203,8 @@ let workflowRouteHttpTests =
         let! (status: int), (body: string) =
           postRaw (sprintf "%s/api/sessions/%s/workflow" baseUrl (SessionId.value unknownSid)) (Some """{"workflow":"interactive"}""")
         status |> Expect.equal "an unknown session returns 404" 404
-        let doc = JsonDocument.Parse(body)
-        doc.RootElement.GetProperty("case").GetString()
+        let root = Json.parseOrFail body
+        getStr "case" root
         |> Expect.equal "error body should carry the BozzettoError case" "SessionNotFound"
       finally (app :> IDisposable).Dispose()
     }

@@ -631,11 +631,19 @@ let bozzettoPaletteCommandContractTests =
     testCase "every command with a declared id matches its package.json title" <| fun _ ->
       let packageJsonPath =
         IO.Path.Combine(__SOURCE_DIRECTORY__, "..", "bozzetto-vscode", "package.json")
-      use doc = Text.Json.JsonDocument.Parse(IO.File.ReadAllText packageJsonPath)
+      let root = Fidelity.Data.JSON.Json.parseOrFail (IO.File.ReadAllText packageJsonPath)
+      let commands =
+        match Fidelity.Data.JSON.JsonValue.prop "contributes" root |> Option.bind (Fidelity.Data.JSON.JsonValue.prop "commands") with
+        | Some (Fidelity.Data.JSON.JsonValue.Array items) -> items
+        | _ -> failtestf "Expected 'contributes.commands' array in package.json"
       let titleById =
-        doc.RootElement.GetProperty("contributes").GetProperty("commands").EnumerateArray()
-        |> Seq.map (fun c -> c.GetProperty("command").GetString(), c.GetProperty("title").GetString())
-        |> Map.ofSeq
+        commands
+        |> List.map (fun c ->
+          match Fidelity.Data.JSON.JsonValue.prop "command" c |> Option.bind Fidelity.Data.JSON.JsonValue.asString,
+                Fidelity.Data.JSON.JsonValue.prop "title" c |> Option.bind Fidelity.Data.JSON.JsonValue.asString with
+          | Some cmd, Some title -> cmd, title
+          | _ -> failtestf "Expected 'command' and 'title' strings in package.json command entry")
+        |> Map.ofList
       let allCommands =
         [ EnableLiveTesting; DisableLiveTesting; ShowBozzettoContainer; FocusOutputView ]
       for cmd in allCommands do

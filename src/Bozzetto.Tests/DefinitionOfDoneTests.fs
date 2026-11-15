@@ -34,7 +34,7 @@ module Bozzetto.Tests.DefinitionOfDoneTests
 
 open System
 open System.IO
-open System.Text.Json
+open Fidelity.Data.JSON
 open System.Text.RegularExpressions
 open Expecto
 open Expecto.Flip
@@ -112,18 +112,12 @@ module RepoProbe =
         |> List.exists (fun args -> TestInfrastructure.TrustSignal.tierOfArgs args = runner)
       StageExists = fun name -> ciPipeline.Value.Contains(sprintf "stage \"%s\"" name) }
 
-let stringProperty (name: string) (row: JsonElement) =
-  match row.TryGetProperty name with
-  | true, value when value.ValueKind = JsonValueKind.String -> value.GetString()
-  | _ -> ""
+let stringProperty (name: string) (row: JsonValue) =
+  JsonValue.prop name row |> Option.bind JsonValue.asString |> Option.defaultValue ""
 
-let private stringArrayProperty (name: string) (row: JsonElement) =
-  match row.TryGetProperty name with
-  | true, value when value.ValueKind = JsonValueKind.Array ->
-    value.EnumerateArray()
-    |> Seq.filter (fun e -> e.ValueKind = JsonValueKind.String)
-    |> Seq.map (fun e -> e.GetString())
-    |> Seq.toList
+let private stringArrayProperty (name: string) (row: JsonValue) =
+  match JsonValue.prop name row with
+  | Some (JsonValue.Array items) -> items |> List.choose JsonValue.asString
   | _ -> []
 
 let private runIdPattern = Regex(@"^\d{8,}$")
@@ -132,7 +126,7 @@ let private fullShaPattern = Regex(@"^[0-9a-f]{40}$")
 
 /// Resolve one `kind: "ci"` evidence object. Every branch that cannot prove the
 /// claim adds an error — there is no "assume it is fine" path.
-let private validateCiEvidence (probe: RepoProbe) (id: string) (evidence: JsonElement) (errors: ResizeArray<string>) =
+let private validateCiEvidence (probe: RepoProbe) (id: string) (evidence: JsonValue) (errors: ResizeArray<string>) =
   let tests = stringArrayProperty "tests" evidence
   let runner = stringProperty "runner" evidence
   let stage = stringProperty "stage" evidence
@@ -186,7 +180,7 @@ let private validateExternalEvidence
   (today: DateOnly)
   (id: string)
   (client: string)
-  (evidence: JsonElement)
+  (evidence: JsonValue)
   (errors: ResizeArray<string>)
   =
   match externalClients |> Set.contains client with
@@ -227,14 +221,14 @@ let private validateEvidence
   (today: DateOnly)
   (id: string)
   (client: string)
-  (row: JsonElement)
+  (row: JsonValue)
   (errors: ResizeArray<string>)
   =
-  match row.TryGetProperty "evidence" with
-  | false, _ -> errors.Add(sprintf "%s needs executable evidence" id)
-  | true, evidence ->
-    match evidence.ValueKind with
-    | JsonValueKind.Object ->
+  match JsonValue.prop "evidence" row with
+  | None -> errors.Add(sprintf "%s needs executable evidence" id)
+  | Some evidence ->
+    match evidence with
+    | JsonValue.Object _ ->
       let kind = stringProperty "kind" evidence
       match evidenceKinds |> Set.contains kind with
       | false -> errors.Add(sprintf "%s: unknown evidence kind '%s'" id kind)
@@ -251,17 +245,16 @@ let private validateEvidence
 
 let validateMatrixWith (probe: RepoProbe) (today: DateOnly) (json: string) =
   try
-    use doc = JsonDocument.Parse json
-    let root = doc.RootElement
-    let rows = root.GetProperty("rows").EnumerateArray() |> Seq.toArray
+    let root = Json.parseOrFail json
+    let rows =
+      match JsonValue.prop "rows" root with
+      | Some (JsonValue.Array items) -> items |> List.toArray
+      | _ -> failwith "matrix must declare a 'rows' array"
     let errors = ResizeArray<string>()
     let setFrom (name: string) =
-      match root.TryGetProperty name with
-      | true, value when value.ValueKind = JsonValueKind.Array ->
-        value.EnumerateArray()
-        |> Seq.filter (fun e -> e.ValueKind = JsonValueKind.String)
-        |> Seq.map (fun e -> e.GetString())
-        |> Set.ofSeq
+      match JsonValue.prop name root with
+      | Some (JsonValue.Array items) ->
+        items |> List.choose JsonValue.asString |> Set.ofList
       | _ -> Set.empty
     let evidenceKinds = setFrom "evidenceKinds"
     let externalClients = setFrom "externalClients"
@@ -293,9 +286,9 @@ let validateMatrixWith (probe: RepoProbe) (today: DateOnly) (json: string) =
       | "verified" -> validateEvidence probe evidenceKinds externalClients today id client row errors
       | "deferred" ->
         let hasIssue =
-          match row.TryGetProperty "issue" with
-          | true, value when value.ValueKind = JsonValueKind.Number -> value.GetInt32() > 0
-          | _ -> false
+          match JsonValue.prop "issue" row |> Option.bind JsonValue.asInt with
+          | Some n -> n > 0L
+          | None -> false
         let expiry = stringProperty "expires" row
         match hasIssue with
         | true -> ()

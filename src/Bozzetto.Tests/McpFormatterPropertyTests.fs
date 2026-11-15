@@ -1,7 +1,7 @@
 module Bozzetto.Tests.McpFormatterPropertyTests
 
 open System
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open FsCheck
@@ -66,16 +66,15 @@ let private genCodeWithDelimiters =
 let private escapeJsonTests =
   testList "escapeJson" [
 
-    testPropertyWithConfig propConfig "roundtrip through JsonDocument.Parse recovers original" <|
+    testPropertyWithConfig propConfig "roundtrip through Json.parseOrFail recovers original" <|
       fun (s: string) ->
         match s with
         | null -> true
         | _ ->
           let escaped = McpAdapter.escapeJson s
           let json = sprintf """{"t":"%s"}""" escaped
-          let doc = JsonDocument.Parse(json)
-          let recovered = doc.RootElement.GetProperty("t").GetString()
-          recovered = s
+          let root = Json.parseOrFail json
+          JsonValue.prop "t" root |> Option.bind JsonValue.asString = Some s
 
     testPropertyWithConfig propConfig "output has no unescaped control chars" <|
       fun (s: string) ->
@@ -131,9 +130,8 @@ let private escapeJsonTests =
           let once = McpAdapter.escapeJson s
           let twice = McpAdapter.escapeJson once
           let json = sprintf """{"t":"%s"}""" twice
-          let doc = JsonDocument.Parse(json)
-          let recovered = doc.RootElement.GetProperty("t").GetString()
-          recovered = once
+          let root = Json.parseOrFail json
+          JsonValue.prop "t" root |> Option.bind JsonValue.asString = Some once
   ]
 
 // ── splitStatements tests ──
@@ -193,18 +191,16 @@ let private formatEventsJsonTests =
       fun () ->
         let events = pick genEventList
         let json = McpAdapter.formatEventsJson events
-        let parsed =
-          try JsonDocument.Parse(json) |> ignore; true
-          with _ -> false
-        parsed
+        match Json.parse json with
+        | Ok _ -> true
+        | Error _ -> false
 
     testPropertyWithConfig propConfig "count field matches input length" <|
       fun () ->
         let events = pick genEventList
         let json = McpAdapter.formatEventsJson events
-        let doc = JsonDocument.Parse(json)
-        let count = doc.RootElement.GetProperty("count").GetInt32()
-        count = events.Length
+        let root = Json.parseOrFail json
+        JsonValue.prop "count" root |> Option.bind JsonValue.asInt |> Option.map int = Some events.Length
 
     testPropertyWithConfig propConfig "all escaped source strings appear in output" <|
       fun () ->

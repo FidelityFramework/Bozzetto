@@ -5,8 +5,7 @@ open System.Diagnostics
 open System.IO
 open System.Net.Http
 open System.Text
-open System.Text.Json
-open System.Text.Json.Nodes
+open Fidelity.Data.JSON
 open System.Threading
 open System.Threading.Tasks
 open Expecto
@@ -16,18 +15,52 @@ open ModelContextProtocol.Client
 open ModelContextProtocol.Protocol
 open Bozzetto.Tests.TestInfrastructure
 
-let private field name (value: JsonElement) = value.GetProperty(name: string)
-let private text name value = (field name value).GetString() |> Option.ofObj |> Option.defaultValue ""
-let private parse (value: string) =
-  use document = JsonDocument.Parse value
-  document.RootElement.Clone()
+let private field name (value: JsonValue) =
+  match JsonValue.prop (name: string) value with
+  | Some p -> p
+  | None -> failtestf "missing field '%s' in %s" name (Json.serialize value)
+
+let private boolField name value =
+  match field name value |> JsonValue.asBool with
+  | Some b -> b
+  | None -> failtestf "field '%s' is not a bool in %s" name (Json.serialize value)
+
+let private intField name value =
+  match field name value |> JsonValue.asInt with
+  | Some n -> int n
+  | None -> failtestf "field '%s' is not an int in %s" name (Json.serialize value)
+
+let private int64Field name value =
+  match field name value |> JsonValue.asInt with
+  | Some n -> n
+  | None -> failtestf "field '%s' is not an int64 in %s" name (Json.serialize value)
+
+let private uint64Field name value =
+  let v = field name value
+  match JsonValue.tryAsUInt64 v with
+  | Some n -> n
+  | None ->
+    match v with
+    | JsonValue.Number n when n >= 0.0 && n = float (uint64 n) -> uint64 n
+    | _ -> failtestf "field '%s' is not a uint64 in %s" name (Json.serialize value)
+
+let private arrayField name value =
+  match field name value with
+  | JsonValue.Array items -> items
+  | _ -> failtestf "field '%s' is not an array in %s" name (Json.serialize value)
+
+let private text name value =
+  match field name value |> JsonValue.asString with
+  | Some s -> s
+  | None -> failtestf "field '%s' is not a string in %s" name (Json.serialize value)
+let private parse (value: string) = Json.parseOrFail value
 let private success response =
-  (field "success" response).GetBoolean() |> Expect.isTrue (response.GetRawText())
+  boolField "success" response |> Expect.isTrue (Json.serialize response)
   field "result" response
 let private statusObservation response =
   // The supervisor fences reads overtaken by session activity or a newer
   // observation. Only that refusal asks this bounded wait for a fresh read.
-  if not ((field "success" response).GetBoolean())
+  if not (boolField "success" response)
      && text "code" (field "error" response) = "superseded" then None
   else Some(success response)
 let private authority response = field "authority" response
@@ -38,7 +71,27 @@ let private required name =
   | _ -> failtestf "%s is required for live provider acceptance" name
 let private providerResult (result: CallToolResult) =
   result.StructuredContent.HasValue |> Expect.isTrue "Composer MCP result retains structured worker authority"
-  result.StructuredContent.Value
+  Bozzetto.Server.McpProtocolJson.ofElement result.StructuredContent.Value
+
+let rec private toJsonValue (v: obj) : JsonValue =
+  match v with
+  | null -> JsonValue.Null
+  | :? JsonValue as j -> j
+  | :? string as s -> JsonValue.String s
+  | :? bool as b -> JsonValue.Bool b
+  | :? int as n -> JsonValue.Number (float n)
+  | :? int64 as n -> JsonValue.Number (float n)
+  | :? uint64 as n -> JsonValue.Number (float n)
+  | :? float as n -> JsonValue.Number n
+  | :? Collections.IDictionary as d ->
+    JsonValue.Object [ for k in d.Keys -> string k, toJsonValue d[k] ]
+  | :? Collections.IEnumerable as seq ->
+    JsonValue.Array [ for item in seq -> toJsonValue item ]
+  | _ ->
+    JsonValue.Object [
+      for p in v.GetType().GetProperties() ->
+        p.Name, toJsonValue (p.GetValue v)
+    ]
 
 type private Evidence(directory: string) =
   let gate = obj ()
@@ -50,7 +103,7 @@ type private Evidence(directory: string) =
 
 let private httpJson (http: HttpClient) (evidence: Evidence) (methodName: string) (path: string) payload = task {
   use request = new HttpRequestMessage(HttpMethod(methodName), path)
-  payload |> Option.iter (fun value -> request.Content <- new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json"))
+  payload |> Option.iter (fun value -> request.Content <- new StringContent(toJsonValue value |> Json.serialize, Encoding.UTF8, "application/json"))
   use deadline = new CancellationTokenSource(if methodName = "GET" then TimeSpan.FromSeconds 3. else TimeSpan.FromMinutes 8.)
   use! response = http.SendAsync(request, deadline.Token)
   let! body = response.Content.ReadAsStringAsync()
@@ -67,7 +120,11 @@ let private providerHttp http evidence operation identity extra = task {
 
 let private call (mcp: McpClient) (evidence: Evidence) name args cancellation = task {
   let! result = mcp.CallToolAsync(name, readOnlyDict args, null, null, cancellation)
-  evidence.Write("mcp-" + name, JsonSerializer.Serialize result)
+  let blocks =
+    result.Content
+    |> Seq.choose (function :? TextContentBlock as b -> Some (JsonValue.String b.Text) | _ -> None)
+    |> Seq.toList
+  evidence.Write("mcp-" + name, JsonValue.Object [ "isError", JsonValue.Bool (result.IsError.GetValueOrDefault false); "content", JsonValue.Array blocks ] |> Json.serialize)
   return result
 }
 
@@ -111,7 +168,7 @@ let private readResource (mcp: McpClient) (evidence: Evidence) = task {
     |> Seq.choose (function :? TextResourceContents as content -> Some content.Text | _ -> None)
     |> Seq.exactlyOne
     |> parse
-  evidence.Write("composer-resource", json.GetRawText())
+  evidence.Write("composer-resource", Json.serialize json)
   return json
 }
 
@@ -139,8 +196,8 @@ let tests =
   testSequenced <| testList "Live Composer shared interfaces" [
     testCase "status observation preserves a successful snapshot" (fun () ->
       let response = parse """{"success":true,"result":{"busy":true,"current":null}}"""
-      statusObservation response |> Option.map (fun value -> value.GetRawText())
-      |> Expect.equal "the wait inspects the exact successful snapshot" (Some((field "result" response).GetRawText())))
+      statusObservation response |> Option.map Json.serialize
+      |> Expect.equal "the wait inspects the exact successful snapshot" (Some(Json.serialize (field "result" response))))
     testCase "status observation requires a fresh read after superseded" (fun () ->
       let response = parse """{"success":false,"result":{"busy":true},"error":{"code":"superseded","message":"Session activity or a newer observation superseded this read."}}"""
       statusObservation response |> Expect.isNone "a refused snapshot cannot satisfy the wait")
@@ -200,9 +257,9 @@ let tests =
                 evidence.Write("daemon-identity", body)
                 let identity = parse body
                 let pid =
-                  match identity.TryGetProperty "pid" with
-                  | true, value -> value.GetInt32()
-                  | _ -> (field "Pid" identity).GetInt32()
+                  match JsonValue.prop "pid" identity |> Option.bind JsonValue.asInt with
+                  | Some value -> int value
+                  | None -> intField "Pid" identity
                 pid |> Expect.equal "probe belongs to the exact spawned daemon" daemon.Id
                 use! health = http.GetAsync("/health", timeout.Token)
                 return health.IsSuccessStatusCode
@@ -216,7 +273,7 @@ let tests =
           discovered |> Seq.exists (fun tool -> tool.Name = "composer_format_preview") |> Expect.isTrue "public formatting preview is discoverable"
           let! initialFsiStatus, initialFsi = httpJson http evidence "GET" "/api/sessions" None
           initialFsiStatus |> Expect.equal "FSI list is readable" 200
-          (field "sessions" initialFsi).GetArrayLength() |> Expect.equal "Composer is callable before any FSI session exists" 0
+          (arrayField "sessions" initialFsi).Length |> Expect.equal "Composer is callable before any FSI session exists" 0
           let! opened = composer mcp evidence "composer_open_project" [ "project", box firstFixture.Project ]
           success opened |> ignore
           let first = authority opened
@@ -226,7 +283,7 @@ let tests =
             null, CancellationToken.None)
           use ownedSubscription = ownAsync subscription
           let! before = readResource mcp evidence
-          (field "sessions" before).GetArrayLength() |> Expect.equal "resource exposes the MCP-opened session" 1
+          (arrayField "sessions" before).Length |> Expect.equal "resource exposes the MCP-opened session" 1
           use! streamResponse = http.GetAsync("/api/composer/events", HttpCompletionOption.ResponseHeadersRead)
           use! stream = streamResponse.Content.ReadAsStreamAsync()
           use reader = new StreamReader(stream)
@@ -265,10 +322,10 @@ let tests =
           // The daemon has zero F# sessions and one accepted Composer session.
           // Legacy counts must name their provider rather than imply no work exists.
           let! providerState = readResource mcp evidence
-          (field "sessions" providerState).GetArrayLength() |> Expect.equal "one accepted Composer session remains visible" 1
+          (arrayField "sessions" providerState).Length |> Expect.equal "one accepted Composer session remains visible" 1
           let! healthCode, health = httpJson http evidence "GET" "/health" None
           healthCode |> Expect.equal "health transport completed" 200
-          (field "sessionCount" health).GetInt32() |> Expect.equal "health retains the F# count" 0
+          intField "sessionCount" health |> Expect.equal "health retains the F# count" 0
           text "sessionProvider" health |> Expect.equal "health scopes inherited counts" "fsharp"
           text "diagnosticSummary" health |> Expect.equal "health does not claim Composer is empty" "No F# sessions registered with the daemon."
           let! daemonStatus = call mcp evidence "get_daemon_status" [] CancellationToken.None
@@ -279,16 +336,16 @@ let tests =
             |> parse
           let inheritedSessions = field "sessions" daemonStatusJson
           text "provider" inheritedSessions |> Expect.equal "MCP status scopes inherited counts" "fsharp"
-          (field "total" inheritedSessions).GetInt32() |> Expect.equal "MCP retains the F# count" 0
+          intField "total" inheritedSessions |> Expect.equal "MCP retains the F# count" 0
           let! cliOutput = cliStatus dotnet daemonDll port cache
-          evidence.Write("cli-status", JsonSerializer.Serialize {| output = cliOutput |})
+          evidence.Write("cli-status", JsonValue.Object [ "output", JsonValue.String cliOutput ] |> Json.serialize)
           cliOutput |> Expect.stringContains "CLI zero is explicitly F#" "F# sessions: 0 active"
           cliOutput |> Expect.stringContains "CLI advertises the current MCP endpoint" (sprintf "MCP (Streamable HTTP): http://localhost:%d/" port)
           cliOutput |> Expect.stringContains "CLI labels SSE compatibility" (sprintf "MCP (SSE, older clients): http://localhost:%d/sse" port)
           let! beforeRun = providerHttp http evidence "run" first [ "arguments", box ([||]: string array) ]
           let result = success beforeRun
           text "standardOutput" result |> Expect.equal "HTTP execution uses accepted native artifact" "stable\nbefore\n"
-          (field "exitCode" result).GetInt32() |> Expect.equal "native exit" 0
+          intField "exitCode" result |> Expect.equal "native exit" 0
 
           let unchangedSource = File.ReadAllText firstFixture.Source
           let editedBuffer = unchangedSource.Replace("let changeable () = false", "let changeable () = true")
@@ -298,19 +355,19 @@ let tests =
           let policy = "clef-two-space-lf-v1"
           let baseDigest = Encoding.UTF8.GetBytes editedBuffer |> Security.Cryptography.SHA256.HashData |> Convert.ToHexString
           let! formatting = composer mcp evidence "composer_format_preview" (arguments first @ [
-            "generation", box ((field "generation" (authority afterMalformed)).GetInt64())
+            "generation", box (int64Field "generation" (authority afterMalformed))
             "document", box document; "incarnation", box incarnation; "revision", box 1UL
             "source", box editedBuffer; "configuration", box policy
           ])
           let preview = success formatting
           text "document" preview |> Expect.equal "public preview preserves the opaque document identity" document
           text "incarnation" preview |> Expect.equal "public preview preserves the document incarnation" incarnation
-          (field "revision" preview).GetUInt64() |> Expect.equal "public preview preserves the immutable buffer revision" 1UL
+          uint64Field "revision" preview |> Expect.equal "public preview preserves the immutable buffer revision" 1UL
           text "configuration" preview |> Expect.equal "public preview preserves the selected formatting policy" policy
           text "sourceSha256" preview |> Expect.equal "public preview identifies the exact supplied edited buffer" baseDigest
           File.ReadAllText firstFixture.Source |> Expect.equal "public preview performs no source write" unchangedSource
-          (field "generation" (authority formatting)).GetInt64()
-          |> Expect.equal "public preview does not reserve an edit" ((field "generation" (authority afterMalformed)).GetInt64())
+          int64Field "generation" (authority formatting)
+          |> Expect.equal "public preview does not reserve an edit" (int64Field "generation" (authority afterMalformed))
           let! afterPreview = composer mcp evidence "composer_session_status" (arguments first)
           text "artifactSha256" (afterPreview |> success |> field "current")
           |> Expect.equal "public preview preserves accepted artifact authority" (text "artifactSha256" accepted)
@@ -318,7 +375,7 @@ let tests =
           let! editing = providerHttp http evidence "reserve" first [ "label", box "save edited buffer and apply completed preview" ]
           let editReservation = editing |> success |> text "reservation"
           let! withdrawn = composer mcp evidence "composer_session_status" (arguments first)
-          (withdrawn |> success |> field "current").ValueKind |> Expect.equal "human reservation immediately withdraws MCP current" JsonValueKind.Null
+          (withdrawn |> success |> field "current") |> Expect.equal "human reservation immediately withdraws MCP current" JsonValue.Null
           // Saving and applying a completed preview use the new successful
           // reservation. The preview itself grants no source write authority.
           File.WriteAllText(firstFixture.Source, editedBuffer)
@@ -329,34 +386,38 @@ let tests =
           // Streamable HTTP cancellation aborts a response stream; MCP work
           // cancellation is an explicit notification targeting its JSON-RPC id.
           let buildRequestId = "live-build-" + Guid.NewGuid().ToString("N")
-          let buildParameters =
-            JsonSerializer.SerializeToNode({| name = "composer_build"
-                                              arguments = dict (arguments first @ [ "reservation", box editReservation ]) |})
+          let buildParamsJson =
+            toJsonValue
+              {| name = "composer_build"
+                 arguments = dict (arguments first @ [ "reservation", box editReservation ]) |}
+          let buildParameters = Bozzetto.Server.McpProtocolJson.toNode buildParamsJson
           let buildRequest = JsonRpcRequest(Id = RequestId(buildRequestId), Method = "tools/call", Params = buildParameters)
-          evidence.Write("mcp-build-request", JsonSerializer.Serialize buildRequest)
+          evidence.Write("mcp-build-request", JsonValue.Object [ "id", JsonValue.String buildRequestId; "method", JsonValue.String "tools/call"; "params", buildParamsJson ] |> Json.serialize)
           use buildTransport = new CancellationTokenSource(TimeSpan.FromMinutes 8.)
           let pending = mcp.SendRequestAsync(buildRequest, buildTransport.Token)
           do! waitUntil 30. "real MCP build enters supervised work before cancellation" (fun () -> task {
             let! status = providerHttp http evidence "status" first []
-            return statusObservation status |> Option.exists (fun value -> (field "busy" value).GetBoolean())
+            return statusObservation status |> Option.exists (fun value -> boolField "busy" value)
           })
+          let cancelParamsJson =
+            toJsonValue {| requestId = buildRequestId; reason = "live shared-authority acceptance" |}
           let canceled = JsonRpcNotification(
             Method = NotificationMethods.CancelledNotification,
-            Params = JsonSerializer.SerializeToNode({| requestId = buildRequestId; reason = "live shared-authority acceptance" |}))
-          evidence.Write("mcp-cancellation-notification", JsonSerializer.Serialize canceled)
+            Params = Bozzetto.Server.McpProtocolJson.toNode cancelParamsJson)
+          evidence.Write("mcp-cancellation-notification", JsonValue.Object [ "method", JsonValue.String NotificationMethods.CancelledNotification; "params", cancelParamsJson ] |> Json.serialize)
           use notificationDeadline = new CancellationTokenSource(TimeSpan.FromSeconds 10.)
           do! mcp.SendMessageAsync(canceled, notificationDeadline.Token)
           do! waitUntil 30. "MCP cancellation notification withdraws shared artifact authority" (fun () -> task {
             let! status = providerHttp http evidence "status" first []
             return statusObservation status |> Option.exists (fun value ->
-              not ((field "busy" value).GetBoolean()) && (field "current" value).ValueKind = JsonValueKind.Null)
+              not (boolField "busy" value) && field "current" value = JsonValue.Null)
           })
           // Close the abandoned HTTP response only AFTER server-side authority
           // is withdrawn, so disconnect alone cannot make this assertion pass.
           buildTransport.Cancel()
           try
             let! response = pending.WaitAsync(TimeSpan.FromSeconds 10.)
-            evidence.Write("mcp-canceled-build-response", JsonSerializer.Serialize response)
+            evidence.Write("mcp-canceled-build-response", JsonValue.Object [ "id", JsonValue.String (string response.Id) ] |> Json.serialize)
           with :? OperationCanceledException -> ()
           let! recovered = providerHttp http evidence "reserve" first [ "label", box "recover canceled edit" ]
           let! rebuilt = providerHttp http evidence "build" first [ "reservation", box (recovered |> success |> text "reservation") ]
@@ -378,13 +439,13 @@ let tests =
           let! reconnected = connect port
           use ownedReconnect = ownAsync reconnected
           let! reconnectResource = readResource reconnected evidence
-          let found = (field "sessions" reconnectResource).EnumerateArray() |> Seq.find (fun row -> text "session" (authority row) = text "session" second)
+          let found = arrayField "sessions" reconnectResource |> List.find (fun row -> text "session" (authority row) = text "session" second)
           text "host" (authority found) |> Expect.equal "reconnected observer sees same owner" (text "host" second)
           text "epoch" (authority found) |> Expect.equal "reconnection creates no compiler epoch" (text "epoch" second)
           let! retired = providerHttp http evidence "prepare_compiler_change" second []
           success retired |> ignore
           let! oldRun = composer reconnected evidence "composer_run_current" (arguments second @ [ "arguments", box ([||]: string array) ])
-          (field "success" oldRun).GetBoolean() |> Expect.isFalse "human retirement revokes agent execution authority"
+          boolField "success" oldRun |> Expect.isFalse "human retirement revokes agent execution authority"
           let! freshOpen = composer reconnected evidence "composer_open_project" [ "project", box secondFixture.Project ]
           success freshOpen |> ignore
           text "epoch" (authority freshOpen) |> Expect.notEqual "reopening after replacement has a new compiler epoch" (text "epoch" second)

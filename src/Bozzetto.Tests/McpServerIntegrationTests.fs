@@ -27,6 +27,31 @@ let private agentCtx () =
     ctx.SessionMap.[agent] <- SessionId.value sessionId
   ctx
 
+let private getProp k v =
+  match Fidelity.Data.JSON.JsonValue.prop k v with
+  | Some p -> p
+  | None -> failtestf "Expected property '%s'" k
+
+let private getStr k v =
+  match getProp k v |> Fidelity.Data.JSON.JsonValue.asString with
+  | Some s -> s
+  | None -> failtestf "Expected string property '%s'" k
+
+let private getInt k v =
+  match getProp k v |> Fidelity.Data.JSON.JsonValue.asInt with
+  | Some i -> int i
+  | None -> failtestf "Expected int property '%s'" k
+
+let private getBool k v =
+  match getProp k v |> Fidelity.Data.JSON.JsonValue.asBool with
+  | Some b -> b
+  | None -> failtestf "Expected bool property '%s'" k
+
+let private getArr k v =
+  match getProp k v with
+  | Fidelity.Data.JSON.JsonValue.Array a -> a
+  | _ -> failtestf "Expected array property '%s'" k
+
 [<Tests>]
 let tests =
   testSequenced <| Integration.hostList "MCP Server Integration tests" [
@@ -145,27 +170,31 @@ let tests =
 
         let! daemonJson = getDaemonStatus ctx
         let! sessionJson = getSessionStatus ctx "test" None None
-        let daemon = System.Text.Json.JsonDocument.Parse(daemonJson: string)
-        let session = System.Text.Json.JsonDocument.Parse(sessionJson: string)
-        try
-          daemon.RootElement.GetProperty("scope").GetString()
-          |> Expect.equal "daemon tool has daemon scope" "Daemon"
-          (daemon.RootElement.GetProperty("sessions").GetProperty("total").GetInt32(), 0)
-          |> Expect.isGreaterThanOrEqual "daemon status carries session counts"
-          (daemon.RootElement.GetProperty("leases").GetProperty("activeCount").GetInt32(), 0)
-          |> Expect.isGreaterThanOrEqual "daemon status carries lease counts"
-          session.RootElement.GetProperty("scope").GetString()
-          |> Expect.equal "session tool has session scope" "Session"
-          session.RootElement.GetProperty("sessionId").GetString()
-          |> Expect.equal "session status names the routed session" ctx.SessionMap.["test"]
-          session.RootElement.GetProperty("state").GetString()
-          |> Expect.equal "session status carries lifecycle state" "Ready"
-          session.RootElement.GetProperty("available").EnumerateArray()
-          |> Seq.exists (fun item -> item.GetString() = "send_fsharp_code")
-          |> Expect.isTrue "session status carries the current affordances"
-        finally
-          daemon.Dispose()
-          session.Dispose()
+        let daemon = Fidelity.Data.JSON.Json.parseOrFail (daemonJson: string)
+        let session = Fidelity.Data.JSON.Json.parseOrFail (sessionJson: string)
+        getStr "scope" daemon
+        |> Expect.equal "daemon tool has daemon scope" "Daemon"
+        let sessionsTotal = getProp "sessions" daemon |> getInt "total"
+        (sessionsTotal, 0)
+        |> Expect.isGreaterThanOrEqual "daemon status carries session counts"
+        let activeLeases = getProp "leases" daemon |> getInt "activeCount"
+        (activeLeases, 0)
+        |> Expect.isGreaterThanOrEqual "daemon status carries lease counts"
+        getStr "scope" session
+        |> Expect.equal "session tool has session scope" "Session"
+        getStr "sessionId" session
+        |> Expect.equal "session status names the routed session" ctx.SessionMap.["test"]
+        getStr "state" session
+        |> Expect.equal "session status carries lifecycle state" "Ready"
+        let available =
+          getArr "available" session
+          |> List.map (fun v ->
+            match Fidelity.Data.JSON.JsonValue.asString v with
+            | Some s -> s
+            | None -> failtestf "Expected string in 'available' array")
+        available
+        |> List.exists (fun item -> item = "send_fsharp_code")
+        |> Expect.isTrue "session status carries the current affordances"
       }
 
     testTask "loadFSharpScript tool loads and executes script" {
@@ -325,12 +354,13 @@ let tests =
 
         let! (result: string) = sendFSharpCode ctx "test-agent" "let jsonTestVal = 42;;"OutputFormat.Json None None None None None None
 
-        let doc = System.Text.Json.JsonDocument.Parse(result)
-        let root = doc.RootElement
-        (root.GetProperty("success").GetBoolean()) |> Expect.isTrue "should report success"
+        let root = Fidelity.Data.JSON.Json.parseOrFail result
+        getBool "success" root
+        |> Expect.isTrue "should report success"
         // Tool responses never echo the submitted code back (the agent already
         // has it); the evaluated binding is in `result`.
-        (root.GetProperty("result").GetString()) |> Expect.stringContains "should include the evaluated binding" "jsonTestVal"
+        getStr "result" root
+        |> Expect.stringContains "should include the evaluated binding" "jsonTestVal"
       }
 
     testTask "sendFSharpCode with Json format returns error structure on failure" {
@@ -338,10 +368,11 @@ let tests =
 
         let! (result: string) = sendFSharpCode ctx "test-agent" "let x: int = \"not an int\";;"OutputFormat.Json None None None None None None
 
-        let doc = System.Text.Json.JsonDocument.Parse(result)
-        let root = doc.RootElement
-        (root.GetProperty("success").GetBoolean()) |> Expect.isFalse "should report failure"
-        (root.GetProperty("error").GetString()) |> Expect.isNonEmpty "should have error message"
+        let root = Fidelity.Data.JSON.Json.parseOrFail result
+        getBool "success" root
+        |> Expect.isFalse "should report failure"
+        getStr "error" root
+        |> Expect.isNonEmpty "should have error message"
       }
 
     testTask "sendFSharpCode with Json format returns array for multiple statements" {
@@ -349,9 +380,11 @@ let tests =
 
         let! (result: string) = sendFSharpCode ctx "test-agent" "let a1 = 1;;\nlet b1 = 2;;"OutputFormat.Json None None None None None None
 
-        let doc = System.Text.Json.JsonDocument.Parse(result)
-        let root = doc.RootElement
-        root.ValueKind |> Expect.equal "should be a JSON array" System.Text.Json.JsonValueKind.Array
-        (root.GetArrayLength()) |> Expect.equal "should have 2 results" 2
+        let root = Fidelity.Data.JSON.Json.parseOrFail result
+        let items =
+          match root with
+          | Fidelity.Data.JSON.JsonValue.Array arr -> arr
+          | _ -> failtestf "should be a JSON array, got: %s" result
+        items.Length |> Expect.equal "should have 2 results" 2
       }
   ]
