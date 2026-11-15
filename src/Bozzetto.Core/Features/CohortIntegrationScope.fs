@@ -1,7 +1,7 @@
 namespace Bozzetto.Features
 
 open System
-open System.Xml.Linq
+open Bozzetto
 
 /// Pure decision logic behind the cohort's integration-worktree bootstrap
 /// (`Bozzetto/Mcp.fs`'s `setIntegrationRef`/`discoverProjects`) —
@@ -66,16 +66,12 @@ module CohortIntegrationScope =
   /// Total: malformed/non-XML input yields `[]`, never throws, so a caller
   /// can treat `[]` as "no solution-declared set" and fall back safely.
   let parseSlnxProjectPaths (xmlContent: string) : string list =
-    try
-      let doc = XDocument.Parse xmlContent
-      doc.Descendants(XName.Get "Project")
-      |> Seq.choose (fun el ->
-        match el.Attribute(XName.Get "Path") with
-        | null -> None
-        | attr -> Some attr.Value)
-      |> Seq.filter (fun p -> p.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase))
-      |> Seq.toList
-    with _ -> []
+    match XmlQuery.parseText xmlContent with
+    | Ok doc ->
+      XmlQuery.descendantsNamed "Project" doc.Root
+      |> List.choose (XmlQuery.attr "Path")
+      |> List.filter (fun p -> p.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase))
+    | Error _ -> []
 
   /// The project set to load into the cohort's integration session.
   /// NO-EMPTY-ESCAPE (mirrors `AffectedTests`'s doctrine): when the

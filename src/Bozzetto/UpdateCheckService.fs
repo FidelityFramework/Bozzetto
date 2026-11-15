@@ -3,8 +3,8 @@ namespace Bozzetto
 open System
 open System.IO
 open System.Net.Http
-open System.Text.Json
 open System.Threading.Tasks
+open Fidelity.Data.JSON
 
 /// The impure adapter for issue #136 ("tell users and agents when they are
 /// running a stale Bozzetto"). Everything decidable is in `Bozzetto.UpdateCheck`
@@ -22,20 +22,10 @@ module UpdateCheckService =
 
   let private httpClient = new HttpClient(Timeout = Timeouts.updateCheckFetch)
 
-  let private jsonOptions = JsonSerializerOptions(WriteIndented = true)
-
   /// On-disk shape of `<BozzettoDir>/update-check.json`. Plain primitives only
-  /// (no `option`, no `DateTimeOffset`) so this round-trips through the
-  /// default `JsonSerializer` with no F#-aware converter required — `0L` /
-  /// `""` are the "nothing yet" values, read back via `toLastChecked`/
-  /// `toLatest` below. NOT `private`: System.Text.Json's reflection-based
-  /// deserializer only matches a PUBLIC constructor for an immutable record
-  /// like this one — a `private` type's auto-generated constructor is
-  /// private too, which `Deserialize<CacheFile>` would then silently fail
-  /// to find, and `readCache`'s fail-safe `with _ -> emptyCache` would
-  /// swallow that into "no cache exists" forever, on every read, after
-  /// every write (caught by this file's own tests: dismissing a version
-  /// appeared to work, but a follow-up read never saw it).
+  /// (no `option`, no `DateTimeOffset`), encoded and decoded explicitly via
+  /// `Fidelity.Data.JSON` — `0L` / `""` are the "nothing yet" values, read
+  /// back via `toLastChecked`/`toLatest` below.
   type CacheFile = {
     LastCheckedUtcTicks: int64
     LastKnownLatest: string
@@ -44,6 +34,33 @@ module UpdateCheckService =
 
   let private emptyCache : CacheFile =
     { LastCheckedUtcTicks = 0L; LastKnownLatest = ""; DismissedVersions = [||] }
+
+  let private encodeCache (cache: CacheFile) : JsonValue =
+    JsonValue.Object [
+      "LastCheckedUtcTicks", JsonValue.ofInt64 cache.LastCheckedUtcTicks
+      "LastKnownLatest", JsonValue.String (if isNull cache.LastKnownLatest then "" else cache.LastKnownLatest)
+      "DismissedVersions",
+        JsonValue.Array (
+          (if isNull cache.DismissedVersions then [||] else cache.DismissedVersions)
+          |> Array.map JsonValue.String
+          |> Array.toList)
+    ]
+
+  let private decodeCache (v: JsonValue) : CacheFile option =
+    match JsonValue.prop "LastCheckedUtcTicks" v |> Option.bind JsonValue.asInt,
+          JsonValue.prop "LastKnownLatest" v |> Option.bind JsonValue.asString,
+          JsonValue.prop "DismissedVersions" v with
+    | Some ticks, Some latest, Some (JsonValue.Array dismissedVals) ->
+      let dismissed =
+        dismissedVals
+        |> List.choose JsonValue.asString
+        |> List.toArray
+      Some {
+        LastCheckedUtcTicks = ticks
+        LastKnownLatest = latest
+        DismissedVersions = dismissed
+      }
+    | _ -> None
 
   let private cachePath (bozzettoDir: string) : string = Path.Combine(bozzettoDir, "update-check.json")
 
@@ -56,9 +73,9 @@ module UpdateCheckService =
       match File.Exists path with
       | false -> emptyCache
       | true ->
-        match JsonSerializer.Deserialize<CacheFile>(File.ReadAllText path, jsonOptions) with
-        | cache when obj.ReferenceEquals(cache, null) -> emptyCache
-        | cache -> cache
+        match Json.parse (File.ReadAllText path) with
+        | Ok root -> decodeCache root |> Option.defaultValue emptyCache
+        | Error _ -> emptyCache
     with _ -> emptyCache
 
   /// Atomic (tmp + move) and best-effort: a failed write never blocks or
@@ -69,7 +86,7 @@ module UpdateCheckService =
       Directory.CreateDirectory bozzettoDir |> ignore
       let target = cachePath bozzettoDir
       let tmp = target + ".tmp"
-      File.WriteAllText(tmp, JsonSerializer.Serialize(cache, jsonOptions))
+      File.WriteAllText(tmp, Json.serializePretty (encodeCache cache))
       File.Move(tmp, target, true)
     with _ -> ()
 
@@ -115,24 +132,22 @@ module UpdateCheckService =
     task {
       try
         let! json = httpClient.GetStringAsync nugetIndexUrl
-        use doc = JsonDocument.Parse json
-        match doc.RootElement.TryGetProperty "versions" with
-        | true, arr when arr.ValueKind = JsonValueKind.Array ->
-          let versions =
-            arr.EnumerateArray()
-            |> Seq.choose (fun el ->
-              match el.ValueKind with
-              | JsonValueKind.String -> UpdateCheck.tryParseVersion (el.GetString())
-              | _ -> None)
-            |> Seq.toList
-          match versions with
-          | [] -> return Error "NuGet's flat container returned no parseable version"
-          | vs -> return Ok(vs |> List.max)
-        | _ -> return Error "NuGet's flat container response had no 'versions' array"
+        match Json.parse json with
+        | Error err -> return Error(sprintf "NuGet's response was not valid JSON: %s" err)
+        | Ok root ->
+          match JsonValue.prop "versions" root with
+          | Some (JsonValue.Array arr) ->
+            let versions =
+              arr
+              |> List.choose (fun el ->
+                JsonValue.asString el |> Option.bind UpdateCheck.tryParseVersion)
+            match versions with
+            | [] -> return Error "NuGet's flat container returned no parseable version"
+            | vs -> return Ok(vs |> List.max)
+          | _ -> return Error "NuGet's flat container response had no 'versions' array"
       with
       | :? TaskCanceledException -> return Error "timed out contacting NuGet"
       | :? HttpRequestException as ex -> return Error(sprintf "could not reach NuGet: %s" ex.Message)
-      | :? JsonException as ex -> return Error(sprintf "NuGet's response was not valid JSON: %s" ex.Message)
       | ex -> return Error(sprintf "update check failed: %s" ex.Message)
     }
 

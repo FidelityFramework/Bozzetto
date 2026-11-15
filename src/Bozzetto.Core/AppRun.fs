@@ -2,7 +2,7 @@ module Bozzetto.AppRun
 
 open System
 open System.IO
-open System.Text.Json
+open Fidelity.Data.JSON
 open Bozzetto.ProjectLoading
 
 /// Which executable project the caller asked to run.
@@ -95,53 +95,43 @@ type LaunchConfig =
   | NoProfile
   | Profile of LaunchProfile
 
-let private jsonOptions =
-  JsonDocumentOptions(CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true)
+let private tryProp (name: string) (el: JsonValue) =
+  JsonValue.prop name el
 
-let private tryProp (name: string) (el: JsonElement) =
-  match el.ValueKind with
-  | JsonValueKind.Object ->
-    match el.TryGetProperty name with
-    | true, v -> Some v
-    | false, _ -> None
-  | _ -> None
-
-let private stringValue (el: JsonElement) =
-  match el.ValueKind with
-  | JsonValueKind.String ->
-    match el.GetString() with
-    | null -> ""
-    | s -> s
-  | _ -> el.GetRawText()
+let private stringValue (el: JsonValue) =
+  match el with
+  | JsonValue.String s -> if isNull s then "" else s
+  | _ -> Json.serialize el
 
 /// The profile `dotnet run` would use: the first whose commandName is "Project".
 let parseLaunchSettings (json: string) : Result<LaunchConfig, string> =
-  try
-    use doc = JsonDocument.Parse(json, jsonOptions)
+  match WireJson.parseRelaxed json with
+  | Error msg ->
+    Error (sprintf "launchSettings.json is not valid JSON: %s" msg)
+  | Ok root ->
     let profiles =
-      match tryProp "profiles" doc.RootElement with
-      | Some p -> p.EnumerateObject() |> Seq.toList
-      | None -> []
-    let isProjectProfile (p: JsonProperty) =
-      match tryProp "commandName" p.Value with
+      match tryProp "profiles" root with
+      | Some (JsonValue.Object props) -> props
+      | _ -> []
+    let isProjectProfile ((_name, value): string * JsonValue) =
+      match tryProp "commandName" value with
       | Some c -> stringValue c = "Project"
       | None -> false
     match profiles |> List.tryFind isProjectProfile with
     | None -> Ok LaunchConfig.NoProfile
-    | Some p ->
+    | Some (profileName, profileVal) ->
       let urls =
-        match tryProp "applicationUrl" p.Value with
+        match tryProp "applicationUrl" profileVal with
         | Some u ->
           (stringValue u).Split(';', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries)
           |> Array.toList
         | None -> []
       let env =
-        match tryProp "environmentVariables" p.Value with
-        | Some e -> e.EnumerateObject() |> Seq.map (fun kv -> kv.Name, stringValue kv.Value) |> Seq.toList
-        | None -> []
-      Ok (LaunchConfig.Profile { Name = p.Name; ApplicationUrls = urls; EnvironmentVariables = env })
-  with :? JsonException as ex ->
-    Error (sprintf "launchSettings.json is not valid JSON: %s" ex.Message)
+        match tryProp "environmentVariables" profileVal with
+        | Some (JsonValue.Object envProps) ->
+          envProps |> List.map (fun (k, v) -> k, stringValue v)
+        | _ -> []
+      Ok (LaunchConfig.Profile { Name = profileName; ApplicationUrls = urls; EnvironmentVariables = env })
 
 [<RequireQualifiedAccess>]
 type UrlPolicy =

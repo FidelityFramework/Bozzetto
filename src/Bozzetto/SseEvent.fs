@@ -17,7 +17,7 @@ type SseChannel =
 /// ("state" channel) and SessionEvents.SessionEvent ("session" channel)
 /// types: the same worker occurrence (e.g. a session-ready notification) used to be
 /// represented by two unrelated DUs, serialized by two different ad hoc
-/// techniques (sprintf string-templating vs. a hand-rolled Utf8JsonWriter),
+/// techniques (sprintf string-templating vs. a hand-rolled JSON writer),
 /// and SseWriter had to track "two event types" separately. Now there is one
 /// DU, one classifier (`SseEvent.channel`), and one serializer
 /// (`SseEvent.toJson`).

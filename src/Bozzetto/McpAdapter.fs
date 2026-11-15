@@ -6,7 +6,6 @@ open System
 open System.IO
 open Fidelity.Data.JSON
 open System.Threading.Tasks
-open System.Xml.Linq
 open Bozzetto.AppState
 open Bozzetto.WarmUp
 open Bozzetto.Features.CellDependenciesReport

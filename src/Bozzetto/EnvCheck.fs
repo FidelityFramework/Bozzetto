@@ -8,7 +8,6 @@ open System.Net.Http
 open System.Net
 open System.Net.Sockets
 open Fidelity.Data.JSON
-open System.Xml.Linq
 open Bozzetto
 open Bozzetto.Server
 
@@ -377,7 +376,7 @@ let sdkCheckFromInputs
 /// also matches framework monikers mentioned inside an XML COMMENT (e.g. the
 /// repo's own Directory.Build.props carries a comment explaining exactly why
 /// an unrelated target) and would misreport the comment's warning as
-/// the project's real target. XDocument.Parse never surfaces comment text as
+/// the project's real target. XmlQuery.parseText never surfaces comment text as
 /// element content, so this reads only what MSBuild itself would read.
 let targetFrameworkMajorsFromXml (xmlText: string) : int list =
   let tfmRx = Text.RegularExpressions.Regex(@"^net(\d+)\.\d+")
@@ -391,14 +390,17 @@ let targetFrameworkMajorsFromXml (xmlText: string) : int list =
         | true, major -> Some major
         | _ -> None
       | _ -> None)
-  try
-    let doc = XDocument.Parse(xmlText)
-    doc.Descendants()
-    |> Seq.filter (fun e ->
-      e.Name.LocalName = "TargetFramework" || e.Name.LocalName = "TargetFrameworks")
-    |> Seq.collect (fun e -> majorsOf e.Value)
-    |> Seq.toList
-  with _ -> []
+  match XmlQuery.parseText xmlText with
+  | Ok doc ->
+    XmlQuery.descendants doc.Root
+    |> List.filter (fun e ->
+      match Fidelity.Data.XML.XmlNode.name e with
+      | Some nm ->
+        let ln = XmlQuery.localName nm
+        ln = "TargetFramework" || ln = "TargetFrameworks"
+      | None -> false)
+    |> List.collect (fun e -> majorsOf (XmlQuery.innerText e))
+  | Error _ -> []
 
 /// Locate the highest TargetFramework major referenced by the projects/build
 /// props reachable upward from the working directory.

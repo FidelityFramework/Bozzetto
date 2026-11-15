@@ -3,7 +3,7 @@ module Bozzetto.AspireSetup
 open System
 open System.IO
 open System.Runtime.InteropServices
-open System.Text.Json
+open Fidelity.Data.JSON
 open Bozzetto.Utils
 
 type LaunchProfile = {
@@ -53,56 +53,44 @@ let loadLaunchSettings (projectDir: string) : LaunchSettings option =
     match File.Exists(launchSettingsPath) with
     | true ->
       let json = File.ReadAllText(launchSettingsPath)
-      let doc = JsonDocument.Parse(json)
-      
-      let profiles = 
-        match doc.RootElement.TryGetProperty("profiles") |> fst with
-        | true ->
-          let profilesElement = doc.RootElement.GetProperty("profiles")
-          profilesElement.EnumerateObject()
-          |> Seq.map (fun prop ->
-            let profileName = prop.Name
-            let profile = prop.Value
-            
-            let envVars = 
-              match profile.TryGetProperty("environmentVariables") |> fst with
-              | true ->
-                let envElement = profile.GetProperty("environmentVariables")
-                envElement.EnumerateObject()
-                |> Seq.map (fun envProp -> envProp.Name, envProp.Value.GetString())
-                |> Map.ofSeq
-              | false ->
-                Map.empty
-            
-            let appUrl = 
-              match profile.TryGetProperty("applicationUrl") |> fst with
-              | true -> Some (profile.GetProperty("applicationUrl").GetString())
-              | false -> None
-            
-            let commandName = 
-              match profile.TryGetProperty("commandName") |> fst with
-              | true -> profile.GetProperty("commandName").GetString()
-              | false -> "Project"
-            
-            let launchBrowser =
-              match profile.TryGetProperty("launchBrowser") |> fst with
-              | true -> profile.GetProperty("launchBrowser").GetBoolean()
-              | false -> false
-            
-            profileName, {
-              CommandName = commandName
-              LaunchBrowser = launchBrowser
-              EnvironmentVariables = envVars
-              ApplicationUrl = appUrl
-            })
-          |> Map.ofSeq
-        | false ->
-          Map.empty
-      
-      Some { Profiles = profiles }
+      match WireJson.parseRelaxed json with
+      | Error _ -> None
+      | Ok root ->
+        let profiles =
+          match JsonValue.prop "profiles" root with
+          | Some (JsonValue.Object profileProps) ->
+            profileProps
+            |> List.map (fun (profileName, profile) ->
+              let envVars =
+                match JsonValue.prop "environmentVariables" profile with
+                | Some (JsonValue.Object envProps) ->
+                  envProps
+                  |> List.choose (fun (k, v) -> JsonValue.asString v |> Option.map (fun s -> k, s))
+                  |> Map.ofList
+                | _ -> Map.empty
+              let appUrl =
+                JsonValue.prop "applicationUrl" profile
+                |> Option.bind JsonValue.asString
+              let commandName =
+                JsonValue.prop "commandName" profile
+                |> Option.bind JsonValue.asString
+                |> Option.defaultValue "Project"
+              let launchBrowser =
+                JsonValue.prop "launchBrowser" profile
+                |> Option.bind JsonValue.asBool
+                |> Option.defaultValue false
+              profileName, {
+                CommandName = commandName
+                LaunchBrowser = launchBrowser
+                EnvironmentVariables = envVars
+                ApplicationUrl = appUrl
+              })
+            |> Map.ofList
+          | _ -> Map.empty
+        Some { Profiles = profiles }
     | false ->
       None
-  with ex ->
+  with _ ->
     None
 
 let setupAspirePaths (logger: ILogger) =

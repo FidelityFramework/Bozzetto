@@ -4,18 +4,22 @@ open System
 open System.Diagnostics
 open System.IO
 open System.Reflection
-open System.Text.Json
+open System.Text
 open System.Threading.Tasks
-open System.Xml.Linq
+open Fidelity.Data.JSON
 open Microsoft.AspNetCore.Http
 open Expecto
 open Expecto.Flip
 open Bozzetto
 
 let private declaredRelease () =
-  XDocument.Load(Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "Directory.Build.props")).Descendants()
-  |> Seq.find (fun element -> element.Name.LocalName = "Version")
-  |> fun element -> element.Value.Trim()
+  let propsPath = Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "Directory.Build.props")
+  match XmlQuery.parseText (File.ReadAllText propsPath) with
+  | Ok doc ->
+    XmlQuery.descendantsNamed "Version" doc.Root
+    |> List.head
+    |> fun element -> (XmlQuery.innerText element).Trim()
+  | Error err -> failtestf "Failed to parse Directory.Build.props: %s" err
 
 [<Tests>]
 let tests = testList "Public release version" [
@@ -59,12 +63,11 @@ let tests = testList "Public release version" [
       context.Response.Body <- body
       do! Bozzetto.Server.McpServer.writeVersionResponse context
       context.Response.StatusCode |> Expect.equal "existing HTTP version endpoint succeeds" 200
-      use document = JsonDocument.Parse(body.ToArray())
-      let root = document.RootElement
-      root.GetProperty("version").GetString() |> Expect.equal "HTTP and discovery are consistent" Bozzetto.Server.DaemonInfo.version
-      root.GetProperty("version").GetString() |> Expect.equal "HTTP and MCP are consistent" (Bozzetto.Server.McpServer.publicServerInfo ()).Version
-      root.GetProperty("apiVersion").GetInt32() |> Expect.equal "API compatibility identity is preserved" EndpointContracts.apiVersion
-      root.GetProperty("protocolVersion").GetInt32() |> Expect.equal "HTTP protocol identity is preserved" 1
+      let root = Json.parseOrFail (Encoding.UTF8.GetString(body.ToArray()))
+      JsonValue.prop "version" root |> Option.bind JsonValue.asString |> Expect.equal "HTTP and discovery are consistent" (Some Bozzetto.Server.DaemonInfo.version)
+      JsonValue.prop "version" root |> Option.bind JsonValue.asString |> Expect.equal "HTTP and MCP are consistent" (Some (Bozzetto.Server.McpServer.publicServerInfo ()).Version)
+      JsonValue.prop "apiVersion" root |> Option.bind JsonValue.asInt |> Expect.equal "API compatibility identity is preserved" (Some (int64 EndpointContracts.apiVersion))
+      JsonValue.prop "protocolVersion" root |> Option.bind JsonValue.asInt |> Expect.equal "HTTP protocol identity is preserved" (Some 1L)
     }
   }
 

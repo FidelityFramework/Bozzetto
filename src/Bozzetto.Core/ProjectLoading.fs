@@ -2,7 +2,6 @@ module Bozzetto.ProjectLoading
 
 open System
 open System.IO
-open System.Xml.Linq
 
 open FSharp.Compiler.CodeAnalysis
 open Bozzetto.Utils
@@ -31,8 +30,6 @@ and ClassifiedProject = {
 /// it does not replace the retired project evaluator.
 module ManualProjectParse =
 
-  let private xname (local: string) = XName.Get(local)
-
   let rec private collectSourceFiles (projPath: string) (visited: Set<string>) (acc: FileName list) =
     let full = Path.GetFullPath projPath
     match visited.Contains full with
@@ -43,25 +40,24 @@ module ManualProjectParse =
       | false -> acc, visited'
       | true ->
         try
-          let doc = XDocument.Load full
-          let dir = Path.GetDirectoryName full
-          let ns = doc.Root.Attribute(xname "xmlns") |> Option.ofObj |> Option.map (fun a -> XNamespace.Get a.Value) |> Option.defaultValue (XNamespace.None)
-          let compileIncludes =
-            doc.Descendants(ns + "Compile")
-            |> Seq.choose (fun el -> el.Attribute(xname "Include") |> Option.ofObj |> Option.map (fun a -> a.Value))
-            |> Seq.map (fun inc -> Path.GetFullPath(Path.Combine(dir, inc.Replace('\\', Path.DirectorySeparatorChar))))
-            |> Seq.filter (fun p -> p.EndsWith(".fs", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".fsx", StringComparison.OrdinalIgnoreCase))
-            |> Seq.filter File.Exists
-            |> Seq.toList
-          // Recurse into ProjectReferences
-          let refs =
-            doc.Descendants(ns + "ProjectReference")
-            |> Seq.choose (fun el -> el.Attribute(xname "Include") |> Option.ofObj |> Option.map (fun a -> a.Value))
-            |> Seq.map (fun inc -> Path.GetFullPath(Path.Combine(dir, inc.Replace('\\', Path.DirectorySeparatorChar))))
-            |> Seq.toList
-          let recAcc, recVisited =
-            refs |> List.fold (fun (a, v) r -> collectSourceFiles r v a) (acc, visited')
-          recAcc @ compileIncludes, recVisited
+          match XmlQuery.parseText (File.ReadAllText full) with
+          | Error _ -> acc, visited'
+          | Ok doc ->
+            let dir = Path.GetDirectoryName full
+            let compileIncludes =
+              XmlQuery.descendantsNamed "Compile" doc.Root
+              |> List.choose (XmlQuery.attr "Include")
+              |> List.map (fun inc -> Path.GetFullPath(Path.Combine(dir, inc.Replace('\\', Path.DirectorySeparatorChar))))
+              |> List.filter (fun p -> p.EndsWith(".fs", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".fsx", StringComparison.OrdinalIgnoreCase))
+              |> List.filter File.Exists
+            // Recurse into ProjectReferences
+            let refs =
+              XmlQuery.descendantsNamed "ProjectReference" doc.Root
+              |> List.choose (XmlQuery.attr "Include")
+              |> List.map (fun inc -> Path.GetFullPath(Path.Combine(dir, inc.Replace('\\', Path.DirectorySeparatorChar))))
+            let recAcc, recVisited =
+              refs |> List.fold (fun (a, v) r -> collectSourceFiles r v a) (acc, visited')
+            recAcc @ compileIncludes, recVisited
         with _ ->
           acc, visited'
 
@@ -546,32 +542,36 @@ type private FallbackProjectProps = {
 
 let private readFallbackProjectProps (projPath: string) : FallbackProjectProps =
   try
-    let doc = XDocument.Load (Path.GetFullPath projPath)
-    let propValue (name: string) =
-      doc.Descendants(XName.Get name) |> Seq.tryHead |> Option.map (fun e -> e.Value.Trim())
-    let outputType = propValue "OutputType"
-    let isTestProjectProp =
-      propValue "IsTestProject"
-      |> Option.map (fun v -> String.Equals(v, "true", StringComparison.OrdinalIgnoreCase))
-    let packageRefs =
-      doc.Descendants(XName.Get "PackageReference")
-      |> Seq.choose (fun el -> el.Attribute(XName.Get "Include") |> Option.ofObj |> Option.map (fun a -> a.Value))
-      |> Seq.toList
-    // Same desktop-UI markers as activeUiPropertyMarkers, read straight from
-    // the XML since there is no ProjectMetadata.AllProperties here.
-    let uiMarkers =
-      [ "UseWPF"; "UseWindowsForms"; "UseMaui"; "UseWinUI" ]
-      |> List.filter (fun prop ->
-        match propValue prop with
-        | Some v -> String.Equals(v, "true", StringComparison.OrdinalIgnoreCase)
-        | None -> false)
-    // Fixture SDK/FrameworkReference markers come from the same
-    // single reader — so the fallback path cannot classify a Minimal API
-    // project differently from the normal one.
-    let projectFileMarkers = WorkflowTypes.ProjectFileMarkers.read projPath
-    { OutputType = outputType
-      IsTestProject = isTestProjectProp
-      PackageRefs = packageRefs @ uiMarkers @ projectFileMarkers }
+    match XmlQuery.parseText (File.ReadAllText (Path.GetFullPath projPath)) with
+    | Error _ ->
+      { OutputType = None; IsTestProject = None; PackageRefs = [] }
+    | Ok doc ->
+      let propValue (name: string) =
+        XmlQuery.descendantsNamed name doc.Root
+        |> List.tryHead
+        |> Option.map (fun e -> (XmlQuery.innerText e).Trim())
+      let outputType = propValue "OutputType"
+      let isTestProjectProp =
+        propValue "IsTestProject"
+        |> Option.map (fun v -> String.Equals(v, "true", StringComparison.OrdinalIgnoreCase))
+      let packageRefs =
+        XmlQuery.descendantsNamed "PackageReference" doc.Root
+        |> List.choose (XmlQuery.attr "Include")
+      // Same desktop-UI markers as activeUiPropertyMarkers, read straight from
+      // the XML since there is no ProjectMetadata.AllProperties here.
+      let uiMarkers =
+        [ "UseWPF"; "UseWindowsForms"; "UseMaui"; "UseWinUI" ]
+        |> List.filter (fun prop ->
+          match propValue prop with
+          | Some v -> String.Equals(v, "true", StringComparison.OrdinalIgnoreCase)
+          | None -> false)
+      // Fixture SDK/FrameworkReference markers come from the same
+      // single reader — so the fallback path cannot classify a Minimal API
+      // project differently from the normal one.
+      let projectFileMarkers = WorkflowTypes.ProjectFileMarkers.read projPath
+      { OutputType = outputType
+        IsTestProject = isTestProjectProp
+        PackageRefs = packageRefs @ uiMarkers @ projectFileMarkers }
   with _ ->
     { OutputType = None; IsTestProject = None; PackageRefs = [] }
 

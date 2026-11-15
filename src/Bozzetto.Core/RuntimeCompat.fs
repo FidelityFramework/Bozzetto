@@ -10,7 +10,7 @@
 module Bozzetto.RuntimeCompat
 
 open System
-open System.Text.Json
+open Fidelity.Data.JSON
 
 /// Whether the required runtime is a released version or a preview/RC.
 type RuntimeStability =
@@ -64,26 +64,28 @@ let private parseVersionString (text: string) : Result<RuntimeRequirement, Runti
 /// Takes the highest major across `framework` / `frameworks` (an ASP.NET project lists both
 /// Microsoft.NETCore.App and Microsoft.AspNetCore.App).
 let parseRuntimeRequirement (json: string) : Result<RuntimeRequirement, RuntimeConfigError> =
-  try
-    use document = JsonDocument.Parse json
-    let versionsOf (element: JsonElement) =
-      match element.TryGetProperty "version" with
-      | true, version when version.ValueKind = JsonValueKind.String -> [ version.GetString() ]
+  match WireJson.parseRelaxed json with
+  | Error detail ->
+    Error(NotJsonRuntimeConfig detail)
+  | Ok root ->
+    let versionsOf (element: JsonValue) =
+      match JsonValue.prop "version" element with
+      | Some (JsonValue.String version) -> [ version ]
       | _ -> []
     let frameworkVersions =
-      match document.RootElement.TryGetProperty "runtimeOptions" with
-      | true, options ->
+      match JsonValue.prop "runtimeOptions" root with
+      | Some options ->
         let single =
-          match options.TryGetProperty "framework" with
-          | true, framework -> versionsOf framework
-          | false, _ -> []
+          match JsonValue.prop "framework" options with
+          | Some framework -> versionsOf framework
+          | None -> []
         let many =
-          match options.TryGetProperty "frameworks" with
-          | true, frameworks when frameworks.ValueKind = JsonValueKind.Array ->
-            [ for framework in frameworks.EnumerateArray() do yield! versionsOf framework ]
+          match JsonValue.prop "frameworks" options with
+          | Some (JsonValue.Array frameworks) ->
+            frameworks |> List.collect versionsOf
           | _ -> []
         single @ many
-      | false, _ -> []
+      | None -> []
     match frameworkVersions with
     | [] -> Error NoFrameworkVersion
     | versions ->
@@ -98,8 +100,6 @@ let parseRuntimeRequirement (json: string) : Result<RuntimeRequirement, RuntimeC
         let atTop = requirements |> List.filter (fun r -> r.Major = top)
         let stability = if atTop |> List.exists (fun r -> r.Stability = Prerelease) then Prerelease else Stable
         Ok { Major = top; Stability = stability }
-  with :? JsonException as ex ->
-    Error(NotJsonRuntimeConfig ex.Message)
 
 /// Decide how to launch the host for a session.
 /// `hostMajor` is the runtime major the host would run on by default; `installedMajors` are

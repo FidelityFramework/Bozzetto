@@ -2,8 +2,7 @@ namespace Bozzetto
 
 open System
 open System.IO
-open System.Text.Json
-open System.Text.Json.Serialization
+open Fidelity.Data.JSON
 open Bozzetto.ProjectLoading
 
 open Bozzetto.WarmUp
@@ -75,15 +74,150 @@ module internal WarmupReplayCache =
     DiscoveryWarnings: string list
   }
 
-  let private jsonOptions =
-    let options =
-      JsonSerializerOptions(
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true
-      )
+  let private encodeFileStamp (s: FileStamp) : JsonValue =
+    JsonValue.Object [
+      "path", JsonValue.String s.Path
+      "exists", JsonValue.Bool s.Exists
+      "length", JsonValue.ofInt64 s.Length
+      "lastWriteTimeUtcTicks", JsonValue.ofInt64 s.LastWriteTimeUtcTicks
+    ]
 
-    options.Converters.Add(JsonFSharpConverter())
-    options
+  let private decodeFileStamp (v: JsonValue) : FileStamp option =
+    match JsonValue.prop "path" v |> Option.bind JsonValue.asString,
+          JsonValue.prop "exists" v |> Option.bind JsonValue.asBool,
+          JsonValue.prop "length" v |> Option.bind JsonValue.asInt,
+          JsonValue.prop "lastWriteTimeUtcTicks" v |> Option.bind JsonValue.asInt with
+    | Some path, Some exists, Some length, Some ticks ->
+      Some { Path = path; Exists = exists; Length = length; LastWriteTimeUtcTicks = ticks }
+    | _ -> None
+
+  let private encodeProjectFileStamp (s: ProjectFileStamp) : JsonValue =
+    JsonValue.Object [
+      "path", JsonValue.String s.Path
+      "exists", JsonValue.Bool s.Exists
+      "contentHash", JsonValue.String s.ContentHash
+    ]
+
+  let private decodeProjectFileStamp (v: JsonValue) : ProjectFileStamp option =
+    match JsonValue.prop "path" v |> Option.bind JsonValue.asString,
+          JsonValue.prop "exists" v |> Option.bind JsonValue.asBool,
+          JsonValue.prop "contentHash" v |> Option.bind JsonValue.asString with
+    | Some path, Some exists, Some hash ->
+      Some { Path = path; Exists = exists; ContentHash = hash }
+    | _ -> None
+
+  let private decodeList (decodeItem: JsonValue -> 'a option) (v: JsonValue) : 'a list option =
+    match v with
+    | JsonValue.Array items ->
+      let decoded = items |> List.choose decodeItem
+      if decoded.Length = items.Length then Some decoded else None
+    | _ -> None
+
+  let private encodeFingerprint (fp: Fingerprint) : JsonValue =
+    JsonValue.Object [
+      "schemaVersion", JsonValue.ofInt64 (int64 fp.SchemaVersion)
+      "autoOpenNamespaces", JsonValue.Bool fp.AutoOpenNamespaces
+      "fsiArgs", JsonValue.Array (fp.FsiArgs |> List.map JsonValue.String)
+      "startupFiles", JsonValue.Array (fp.StartupFiles |> List.map encodeFileStamp)
+      "sourceFiles", JsonValue.Array (fp.SourceFiles |> List.map encodeFileStamp)
+      "assemblyFiles", JsonValue.Array (fp.AssemblyFiles |> List.map encodeFileStamp)
+      "projectFiles", JsonValue.Array (fp.ProjectFiles |> List.map encodeProjectFileStamp)
+    ]
+
+  let private decodeFingerprint (v: JsonValue) : Fingerprint option =
+    match JsonValue.prop "schemaVersion" v |> Option.bind JsonValue.asInt,
+          JsonValue.prop "autoOpenNamespaces" v |> Option.bind JsonValue.asBool,
+          JsonValue.prop "fsiArgs" v |> Option.bind (decodeList JsonValue.asString),
+          JsonValue.prop "startupFiles" v |> Option.bind (decodeList decodeFileStamp),
+          JsonValue.prop "sourceFiles" v |> Option.bind (decodeList decodeFileStamp),
+          JsonValue.prop "assemblyFiles" v |> Option.bind (decodeList decodeFileStamp),
+          JsonValue.prop "projectFiles" v |> Option.bind (decodeList decodeProjectFileStamp) with
+    | Some sv, Some autoOpen, Some args, Some startup, Some source, Some asm, Some proj ->
+      Some {
+        SchemaVersion = int sv
+        AutoOpenNamespaces = autoOpen
+        FsiArgs = args
+        StartupFiles = startup
+        SourceFiles = source
+        AssemblyFiles = asm
+        ProjectFiles = proj
+      }
+    | _ -> None
+
+  let private encodeLoadedAssembly (a: LoadedAssembly) : JsonValue =
+    JsonValue.Object [
+      "name", JsonValue.String a.Name
+      "path", JsonValue.String a.Path
+      "namespaceCount", JsonValue.ofInt64 (int64 a.NamespaceCount)
+      "moduleCount", JsonValue.ofInt64 (int64 a.ModuleCount)
+    ]
+
+  let private decodeLoadedAssembly (v: JsonValue) : LoadedAssembly option =
+    match JsonValue.prop "name" v |> Option.bind JsonValue.asString,
+          JsonValue.prop "path" v |> Option.bind JsonValue.asString,
+          JsonValue.prop "namespaceCount" v |> Option.bind JsonValue.asInt,
+          JsonValue.prop "moduleCount" v |> Option.bind JsonValue.asInt with
+    | Some name, Some path, Some nsCount, Some modCount ->
+      Some { Name = name; Path = path; NamespaceCount = int nsCount; ModuleCount = int modCount }
+    | _ -> None
+
+  let private encodeNameToOpen (n: NameToOpen) : JsonValue =
+    let kindStr =
+      match n.Kind with
+      | OpenableKind.Module -> "Module"
+      | OpenableKind.Namespace -> "Namespace"
+    JsonValue.Object [
+      "name", JsonValue.String n.Name
+      "kind", JsonValue.String kindStr
+    ]
+
+  let private decodeOpenableKind (v: JsonValue) : OpenableKind option =
+    let fromCase = function
+      | "Module" | "module" -> Some OpenableKind.Module
+      | "Namespace" | "namespace" -> Some OpenableKind.Namespace
+      | _ -> None
+    match v with
+    | JsonValue.String s -> fromCase s
+    | JsonValue.Object _ ->
+      JsonValue.prop "Case" v
+      |> Option.orElseWith (fun () -> JsonValue.prop "case" v)
+      |> Option.bind JsonValue.asString
+      |> Option.bind fromCase
+    | _ -> None
+
+  let private decodeNameToOpen (v: JsonValue) : NameToOpen option =
+    match JsonValue.prop "name" v |> Option.bind JsonValue.asString,
+          JsonValue.prop "kind" v |> Option.bind decodeOpenableKind with
+    | Some name, Some kind -> Some { Name = name; Kind = kind }
+    | _ -> None
+
+  let private encodeReplayPlan (plan: ReplayPlan) : JsonValue =
+    JsonValue.Object [
+      "fingerprint", encodeFingerprint plan.Fingerprint
+      "sourceFilesScanned", JsonValue.ofInt64 (int64 plan.SourceFilesScanned)
+      "assembliesLoaded", JsonValue.Array (plan.AssembliesLoaded |> List.map encodeLoadedAssembly)
+      "namesToOpen", JsonValue.Array (plan.NamesToOpen |> List.map encodeNameToOpen)
+      "projectFileNames", JsonValue.Array (plan.ProjectFileNames |> List.map JsonValue.String)
+      "discoveryWarnings", JsonValue.Array (plan.DiscoveryWarnings |> List.map JsonValue.String)
+    ]
+
+  let private decodeReplayPlan (v: JsonValue) : ReplayPlan option =
+    match JsonValue.prop "fingerprint" v |> Option.bind decodeFingerprint,
+          JsonValue.prop "sourceFilesScanned" v |> Option.bind JsonValue.asInt,
+          JsonValue.prop "assembliesLoaded" v |> Option.bind (decodeList decodeLoadedAssembly),
+          JsonValue.prop "namesToOpen" v |> Option.bind (decodeList decodeNameToOpen),
+          JsonValue.prop "projectFileNames" v |> Option.bind (decodeList JsonValue.asString),
+          JsonValue.prop "discoveryWarnings" v |> Option.bind (decodeList JsonValue.asString) with
+    | Some fp, Some scanned, Some asms, Some names, Some projFiles, Some warnings ->
+      Some {
+        Fingerprint = fp
+        SourceFilesScanned = int scanned
+        AssembliesLoaded = asms
+        NamesToOpen = names
+        ProjectFileNames = projFiles
+        DiscoveryWarnings = warnings
+      }
+    | _ -> None
 
   let private normalizePath (path: string) =
     match String.IsNullOrWhiteSpace path with
@@ -230,11 +364,9 @@ module internal WarmupReplayCache =
       | false -> None
       | true ->
         let json = File.ReadAllText path
-        let plan = JsonSerializer.Deserialize<ReplayPlan>(json, jsonOptions)
-
-        match isNull (box plan) with
-        | true -> None
-        | false -> Some plan
+        match Json.parse json with
+        | Ok root -> decodeReplayPlan root
+        | Error _ -> None
     with _ ->
       None
 
@@ -254,7 +386,7 @@ module internal WarmupReplayCache =
     // Write to a temp file then atomically move it over `path`, matching the
     // rest of the persistence layer: a crash or a concurrent read never sees a
     // half-written cache. Worst case is a clean miss that triggers rediscovery.
-    let json = JsonSerializer.Serialize(plan, jsonOptions)
+    let json = Json.serializePretty (encodeReplayPlan plan)
     let tmp = path + ".tmp"
     File.WriteAllText(tmp, json)
     File.Move(tmp, path, true)

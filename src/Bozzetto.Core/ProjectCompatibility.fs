@@ -22,7 +22,6 @@ module Bozzetto.ProjectCompatibility
 open System
 open System.IO
 open System.Text.RegularExpressions
-open System.Xml.Linq
 
 /// Why a single target framework moniker cannot be hosted.
 [<RequireQualifiedAccess>]
@@ -126,8 +125,6 @@ let classifyTfm (rawTfm: string) : TfmVerdict =
     | true -> TfmVerdict.Supported(t, int m.Groups.[1].Value)
     | false -> TfmVerdict.Unknown(t, sprintf "'%s' is not a recognised target framework moniker" t)
 
-let private xname (local: string) = XName.Get(local)
-
 /// Read the `<TargetFramework>`/`<TargetFrameworks>` element text from raw
 /// `.fsproj` XML. `<TargetFrameworks>` (plural) is semicolon-split for
 /// multi-targeting. A project with neither element is
@@ -138,12 +135,12 @@ let readTargetFrameworks (fsprojXml: string) : Result<string list, ProjectReadEr
   match String.IsNullOrWhiteSpace fsprojXml with
   | true -> Error ProjectReadError.Empty
   | false ->
-    try
-      let doc = XDocument.Parse fsprojXml
+    match XmlQuery.parseText fsprojXml with
+    | Ok doc ->
       let elementText name =
-        doc.Descendants(xname name)
-        |> Seq.tryHead
-        |> Option.map (fun e -> e.Value.Trim())
+        XmlQuery.descendantsNamed name doc.Root
+        |> List.tryHead
+        |> Option.map (fun e -> (XmlQuery.innerText e).Trim())
         |> Option.filter (fun s -> s <> "")
       match elementText "TargetFramework", elementText "TargetFrameworks" with
       | Some single, _ -> Ok [ single ]
@@ -155,8 +152,8 @@ let readTargetFrameworks (fsprojXml: string) : Result<string list, ProjectReadEr
           |> Array.toList
         )
       | None, None -> Error ProjectReadError.NoTargetFrameworkElement
-    with ex ->
-      Error(ProjectReadError.MalformedXml ex.Message)
+    | Error detail ->
+      Error(ProjectReadError.MalformedXml detail)
 
 /// Classify a whole project from its raw `.fsproj` XML text. Pure — no IO.
 let classify (fsprojXml: string) : ProjectHostability =

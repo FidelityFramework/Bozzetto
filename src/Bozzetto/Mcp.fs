@@ -7,7 +7,6 @@ open System.IO
 open Fidelity.Data.JSON
 open McpJson
 open System.Threading.Tasks
-open System.Xml.Linq
 open Bozzetto
 open Bozzetto.AppState
 open Bozzetto.WarmUp
@@ -2070,13 +2069,11 @@ module McpTools =
   let private readFsprojPackageRefs (path: string) : string list =
     let packageRefs =
       try
-        let doc = XDocument.Load(path)
-        doc.Descendants(XName.Get("PackageReference"))
-        |> Seq.choose (fun el ->
-          match el.Attribute(XName.Get("Include")) with
-          | null -> None
-          | a -> Some a.Value)
-        |> Seq.toList
+        match XmlQuery.parseText (File.ReadAllText path) with
+        | Ok doc ->
+          XmlQuery.descendantsNamed "PackageReference" doc.Root
+          |> List.choose (XmlQuery.attr "Include")
+        | Error _ -> []
       with _ -> []
     // Paket-managed projects (the SAFE stack template among them) carry no
     // <PackageReference> at all — their packages live in a sibling

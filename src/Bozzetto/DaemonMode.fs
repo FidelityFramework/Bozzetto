@@ -720,7 +720,7 @@ module EvalStatsReading =
 /// old parse read `evalCount`/`avgDurationMs`/`minDurationMs`/
 /// `maxDurationMs` off the response envelope's ROOT; the worker's actual
 /// reply nests them one level down inside the envelope's `value` — a
-/// `StatusResult(replyId, snapshot)` — so `JsonElement.TryGetProperty`
+/// `StatusResult(replyId, snapshot)` — so root-property lookup
 /// silently returned `getInt`/`getLong`'s `0`/`0L` default on EVERY read,
 /// and the dashboard's entire eval-performance readout (count, avg/min/max,
 /// P50/P95, the sparkline) was permanently zero for every user

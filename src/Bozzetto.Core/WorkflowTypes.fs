@@ -131,8 +131,6 @@ module FableMarkers =
 /// pattern `ProjectLoading.activeUiPropertyMarkers` uses for `UseWPF`.
 module ProjectFileMarkers =
 
-  open System.Xml.Linq
-
   /// The default SDK. It is what a project says when it has nothing to say, so
   /// it is not a marker — emitting it would put `Microsoft.NET.Sdk` in the
   /// user-visible `PackageRefs` of every project in the repo for no
@@ -149,26 +147,22 @@ module ProjectFileMarkers =
     match String.IsNullOrWhiteSpace fsprojXml with
     | true -> []
     | false ->
-      try
-        let doc = XDocument.Parse fsprojXml
+      match XmlQuery.parseText fsprojXml with
+      | Ok doc ->
         let sdkAttr =
-          doc.Root
-          |> Option.ofObj
-          |> Option.bind (fun root -> root.Attribute(XName.Get "Sdk") |> Option.ofObj)
-          |> Option.map (fun a -> a.Value.Trim())
+          XmlQuery.attr "Sdk" doc.Root
+          |> Option.map (fun v -> v.Trim())
           |> Option.filter (fun v ->
             v <> "" && not (String.Equals(v, defaultSdk, StringComparison.OrdinalIgnoreCase)))
           |> Option.toList
         let frameworkRefs =
-          doc.Descendants(XName.Get "FrameworkReference")
-          |> Seq.choose (fun el ->
-            el.Attribute(XName.Get "Include")
-            |> Option.ofObj
-            |> Option.map (fun a -> a.Value.Trim()))
-          |> Seq.filter (fun v -> v <> "")
-          |> Seq.toList
+          XmlQuery.descendantsNamed "FrameworkReference" doc.Root
+          |> List.choose (fun el ->
+            XmlQuery.attr "Include" el
+            |> Option.map (fun v -> v.Trim()))
+          |> List.filter (fun v -> v <> "")
         sdkAttr @ frameworkRefs |> List.distinct
-      with _ -> []
+      | Error _ -> []
 
   /// The one IO edge. Any failure to read the file yields `[]`, never an
   /// exception — see `parse`.

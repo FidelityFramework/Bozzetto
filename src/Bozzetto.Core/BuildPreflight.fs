@@ -2,7 +2,6 @@ namespace Bozzetto
 
 open System
 open System.IO
-open System.Xml.Linq
 
 [<RequireQualifiedAccess>]
 type BuildPreflight =
@@ -11,13 +10,13 @@ type BuildPreflight =
   | Unknown of reason: string
 
 module BuildPreflight =
-  let private xmlName (name: string) = XName.Get name
-
   let private hasCustomOutputPath (projectPath: string) (readText: string -> string) =
     try
-      let doc = XDocument.Parse (readText projectPath)
-      doc.Descendants (xmlName "OutputPath")
-      |> Seq.exists (fun element -> not (String.IsNullOrWhiteSpace element.Value))
+      match XmlQuery.parseText (readText projectPath) with
+      | Ok doc ->
+        XmlQuery.descendantsNamed "OutputPath" doc.Root
+        |> List.exists (fun element -> not (String.IsNullOrWhiteSpace (XmlQuery.innerText element)))
+      | Error _ -> false
     with _ -> false
 
   let private conventionalGeneratedPaths (projectPath: string) =
