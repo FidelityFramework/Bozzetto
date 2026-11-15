@@ -2,7 +2,6 @@ module Bozzetto.Tests.SseFeatureFormatTests
 
 open Expecto
 open Expecto.Flip
-open System.Text.Json
 open Bozzetto.Features
 
 let private opts = Bozzetto.JsonCasing.CamelCase

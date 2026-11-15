@@ -60,7 +60,7 @@ module Bozzetto.Tests.DaemonResumeOutcomeTests
 open System
 open System.Diagnostics
 open System.Net.Http
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open Bozzetto.Features
@@ -145,14 +145,23 @@ let private aliveInManifest (dataDir: string) =
   | Error _ -> []
 
 let private sessionsIn (workingDir: string) (body: string) : (string * string) list =
-  use doc = JsonDocument.Parse body
-  doc.RootElement.GetProperty("sessions").EnumerateArray()
-  |> Seq.filter (fun (s: JsonElement) ->
-    let dir = Harness.normalizeDir (s.GetProperty("workingDirectory").GetString())
+  let root = Json.parseOrFail body
+  let sessions =
+    match JsonValue.prop "sessions" root with
+    | Some (JsonValue.Array items) -> items
+    | _ -> []
+  sessions
+  |> List.filter (fun (s: JsonValue) ->
+    let dir =
+      JsonValue.prop "workingDirectory" s
+      |> Option.bind JsonValue.asString
+      |> Option.defaultValue ""
+      |> Harness.normalizeDir
     dir = Harness.normalizeDir workingDir)
-  |> Seq.map (fun (s: JsonElement) ->
-    s.GetProperty("id").GetString(), s.GetProperty("status").GetString())
-  |> Seq.toList
+  |> List.map (fun (s: JsonValue) ->
+    let id = JsonValue.prop "id" s |> Option.bind JsonValue.asString |> Option.defaultValue ""
+    let status = JsonValue.prop "status" s |> Option.bind JsonValue.asString |> Option.defaultValue ""
+    id, status)
 
 let private sessionsFor (client: HttpClient) (workingDir: string) = task {
   try
@@ -165,9 +174,9 @@ let private sessionsFor (client: HttpClient) (workingDir: string) = task {
 
 /// (success, result) from an `/exec` response body.
 let private execOutcome (body: string) : bool * string =
-  use doc = JsonDocument.Parse body
-  doc.RootElement.GetProperty("success").GetBoolean(),
-  doc.RootElement.GetProperty("result").GetString()
+  let root = Json.parseOrFail body
+  JsonValue.prop "success" root |> Option.bind JsonValue.asBool |> Option.defaultValue false,
+  JsonValue.prop "result" root |> Option.bind JsonValue.asString |> Option.defaultValue ""
 
 // ─── The gate ───────────────────────────────────────────────────────────────
 

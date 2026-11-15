@@ -252,7 +252,7 @@ let tests = testList "Composer typed binary worker protocol" [
     for literal in [ "1.0"; "1e0"; "-1"; "18446744073709551616"; "null"; "\"1\"" ] do
       parse "1" literal "" |> Result.isError |> Expect.isTrue ("revision refuses " + literal)
     parse "1" "1" "\"source\":null," |> Result.isError |> Expect.isTrue "explicit null cannot become an empty buffer"
-    // JsonElement.TryGetProperty previously selected the final occurrence.
+    // Duplicate object field lookup preserves the final occurrence.
     match parse "1" "1" "\"revision\":2," with
     | Result.Ok(Format(_, _, buffer)) -> buffer.Revision |> Expect.equal "duplicate request field preserves last occurrence" 2UL
     | other -> failtestf "Duplicate field contract changed: %A" other

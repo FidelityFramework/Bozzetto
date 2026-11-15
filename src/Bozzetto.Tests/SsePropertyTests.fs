@@ -1,8 +1,7 @@
 module Bozzetto.Tests.SsePropertyTests
 
 open System
-open System.Text.Json
-open System.Text.Json.Serialization
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open FsCheck
@@ -35,10 +34,9 @@ let private countDataLines (sse: string) =
   |> Array.length
 
 let private isValidJson (s: string) =
-  try
-    use _ = JsonDocument.Parse(s)
-    true
-  with _ -> false
+  match Json.parse s with
+  | Ok _ -> true
+  | Error _ -> false
 
 let private startsWithEventPrefix (sse: string) =
   sse.StartsWith("event: ")

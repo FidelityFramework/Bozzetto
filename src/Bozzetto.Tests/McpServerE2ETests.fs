@@ -3,7 +3,6 @@ module Bozzetto.Tests.McpServerE2ETests
 open Expecto
 open Expecto.Flip
 open System.Text
-open System.Text.Json
 open System.IO
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging

@@ -2,7 +2,7 @@ module Bozzetto.Tests.FsiOutputParserTests
 
 open Expecto
 open Expecto.Flip
-open System.Text.Json
+open Fidelity.Data.JSON
 open Bozzetto.Features.FsiOutputParser
 
 // ── parseFsiVal ───────────────────────────────────────────────────────────────
@@ -226,14 +226,30 @@ let bindingValueContractTests =
   testList "BindingValue.jsonContract" [
 
     test "BindingValue round-trips through JSON serialization without field loss" {
-      let opts = JsonSerializerOptions(PropertyNamingPolicy = JsonNamingPolicy.CamelCase)
       let bv : BindingValue = {
         Name = "answer"; TypeSig = "int"; DisplayValue = "42"
         IsTruncated = false; IsFunctionValue = false
         CellIndex = 3; EvalDurationMs = 12.5; SourceLine = 0
       }
-      let json = JsonSerializer.Serialize(bv, opts)
-      let rt = JsonSerializer.Deserialize<BindingValue>(json, opts)
+      let json = Bozzetto.LiveTestingJson.bindingValue Bozzetto.JsonCasing.CamelCase bv |> Json.serialize
+      let root = Json.parseOrFail json
+      let rt : BindingValue = {
+        Name = JsonValue.prop "name" root |> Option.bind JsonValue.asString |> Option.defaultValue ""
+        TypeSig = JsonValue.prop "typeSig" root |> Option.bind JsonValue.asString |> Option.defaultValue ""
+        DisplayValue = JsonValue.prop "displayValue" root |> Option.bind JsonValue.asString |> Option.defaultValue ""
+        IsTruncated = JsonValue.prop "isTruncated" root |> Option.bind JsonValue.asBool |> Option.defaultValue false
+        IsFunctionValue = JsonValue.prop "isFunctionValue" root |> Option.bind JsonValue.asBool |> Option.defaultValue false
+        CellIndex = JsonValue.prop "cellIndex" root |> Option.bind JsonValue.asInt |> Option.map int |> Option.defaultValue 0
+        EvalDurationMs =
+          match JsonValue.prop "evalDurationMs" root with
+          | Some (JsonValue.Number n) -> n
+          | Some (JsonValue.NumberLiteral _ as v) ->
+            match System.Double.TryParse(Json.serialize v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
+            | true, n -> n
+            | false, _ -> 0.0
+          | _ -> 0.0
+        SourceLine = JsonValue.prop "sourceLine" root |> Option.bind JsonValue.asInt |> Option.map int |> Option.defaultValue 0
+      }
       rt.Name          |> Expect.equal "Name"          bv.Name
       rt.TypeSig       |> Expect.equal "TypeSig"       bv.TypeSig
       rt.DisplayValue  |> Expect.equal "DisplayValue"  bv.DisplayValue
@@ -245,14 +261,16 @@ let bindingValueContractTests =
     }
 
     test "bindings_snapshot payload JSON contains BindingValues array key" {
-      let opts = JsonSerializerOptions(PropertyNamingPolicy = JsonNamingPolicy.CamelCase)
       let bv : BindingValue = {
         Name = "x"; TypeSig = "int"; DisplayValue = "1"
         IsTruncated = false; IsFunctionValue = false
         CellIndex = 0; EvalDurationMs = 0.0; SourceLine = 0
       }
-      let payload = {| BindingValues = [ bv ] |}
-      let json = JsonSerializer.Serialize(payload, opts)
+      let json =
+        Bozzetto.WireJson.objectValue Bozzetto.JsonCasing.CamelCase [
+          "BindingValues", JsonValue.Array [ Bozzetto.LiveTestingJson.bindingValue Bozzetto.JsonCasing.CamelCase bv ]
+        ]
+        |> Json.serialize
       json |> Expect.stringContains "has BindingValues key" "bindingValues"
       json |> Expect.stringContains "value in payload" "\"x\""
     }

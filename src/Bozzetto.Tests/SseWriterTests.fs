@@ -2,8 +2,7 @@ module Bozzetto.Tests.SseWriterTests
 
 open System.IO
 open System.Text
-open System.Text.Json
-open System.Text.Json.Serialization
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open Bozzetto.SseWriter
@@ -148,15 +147,13 @@ let wireProtocolTests = testList "Wire Protocol Contract" [
         Total = 10; Passed = 7; Failed = 1; Stale = 1; Running = 0; Disabled = 1; Enabled = true
       }
       let json = LiveTestingJson.summaryValue productionSseOpts summary |> WireJson.serialize
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      let mutable v = Unchecked.defaultof<JsonElement>
-      root.TryGetProperty("Total", &v) |> Expect.isTrue "has Total"
-      root.TryGetProperty("Passed", &v) |> Expect.isTrue "has Passed"
-      root.TryGetProperty("Failed", &v) |> Expect.isTrue "has Failed"
-      root.TryGetProperty("Stale", &v) |> Expect.isTrue "has Stale"
-      root.TryGetProperty("Running", &v) |> Expect.isTrue "has Running"
-      root.TryGetProperty("Disabled", &v) |> Expect.isTrue "has Disabled"
+      let root = Json.parseOrFail json
+      root |> JsonValue.prop "Total" |> Option.isSome |> Expect.isTrue "has Total"
+      root |> JsonValue.prop "Passed" |> Option.isSome |> Expect.isTrue "has Passed"
+      root |> JsonValue.prop "Failed" |> Option.isSome |> Expect.isTrue "has Failed"
+      root |> JsonValue.prop "Stale" |> Option.isSome |> Expect.isTrue "has Stale"
+      root |> JsonValue.prop "Running" |> Option.isSome |> Expect.isTrue "has Running"
+      root |> JsonValue.prop "Disabled" |> Option.isSome |> Expect.isTrue "has Disabled"
 
     testCase "round-trip values are correct" <| fun () ->
       let summary: Bozzetto.Features.LiveTesting.TestSummary = {
@@ -164,13 +161,12 @@ let wireProtocolTests = testList "Wire Protocol Contract" [
       }
       let sse = formatTestSummaryEvent productionSseOpts None summary None
       let data = extractSseData sse |> Option.get
-      let doc = JsonDocument.Parse(data)
-      let root = doc.RootElement
-      root.GetProperty("Total").GetInt32() |> Expect.equal "Total" 47
-      root.GetProperty("Passed").GetInt32() |> Expect.equal "Passed" 40
-      root.GetProperty("Failed").GetInt32() |> Expect.equal "Failed" 3
-      root.GetProperty("Stale").GetInt32() |> Expect.equal "Stale" 2
-      root.GetProperty("Disabled").GetInt32() |> Expect.equal "Disabled" 1
+      let root = Json.parseOrFail data
+      root |> JsonValue.prop "Total" |> Option.bind JsonValue.asInt |> Option.map int |> Option.defaultValue 0 |> Expect.equal "Total" 47
+      root |> JsonValue.prop "Passed" |> Option.bind JsonValue.asInt |> Option.map int |> Option.defaultValue 0 |> Expect.equal "Passed" 40
+      root |> JsonValue.prop "Failed" |> Option.bind JsonValue.asInt |> Option.map int |> Option.defaultValue 0 |> Expect.equal "Failed" 3
+      root |> JsonValue.prop "Stale" |> Option.bind JsonValue.asInt |> Option.map int |> Option.defaultValue 0 |> Expect.equal "Stale" 2
+      root |> JsonValue.prop "Disabled" |> Option.bind JsonValue.asInt |> Option.map int |> Option.defaultValue 0 |> Expect.equal "Disabled" 1
 
     testCase "no camelCase properties in output" <| fun () ->
       let summary: Bozzetto.Features.LiveTesting.TestSummary = {
@@ -185,56 +181,65 @@ let wireProtocolTests = testList "Wire Protocol Contract" [
   testList "ResultFreshness DU shape" [
     testCase "Fresh serializes as Case/Fields" <| fun () ->
       let json = LiveTestingJson.freshnessValue productionSseOpts Bozzetto.Features.LiveTesting.ResultFreshness.Fresh |> WireJson.serialize
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("Case").GetString() |> Expect.equal "case" "Fresh"
+      let doc = Json.parseOrFail json
+      doc |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "Fresh"
 
     testCase "StaleCodeEdited serializes as Case/Fields" <| fun () ->
       let json = LiveTestingJson.freshnessValue productionSseOpts Bozzetto.Features.LiveTesting.ResultFreshness.StaleCodeEdited |> WireJson.serialize
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("Case").GetString() |> Expect.equal "case" "StaleCodeEdited"
+      let doc = Json.parseOrFail json
+      doc |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "StaleCodeEdited"
 
     testCase "StaleWrongGeneration serializes as Case/Fields" <| fun () ->
       let json = LiveTestingJson.freshnessValue productionSseOpts Bozzetto.Features.LiveTesting.ResultFreshness.StaleWrongGeneration |> WireJson.serialize
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("Case").GetString() |> Expect.equal "case" "StaleWrongGeneration"
+      let doc = Json.parseOrFail json
+      doc |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "StaleWrongGeneration"
   ]
 
   testList "TestRunStatus DU shape" [
     testCase "Stale has Case:Stale" <| fun () ->
       let json = LiveTestingJson.statusValue productionSseOpts (Bozzetto.Features.LiveTesting.TestRunStatus.Stale) |> WireJson.serialize
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("Case").GetString() |> Expect.equal "case" "Stale"
+      let doc = Json.parseOrFail json
+      doc |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "Stale"
 
     testCase "PolicyDisabled has Case:PolicyDisabled" <| fun () ->
       let json = LiveTestingJson.statusValue productionSseOpts (Bozzetto.Features.LiveTesting.TestRunStatus.PolicyDisabled) |> WireJson.serialize
-      let doc = JsonDocument.Parse(json)
-      doc.RootElement.GetProperty("Case").GetString() |> Expect.equal "case" "PolicyDisabled"
+      let doc = Json.parseOrFail json
+      doc |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "PolicyDisabled"
 
     testCase "Passed carries duration in Fields" <| fun () ->
       let status = Bozzetto.Features.LiveTesting.TestRunStatus.Passed (System.TimeSpan.FromMilliseconds(42.5))
       let json = LiveTestingJson.statusValue productionSseOpts status |> WireJson.serialize
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      root.GetProperty("Case").GetString() |> Expect.equal "case" "Passed"
-      root.GetProperty("Fields").GetArrayLength() |> Expect.equal "1 field" 1
-      root.GetProperty("Fields").[0].ValueKind |> Expect.equal "field is string" JsonValueKind.String
+      let root = Json.parseOrFail json
+      root |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "Passed"
+      let fields =
+        match JsonValue.prop "Fields" root with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
+      fields.Length |> Expect.equal "1 field" 1
+      fields.[0] |> JsonValue.asString |> Option.isSome |> Expect.isTrue "field is string"
 
     testCase "Failed carries failure+duration in Fields" <| fun () ->
       let failure = Bozzetto.Features.LiveTesting.TestFailure.AssertionFailed "oops"
       let dur = System.TimeSpan.FromMilliseconds(100.0)
       let status = Bozzetto.Features.LiveTesting.TestRunStatus.Failed(failure, dur)
       let json = LiveTestingJson.statusValue productionSseOpts status |> WireJson.serialize
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      root.GetProperty("Case").GetString() |> Expect.equal "case" "Failed"
-      root.GetProperty("Fields").GetArrayLength() |> Expect.equal "2 fields" 2
+      let root = Json.parseOrFail json
+      root |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "Failed"
+      let fields =
+        match JsonValue.prop "Fields" root with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
+      fields.Length |> Expect.equal "2 fields" 2
 
     testCase "Skipped carries reason in Fields" <| fun () ->
       let json = LiveTestingJson.statusValue productionSseOpts (Bozzetto.Features.LiveTesting.TestRunStatus.Skipped "not applicable") |> WireJson.serialize
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      root.GetProperty("Case").GetString() |> Expect.equal "case" "Skipped"
-      root.GetProperty("Fields").[0].GetString() |> Expect.equal "reason" "not applicable"
+      let root = Json.parseOrFail json
+      root |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "Skipped"
+      let fields =
+        match JsonValue.prop "Fields" root with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
+      fields.[0] |> JsonValue.asString |> Option.defaultValue "" |> Expect.equal "reason" "not applicable"
   ]
 
   testList "TestResultsBatchPayload shape" [
@@ -248,14 +253,12 @@ let wireProtocolTests = testList "Wire Protocol Contract" [
         LastDecision = None
       }
       let json = LiveTestingJson.batchValue productionSseOpts payload |> WireJson.serialize
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
-      let mutable v = Unchecked.defaultof<JsonElement>
-      root.TryGetProperty("Freshness", &v) |> Expect.isTrue "has Freshness"
-      root.TryGetProperty("Entries", &v) |> Expect.isTrue "has Entries"
-      root.TryGetProperty("Summary", &v) |> Expect.isTrue "has Summary"
-      root.TryGetProperty("Generation", &v) |> Expect.isTrue "has Generation"
-      root.TryGetProperty("Completion", &v) |> Expect.isTrue "has Completion"
+      let root = Json.parseOrFail json
+      root |> JsonValue.prop "Freshness" |> Option.isSome |> Expect.isTrue "has Freshness"
+      root |> JsonValue.prop "Entries" |> Option.isSome |> Expect.isTrue "has Entries"
+      root |> JsonValue.prop "Summary" |> Option.isSome |> Expect.isTrue "has Summary"
+      root |> JsonValue.prop "Generation" |> Option.isSome |> Expect.isTrue "has Generation"
+      root |> JsonValue.prop "Completion" |> Option.isSome |> Expect.isTrue "has Completion"
 
     testCase "Freshness is nested DU object" <| fun () ->
       let payload: Bozzetto.Features.LiveTesting.TestResultsBatchPayload = {
@@ -267,82 +270,95 @@ let wireProtocolTests = testList "Wire Protocol Contract" [
         LastDecision = None
       }
       let json = LiveTestingJson.batchValue productionSseOpts payload |> WireJson.serialize
-      let doc = JsonDocument.Parse(json)
-      let freshEl = doc.RootElement.GetProperty("Freshness")
-      freshEl.ValueKind |> Expect.equal "is object" JsonValueKind.Object
-      freshEl.GetProperty("Case").GetString() |> Expect.equal "case" "StaleCodeEdited"
+      let doc = Json.parseOrFail json
+      let freshEl = doc |> JsonValue.prop "Freshness" |> Option.defaultValue JsonValue.Null
+      let isObj = match freshEl with JsonValue.Object _ -> true | _ -> false
+      isObj |> Expect.isTrue "is object"
+      freshEl |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "StaleCodeEdited"
   ]
 ]
 
 /// Helper to serialize and parse in one call
 let private serAndParse encode value =
   let json = encode productionSseOpts value |> WireJson.serialize
-  JsonDocument.Parse(json).RootElement
+  Json.parseOrFail json
 
 [<Tests>]
 let protocolSnapshotTests = testList "Protocol Snapshots" [
 
   testList "RunPolicy wire format" [
     testCase "OnEveryChange" <| fun () ->
-      (serAndParse LiveTestingJson.policyValue RunPolicy.OnEveryChange).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.policyValue RunPolicy.OnEveryChange) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "OnEveryChange"
     testCase "OnSaveOnly" <| fun () ->
-      (serAndParse LiveTestingJson.policyValue RunPolicy.OnSaveOnly).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.policyValue RunPolicy.OnSaveOnly) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "OnSaveOnly"
     testCase "OnDemand" <| fun () ->
-      (serAndParse LiveTestingJson.policyValue RunPolicy.OnDemand).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.policyValue RunPolicy.OnDemand) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "OnDemand"
     testCase "Disabled" <| fun () ->
-      (serAndParse LiveTestingJson.policyValue RunPolicy.Disabled).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.policyValue RunPolicy.Disabled) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "Disabled"
   ]
 
   testList "TestCategory wire format" [
     testCase "Unit" <| fun () ->
-      (serAndParse LiveTestingJson.categoryValue TestCategory.Unit).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.categoryValue TestCategory.Unit) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "Unit"
     testCase "Integration" <| fun () ->
-      (serAndParse LiveTestingJson.categoryValue TestCategory.Integration).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.categoryValue TestCategory.Integration) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "Integration"
     testCase "Custom with value" <| fun () ->
       let root = serAndParse LiveTestingJson.categoryValue (TestCategory.Custom "smoke")
-      root.GetProperty("Case").GetString() |> Expect.equal "case" "Custom"
-      root.GetProperty("Fields").[0].GetString() |> Expect.equal "value" "smoke"
+      root |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "Custom"
+      let fields =
+        match JsonValue.prop "Fields" root with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
+      fields.[0] |> JsonValue.asString |> Option.defaultValue "" |> Expect.equal "value" "smoke"
   ]
 
   testList "CoverageHealth wire format" [
     testCase "AllPassing" <| fun () ->
-      (serAndParse LiveTestingJson.healthValue CoverageHealth.AllPassing).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.healthValue CoverageHealth.AllPassing) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "AllPassing"
     testCase "SomeFailing" <| fun () ->
-      (serAndParse LiveTestingJson.healthValue CoverageHealth.SomeFailing).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.healthValue CoverageHealth.SomeFailing) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "SomeFailing"
   ]
 
   testList "CoverageStatus wire format" [
     testCase "Covered has testCount and health" <| fun () ->
       let root = serAndParse LiveTestingJson.coverageStatusValue (CoverageStatus.Covered(3, CoverageHealth.AllPassing))
-      root.GetProperty("Case").GetString() |> Expect.equal "case" "Covered"
-      root.GetProperty("Fields").GetArrayLength() |> Expect.equal "2 fields" 2
-      root.GetProperty("Fields").[0].GetInt32() |> Expect.equal "testCount" 3
+      root |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "Covered"
+      let fields =
+        match JsonValue.prop "Fields" root with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
+      fields.Length |> Expect.equal "2 fields" 2
+      fields.[0] |> JsonValue.asInt |> Option.map int |> Option.defaultValue 0 |> Expect.equal "testCount" 3
     testCase "NotCovered" <| fun () ->
-      (serAndParse LiveTestingJson.coverageStatusValue CoverageStatus.NotCovered).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.coverageStatusValue CoverageStatus.NotCovered) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "NotCovered"
     testCase "Pending" <| fun () ->
-      (serAndParse LiveTestingJson.coverageStatusValue CoverageStatus.Pending).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.coverageStatusValue CoverageStatus.Pending) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "Pending"
   ]
 
   testList "LineCoverage wire format" [
     testCase "FullyCovered" <| fun () ->
-      (serAndParse LiveTestingJson.lineCoverageValue LineCoverage.FullyCovered).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.lineCoverageValue LineCoverage.FullyCovered) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "FullyCovered"
     testCase "PartiallyCovered" <| fun () ->
       let root = serAndParse LiveTestingJson.lineCoverageValue (LineCoverage.PartiallyCovered(2, 5))
-      root.GetProperty("Case").GetString() |> Expect.equal "case" "PartiallyCovered"
-      root.GetProperty("Fields").[0].GetInt32() |> Expect.equal "covered" 2
+      root |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "case" "PartiallyCovered"
+      let fields =
+        match JsonValue.prop "Fields" root with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
+      fields.[0] |> JsonValue.asInt |> Option.map int |> Option.defaultValue 0 |> Expect.equal "covered" 2
     testCase "NotCovered" <| fun () ->
-      (serAndParse LiveTestingJson.lineCoverageValue LineCoverage.NotCovered).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.lineCoverageValue LineCoverage.NotCovered) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "NotCovered"
   ]
 
@@ -354,10 +370,9 @@ let protocolSnapshotTests = testList "Protocol Snapshots" [
         PerformanceAnnotations = [||]
       }
       let root = serAndParse LiveTestingJson.fileAnnotationsValue fa
-      let mutable v = Unchecked.defaultof<JsonElement>
-      root.TryGetProperty("FilePath", &v) |> Expect.isTrue "has FilePath"
-      root.TryGetProperty("CoverageAnnotations", &v) |> Expect.isTrue "has CoverageAnnotations"
-      root.TryGetProperty("CodeLenses", &v) |> Expect.isTrue "has CodeLenses"
+      root |> JsonValue.prop "FilePath" |> Option.isSome |> Expect.isTrue "has FilePath"
+      root |> JsonValue.prop "CoverageAnnotations" |> Option.isSome |> Expect.isTrue "has CoverageAnnotations"
+      root |> JsonValue.prop "CodeLenses" |> Option.isSome |> Expect.isTrue "has CodeLenses"
 
     testCase "CoverageLineAnnotation shape" <| fun () ->
       let cla : CoverageLineAnnotation = {
@@ -367,9 +382,13 @@ let protocolSnapshotTests = testList "Protocol Snapshots" [
         BranchCoverage = None
       }
       let root = serAndParse LiveTestingJson.coverageLineAnnotationValue cla
-      root.GetProperty("Line").GetInt32() |> Expect.equal "line" 42
-      root.GetProperty("Detail").GetProperty("Case").GetString() |> Expect.equal "detail" "Covered"
-      root.GetProperty("CoveringTestIds").GetArrayLength() |> Expect.equal "ids" 2
+      root |> JsonValue.prop "Line" |> Option.bind JsonValue.asInt |> Option.map int |> Option.defaultValue 0 |> Expect.equal "line" 42
+      root |> JsonValue.prop "Detail" |> Option.bind (JsonValue.prop "Case") |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "detail" "Covered"
+      let coveringIds =
+        match JsonValue.prop "CoveringTestIds" root with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
+      coveringIds.Length |> Expect.equal "ids" 2
 
     testCase "TestLineAnnotation shape" <| fun () ->
       let tla : TestLineAnnotation = {
@@ -378,8 +397,8 @@ let protocolSnapshotTests = testList "Protocol Snapshots" [
         Freshness = AnnotationFreshness.Current
       }
       let root = serAndParse LiveTestingJson.testLineAnnotationValue tla
-      root.GetProperty("Line").GetInt32() |> Expect.equal "line" 10
-      root.GetProperty("Status").GetProperty("Case").GetString() |> Expect.equal "status" "Passed"
+      root |> JsonValue.prop "Line" |> Option.bind JsonValue.asInt |> Option.map int |> Option.defaultValue 0 |> Expect.equal "line" 10
+      root |> JsonValue.prop "Status" |> Option.bind (JsonValue.prop "Case") |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "status" "Passed"
 
     testCase "TestCodeLens shape" <| fun () ->
       let cl : TestCodeLens = {
@@ -387,43 +406,43 @@ let protocolSnapshotTests = testList "Protocol Snapshots" [
         Line = 5; Command = CodeLensCommand.RunTest
       }
       let root = serAndParse LiveTestingJson.codeLensValue cl
-      root.GetProperty("Label").GetString() |> Expect.stringContains "label" "Passed"
-      root.GetProperty("Command").GetProperty("Case").GetString() |> Expect.equal "cmd" "RunTest"
+      root |> JsonValue.prop "Label" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.stringContains "label" "Passed"
+      root |> JsonValue.prop "Command" |> Option.bind (JsonValue.prop "Case") |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "cmd" "RunTest"
   ]
 
   testList "BatchCompletion wire format" [
     testCase "Complete" <| fun () ->
-      (serAndParse LiveTestingJson.completionValue (BatchCompletion.Complete(10, 10))).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.completionValue (BatchCompletion.Complete(10, 10))) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "Complete"
     testCase "Partial" <| fun () ->
-      (serAndParse LiveTestingJson.completionValue (BatchCompletion.Partial(5, 10))).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.completionValue (BatchCompletion.Partial(5, 10))) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "Partial"
     testCase "Superseded" <| fun () ->
-      (serAndParse LiveTestingJson.completionValue BatchCompletion.Superseded).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.completionValue BatchCompletion.Superseded) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "Superseded"
   ]
 
   testList "AnnotationFreshness wire format" [
     testCase "Current" <| fun () ->
-      (serAndParse LiveTestingJson.annotationFreshnessValue AnnotationFreshness.Current).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.annotationFreshnessValue AnnotationFreshness.Current) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "Current"
     testCase "Stale" <| fun () ->
-      (serAndParse LiveTestingJson.annotationFreshnessValue AnnotationFreshness.Stale).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.annotationFreshnessValue AnnotationFreshness.Stale) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "Stale"
     testCase "Running" <| fun () ->
-      (serAndParse LiveTestingJson.annotationFreshnessValue AnnotationFreshness.Running).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.annotationFreshnessValue AnnotationFreshness.Running) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "Running"
   ]
 
   testList "CodeLensCommand wire format" [
     testCase "RunTest" <| fun () ->
-      (serAndParse LiveTestingJson.lensCommandValue CodeLensCommand.RunTest).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.lensCommandValue CodeLensCommand.RunTest) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "RunTest"
     testCase "DebugTest" <| fun () ->
-      (serAndParse LiveTestingJson.lensCommandValue CodeLensCommand.DebugTest).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.lensCommandValue CodeLensCommand.DebugTest) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "DebugTest"
     testCase "ShowHistory" <| fun () ->
-      (serAndParse LiveTestingJson.lensCommandValue CodeLensCommand.ShowHistory).GetProperty("Case").GetString()
+      (serAndParse LiveTestingJson.lensCommandValue CodeLensCommand.ShowHistory) |> JsonValue.prop "Case" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "case" "ShowHistory"
   ]
 ]
@@ -444,18 +463,18 @@ let sessionScopingTests = testList "SSE Session Scoping" [
     testCase "injected json is valid JSON" <| fun () ->
       let json = """{"Total":5,"Passed":3}"""
       let result = injectSessionId (Some "abc") json
-      let doc = JsonDocument.Parse(result)
-      doc.RootElement.GetProperty("SessionId").GetString()
+      let doc = Json.parseOrFail result
+      doc |> JsonValue.prop "SessionId" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "sessionId" "abc"
-      doc.RootElement.GetProperty("Total").GetInt32()
+      doc |> JsonValue.prop "Total" |> Option.bind JsonValue.asInt |> Option.map int |> Option.defaultValue 0
       |> Expect.equal "total preserved" 5
 
     testCase "session identity cannot inject JSON fields or SSE lines" <| fun () ->
       let sid = "quote\"\nslash\\"
-      use doc = JsonDocument.Parse(injectSessionId (Some sid) "{\"Total\":9007199254740993}")
-      doc.RootElement.GetProperty("SessionId").GetString() |> Expect.equal "identity preserved" sid
-      doc.RootElement.GetProperty("Total").GetInt64() |> Expect.equal "exact integer preserved" 9007199254740993L
-      doc.RootElement.EnumerateObject() |> Seq.length |> Expect.equal "no injected properties" 2
+      let doc = Json.parseOrFail (injectSessionId (Some sid) "{\"Total\":9007199254740993}")
+      doc |> JsonValue.prop "SessionId" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "identity preserved" sid
+      doc |> JsonValue.prop "Total" |> Option.bind JsonValue.asInt |> Option.defaultValue 0L |> Expect.equal "exact integer preserved" 9007199254740993L
+      doc |> JsonValue.keys |> List.length |> Expect.equal "no injected properties" 2
 
     testCase "non-object json returned unchanged" <| fun () ->
       injectSessionId (Some "abc") "[1,2,3]"
@@ -476,10 +495,10 @@ let sessionScopingTests = testList "SSE Session Scoping" [
       }
       let result = formatTestSummaryEvent productionSseOpts (Some "sess-456") summary None
       let data = extractSseData result |> Option.get
-      let doc = JsonDocument.Parse(data)
-      doc.RootElement.GetProperty("SessionId").GetString()
+      let doc = Json.parseOrFail data
+      doc |> JsonValue.prop "SessionId" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "sessionId" "sess-456"
-      doc.RootElement.GetProperty("Total").GetInt32()
+      doc |> JsonValue.prop "Total" |> Option.bind JsonValue.asInt |> Option.map int |> Option.defaultValue 0
       |> Expect.equal "total preserved" 10
 
     testCase "formatTestResultsBatchEvent Some injects SessionId" <| fun () ->
@@ -493,8 +512,8 @@ let sessionScopingTests = testList "SSE Session Scoping" [
       }
       let result = formatTestResultsBatchEvent productionSseOpts (Some "sess-789") payload
       let data = extractSseData result |> Option.get
-      let doc = JsonDocument.Parse(data)
-      doc.RootElement.GetProperty("SessionId").GetString()
+      let doc = Json.parseOrFail data
+      doc |> JsonValue.prop "SessionId" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "sessionId" "sess-789"
 
     testCase "formatTestSummaryEvent includes last decision when provided" <| fun () ->
@@ -511,11 +530,11 @@ let sessionScopingTests = testList "SSE Session Scoping" [
           "coverage widened"
       let result = formatTestSummaryEvent productionSseOpts None summary (Some decision)
       let data = extractSseData result |> Option.get
-      let doc = JsonDocument.Parse(data)
-      let lastDecision = doc.RootElement.GetProperty("LastDecision")
-      lastDecision.GetProperty("Precision").GetString()
+      let doc = Json.parseOrFail data
+      let lastDecision = doc |> JsonValue.prop "LastDecision" |> Option.defaultValue JsonValue.Null
+      lastDecision |> JsonValue.prop "Precision" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "precision should be serialized" "coverage_approximation"
-      lastDecision.GetProperty("Trust").GetString()
+      lastDecision |> JsonValue.prop "Trust" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "trust should be serialized" "fresh_approximate"
 
     testCase "formatTestResultsBatchEvent includes last decision when provided" <| fun () ->
@@ -537,11 +556,11 @@ let sessionScopingTests = testList "SSE Session Scoping" [
       }
       let result = formatTestResultsBatchEvent productionSseOpts None payload
       let data = extractSseData result |> Option.get
-      let doc = JsonDocument.Parse(data)
-      let lastDecision = doc.RootElement.GetProperty("LastDecision")
-      lastDecision.GetProperty("Cause").GetString()
+      let doc = Json.parseOrFail data
+      let lastDecision = doc |> JsonValue.prop "LastDecision" |> Option.defaultValue JsonValue.Null
+      lastDecision |> JsonValue.prop "Cause" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "cause should be serialized" "file_saved"
-      lastDecision.GetProperty("Precision").GetString()
+      lastDecision |> JsonValue.prop "Precision" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "precision should be serialized" "conservative_fallback"
 
     testCase "formatFileAnnotationsEvent Some injects SessionId" <| fun () ->
@@ -552,10 +571,10 @@ let sessionScopingTests = testList "SSE Session Scoping" [
       }
       let result = formatFileAnnotationsEvent productionSseOpts (Some "sess-abc") fa
       let data = extractSseData result |> Option.get
-      let doc = JsonDocument.Parse(data)
-      doc.RootElement.GetProperty("SessionId").GetString()
+      let doc = Json.parseOrFail data
+      doc |> JsonValue.prop "SessionId" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "sessionId" "sess-abc"
-      doc.RootElement.GetProperty("FilePath").GetString()
+      doc |> JsonValue.prop "FilePath" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "path preserved" "src/Foo.fs"
   ]
 ]

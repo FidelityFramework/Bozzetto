@@ -191,10 +191,16 @@ type private LeaseReply = { Decision: string; RetryAfter: float; Position: int o
 
 let private requestLease (client: McpClient) : Task<LeaseReply> = task {
   let! text = callTool client "acquire_full_build_lease" []
-  use doc = Text.Json.JsonDocument.Parse text
-  let root = doc.RootElement
-  let str (name: string) = match root.TryGetProperty name with | true, v -> Some (v.GetString()) | _ -> None
-  let retry = match root.TryGetProperty "retryAfterSeconds" with | true, v -> v.GetDouble() | _ -> 0.0
+  let root = Fidelity.Data.JSON.Json.parseOrFail text
+  let str (name: string) = Fidelity.Data.JSON.JsonValue.prop name root |> Option.bind Fidelity.Data.JSON.JsonValue.asString
+  let retry =
+    match Fidelity.Data.JSON.JsonValue.prop "retryAfterSeconds" root with
+    | Some (Fidelity.Data.JSON.JsonValue.Number n) -> n
+    | Some (Fidelity.Data.JSON.JsonValue.NumberLiteral _ as v) ->
+      match Double.TryParse(Fidelity.Data.JSON.Json.serialize v, Globalization.NumberStyles.Float, Globalization.CultureInfo.InvariantCulture) with
+      | true, n -> n
+      | false, _ -> 0.0
+    | _ -> 0.0
   let position =
     str "reason" |> Option.bind (fun reason ->
       let m = Text.RegularExpressions.Regex.Match(reason, @"you are #(\d+) in queue")

@@ -28,7 +28,7 @@ module Bozzetto.Tests.MultiClientOutcomeTests
 
 open System
 open System.Net.Http
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 
@@ -81,22 +81,25 @@ let private execVia (client: HttpClient) (code: string) = task {
   let! status, body =
     Harness.postJson client "/exec" {| code = code; working_directory = sharedDir |}
   status |> Expect.equal (sprintf "/exec processes the request (body: %s)" body) 200
-  use doc = JsonDocument.Parse(body: string)
-  let result = doc.RootElement.GetProperty("result").GetString()
+  let doc = Json.parseOrFail body
+  let result = doc |> JsonValue.prop "result" |> Option.bind JsonValue.asString |> Option.defaultValue ""
   return
-    match doc.RootElement.GetProperty("success").GetBoolean() with
+    match doc |> JsonValue.prop "success" |> Option.bind JsonValue.asBool |> Option.defaultValue false with
     | true -> Evaluated result
     | false -> Refused result
 }
 
 let private sessionIdsIn (body: string) : string list =
-  use doc = JsonDocument.Parse body
-  doc.RootElement.GetProperty("sessions").EnumerateArray()
-  |> Seq.filter (fun (s: JsonElement) ->
-    let dir = Harness.normalizeDir (s.GetProperty("workingDirectory").GetString())
+  let doc = Json.parseOrFail body
+  let sessions =
+    match JsonValue.prop "sessions" doc with
+    | Some (JsonValue.Array items) -> items
+    | _ -> []
+  sessions
+  |> List.filter (fun (s: JsonValue) ->
+    let dir = Harness.normalizeDir (s |> JsonValue.prop "workingDirectory" |> Option.bind JsonValue.asString |> Option.defaultValue "")
     dir = Harness.normalizeDir sharedDir)
-  |> Seq.map (fun (s: JsonElement) -> s.GetProperty("id").GetString())
-  |> Seq.toList
+  |> List.map (fun (s: JsonValue) -> s |> JsonValue.prop "id" |> Option.bind JsonValue.asString |> Option.defaultValue "")
 
 let private sessionIdsVia (client: HttpClient) = task {
   let! status, body = Harness.getJson client "/api/sessions"

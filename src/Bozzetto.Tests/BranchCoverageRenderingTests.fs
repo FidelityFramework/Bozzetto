@@ -7,7 +7,7 @@ module Bozzetto.Tests.BranchCoverageRenderingTests
 
 open Expecto
 open Expecto.Flip
-open System.Text.Json
+open Fidelity.Data.JSON
 open Microsoft.FSharp.Reflection
 open Bozzetto.Features.LiveTesting
 open Bozzetto.McpTools
@@ -91,12 +91,19 @@ let tests =
           (Some (LineCoverage.PartiallyCovered (2, 3)))
       let json =
         formatFileCoverageResponse (mkFileAnns "Branch.fs" [| ann |]) LiveTestState.empty
-      let doc = JsonDocument.Parse(json)
-      let line0 = doc.RootElement.GetProperty("Lines").EnumerateArray() |> Seq.head
-      let bc = line0.GetProperty("BranchCoverage")
+      let root = Json.parseOrFail json
+      let line0 =
+        match JsonValue.prop "Lines" root with
+        | Some (JsonValue.Array (h :: _)) -> h
+        | _ -> failtest "expected Lines array"
+      let bc =
+        match JsonValue.prop "BranchCoverage" line0 with
+        | Some v -> v
+        | None -> failtest "expected BranchCoverage"
       // Should be a structured JSON object, not a flat string
-      bc.ValueKind
-      |> Expect.equal "branchCoverage should be a JSON object, not a string" JsonValueKind.Object
+      let isObject = match bc with JsonValue.Object _ -> true | _ -> false
+      isObject
+      |> Expect.isTrue "branchCoverage should be a JSON object, not a string"
     }
 
     test "branch coverage overrides line coverage when present" {
@@ -148,13 +155,20 @@ let tests =
           (Some LineCoverage.FullyCovered)
       let json =
         formatFileCoverageResponse (mkFileAnns "VscBranch.fs" [| ann |]) LiveTestState.empty
-      let doc = JsonDocument.Parse(json)
-      let line0 = doc.RootElement.GetProperty("Lines").EnumerateArray() |> Seq.head
-      let bc = line0.GetProperty("BranchCoverage")
+      let root = Json.parseOrFail json
+      let line0 =
+        match JsonValue.prop "Lines" root with
+        | Some (JsonValue.Array (h :: _)) -> h
+        | _ -> failtest "expected Lines array"
+      let bc =
+        match JsonValue.prop "BranchCoverage" line0 with
+        | Some v -> v
+        | None -> failtest "expected BranchCoverage"
       // Must be a structured object for VS Code decoration dispatch
-      bc.ValueKind
-      |> Expect.equal "branchCoverage must be a JSON object for VS Code dispatch" JsonValueKind.Object
-      bc.GetProperty("Case").GetString()
-      |> Expect.equal "Case field should identify the branch state" "FullyCovered"
+      let isObject = match bc with JsonValue.Object _ -> true | _ -> false
+      isObject
+      |> Expect.isTrue "branchCoverage must be a JSON object for VS Code dispatch"
+      JsonValue.prop "Case" bc |> Option.bind JsonValue.asString
+      |> Expect.equal "Case field should identify the branch state" (Some "FullyCovered")
     }
   ]

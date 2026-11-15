@@ -140,21 +140,24 @@ let completionsContractTests =
           { DisplayText = "map"; ReplacementText = "map"; Kind = CompletionKind.Method; GetDescription = None }
         ]
         let json = Bozzetto.McpAdapter.formatCompletionsJson items
-        use doc = System.Text.Json.JsonDocument.Parse(json)
-        let completions = doc.RootElement.GetProperty("completions").EnumerateArray() |> Seq.toList
+        let root = Fidelity.Data.JSON.Json.parseOrFail json
+        let completions =
+          match Fidelity.Data.JSON.JsonValue.prop "completions" root with
+          | Some (Fidelity.Data.JSON.JsonValue.Array items) -> items
+          | _ -> []
         completions.Length
         |> Expect.equal "two items" 2
         for c in completions do
-          c.GetProperty("label").GetString()
+          Fidelity.Data.JSON.JsonValue.prop "label" c |> Option.bind Fidelity.Data.JSON.JsonValue.asString |> Option.defaultValue ""
           |> Expect.notEqual "" "label is present"
-          c.GetProperty("kind").GetString()
+          Fidelity.Data.JSON.JsonValue.prop "kind" c |> Option.bind Fidelity.Data.JSON.JsonValue.asString |> Option.defaultValue ""
           |> Expect.notEqual "" "kind is present"
-          c.GetProperty("insertText").GetString()
+          Fidelity.Data.JSON.JsonValue.prop "insertText" c |> Option.bind Fidelity.Data.JSON.JsonValue.asString |> Option.defaultValue ""
           |> Expect.notEqual "" "insertText is present"
           // detail is optional — must be absent or a string, never break parsing
-          match c.TryGetProperty("detail") with
-          | true, d -> d.GetString() |> ignore
-          | false, _ -> ()
+          match Fidelity.Data.JSON.JsonValue.prop "detail" c with
+          | Some d -> Fidelity.Data.JSON.JsonValue.asString d |> Expect.isSome "detail is string"
+          | None -> ()
 
       testCase "escapes description text that contains JSON control characters" <| fun _ ->
         let description = "A \"quoted\" value\nwith a tab\tand control \u0001"
@@ -162,9 +165,14 @@ let completionsContractTests =
           { DisplayText = "quoted"; ReplacementText = "quoted"; Kind = CompletionKind.Method
             GetDescription = Some (fun () -> [| FSharp.Compiler.Text.TaggedText(FSharp.Compiler.Text.TextTag.Text, description) |]) }
         ]
-        use doc = Bozzetto.McpAdapter.formatCompletionsJson items |> System.Text.Json.JsonDocument.Parse
+        let root = Bozzetto.McpAdapter.formatCompletionsJson items |> Fidelity.Data.JSON.Json.parseOrFail
         let detail =
-          doc.RootElement.GetProperty("completions").[0].GetProperty("detail").GetString()
+          match Fidelity.Data.JSON.JsonValue.prop "completions" root with
+          | Some (Fidelity.Data.JSON.JsonValue.Array (first :: _)) ->
+            Fidelity.Data.JSON.JsonValue.prop "detail" first
+            |> Option.bind Fidelity.Data.JSON.JsonValue.asString
+            |> Option.defaultValue ""
+          | _ -> ""
         detail |> Expect.equal "description round-trips through JSON" description
 
       testPropertyWithConfig { FsCheckConfig.defaultConfig with maxTest = 200 }
@@ -175,11 +183,12 @@ let completionsContractTests =
             labels
             |> List.map (fun label ->
               { DisplayText = label; ReplacementText = label; Kind = CompletionKind.Variable; GetDescription = None })
-          use doc = Bozzetto.McpAdapter.formatCompletionsJson items |> System.Text.Json.JsonDocument.Parse
+          let root = Bozzetto.McpAdapter.formatCompletionsJson items |> Fidelity.Data.JSON.Json.parseOrFail
           let serialized =
-            doc.RootElement.GetProperty("completions").EnumerateArray()
-            |> Seq.map (fun item -> item.GetProperty("label").GetString())
-            |> Seq.toList
+            match Fidelity.Data.JSON.JsonValue.prop "completions" root with
+            | Some (Fidelity.Data.JSON.JsonValue.Array arr) ->
+              arr |> List.choose (fun item -> Fidelity.Data.JSON.JsonValue.prop "label" item |> Option.bind Fidelity.Data.JSON.JsonValue.asString)
+            | _ -> []
           serialized = labels
     ]
   ]

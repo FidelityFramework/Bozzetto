@@ -21,7 +21,6 @@ module Bozzetto.Tests.McpToolErrorBodyTests
 /// filesystem probes — closes that gap.
 module StructuredToolErrorResultTests =
   open System
-  open System.Text.Json
   open Expecto
   open Expecto.Flip
   open Bozzetto

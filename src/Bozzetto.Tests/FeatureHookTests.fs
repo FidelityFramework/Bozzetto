@@ -4,7 +4,6 @@ open Expecto
 open Expecto.Flip
 open FsCheck
 open FsCheck.FSharp
-open System.Text.Json
 open Bozzetto.Features
 open Bozzetto.Features.FeatureHooks
 

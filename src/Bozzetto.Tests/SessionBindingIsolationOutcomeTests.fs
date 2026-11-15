@@ -30,7 +30,7 @@ module Bozzetto.Tests.SessionBindingIsolationOutcomeTests
 
 open System
 open System.Net.Http
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 
@@ -75,10 +75,10 @@ let private execIn (workingDir: string) (code: string) = task {
   let! status, body =
     Harness.postJson (client ()) "/exec" {| code = code; working_directory = workingDir |}
   status |> Expect.equal (sprintf "/exec processes the request (body: %s)" body) 200
-  use doc = JsonDocument.Parse(body: string)
-  let result = doc.RootElement.GetProperty("result").GetString()
+  let doc = Json.parseOrFail body
+  let result = doc |> JsonValue.prop "result" |> Option.bind JsonValue.asString |> Option.defaultValue ""
   return
-    match doc.RootElement.GetProperty("success").GetBoolean() with
+    match doc |> JsonValue.prop "success" |> Option.bind JsonValue.asBool |> Option.defaultValue false with
     | true -> Evaluated result
     | false -> Refused result
 }

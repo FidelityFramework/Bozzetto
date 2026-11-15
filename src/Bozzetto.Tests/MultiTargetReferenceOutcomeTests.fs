@@ -22,7 +22,7 @@ open System
 open System.IO
 open System.Net.Http
 open System.Diagnostics
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 
@@ -107,11 +107,15 @@ let private waitForSettled (client: HttpClient) (dir: string) (budget: TimeSpan)
     lastBody <- body
     match status with
     | 200 ->
-      use doc = JsonDocument.Parse body
+      let doc = Json.parseOrFail body
+      let sessions =
+        match JsonValue.prop "sessions" doc with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
       let mine =
-        doc.RootElement.GetProperty("sessions").EnumerateArray()
-        |> Seq.tryFind (fun s -> Http.normalizeDir (s.GetProperty("workingDirectory").GetString()) = expected)
-        |> Option.map (fun s -> s.GetProperty("status").GetString())
+        sessions
+        |> List.tryFind (fun s -> Http.normalizeDir (s |> JsonValue.prop "workingDirectory" |> Option.bind JsonValue.asString |> Option.defaultValue "") = expected)
+        |> Option.map (fun s -> s |> JsonValue.prop "status" |> Option.bind JsonValue.asString |> Option.defaultValue "")
       match mine with
       | Some "Ready" -> outcome <- Some Settled.Ready
       | Some "Faulted" -> outcome <- Some (Settled.Faulted body)
@@ -122,9 +126,9 @@ let private waitForSettled (client: HttpClient) (dir: string) (budget: TimeSpan)
 
 /// (success, result) from an `/exec` response body.
 let private execOutcome (body: string) : bool * string =
-  use doc = JsonDocument.Parse body
-  doc.RootElement.GetProperty("success").GetBoolean(),
-  doc.RootElement.GetProperty("result").GetString() |> Option.ofObj |> Option.defaultValue ""
+  let doc = Json.parseOrFail body
+  doc |> JsonValue.prop "success" |> Option.bind JsonValue.asBool |> Option.defaultValue false,
+  doc |> JsonValue.prop "result" |> Option.bind JsonValue.asString |> Option.defaultValue ""
 
 [<Tests>]
 let multiTargetReferenceOutcomeTests =

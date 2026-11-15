@@ -11,9 +11,8 @@ module Bozzetto.Tests.SseGoldenFixtureGenerationTests
 /// something the daemon could send.
 ///
 /// This file closes that gap: every fixture is generated HERE, from the real
-/// `SseWriter.format*Event` functions, using the exact `JsonSerializerOptions`
-/// production wires up (`McpServer.fs` — a raw `JsonSerializerOptions()` plus
-/// `JsonFSharpConverter()`, no naming-policy transform, mirrored below), and
+/// `SseWriter.format*Event` functions, using the exact `JsonCasing`
+/// production wires up (`McpServer.fs`), and
 /// the test fails if the checked-in file differs from what that real call
 /// produces right now. A field rename in `TestSummary`, `LiveTestingDecision`,
 /// `TestResultsBatchPayload`, or any type they carry, changes the generated
@@ -28,22 +27,14 @@ module Bozzetto.Tests.SseGoldenFixtureGenerationTests
 
 open System
 open System.IO
-open System.Text.Json
-open System.Text.Json.Nodes
-open System.Text.Json.Serialization
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open Bozzetto.SseWriter
 open Bozzetto.Features.LiveTesting
 open Bozzetto.Features.LiveTestActivity
 
-// ── The exact JSON options production uses ──────────────────────────────────
-// Mirrors McpServer.fs's `sseJsonOpts` construction verbatim: a bare
-// JsonSerializerOptions with only the F# converter added — no
-// PropertyNamingPolicy. (SseContractComplianceTests.fs, by contrast, builds
-// its own jsonOpts with a CamelCase naming policy that production does NOT
-// use — that test is a self-consistent shape check, not a wire-format
-// fixture, and is out of this island's scope to touch.)
+// ── The exact JSON casing production uses ───────────────────────────────────
 let private productionJsonOpts () = Bozzetto.JsonCasing.PascalCase
 
 let private fixturesDir =
@@ -64,6 +55,23 @@ let private updateFixturesRequested () =
   | null -> false
   | v -> v = "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase)
 
+let rec private jsonEquals (a: JsonValue) (b: JsonValue) : bool =
+  match a, b with
+  | JsonValue.Null, JsonValue.Null -> true
+  | JsonValue.Bool x, JsonValue.Bool y -> x = y
+  | JsonValue.Number x, JsonValue.Number y -> x = y
+  | JsonValue.NumberLiteral x, JsonValue.NumberLiteral y -> x = y
+  | JsonValue.String x, JsonValue.String y -> x = y
+  | JsonValue.Array xs, JsonValue.Array ys ->
+    xs.Length = ys.Length && List.forall2 jsonEquals xs ys
+  | JsonValue.Object xs, JsonValue.Object ys ->
+    xs.Length = ys.Length
+    && xs |> List.forall (fun (k, vx) ->
+      match ys |> List.tryFind (fun (ky, _) -> ky = k) with
+      | Some (_, vy) -> jsonEquals vx vy
+      | None -> false)
+  | _ -> false
+
 /// Compare two JSON payloads structurally (key order must not matter — these
 /// are objects, not ordered documents) and, on mismatch, fail with both
 /// payloads pretty-printed so a rename shows up as an obvious diff.
@@ -77,10 +85,10 @@ let private assertMatchesFixture (fixtureFileName: string) (generatedPayload: st
     File.Exists fixturePath
     |> Expect.isTrue (sprintf "golden fixture '%s' should exist — run with BOZZETTO_UPDATE_SSE_FIXTURES=1 to create it" fixtureFileName)
     let onDisk = File.ReadAllText fixturePath
-    let onDiskNode = JsonNode.Parse onDisk
-    let generatedNode = JsonNode.Parse generatedPayload
-    let pretty (n: JsonNode) = n.ToJsonString(JsonSerializerOptions(WriteIndented = true))
-    JsonNode.DeepEquals(onDiskNode, generatedNode)
+    let onDiskNode = Json.parseOrFail onDisk
+    let generatedNode = Json.parseOrFail generatedPayload
+    let pretty (n: JsonValue) = Json.serializePretty n
+    jsonEquals onDiskNode generatedNode
     |> Expect.isTrue
          (sprintf
            "fixture '%s' no longer matches the REAL SseWriter output — this is either a rename that must be fixed, \

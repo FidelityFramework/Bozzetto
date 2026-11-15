@@ -2,8 +2,7 @@ module Bozzetto.Tests.SseContractComplianceTests
 
 open System
 open System.Reflection
-open System.Text.Json
-open System.Text.Json.Serialization
+open Fidelity.Data.JSON
 open System.Text.RegularExpressions
 open Expecto
 open Expecto.Flip
@@ -37,13 +36,11 @@ let private countDataLines (sse: string) =
   |> Array.filter (fun l -> l.StartsWith("data: "))
   |> Array.length
 
-let private hasJsonProperty (name: string) (el: JsonElement) =
-  let mutable p = Unchecked.defaultof<JsonElement>
-  el.TryGetProperty(name, &p)
+let private hasJsonProperty (name: string) (el: JsonValue) =
+  el |> JsonValue.prop name |> Option.isSome
 
 let private assertJsonProperties (eventName: string) (expectedProps: string list) (json: string) =
-  use doc = JsonDocument.Parse(json)
-  let root = doc.RootElement
+  let root = Json.parseOrFail json
   for prop in expectedProps do
     root |> hasJsonProperty prop
     |> Expect.isTrue (sprintf "%s JSON should have property '%s'" eventName prop)
@@ -289,10 +286,12 @@ let sseContractComplianceTests = testList "SSE contract compliance" [
       let json =
         formatFailureNarrativesEvent jsonOpts None (mkFailureNarratives ())
         |> extractDataPayload
-      use doc = JsonDocument.Parse(json)
-      doc.RootElement.ValueKind
-      |> Expect.equal "root should be array" JsonValueKind.Array
-      let first = doc.RootElement.EnumerateArray() |> Seq.head
+      let doc = Json.parseOrFail json
+      let arr =
+        match doc with
+        | JsonValue.Array items -> items
+        | _ -> failtest "root should be array"
+      let first = arr |> List.head
       for prop in [ "testId"; "lastPassedAt"; "timeSinceLastPass"
                     "causalChanges"; "propertyViolation"; "summary" ] do
         first |> hasJsonProperty prop
@@ -311,9 +310,9 @@ let sseContractComplianceTests = testList "SSE contract compliance" [
     testCase "test_trace preserves JSON payload" <| fun () ->
       let traceJson = """{"enabled":true,"providers":["Expecto"],"summary":{"total":100}}"""
       let payload = formatTestTraceEvent None traceJson |> extractDataPayload
-      use doc = JsonDocument.Parse(payload)
+      let doc = Json.parseOrFail payload
       for prop in [ "enabled"; "providers"; "summary" ] do
-        doc.RootElement |> hasJsonProperty prop
+        doc |> hasJsonProperty prop
         |> Expect.isTrue (sprintf "test_trace should preserve '%s'" prop)
 
     testCase "test_summary carries nullable lastDecision for explanation-aware clients" <| fun () ->
@@ -328,8 +327,8 @@ let sseContractComplianceTests = testList "SSE contract compliance" [
               [||]
               "fallback rebuild"))
         |> extractDataPayload
-      use doc = JsonDocument.Parse(payload)
-      let lastDecision = doc.RootElement.GetProperty("lastDecision")
+      let doc = Json.parseOrFail payload
+      let lastDecision = doc |> JsonValue.prop "lastDecision" |> Option.defaultValue JsonValue.Null
       lastDecision |> hasJsonProperty "precision"
       |> Expect.isTrue "test_summary lastDecision should expose precision"
       lastDecision |> hasJsonProperty "trust"
@@ -350,8 +349,8 @@ let sseContractComplianceTests = testList "SSE contract compliance" [
                   "coverage widened") }
         |> formatTestResultsBatchEvent jsonOpts None
         |> extractDataPayload
-      use doc = JsonDocument.Parse(payload)
-      let lastDecision = doc.RootElement.GetProperty("lastDecision")
+      let doc = Json.parseOrFail payload
+      let lastDecision = doc |> JsonValue.prop "lastDecision" |> Option.defaultValue JsonValue.Null
       lastDecision |> hasJsonProperty "cause"
       |> Expect.isTrue "test_results_batch lastDecision should expose cause"
       lastDecision |> hasJsonProperty "reason"
@@ -413,9 +412,12 @@ let sseContractComplianceTests = testList "SSE contract compliance" [
       let payload =
         formatCohortMatrixEvent jsonOpts (CohortTestData.mkFrame ())
         |> extractDataPayload
-      use doc = JsonDocument.Parse(payload)
-      let landings = doc.RootElement.GetProperty("landings")
-      (landings.GetArrayLength(), 0) |> Expect.isGreaterThan "the fixture's landing must appear as a row"
+      let doc = Json.parseOrFail payload
+      let landings =
+        match JsonValue.prop "landings" doc with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
+      (landings.Length, 0) |> Expect.isGreaterThan "the fixture's landing must appear as a row"
       let row = landings.[0]
       for prop in [ "id"; "requester"; "statement"; "commits"; "state"; "queuePosition"; "blocker"; "nextAction" ] do
         row |> hasJsonProperty prop
@@ -437,13 +439,13 @@ let sseContractComplianceTests = testList "SSE contract compliance" [
       let payload =
         formatLandingChangedEvent jsonOpts (CohortTestData.mkBlockedLanding ())
         |> extractDataPayload
-      use doc = JsonDocument.Parse(payload)
-      doc.RootElement.GetProperty("state").GetString()
+      let doc = Json.parseOrFail payload
+      doc |> JsonValue.prop "state" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "landing should be blocked" "blocked"
-      let blocker = doc.RootElement.GetProperty("blocker")
+      let blocker = doc |> JsonValue.prop "blocker" |> Option.defaultValue JsonValue.Null
       blocker |> hasJsonProperty "kind"
       |> Expect.isTrue "blocker should expose kind"
-      let nextAction = doc.RootElement.GetProperty("nextAction")
+      let nextAction = doc |> JsonValue.prop "nextAction" |> Option.defaultValue JsonValue.Null
       nextAction |> hasJsonProperty "kind"
       |> Expect.isTrue "nextAction should expose kind"
 

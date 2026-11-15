@@ -16,7 +16,7 @@ module Bozzetto.Tests.SessionStatusTruthTests
 /// would have passed while the product still lied.
 open System
 open System.Collections.Concurrent
-open System.Text.Json
+open Fidelity.Data.JSON
 open System.Threading.Tasks
 open Expecto
 open Expecto.Flip
@@ -99,9 +99,6 @@ let private ctxFor (info: SessionInfo) : McpContext =
     GetDaemonHealth = fun () -> None
     GetProcessTelemetry = fun () -> None }
 
-/// The parsed status fields, copied out while the JsonDocument is still alive.
-/// Returning a `JsonElement` past its `use` would hand back a disposed
-/// document — a lifetime bug in the test, not the product.
 type private StatusFacts = {
   State: string
   Lifecycle: string
@@ -116,11 +113,14 @@ let private statusJson (info: SessionInfo) =
 
 let private callStatus (info: SessionInfo) : StatusFacts =
   let json = statusJson info
-  use doc = JsonDocument.Parse(json)
-  let el = doc.RootElement
-  { State = el.GetProperty("state").GetString()
-    Lifecycle = el.GetProperty("lifecycle").GetString()
-    Loaded = el.GetProperty("loadedProjects").GetArrayLength() }
+  let el = Json.parseOrFail json
+  let loadedCount =
+    match JsonValue.prop "loadedProjects" el with
+    | Some (JsonValue.Array items) -> items.Length
+    | _ -> 0
+  { State = el |> JsonValue.prop "state" |> Option.bind JsonValue.asString |> Option.defaultValue ""
+    Lifecycle = el |> JsonValue.prop "lifecycle" |> Option.bind JsonValue.asString |> Option.defaultValue ""
+    Loaded = loadedCount }
 
 [<Tests>]
 let sessionStatusTruthTests = testList "session status tells the truth" [
@@ -130,20 +130,26 @@ let sessionStatusTruthTests = testList "session status tells the truth" [
       "Project", [ "with spaces/Thing.fsproj" ], SessionProjectTarget.Project "with spaces/Thing.fsproj"
       "Solution", [ "with spaces/Workspace.slnx" ], SessionProjectTarget.Solution "with spaces/Workspace.slnx" ] do
     testCase (label + " target retains its explicit constructor and path in status JSON") <| fun _ ->
-      use document = JsonDocument.Parse(statusJson { warmingInfo with Projects = paths })
-      let targets = document.RootElement.GetProperty("target")
-      targets.GetArrayLength() |> Expect.equal "Exactly the requested target is reported." 1
-      targets[0].GetProperty("type").GetString()
+      let document = Json.parseOrFail (statusJson { warmingInfo with Projects = paths })
+      let targets =
+        match JsonValue.prop "target" document with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
+      targets.Length |> Expect.equal "Exactly the requested target is reported." 1
+      targets.[0] |> JsonValue.prop "type" |> Option.bind JsonValue.asString |> Option.defaultValue ""
       |> Expect.equal "The worker wire codec preserves the target constructor." label
       match target with
       | SessionProjectTarget.Bare ->
-        targets[0].EnumerateObject() |> Seq.map (fun property -> property.Name) |> Seq.toList
+        targets.[0] |> JsonValue.keys
         |> Expect.equal "Bare intent carries only its explicit constructor." [ "type" ]
       | SessionProjectTarget.Project path
       | SessionProjectTarget.Solution path ->
-        let fields = targets[0].GetProperty("value")
-        fields.GetArrayLength() |> Expect.equal "The target carries exactly one path." 1
-        fields[0].GetString()
+        let fields =
+          match JsonValue.prop "value" targets.[0] with
+          | Some (JsonValue.Array items) -> items
+          | _ -> []
+        fields.Length |> Expect.equal "The target carries exactly one path." 1
+        fields.[0] |> JsonValue.asString |> Option.defaultValue ""
         |> Expect.equal "Target paths survive the actual MCP response verbatim." path
 
   testCase "WHY — a warming session must not report Ready, because agents gate on that field" <| fun _ ->

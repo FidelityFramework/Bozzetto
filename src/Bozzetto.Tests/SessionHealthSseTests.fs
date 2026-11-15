@@ -14,7 +14,7 @@ module Bozzetto.Tests.SessionHealthSseTests
 //      health without waiting for the next transition.
 
 open System
-open System.Text.Json
+open Fidelity.Data.JSON
 open System.Threading.Tasks
 open Expecto
 open Expecto.Flip
@@ -97,26 +97,26 @@ let sessionHealthEventShapeTests = testList "SseEvent.SessionHealthChanged" [
 
   testCase "toJson carries the session id, type tag, and Healthy status with no reason" <| fun _ ->
     let json = SseEvent.toJson (SseEvent.SessionHealthChanged("abc123", SessionHealth.Healthy))
-    use doc = JsonDocument.Parse(json)
-    doc.RootElement.GetProperty("type").GetString() |> Expect.equal "type tag" "session_health_changed"
-    doc.RootElement.GetProperty("sessionId").GetString() |> Expect.equal "session id" "abc123"
-    let health = doc.RootElement.GetProperty("health")
-    health.GetProperty("status").GetString() |> Expect.equal "status" "Healthy"
-    health.TryGetProperty("reason") |> fst |> Expect.isFalse "Healthy carries no reason property (WhenWritingNull)"
+    let doc = Json.parseOrFail json
+    doc |> JsonValue.prop "type" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "type tag" "session_health_changed"
+    doc |> JsonValue.prop "sessionId" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "session id" "abc123"
+    let health = doc |> JsonValue.prop "health" |> Option.defaultValue JsonValue.Null
+    health |> JsonValue.prop "status" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "status" "Healthy"
+    health |> JsonValue.prop "reason" |> Option.isSome |> Expect.isFalse "Healthy carries no reason property (WhenWritingNull)"
 
   testCase "toJson carries the Degraded reason" <| fun _ ->
     let json = SseEvent.toJson (SseEvent.SessionHealthChanged("abc123", SessionHealth.Degraded "nothing loaded"))
-    use doc = JsonDocument.Parse(json)
-    let health = doc.RootElement.GetProperty("health")
-    health.GetProperty("status").GetString() |> Expect.equal "status" "Degraded"
-    health.GetProperty("reason").GetString() |> Expect.equal "reason" "nothing loaded"
+    let doc = Json.parseOrFail json
+    let health = doc |> JsonValue.prop "health" |> Option.defaultValue JsonValue.Null
+    health |> JsonValue.prop "status" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "status" "Degraded"
+    health |> JsonValue.prop "reason" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "reason" "nothing loaded"
 
   testCase "toJson carries the Failed reason" <| fun _ ->
     let json = SseEvent.toJson (SseEvent.SessionHealthChanged("abc123", SessionHealth.Failed "worker crashed"))
-    use doc = JsonDocument.Parse(json)
-    let health = doc.RootElement.GetProperty("health")
-    health.GetProperty("status").GetString() |> Expect.equal "status" "Failed"
-    health.GetProperty("reason").GetString() |> Expect.equal "reason" "worker crashed"
+    let doc = Json.parseOrFail json
+    let health = doc |> JsonValue.prop "health" |> Option.defaultValue JsonValue.Null
+    health |> JsonValue.prop "status" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "status" "Failed"
+    health |> JsonValue.prop "reason" |> Option.bind JsonValue.asString |> Option.defaultValue "" |> Expect.equal "reason" "worker crashed"
 ]
 
 // ── Group 2: wireSessionHealthSubscription — transition-only push ───────

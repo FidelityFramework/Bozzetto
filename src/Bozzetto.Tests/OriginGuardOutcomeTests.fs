@@ -31,7 +31,7 @@ open System.Net
 open System.Net.Http
 open System.Net.Sockets
 open System.Text
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 
@@ -100,8 +100,8 @@ let private probe (httpMethod: HttpMethod) (path: string) = {
   Body = None
 }
 
-let private jsonBody (payload: obj) (p: Probe) =
-  { p with Body = Some (JsonSerializer.Serialize payload); ContentType = Some "application/json" }
+let private jsonBody (payload: JsonValue) (p: Probe) =
+  { p with Body = Some (Json.serialize payload); ContentType = Some "application/json" }
 
 /// Send `p` to one of the daemon's two listeners and return (status, body).
 /// A fresh HttpClient per probe: HttpClient stamps its own Host from the
@@ -152,18 +152,21 @@ let private awaitControlListener () = task {
 let private sessionCount (client: HttpClient) = task {
   let! status, body = Harness.getJson client "/api/sessions"
   status |> Expect.equal "/api/sessions answers" 200
-  use doc = JsonDocument.Parse(body: string)
-  return doc.RootElement.GetProperty("sessions").EnumerateArray() |> Seq.length
+  let doc = Json.parseOrFail body
+  return
+    match JsonValue.prop "sessions" doc with
+    | Some (JsonValue.Array items) -> items.Length
+    | _ -> 0
 }
 
 /// A rejection must say what was refused and why — an agent or a developer
 /// reading the 403 should not have to read the daemon log to understand it.
 let private expectRejection (expectedStatus: int) (mustMention: string) (status: int, body: string) =
   status |> Expect.equal (sprintf "must be refused by the origin guard (body: %s)" body) expectedStatus
-  use doc = JsonDocument.Parse(body: string)
-  doc.RootElement.GetProperty("success").GetBoolean()
+  let doc = Json.parseOrFail body
+  doc |> JsonValue.prop "success" |> Option.bind JsonValue.asBool |> Option.defaultValue true
   |> Expect.isFalse "a refused request must not report success"
-  doc.RootElement.GetProperty("error").GetString()
+  doc |> JsonValue.prop "error" |> Option.bind JsonValue.asString |> Option.defaultValue ""
   |> Expect.stringContains "the refusal must name what was refused" mustMention
 
 // ─── The gate ───────────────────────────────────────────────────────────────
@@ -180,9 +183,14 @@ let originGuardOutcomeTests =
       let! before = sessionCount client
       before |> Expect.equal "the daemon starts with no sessions (--no-resume, fresh data dir)" 0
 
+      let createPayload =
+        JsonValue.Object [
+          "projects", JsonValue.Array []
+          "workingDirectory", JsonValue.String attackerTargetDir
+        ]
       let! rejected =
         probe HttpMethod.Post "/api/sessions/create"
-        |> jsonBody {| projects = ([||]: string array); workingDirectory = attackerTargetDir |}
+        |> jsonBody createPayload
         |> fun p -> { p with Origin = Some "http://evil.example"; SecFetchSite = Some "cross-site" }
         |> sendToMcp
       rejected |> expectRejection 403 "http://evil.example"
@@ -198,8 +206,10 @@ let originGuardOutcomeTests =
 
     testTask "the SAME mutating request is refused with a foreign Origin and reaches the route without one" {
       let payload =
-        {| filePath = IO.Path.Combine(attackerTargetDir, "Unsaved.fs")
-           content = "module Unsaved\nlet value = 42" |}
+        JsonValue.Object [
+          "filePath", JsonValue.String (IO.Path.Combine(attackerTargetDir, "Unsaved.fs"))
+          "content", JsonValue.String "module Unsaved\nlet value = 42"
+        ]
       let target = "/api/sessions/deadbeef/buffer-changed"
 
       let! guarded =
@@ -229,9 +239,14 @@ let originGuardOutcomeTests =
       // whose foreign Origin this guard rejects, so the Origin check would
       // never be consulted at all. 415 is the guard's answer for a body that
       // is not labelled application/json.
+      let createPayload =
+        JsonValue.Object [
+          "projects", JsonValue.Array []
+          "workingDirectory", JsonValue.String attackerTargetDir
+        ]
       let! rejected =
         { probe HttpMethod.Post "/api/sessions/create" with
-            Body = Some (JsonSerializer.Serialize {| projects = ([||]: string array); workingDirectory = attackerTargetDir |})
+            Body = Some (Json.serialize createPayload)
             ContentType = Some "text/plain;charset=UTF-8" }
         |> sendToMcp
       rejected |> expectRejection 415 "text/plain"
@@ -246,9 +261,14 @@ let originGuardOutcomeTests =
       // A page on bozzetto.evil.example whose DNS A record answers 127.0.0.1
       // reaches the daemon with a same-origin Origin and a foreign Host. Only
       // the Host check can see that.
+      let createPayload =
+        JsonValue.Object [
+          "projects", JsonValue.Array []
+          "workingDirectory", JsonValue.String attackerTargetDir
+        ]
       let! rejected =
         probe HttpMethod.Post "/api/sessions/create"
-        |> jsonBody {| projects = ([||]: string array); workingDirectory = attackerTargetDir |}
+        |> jsonBody createPayload
         |> fun p -> { p with HostHeader = Some "bozzetto.evil.example" }
         |> sendToMcp
       rejected |> expectRejection 403 "bozzetto.evil.example"

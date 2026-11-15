@@ -14,7 +14,7 @@ module Bozzetto.Tests.CohortSseEventsTests
 /// `Bozzetto.Features.LiveTesting.TestId` if this file ever opens both.
 
 open System
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 
@@ -44,7 +44,30 @@ let private joinTwoAndClaim () =
   joinAndClaim ()
   |> fun s -> applyOk s (Bozzetto.Cohort.CohortCommand.Join(bob, Bozzetto.Cohort.JoinableRole.Implementer, Some "sess-2"))
 
-let private getProp (name: string) (el: JsonElement) = el.GetProperty(name)
+let private getProp (name: string) (el: JsonValue) =
+  match JsonValue.prop name el with
+  | Some v -> v
+  | None -> failtestf "Missing property '%s' in %s" name (Json.serialize el)
+
+let private getStr (el: JsonValue) =
+  match JsonValue.asString el with
+  | Some s -> s
+  | None -> failtestf "Expected string in %s" (Json.serialize el)
+
+let private getInt64 (el: JsonValue) =
+  match JsonValue.asInt el with
+  | Some n -> n
+  | None -> failtestf "Expected int64 in %s" (Json.serialize el)
+
+let private getBool (el: JsonValue) =
+  match JsonValue.asBool el with
+  | Some b -> b
+  | None -> failtestf "Expected bool in %s" (Json.serialize el)
+
+let private getArr (el: JsonValue) =
+  match el with
+  | JsonValue.Array a -> a
+  | _ -> failtestf "Expected array in %s" (Json.serialize el)
 
 /// Minimal `WorkerProtocol.SessionInfo` for `resolveSaveObserver` tests —
 /// only `Id`/`WorkingDirectory` matter to that resolver; every other field
@@ -87,18 +110,17 @@ let cohortSseEventsTests = testList "Cohort SSE events (item 15a)" [
         sse.Split('\n')
         |> Array.choose (fun l -> if l.StartsWith("data: ") then Some (l.Substring 6) else None)
         |> String.concat "\n"
-    use doc = JsonDocument.Parse(payload)
-    let root = doc.RootElement
-    root |> getProp "claimId" |> fun p -> p.GetString()
+    let root = Json.parseOrFail payload
+    root |> getProp "claimId" |> getStr
     |> Expect.equal "claimId should match the acquired claim's id" expectedClaimId
     let scope = root |> getProp "scope"
-    scope |> getProp "kind" |> fun p -> p.GetString() |> Expect.equal "scope kind should be file" "file"
-    scope |> getProp "path" |> fun p -> p.GetString() |> Expect.equal "scope path should be the claimed file" "src/Foo.fs"
-    root |> getProp "holder" |> fun p -> p.GetString()
+    scope |> getProp "kind" |> getStr |> Expect.equal "scope kind should be file" "file"
+    scope |> getProp "path" |> getStr |> Expect.equal "scope path should be the claimed file" "src/Foo.fs"
+    root |> getProp "holder" |> getStr
     |> Expect.equal "holder should be the acquiring member, displayed verbatim (Minted)" "alice"
-    root |> getProp "fence" |> fun p -> p.GetInt64()
+    root |> getProp "fence" |> getInt64
     |> Expect.equal "fence should be the claim's current fence" (int64 claim.Fence)
-    root |> getProp "kind" |> fun p -> p.GetString()
+    root |> getProp "kind" |> getStr
     |> Expect.equal "kind should be the event kind passed in" "acquired"
 
   testCase "claim_changed reports holder=null for a released claim" <| fun () ->
@@ -109,9 +131,9 @@ let cohortSseEventsTests = testList "Cohort SSE events (item 15a)" [
     let payload =
       Bozzetto.SseWriter.formatClaimChangedEvent jsonOpts "released" released
       |> fun sse -> sse.Split('\n') |> Array.choose (fun l -> if l.StartsWith("data: ") then Some (l.Substring 6) else None) |> String.concat "\n"
-    use doc = JsonDocument.Parse(payload)
-    doc.RootElement.GetProperty("holder").ValueKind
-    |> Expect.equal "released claim should carry a null holder, not a stale one" JsonValueKind.Null
+    let root = Json.parseOrFail payload
+    root |> getProp "holder"
+    |> Expect.equal "released claim should carry a null holder, not a stale one" JsonValue.Null
 
   testCase "landing_changed round-trips a Blocked landing's typed blocker + next action" <| fun () ->
     let state0 = joinAndClaim ()
@@ -126,18 +148,17 @@ let cohortSseEventsTests = testList "Cohort SSE events (item 15a)" [
     let payload =
       Bozzetto.SseWriter.formatLandingChangedEvent jsonOpts landing
       |> fun sse -> sse.Split('\n') |> Array.choose (fun l -> if l.StartsWith("data: ") then Some (l.Substring 6) else None) |> String.concat "\n"
-    use doc = JsonDocument.Parse(payload)
-    let root = doc.RootElement
-    root |> getProp "landingId" |> fun p -> p.GetString() |> Expect.equal "landingId should match" expectedLandingId
-    root |> getProp "requester" |> fun p -> p.GetString() |> Expect.equal "requester should be the landing's requester" "alice"
-    root |> getProp "state" |> fun p -> p.GetString() |> Expect.equal "state should be blocked" "blocked"
+    let root = Json.parseOrFail payload
+    root |> getProp "landingId" |> getStr |> Expect.equal "landingId should match" expectedLandingId
+    root |> getProp "requester" |> getStr |> Expect.equal "requester should be the landing's requester" "alice"
+    root |> getProp "state" |> getStr |> Expect.equal "state should be blocked" "blocked"
     let blocker = root |> getProp "blocker"
-    blocker |> getProp "kind" |> fun p -> p.GetString() |> Expect.equal "blocker kind should be failing_tests" "failing_tests"
-    blocker |> getProp "tests" |> fun p -> p.EnumerateArray() |> Seq.map (fun t -> t.GetString()) |> Seq.toList
+    blocker |> getProp "kind" |> getStr |> Expect.equal "blocker kind should be failing_tests" "failing_tests"
+    blocker |> getProp "tests" |> getArr |> List.map getStr
     |> Expect.equal "blocker tests should list the failing test" [ "t1" ]
     let nextAction = root |> getProp "nextAction"
-    nextAction |> getProp "kind" |> fun p -> p.GetString() |> Expect.equal "nextAction kind should be fix_tests" "fix_tests"
-    nextAction |> getProp "tests" |> fun p -> p.EnumerateArray() |> Seq.map (fun t -> t.GetString()) |> Seq.toList
+    nextAction |> getProp "kind" |> getStr |> Expect.equal "nextAction kind should be fix_tests" "fix_tests"
+    nextAction |> getProp "tests" |> getArr |> List.map getStr
     |> Expect.equal "nextAction tests should list the failing test" [ "t1" ]
 
   testCase "landing_changed carries no blocker/nextAction for a non-blocked state" <| fun () ->
@@ -149,13 +170,13 @@ let cohortSseEventsTests = testList "Cohort SSE events (item 15a)" [
     let payload =
       Bozzetto.SseWriter.formatLandingChangedEvent jsonOpts landing
       |> fun sse -> sse.Split('\n') |> Array.choose (fun l -> if l.StartsWith("data: ") then Some (l.Substring 6) else None) |> String.concat "\n"
-    use doc = JsonDocument.Parse(payload)
-    doc.RootElement.GetProperty("state").GetString()
+    let root = Json.parseOrFail payload
+    root |> getProp "state" |> getStr
     |> Expect.equal "landing was queued then immediately rebased (queue was empty)" "rebasing"
-    doc.RootElement.GetProperty("blocker").ValueKind
-    |> Expect.equal "blocker should be null when not blocked" JsonValueKind.Null
-    doc.RootElement.GetProperty("nextAction").ValueKind
-    |> Expect.equal "nextAction should be null when not blocked" JsonValueKind.Null
+    root |> getProp "blocker"
+    |> Expect.equal "blocker should be null when not blocked" JsonValue.Null
+    root |> getProp "nextAction"
+    |> Expect.equal "nextAction should be null when not blocked" JsonValue.Null
 
   testCase "cohort_matrix round-trips members/claims/tests/rows" <| fun () ->
     let state = joinAndClaim ()
@@ -171,29 +192,28 @@ let cohortSseEventsTests = testList "Cohort SSE events (item 15a)" [
     let payload =
       Bozzetto.SseWriter.formatCohortMatrixEvent jsonOpts frame
       |> fun sse -> sse.Split('\n') |> Array.choose (fun l -> if l.StartsWith("data: ") then Some (l.Substring 6) else None) |> String.concat "\n"
-    use doc = JsonDocument.Parse(payload)
-    let root = doc.RootElement
-    root |> getProp "version" |> fun p -> p.GetInt64() |> Expect.equal "version should be the ledger seq the frame was projected from" 3L
-    let members = root |> getProp "members" |> fun p -> p.EnumerateArray() |> Seq.toList
+    let root = Json.parseOrFail payload
+    root |> getProp "version" |> getInt64 |> Expect.equal "version should be the ledger seq the frame was projected from" 3L
+    let members = root |> getProp "members" |> getArr
     members |> List.length |> Expect.equal "one member joined" 1
     let m0 = members.[0]
-    m0 |> getProp "id" |> fun p -> p.GetString() |> Expect.equal "member id should be displayed verbatim" "alice"
-    m0 |> getProp "role" |> fun p -> p.GetString() |> Expect.equal "role should be Implementer" "Implementer"
-    m0 |> getProp "conductor" |> fun p -> p.GetBoolean() |> Expect.isTrue "the first joiner becomes conductor"
-    let claims = root |> getProp "claims" |> fun p -> p.EnumerateArray() |> Seq.toList
+    m0 |> getProp "id" |> getStr |> Expect.equal "member id should be displayed verbatim" "alice"
+    m0 |> getProp "role" |> getStr |> Expect.equal "role should be Implementer" "Implementer"
+    m0 |> getProp "conductor" |> getBool |> Expect.isTrue "the first joiner becomes conductor"
+    let claims = root |> getProp "claims" |> getArr
     claims |> List.length |> Expect.equal "one claim acquired" 1
     let c0 = claims.[0]
-    c0 |> getProp "scope" |> getProp "path" |> fun p -> p.GetString() |> Expect.equal "claim scope path" "src/Foo.fs"
-    c0 |> getProp "holder" |> fun p -> p.GetString() |> Expect.equal "claim holder should be alice" "alice"
-    let tests = root |> getProp "tests" |> fun p -> p.EnumerateArray() |> Seq.map (fun t -> t.GetString()) |> Seq.toList
+    c0 |> getProp "scope" |> getProp "path" |> getStr |> Expect.equal "claim scope path" "src/Foo.fs"
+    c0 |> getProp "holder" |> getStr |> Expect.equal "claim holder should be alice" "alice"
+    let tests = root |> getProp "tests" |> getArr |> List.map getStr
     tests |> Expect.equal "tests should be the union of pass/fail/stale, sorted" [ "t1"; "t2" ]
-    let rows = root |> getProp "rows" |> fun p -> p.EnumerateArray() |> Seq.toList
+    let rows = root |> getProp "rows" |> getArr
     rows |> List.length |> Expect.equal "one session row (alice's)" 1
     let r0 = rows.[0]
-    r0 |> getProp "generation" |> fun p -> p.GetInt64() |> Expect.equal "row generation should match the snapshot" 2L
-    let passBits = r0 |> getProp "pass" |> fun p -> p.EnumerateArray() |> Seq.map (fun b -> b.GetBoolean()) |> Seq.toList
+    r0 |> getProp "generation" |> getInt64 |> Expect.equal "row generation should match the snapshot" 2L
+    let passBits = r0 |> getProp "pass" |> getArr |> List.map getBool
     passBits |> Expect.equal "pass bitplane aligned with tests [t1;t2]" [ true; false ]
-    let failBits = r0 |> getProp "fail" |> fun p -> p.EnumerateArray() |> Seq.map (fun b -> b.GetBoolean()) |> Seq.toList
+    let failBits = r0 |> getProp "fail" |> getArr |> List.map getBool
     failBits |> Expect.equal "fail bitplane aligned with tests [t1;t2]" [ false; true ]
 
   testCase "cohort_matrix has no members/claims/rows for an empty cohort" <| fun () ->
@@ -202,10 +222,10 @@ let cohortSseEventsTests = testList "Cohort SSE events (item 15a)" [
     let payload =
       Bozzetto.SseWriter.formatCohortMatrixEvent jsonOpts frame
       |> fun sse -> sse.Split('\n') |> Array.choose (fun l -> if l.StartsWith("data: ") then Some (l.Substring 6) else None) |> String.concat "\n"
-    use doc = JsonDocument.Parse(payload)
-    doc.RootElement.GetProperty("members").GetArrayLength() |> Expect.equal "no members yet" 0
-    doc.RootElement.GetProperty("claims").GetArrayLength() |> Expect.equal "no claims yet" 0
-    doc.RootElement.GetProperty("rows").GetArrayLength() |> Expect.equal "no session rows yet" 0
+    let root = Json.parseOrFail payload
+    (root |> getProp "members" |> getArr).Length |> Expect.equal "no members yet" 0
+    (root |> getProp "claims" |> getArr).Length |> Expect.equal "no claims yet" 0
+    (root |> getProp "rows" |> getArr).Length |> Expect.equal "no session rows yet" 0
 
   // ── save_observed (claim early-warning, multi-agent vision §5.1) ──
 
@@ -223,15 +243,14 @@ let cohortSseEventsTests = testList "Cohort SSE events (item 15a)" [
     let payload =
       Bozzetto.SseWriter.formatSaveObservedEvent jsonOpts claim bob alice "src/Foo.fs"
       |> fun sse -> sse.Split('\n') |> Array.choose (fun l -> if l.StartsWith("data: ") then Some (l.Substring 6) else None) |> String.concat "\n"
-    use doc = JsonDocument.Parse(payload)
-    let root = doc.RootElement
-    root |> getProp "claimId" |> fun p -> p.GetString() |> Expect.equal "claimId should be the violated claim's id" expectedClaimId
-    root |> getProp "observer" |> fun p -> p.GetString() |> Expect.equal "observer should be the saving member, displayed verbatim (Minted)" "bob"
-    root |> getProp "holder" |> fun p -> p.GetString() |> Expect.equal "holder should be the claim's holder" "alice"
+    let root = Json.parseOrFail payload
+    root |> getProp "claimId" |> getStr |> Expect.equal "claimId should be the violated claim's id" expectedClaimId
+    root |> getProp "observer" |> getStr |> Expect.equal "observer should be the saving member, displayed verbatim (Minted)" "bob"
+    root |> getProp "holder" |> getStr |> Expect.equal "holder should be the claim's holder" "alice"
     let scope = root |> getProp "scope"
-    scope |> getProp "kind" |> fun p -> p.GetString() |> Expect.equal "scope kind should be file" "file"
-    scope |> getProp "path" |> fun p -> p.GetString() |> Expect.equal "scope path should be the claimed file" "src/Foo.fs"
-    root |> getProp "path" |> fun p -> p.GetString() |> Expect.equal "path should be the saved path" "src/Foo.fs"
+    scope |> getProp "kind" |> getStr |> Expect.equal "scope kind should be file" "file"
+    scope |> getProp "path" |> getStr |> Expect.equal "scope path should be the claimed file" "src/Foo.fs"
+    root |> getProp "path" |> getStr |> Expect.equal "path should be the saved path" "src/Foo.fs"
 
   testCase "save_observed mapping (McpServer.saveObservedRow) resolves the current claim by the event's claimId" <| fun () ->
     let state0 = joinTwoAndClaim ()

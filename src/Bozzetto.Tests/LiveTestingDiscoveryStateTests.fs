@@ -2,7 +2,7 @@ module Bozzetto.Tests.LiveTestingDiscoveryStateTests
 
 open System
 open System.Collections.Concurrent
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open Bozzetto
@@ -33,14 +33,16 @@ let private mkCtxWithState (state: LiveTestState) : McpContext =
     GetDaemonHealth = fun () -> None
     GetProcessTelemetry = fun () -> None }
 
-let private jsonBoolField (fieldName: string) (root: JsonElement) =
-  root.GetProperty(fieldName).GetBoolean()
+let private jsonBoolField (fieldName: string) (root: JsonValue) =
+  JsonValue.prop fieldName root |> Option.bind JsonValue.asBool |> Option.defaultValue false
 
-let private jsonStringField (fieldName: string) (root: JsonElement) =
-  root.GetProperty(fieldName).GetString()
+let private jsonStringField (fieldName: string) (root: JsonValue) =
+  JsonValue.prop fieldName root |> Option.bind JsonValue.asString |> Option.defaultValue ""
 
-let private jsonStringArrayField (fieldName: string) (root: JsonElement) =
-  root.GetProperty(fieldName).EnumerateArray() |> Seq.map (fun v -> v.GetString()) |> Seq.toArray
+let private jsonStringArrayField (fieldName: string) (root: JsonValue) =
+  match JsonValue.prop fieldName root with
+  | Some (JsonValue.Array items) -> items |> List.choose JsonValue.asString |> List.toArray
+  | _ -> [||]
 
 [<Tests>]
 let tests =
@@ -194,8 +196,7 @@ let mcpDiscoverySemanticsTests =
 
       let! (json: string) = getLiveTestStatus ctx "copilot" None
 
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
+      let root = Json.parseOrFail json
       root |> jsonStringField "DiscoveryState"
       |> Expect.equal "cold active session should still be discovering" "discovering"
       root |> jsonBoolField "DiscoveryRequiresEval"
@@ -213,8 +214,7 @@ let mcpDiscoverySemanticsTests =
 
       let! (json: string) = getLiveTestStatus ctx "copilot" None
 
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
+      let root = Json.parseOrFail json
       root |> jsonStringField "DiscoveryState"
       |> Expect.equal "queued discovery should still report discovering" "discovering"
       root |> jsonBoolField "DiscoveryRequiresEval"
@@ -230,8 +230,7 @@ let mcpDiscoverySemanticsTests =
 
       let! (json: string) = getTestTrace ctx
 
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
+      let root = Json.parseOrFail json
       root |> jsonStringField "DiscoveryState"
       |> Expect.equal "trace should report discovery in progress" "discovering"
       root |> jsonBoolField "DiscoveryRequiresEval"
@@ -249,8 +248,7 @@ let mcpDiscoverySemanticsTests =
 
       let! (json: string) = getTestTrace ctx
 
-      let doc = JsonDocument.Parse(json)
-      let root = doc.RootElement
+      let root = Json.parseOrFail json
       root |> jsonStringField "DiscoveryState"
       |> Expect.equal "trace should still report discovery in progress" "discovering"
       root |> jsonBoolField "DiscoveryRequiresEval"
@@ -277,26 +275,22 @@ let mcpDiscoverySemanticsTests =
 
       let! (json: string) = getLiveTestStatus ctx "copilot" None
 
-      let doc = JsonDocument.Parse(json)
-      try
-        let root = doc.RootElement
-        let lastDecision = root.GetProperty("LastDecision")
-        lastDecision |> jsonStringField "Precision"
-        |> Expect.equal "status should expose fallback precision explicitly" "conservative_fallback"
-        lastDecision |> jsonStringField "Trust"
-        |> Expect.equal "status should expose approximate trust explicitly" "fresh_approximate"
-        lastDecision |> jsonStringField "Cause"
-        |> Expect.equal "status should expose the rerun cause" "file_saved"
-        lastDecision |> jsonStringField "FilePath"
-        |> Expect.equal "status should preserve the changed file path" "src/Module.fs"
-        lastDecision |> jsonStringArrayField "ChangedSymbols"
-        |> Expect.equal "status should preserve changed symbols" [| "Module.add" |]
-        lastDecision |> jsonStringArrayField "SelectedTests"
-        |> Expect.equal "status should preserve selected tests" [| "Module.Tests.should_add" |]
-        lastDecision |> jsonStringArrayField "DeferredTests"
-        |> Expect.equal "status should preserve deferred tests" [| "Architecture.Tests.should_hold" |]
-      finally
-        doc.Dispose()
+      let root = Json.parseOrFail json
+      let lastDecision = JsonValue.prop "LastDecision" root |> Option.defaultValue JsonValue.Null
+      lastDecision |> jsonStringField "Precision"
+      |> Expect.equal "status should expose fallback precision explicitly" "conservative_fallback"
+      lastDecision |> jsonStringField "Trust"
+      |> Expect.equal "status should expose approximate trust explicitly" "fresh_approximate"
+      lastDecision |> jsonStringField "Cause"
+      |> Expect.equal "status should expose the rerun cause" "file_saved"
+      lastDecision |> jsonStringField "FilePath"
+      |> Expect.equal "status should preserve the changed file path" "src/Module.fs"
+      lastDecision |> jsonStringArrayField "ChangedSymbols"
+      |> Expect.equal "status should preserve changed symbols" [| "Module.add" |]
+      lastDecision |> jsonStringArrayField "SelectedTests"
+      |> Expect.equal "status should preserve selected tests" [| "Module.Tests.should_add" |]
+      lastDecision |> jsonStringArrayField "DeferredTests"
+      |> Expect.equal "status should preserve deferred tests" [| "Architecture.Tests.should_hold" |]
     }
 
     testTask "get_test_trace surfaces the last decision so ambient status can explain why live testing stayed quiet" {
@@ -316,19 +310,15 @@ let mcpDiscoverySemanticsTests =
 
       let! (json: string) = getTestTrace ctx
 
-      let doc = JsonDocument.Parse(json)
-      try
-        let root = doc.RootElement
-        let lastDecision = root.GetProperty("LastDecision")
-        lastDecision |> jsonStringField "Precision"
-        |> Expect.equal "trace should expose suppression precision" "suppressed_by_policy"
-        lastDecision |> jsonStringField "Trust"
-        |> Expect.equal "trace should expose suppressed trust" "suppressed"
-        lastDecision |> jsonStringField "Cause"
-        |> Expect.equal "trace should expose buffered keystroke cause" "keystroke_buffered"
-        lastDecision |> jsonStringField "Reason"
-        |> Expect.stringContains "trace should preserve the human explanation" "stayed quiet on purpose"
-      finally
-        doc.Dispose()
+      let root = Json.parseOrFail json
+      let lastDecision = JsonValue.prop "LastDecision" root |> Option.defaultValue JsonValue.Null
+      lastDecision |> jsonStringField "Precision"
+      |> Expect.equal "trace should expose suppression precision" "suppressed_by_policy"
+      lastDecision |> jsonStringField "Trust"
+      |> Expect.equal "trace should expose suppressed trust" "suppressed"
+      lastDecision |> jsonStringField "Cause"
+      |> Expect.equal "trace should expose buffered keystroke cause" "keystroke_buffered"
+      lastDecision |> jsonStringField "Reason"
+      |> Expect.stringContains "trace should preserve the human explanation" "stayed quiet on purpose"
     }
   ]

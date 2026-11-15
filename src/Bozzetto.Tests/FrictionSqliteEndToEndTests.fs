@@ -2,7 +2,7 @@ module Bozzetto.Tests.FrictionSqliteEndToEndTests
 
 open System
 open System.IO
-open System.Text.Json
+open Fidelity.Data.JSON
 open Expecto
 open Expecto.Flip
 open Microsoft.Extensions.Logging.Abstractions
@@ -53,19 +53,22 @@ let tests =
       let! _ = tools.report_friction("run_tests", "needed_another_tool", "Exact test name unclear.", "list_tests")
       let! reportJson = tools.get_friction_report()
 
-      let doc = JsonDocument.Parse(reportJson)
-      doc.RootElement.GetProperty("TotalFeedbackItems").GetInt32()
-      |> Expect.equal "should expose feedback count" 1
+      let root = Json.parseOrFail reportJson
+      JsonValue.prop "TotalFeedbackItems" root |> Option.bind JsonValue.asInt |> Option.map int
+      |> Expect.equal "should expose feedback count" (Some 1)
 
-      let recentFeedback = doc.RootElement.GetProperty("RecentFeedback")
-      (recentFeedback.GetArrayLength(), 0)
+      let recentFeedback =
+        match JsonValue.prop "RecentFeedback" root with
+        | Some (JsonValue.Array items) -> items
+        | _ -> []
+      (recentFeedback.Length, 0)
       |> Expect.isGreaterThan "should expose recent feedback"
 
       let first = recentFeedback[0]
-      first.GetProperty("Tool").GetString()
-      |> Expect.equal "should preserve complained tool" "run_tests"
-      first.GetProperty("LatestAlternative").GetString()
-      |> Expect.equal "should preserve resolving alternative" "list_tests"
+      JsonValue.prop "Tool" first |> Option.bind JsonValue.asString
+      |> Expect.equal "should preserve complained tool" (Some "run_tests")
+      JsonValue.prop "LatestAlternative" first |> Option.bind JsonValue.asString
+      |> Expect.equal "should preserve resolving alternative" (Some "list_tests")
 
       try File.Delete dbPath with _ -> ()
     }

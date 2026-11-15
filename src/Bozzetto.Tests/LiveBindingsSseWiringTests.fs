@@ -22,7 +22,6 @@ module Bozzetto.Tests.LiveBindingsSseWiringTests
 // SSE event registry.
 
 open System
-open System.Text.Json
 open Expecto
 open Expecto.Flip
 open Bozzetto

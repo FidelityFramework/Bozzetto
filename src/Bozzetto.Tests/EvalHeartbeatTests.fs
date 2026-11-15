@@ -1,6 +1,5 @@
 module Bozzetto.Tests.EvalHeartbeatTests
 
-open System.Text.Json
 open Expecto
 open Expecto.Flip
 open Bozzetto.SseWriter
