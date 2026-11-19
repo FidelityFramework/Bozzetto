@@ -118,7 +118,7 @@ dotnet fsi ci-pipeline.fsx     # full pipeline; `-- ci`, `-- composer`, `-- pack
   of polling. Measure available RAM and swap, process RSS with parents, and
   cgroup usage. Distinguish the daemon, compiler workers, unrelated builds and
   editor language servers. Before and after multi-repository builds, check for
-  an oversized F# language server (`pgrep -af fsautocomplete`). Ask before
+  an oversized language server (`pgrep -af 'ClefAutoComplete|fsautocomplete'`). Ask before
   changing scheduling policy or stopping processes you do not own.
 - **Sub-agents do not inherit this file's context.** Put the lease loop and the
   retrieval rule in every brief.
@@ -132,7 +132,7 @@ the risk it addresses.
 1. **Inner loop: targeted.** Run the tests for the owner you changed and for
    the components that consume its facts. Filters are fine here.
 2. **Prove each new rule.** A new check or refusal needs a positive control, a
-   negative control that asserts the specific reason, and one mutation that a
+   negative control that asserts the specific reason, and one fault-injection negative control that a
    test catches.
 3. **Acceptance scope belongs to the auditor.** The current FFI role assignment
    is recorded in the Farscape wiki's [FFI Working Agreements](https://forge.spkez.dev/FidelityFramework/Farscape/wiki/FFI-Working-Agreements).
@@ -236,8 +236,14 @@ logs and trust ledgers that validation records cite before deleting artifacts.
   - Then `find`, `pgq` and `sources`, each pinned to that snapshot.
   - Cite repo, revision, path and the returned lines.
   - The index covers pushed heads only, so push before asking about new work.
-  - Helpers and request shapes:
-    `~/.cache/bozzetto/evidence/ffi-correction-2026-10-03/tools/README.md`.
+  - Adapter usage and request shapes follow the `fidelity-lookup` skill
+    (`/home/hhh/repos/speakez-lab/platform/agents/skills/fidelity-lookup/SKILL.md`)
+    and `speakez-lab/platform/agents/pi-lab/README.md`.
+- **Guardrails and blind audit packets:** Bozzetto's leased gate runners and
+  audit-packet tooling implement
+  [Pipeline Guardrails and Canary Budgets](https://forge.spkez.dev/FidelityFramework/Composer/wiki/Pipeline-Guardrails-and-Canary-Budgets)
+  and `fidelity-blind-audit` (including `-pgid` process-group cleanup per
+  Bozzetto `#35`).
 - **Repositories absent from the fresh schema** may be read directly, with
   bounded searches. Record that outside-index exception for the current
   snapshot.
