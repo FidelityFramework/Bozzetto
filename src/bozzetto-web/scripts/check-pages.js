@@ -193,11 +193,13 @@ async function check() {
   await evaluate(dashboard, `${agentPanel}.querySelectorAll('details').forEach(d => { d.open = false; })`);
   assert.deepEqual({fetches: pageRequests.length, commands: pageFrames.length}, trafficBeforeExpansion, 'accordion expansion requires no frontend fetch or command');
   // The same ordering assertion must fail when rendered pass order is reversed.
-  const assertHistoryOrder = () => historyNames().then(names => assert.deepEqual(names, ['Mock observer', 'Mock verifier'], 'earlier passes must be newest first'));
-  await evaluate(dashboard, `(() => { const d = ${historyDetails}; d.append(...[...d.querySelectorAll(':scope > details')].reverse()); })()`);
-  await assert.rejects(assertHistoryOrder, {code:'ERR_ASSERTION'}, 'latest-first assertion catches reversed history');
-  await evaluate(dashboard, `(() => { const d = ${historyDetails}; d.append(...[...d.querySelectorAll(':scope > details')].reverse()); })()`);
-  await assertHistoryOrder();
+  // The reversal is applied to a detached copy: the live rows belong to the
+  // keyed renderer, whose row ranges a foreign DOM move would corrupt.
+  const historyNamesIn = root => evaluate(dashboard, `[...${root}.querySelectorAll(':scope > details > summary')].map(s => s.textContent.split(' · ')[0])`);
+  const assertHistoryOrderIn = root => historyNamesIn(root).then(names => assert.deepEqual(names, ['Mock observer', 'Mock verifier'], 'earlier passes must be newest first'));
+  const reversedHistory = `(() => { const d = ${historyDetails}.cloneNode(true); d.append(...[...d.querySelectorAll(':scope > details')].reverse()); return d; })()`;
+  await assert.rejects(() => assertHistoryOrderIn(reversedHistory), {code:'ERR_ASSERTION'}, 'latest-first assertion catches reversed history');
+  await assertHistoryOrderIn(historyDetails);
   await writeFile(join(evidence, 'agent-accordion.json'), JSON.stringify({current:await currentNames(), earlier:await historyNames(), initiallyCollapsed:true, fullDetailsRetained:true, noExpansionTraffic:true, reverseOrderMutationCaught:true}, null, 2));
   const assertDashboardHeadings = page => {
     for (const title of ['Open project', 'Compiler worker', 'Run output', 'Composer sessions', 'Work leases']) {
@@ -288,10 +290,16 @@ async function check() {
   assert.equal(await evaluate(work, `${twoOlder}.textContent.includes('/mock/older-abandoned')`), false, 'older entries stay unmounted while Show older is closed');
   const olderTraffic = {fetches: pageRequests.length, commands: pageFrames.length};
   await evaluate(work, `${twoOlder}.querySelector(':scope > summary').click()`);
+  // #14: an entry from another local day of this year shows a short local date
+  // and time ("Nov 5, 9:03 PM") and no year; the mock dates it about 48 hours
+  // before the bridge started, so either neighbouring minute's day is accepted.
+  const olderDays = await evaluate(work, "[0, 120000].map(slack => new Date(Date.now() - 172800000 - slack).toLocaleDateString([], {month:'short', day:'numeric'}))");
   const olderYear = String(new Date(Date.now() - 172800000).getFullYear());
+  const olderSameYear = olderYear === String(new Date().getFullYear());
   await waitFor(work, `${twoOlder}.open && ${twoOlder}.textContent.includes('/mock/older-abandoned')`);
   const olderText = await evaluate(work, `${twoOlder}.textContent`);
-  assert.ok(olderText.includes('pi-old-run') && olderText.includes(olderYear) && olderText.includes('elapsed 1m 00s'), `Show older reveals non-today entry with local date, caller, and elapsed time: ${olderText}`);
+  assert.ok(olderText.includes('pi-old-run') && olderDays.some(day => olderText.includes(day + ', ')) && olderText.includes('elapsed 1m 00s'), `Show older reveals non-today entry with short local date, caller, and elapsed time: ${olderText}`);
+  if (olderSameYear) assert.ok(!olderText.includes(olderYear), `a same-year entry's short date omits the year: ${olderText}`);
   assert.equal(await evaluate(work, `${twoOlder}.querySelector('.node-outcome-abandoned')?.textContent`), 'abandoned', 'older abandoned entry retains distinct abandoned badge');
   // Retiring the last older row unmounts Show older and resets its controlled open state on restore.
   await evaluate(work, `${twoOlder}.querySelector('details.node-operation > summary').click()`);
@@ -341,7 +349,7 @@ async function check() {
         const frame = event.fields[0];
         if (frame.Correlation !== correlation) return;
         agent.off('message', receive);
-        event.tag === 2 ? resolve() : reject(new Error(frame.Message));
+        event.tag === 2 ? resolve(frame.Target) : reject(new Error(frame.Message));
       };
       agent.on('message', receive);
       agent.send(encodeCommand(new CommandFrame(correlation, new Command(3, [`/mock/${name}.fidproj`]))));
@@ -349,7 +357,7 @@ async function check() {
     await openProject('SideBySide', 101);
     await waitFor(dashboard, "document.body.innerText.includes('mock read progressed')");
     // Stage 1 pushes a newer owner-liveness timestamp and renewed lease expiry on the active command:
-    // verify SolidJS updates both rendered fields IN PLACE without remounting or freezing at initial mount.
+    // verify Ranvier updates both rendered fields IN PLACE without remounting or freezing at initial mount.
     await waitFor(work, `(() => {
       const card = ${initialNode('one')};
       const liv = card.querySelector('.node-active .node-operation-liveness')?.textContent ?? '';
@@ -376,12 +384,64 @@ async function check() {
     assert.ok((await inspect(dashboard)).text.includes('mock read completed'), 'expansion immediately exposes the pushed final result');
     await evaluate(dashboard, `${historyDetails}.querySelectorAll('details').forEach(d => { d.open = false; }); ${historyDetails}.open = false`);
     await writeFile(join(evidence, 'agent-push.json'), JSON.stringify({progressReordered:true, completedMovedToHistory:true, historyStayedClosed:true, nestedStateRetained:true, finalDetailAvailable:true}, null, 2));
+    // #36: the open Dashboard header follows pushed Health frames alone. A third
+    // open session strains the mock worker (Degraded, memory Tight); closing it
+    // restores Healthy, memory Normal. The page is never reloaded, sends no
+    // command (no RequestSnapshot) and makes no XHR/fetch request; the verdict
+    // and pressure badges are the same elements throughout, rewritten in place.
+    const strip = "document.querySelector('.daemon-health')";
+    const healthState = `(() => { const badges = [...${strip}.querySelectorAll('.badge')].map(b => b.textContent); return (badges.find(b => b === 'Healthy' || b === 'Degraded') ?? '') + '|' + (badges.find(b => b.startsWith('memory ')) ?? ''); })()`;
+    assert.equal(await evaluate(dashboard, healthState), 'Healthy|memory Normal', 'live health starts Healthy with Normal memory pressure');
+    await evaluate(dashboard, `(() => {
+      window.__sameDocument = 'dashboard-live-health';
+      window.__healthStates = [];
+      const record = () => { const state = ${healthState}; if (window.__healthStates.at(-1) !== state) window.__healthStates.push(state); };
+      record();
+      window.__verdictBadge = [...${strip}.querySelectorAll('.badge')].find(b => b.textContent === 'Healthy');
+      window.__pressureBadge = [...${strip}.querySelectorAll('.badge')].find(b => b.textContent.startsWith('memory '));
+      new MutationObserver(record).observe(${strip}, {subtree:true, childList:true, characterData:true, attributes:true});
+    })()`);
+    const liveTraffic = () => ({fetches: pageRequests.filter(r => r.session === dashboard).length, commands: pageFrames.filter(f => f.session === dashboard).length});
+    const trafficBeforeHealth = liveTraffic();
+    const strained = await openProject('LivePressure', 103);
+    await waitFor(dashboard, `${healthState} === 'Degraded|memory Tight'`);
+    const strainedClass = await evaluate(dashboard, 'window.__pressureBadge.className');
+    assert.ok(strainedClass.includes('badge-warning'), `tight pressure restyles the same badge: ${strainedClass}`);
+    await new Promise((resolve, reject) => {
+      const receive = data => {
+        const decoded = decodeEvent(new Uint8Array(data));
+        if (decoded.tag !== 0) return reject(new Error(decoded.fields[0]));
+        const event = decoded.fields[0];
+        if ((event.tag !== 2 && event.tag !== 3) || event.fields[0].Correlation !== 104) return;
+        agent.off('message', receive);
+        event.tag === 2 ? resolve() : reject(new Error(event.fields[0].Message));
+      };
+      agent.on('message', receive);
+      agent.send(encodeCommand(new CommandFrame(104, new Command(8, [strained]))));
+    });
+    await waitFor(dashboard, `${healthState} === 'Healthy|memory Normal'`);
+    const live = await evaluate(dashboard, `({
+      states: window.__healthStates,
+      sameDocument: window.__sameDocument,
+      verdictInPlace: [...${strip}.querySelectorAll('.badge')].find(b => b.textContent === 'Healthy') === window.__verdictBadge,
+      pressureInPlace: [...${strip}.querySelectorAll('.badge')].find(b => b.textContent.startsWith('memory ')) === window.__pressureBadge,
+      pressureClass: window.__pressureBadge.className,
+    })`);
+    assert.deepEqual(live.states, ['Healthy|memory Normal', 'Degraded|memory Tight', 'Healthy|memory Normal'], 'pushed Health moves the header Healthy → Degraded/Tight → Healthy, with no mixed intermediate state');
+    assert.equal(live.sameDocument, 'dashboard-live-health', 'the dashboard was not reloaded');
+    assert.equal(live.verdictInPlace && live.pressureInPlace, true, 'verdict and pressure badges are rewritten in place, not remounted');
+    assert.ok(!live.pressureClass.includes('badge-warning'), `normal pressure restores the badge style: ${live.pressureClass}`);
+    assert.deepEqual(liveTraffic(), trafficBeforeHealth, 'live health needs no dashboard fetch, XHR or bridge command');
+    assert.equal(pageFrames.some(f => f.session === dashboard && f.command === 0), false, 'the dashboard never sends RequestSnapshot');
+    // Negative control: the exact-sequence assertion refuses a missed transition.
+    assert.throws(() => assert.deepEqual(['Healthy|memory Normal', 'Healthy|memory Normal'], live.states), {code: 'ERR_ASSERTION'}, 'a header that never degraded fails the live-health check');
+    await writeFile(join(evidence, 'live-health.json'), JSON.stringify({...live, traffic: liveTraffic(), trafficBefore: trafficBeforeHealth}, null, 2));
   } finally { agent.terminate(); }
   assert.equal(await evaluate(work, "document.querySelector('input[placeholder=\"/absolute/path/Project.fidproj\"]').closest('details').open"), false, 'no manual opening was needed');
   assert.ok(!(await inspect(dashboard)).text.includes('SideBySide.fidproj'));
   await waitFor(dashboard, `(() => { const d = ${snapshotDetails}; return !d.open && [...d.querySelectorAll('tbody tr')].some(r => r.firstElementChild.textContent === 'Compiler worker'); })()`);
   const pushedWhileCollapsed = await evaluate(dashboard, `(() => { const d = ${snapshotDetails}; return {open:d.open, rows:[...d.querySelectorAll('tbody tr')].map(r => r.firstElementChild.textContent)}; })()`);
-  assert.deepEqual(pushedWhileCollapsed, {open:false, rows:['daemon','Compiler worker']}, 'hidden Solid-bound rows update from owner push');
+  assert.deepEqual(pushedWhileCollapsed, {open:false, rows:['daemon','Compiler worker']}, 'hidden Ranvier-bound rows update from owner push');
   await evaluate(dashboard, `${snapshotDetails}.querySelector(':scope > summary').click()`);
   assert.equal(await evaluate(dashboard, `(() => { const d = ${snapshotDetails}; return d.open && d.querySelector('table').getClientRects().length > 0 && d.querySelector('table').innerText.includes('Compiler worker'); })()`), true, 'opening immediately reveals latest pushed state');
   const dashboardWithWorker = await inspect(dashboard);
@@ -490,7 +550,7 @@ async function check() {
     assert.equal((await inspect(session)).overflow, false, `${name} fits a narrow viewport`);
   }
   assert.deepEqual(browserErrors, [], 'no browser runtime errors');
-  console.log(`Page checks passed: latest-first agent accordions, pushed progress/completion, retained disclosure state, isolated views, live collapsed store, native information controls, navigation, shared-owner command, reload, 900/480 px layouts. Evidence: ${evidence}`);
+  console.log(`Page checks passed: live pushed health transition (#36), short local dates (#14), latest-first agent accordions, pushed progress/completion, retained disclosure state, isolated views, live collapsed store, native information controls, navigation, shared-owner command, reload, 900/480 px layouts. Evidence: ${evidence}`);
 }
 let timeout;
 try {

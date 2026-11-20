@@ -281,6 +281,36 @@ let factsTests =
       (healthOf before).Revision |> Expect.equal "the value before the next reading is the last reading's" (int64 readings)
   ]
 
+let private stats available : Features.MachineMemory.Stats = { TotalBytes = 100L; AvailableBytes = available }
+
+let private healthRecord level : Features.HealthSnapshot =
+  { DaemonPid = 1; DaemonPort = 2; Uptime = TimeSpan.Zero; Version = "test"; SessionSummaries = []; LiveTestingSummary = None
+    MemoryMB = 3; Anomalies = []; GcDumpOutcome = None; MemoryPressure = level }
+
+let private withLiveHealth available read check =
+  Server.HealthTick.reset ()
+  Features.MemoryPressureWatch.reset ()
+  try
+    Server.HealthTick.observe (stats available) |> ignore
+    Server.HealthTick.install read
+    let first = Server.HealthTick.refresh ()
+    let graph = Facts.Graph(constants, incarnation)
+    use _owners =
+      graph.Start
+        { Facts.Owners.Tick = Server.HealthTick.Changed, Server.HealthTick.current
+          Pool = (Event<Features.LeaseWatch.Pool>()).Publish, (fun () -> pool 1L [] [])
+          Agents = None
+          Membership = None
+          Journal = (Event<unit>()).Publish, (fun () -> ComposerIntegration.ComposerJournal.empty "")
+          Liveness = None }
+    let sink = Sink()
+    let snapshot, registration = graph.Register sink.Push
+    use _registration = registration
+    check first (healthOf snapshot) sink
+  finally
+    Server.HealthTick.reset ()
+    Features.MemoryPressureWatch.reset ()
+
 [<Tests>]
 let healthTickTests =
   testSequenced <| testList "HealthTick — the daemon's one sequencer of its readings" [
@@ -373,4 +403,79 @@ let healthTickTests =
       (late.Record |> Option.map _.Version, late.RecordAtMs) |> Expect.equal "the earlier-started one, finishing last, kept the newer record and its time" (Some "newer", fast.RecordAtMs)
       Server.HealthTick.reset ()
       Features.MemoryPressureWatch.reset ()
+
+    testCase "memory recovery reaches an already registered dashboard sink" <| fun () ->
+      let read () = Features.MemoryPressureWatch.currentLevel () |> healthRecord |> Some
+      withLiveHealth 10L read (fun _ initial sink ->
+        (initial.Overall, initial.MemoryPressure)
+        |> Expect.equal "the registered page starts under tight pressure" ("Degraded", "Tight")
+        Server.HealthTick.observeTransition false Set.empty Set.empty (stats 50L)
+        sink.Healths |> List.map (fun h -> h.Revision, h.Overall, h.MemoryPressure)
+        |> Expect.equal "the same sink receives one recovered health frame" [ (initial.Revision + 1L, "Healthy", "Normal") ]
+        Server.HealthTick.current () |> Option.bind _.Record |> Option.map _.MemoryPressure
+        |> Expect.equal "the transition also obtained fresh accounting" (Some MemoryPressure.Normal))
+
+    testCase "losing the Composer PID refreshes process and health accounting at Normal pressure" <| fun () ->
+      let mutable composerPid = Some Environment.ProcessId
+      let pids () = composerPid |> Option.toList |> Set.ofList
+      let faultedSession : Features.SessionHealthSummary =
+        { SessionId = "worker"; ProjectName = "test"; Status = Features.SessionHealthStatus.Faulted
+          EvalCount = 0; LastActivity = DateTimeOffset.UtcNow }
+      let read () =
+        let processes = composerPid |> Option.toList |> List.map (fun pid -> pid, "composer-worker")
+        Server.DaemonTelemetry.sample processes |> ignore
+        let sessions = composerPid |> Option.map (fun _ -> faultedSession) |> Option.toList
+        Some { healthRecord MemoryPressure.Normal with SessionSummaries = sessions }
+      withLiveHealth 50L read (fun _ initial sink ->
+        let before = pids ()
+        initial.Processes |> Array.map _.ProcessId |> Expect.equal "the worker is present in the initial telemetry" [| Environment.ProcessId |]
+        (initial.Overall, initial.MemoryPressure) |> Expect.equal "the initial record is degraded with normal RAM" ("Degraded", "Normal")
+        composerPid <- None
+        Server.HealthTick.observeTransition false before (pids ()) (stats 50L)
+        sink.Healths |> List.map (fun h -> h.Overall, h.MemoryPressure, h.Processes.Length)
+        |> Expect.equal "the PID change alone publishes refreshed health and removes the process" [ ("Healthy", "Normal", 0) ])
+
+    testCase "an alarm recovery can request a refresh at unchanged pressure and PIDs" <| fun () ->
+      let alarm = Features.HealthAnomaly.Verdict.OperationalFault {
+        Kind = Features.HealthAnomaly.OperationalFaultKind.ProcScanFailure
+        ObservedAt = DateTimeOffset.UtcNow; Count = 1; Detail = "injected scan fault" }
+      let mutable record = { healthRecord MemoryPressure.Normal with Anomalies = [ alarm ] }
+      withLiveHealth 50L (fun () -> Some record) (fun _ initial sink ->
+        initial.Overall |> Expect.equal "the operational alarm is visible before recovery" "Unhealthy"
+        record <- healthRecord MemoryPressure.Normal
+        Server.HealthTick.observeTransition true Set.empty Set.empty (stats 50L)
+        sink.Healths |> List.map (fun h -> h.Overall, h.Alarms.Length)
+        |> Expect.equal "the forced refresh clears the alarm on the registered sink" [ ("Healthy", 0) ])
+
+    testCase "steady background checks keep the same tick and send zero Health frames" <| fun () ->
+      let read () = Some (healthRecord MemoryPressure.Normal)
+      withLiveHealth 50L read (fun first _ sink ->
+        let owned = Set.singleton 7
+        let publications = ResizeArray<Server.HealthTick.Tick>()
+        use _ = Server.HealthTick.Changed.Subscribe publications.Add
+        for available in [ 55L; 60L; 50L ] do
+          Server.HealthTick.observeTransition false owned owned (stats available)
+        publications |> Expect.isEmpty "steady checks emit zero HealthTick publications"
+        sink.Healths |> Expect.isEmpty "the pressure level and owned PID set stayed the same and no anomaly requested refresh"
+        Server.HealthTick.current () |> Expect.equal "steady checks keep the serial and acquisition times" (Some first))
+
+    testCase "a reader failure during recovery preserves record age and leaves observations publishing" <| fun () ->
+      withLiveHealth 10L (fun () -> Some (healthRecord MemoryPressure.Tight)) (fun first _ sink ->
+        Server.HealthTick.install (fun () -> failwith "injected health record failure")
+        Server.HealthTick.observeTransition false Set.empty Set.empty (stats 50L)
+        sink.Healths |> List.map (fun h -> h.MemoryPressure, h.RecordAtMs)
+        |> Expect.equal "recovered pressure publishes with the previous record time" [ ("Normal", first.RecordAtMs) ]
+        let failed = Server.HealthTick.current () |> Option.get
+        (failed.Record, failed.Telemetry, failed.RecordAtMs)
+        |> Expect.equal "a failed read keeps record and telemetry together" (first.Record, first.Telemetry, first.RecordAtMs)
+
+        // An ordinary reading goes quiet if the failed refresh leaks its counter.
+        Server.HealthTick.observe (stats 55L) |> ignore
+        sink.Healths |> List.length |> Expect.equal "the failed refresh released its publication suppression" 2
+        let recovered = { healthRecord MemoryPressure.Normal with Version = "recovered" }
+        Server.HealthTick.install (fun () -> Some recovered)
+        let refreshed = Server.HealthTick.refresh ()
+        refreshed.Record |> Expect.equal "a later refresh installs a new record" (Some recovered)
+        sink.Healths |> List.map (fun h -> h.Version, h.Overall) |> List.last
+        |> Expect.equal "the registered page receives the healthy record" ("recovered", "Healthy"))
   ]

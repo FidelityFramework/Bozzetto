@@ -84,8 +84,12 @@ let private healthValue () : DaemonHealth =
       |]
     | Unconfigured | Idle -> [||]
   let open' = sessions |> Seq.filter (fun s -> not s.Status.Closed) |> Seq.length
+  // Three open sessions stand in for a worker under memory strain: the verdict
+  // degrades and pressure tightens together, and closing one restores both, so
+  // a page can watch one pushed Health transition each way.
+  let strained = open' >= 3
   let alarms =
-    if open' >= 3 then
+    if strained then
       [| { HealthAlarm.Signal = "WorkerRss"; State = "Drifting"; Message = "Composer worker RSS is 2.4 sigma above its baseline (mock)." } |]
     else [||]
   healthRevision <- healthRevision + 1L
@@ -95,8 +99,10 @@ let private healthValue () : DaemonHealth =
     ProcessId = 4242
     McpPort = 47759
     Overall = (if alarms.Length > 0 then "Degraded" else "Healthy")
-    MemoryPressure = "Normal"
-    MemoryPressureNote = "60.0% of RAM available — the machine has room; tight at or below 20%"
+    MemoryPressure = (if strained then "Tight" else "Normal")
+    MemoryPressureNote =
+      if strained then "18.0% of RAM available — tight at or below 20% (mock)"
+      else "60.0% of RAM available — the machine has room; tight at or below 20%"
     ResidentBytes = 186_000_000L + int64 (random () * 12_000_000.0)
     MachineAvailableBytes = 38_500_000_000L + int64 (random () * 400_000_000.0)
     MachineTotalBytes = 66_571_993_088L

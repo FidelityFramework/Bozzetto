@@ -1,5 +1,4 @@
 import { defineConfig } from 'vite';
-import solidPlugin from 'vite-plugin-solid';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import { mockBridge } from './scripts/mock-bridge.js';
 import { prepaintStyle } from './theme.js';
@@ -54,7 +53,7 @@ const themePrepaint = {
 export default defineConfig(({ mode }) => ({
   // `vite build` must produce ONE self-contained index.html: scripts, styles
   // and assets all inlined, so scripts/weld.js can embed it in the daemon.
-  plugins: [themePrepaint, solidPlugin(), viteSingleFile(), ...(mode === 'mock' ? [mockBridge()] : [])],
+  plugins: [themePrepaint, viteSingleFile(), ...(mode === 'mock' ? [mockBridge()] : [])],
   // `--mode mock` answers /ui/bridge from the in-process mock instead.
   // `vite` serves the source page; `vite preview` serves the built dist/.
   server: { proxy: mode === 'mock' ? undefined : bridgeProxy },

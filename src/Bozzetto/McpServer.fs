@@ -3061,6 +3061,7 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
         let leaseId = Bozzetto.ExpensiveWorkLease.LeaseId.ofWire leaseIdStr
         match Bozzetto.Features.LeaseWatch.release leaseId with
         | Bozzetto.ExpensiveWorkLease.ReleaseOutcome.Released ->
+          Bozzetto.Server.HealthTick.sample () |> ignore
           do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "outcome", JsonValue.String ("released") ])
         | Bozzetto.ExpensiveWorkLease.ReleaseOutcome.AlreadyGone ->
           do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "outcome", JsonValue.String ("already_gone") ])

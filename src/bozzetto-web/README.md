@@ -1,7 +1,7 @@
 # bozzetto-web
 
 Bozzetto's browser UI: separate operations dashboard and Work pages. It is an
-F# (Partas.Solid) single-page app compiled by Fable, bundled by Vite into one
+F# (Ranvier) single-page app compiled by Fable, bundled by Vite into one
 self-contained HTML page, and welded into the daemon, which serves it and
 talks to it over one WebSocket.
 
@@ -38,9 +38,9 @@ native Clef backend compiled by Composer.
 ```
 ┌────────────────────────────────────────────────────────────┐
 │ Frontend (this directory)  │  Backend (Bozzetto daemon)    │
-│ Partas.Solid → Fable → JSX │  .NET today: ComposerSupervisor│
-│ → Solid/Vite, DaisyUI      │  health, leases               │
-│ Solid stores = the model   │  = the update function        │
+│ Ranvier.View → Fable → JS  │  .NET today: ComposerSupervisor│
+│ → Vite, DaisyUI            │  health, leases               │
+│ Ranvier signals = model    │  = the update function        │
 ├────────────────────────────────────────────────────────────┤
 │  src/Shared/Protocol.fs: Command / Event, types only       │
 │  one WebSocket on the daemon's MCP port: /ui/bridge        │
@@ -65,13 +65,15 @@ native Clef backend compiled by Composer.
   used by the mock bridge and the tests, and is the reference for the .NET
   codec. When BAREWire compiles under both Fable and Composer, the codecs swap
   to binary framing; `Protocol.fs` and the UI stay as they are.
-- **MVU as a metaphor.** There is no Elmish. Solid stores are the model
-  ([`Model.fs`](src/Frontend/Model.fs)), the backend is the update function,
-  `dispatch` sends a `Command` over the bridge, and each `Event` folds into the
-  stores. Snapshots go in through `reconcile`, keyed by `id`, so only the DOM
-  that reads a changed field updates. State that belongs only to the UI (the
-  theme, the link status, card inputs, the outcome log) stays local, like
-  WrenHello's theme.
+- **MVU as a metaphor.** There is no Elmish. Ranvier signals are the model
+  ([`Model.fs`](src/Frontend/Model.fs)), one per slice the backend reports
+  (health, uptime, leases, work nodes, sessions, ...). The backend is the
+  update function, `dispatch` sends a `Command` over the bridge, and each
+  `Event` folds into the signals it carries inside one `Ranvier.batch`, so only
+  the bindings that read those signals recompute, and each rewrites its own DOM
+  node only when its value changed. There is no virtual DOM and no diffing.
+  State that belongs only to the UI (the theme, the link status, card inputs,
+  the outcome log) stays local, like WrenHello's theme.
 - **One bridge.** [`Interop.fs`](src/Frontend/Interop.fs) holds the JS ends
   as one-liners. [`Bridge.fs`](src/Frontend/Bridge.fs) owns a single WebSocket
   to `/ui/bridge` on the page's own origin and reconnects with capped backoff
@@ -80,23 +82,25 @@ native Clef backend compiled by Composer.
   when something changed. Pulls are Commands: `RequestSnapshot` is answered
   by Events. The page keeps no clock: times are shown as instants ("since",
   "until"). The one duration shown, the daemon's uptime, is the value the
-  daemon's own clock pushes each second (`Uptime`), held in a Solid signal.
+  daemon's own clock pushes each second (`Uptime`), held in its own signal.
 
-### Store rules (Solid)
+### View rules (Ranvier)
 
-- Store contents are F# **anonymous records**, which Fable emits as plain JS
-  objects. Solid proxies only plain objects and arrays. An F# record or union
-  is a class instance, which a store treats as an opaque leaf, and `reconcile`
-  could not diff it field by field.
-- Setting a store path to an object **merges** into the existing node, and
-  `reconcile` mutates nodes in place. Never put one object at two store
-  locations, and never store shared constants (placeholders are functions).
-- No `option` inside stores: use `hasCurrent`/`current` and
-  `healthSeen`/`health` pairs.
-- Partas compiles `[<SolidComponent>]` functions to plain functions, and a
-  call inside JSX runs inside Solid's insert effect. A component therefore
-  reads reactive state only in JSX expressions and handlers, never in its
-  setup code.
+- [`View.fs`](src/Frontend/View.fs) is the page's authoring vocabulary on
+  `Ranvier.View.Dom` Program views, mounted once by `Mounting.mount` on the
+  page's one `Ranvier.Graph` ([`Main.fs`](src/Frontend/Main.fs)). A component
+  function builds its view once; anything that changes is read inside a reader
+  (`rx`, `clsRx`, `attrRx`, `flagRx`, a list's items or a condition), never in
+  the function body, so the read subscribes only the binding that shows it.
+- Lists are keyed (`each key items row`): a row is retained while its key is
+  present and reads its current item through the reader it is given.
+  Conditionals (`show`, `showElse`) remount only when the condition flips.
+- Signal contents are F# anonymous records. No `option` inside them: use
+  `hasCurrent`/`current` and `HealthSeen`/`Health` pairs.
+- A callback from outside the graph (a socket frame, a link change, a DOM
+  event) runs through `View.act`, on the page graph as one batch.
+- Rows are delimited by comment ranges the renderer owns; tests and tools do
+  not move rendered rows themselves.
 
 ### Look (Braidpoint)
 
@@ -261,7 +265,7 @@ Prerequisites: the .NET 10 SDK (repository `global.json`) and Node.js 20.19+.
 
 ```bash
 cd bozzetto-web
-dotnet tool restore    # Fable 5.0.0-alpha.14, pinned here only
+dotnet tool restore    # Fable 5.17.2, pinned here only
 npm install
 ```
 
@@ -273,13 +277,13 @@ current native API has no queued-request withdrawal operation.
 
 | Command | What it does |
 |---|---|
-| `npm run fable` | Fable: `src/Frontend` → `output/*.fs.jsx` |
+| `npm run fable` | Fable: `src/Frontend` → `output/*.fs.js` |
 | `npm run fable:watch` | Fable in watch mode, for use alongside `npm run dev` |
 | `npm run dev:mock` | Fable-compiles the mock, then Vite with an in-process mock `/ui/bridge` |
 | `npm run dev` | Vite, proxying `/ui/bridge` to `$BOZZETTO_DAEMON` (default `http://127.0.0.1:47759`) |
 | `npm run preview:mock` | Serves the **built** `dist/index.html` with the mock bridge |
-| `npm test` | Codec round trip under node, for every Command and Event case plus malformed frames |
-| `npm run test:pages` | Chromium mock checks: populated agent rows and usage distinctions, route separation, visible health, information-dialog visibility/accessibility/focus, caught stylesheet mutation, navigation/shared-owner command/reload and 900/480 px layouts |
+| `npm test` | Codec round trip under node, for every Command and Event case plus malformed frames, and the local short-date format (#14) |
+| `npm run test:pages` | Chromium mock checks: live pushed Health transitions on an open Dashboard (Healthy/Normal → Degraded/Tight → Healthy/Normal, no reload or request), populated agent rows and usage distinctions, route separation, visible health, information-dialog visibility/accessibility/focus, caught stylesheet mutation, navigation/shared-owner command/reload and 900/480 px layouts |
 | `npm run build` | Fable → `vite build` → verify → weld |
 | `npm run build:daemon` | The same verified build, welded into `../Bozzetto/WebAssets.fs` for the daemon |
 
@@ -297,8 +301,9 @@ builds into a compiler refusal, and `"--fail"` among the run arguments exits
 with code 3. Reservations can be used once. A build holds a `full_build` lease
 and a run a `run_app` lease, one of each kind at a time, so a second build
 queues. The mock pushes Leases on every grant, queue and release, and Health
-when its verdict, process set or alarms change. Its state is shared by every
-tab, as the daemon's is.
+when its verdict, memory pressure, process set or alarms change; three open
+sessions degrade it to Degraded with Tight memory, and closing one restores
+it. Its state is shared by every tab, as the daemon's is.
 
 **Against a daemon.** Bring up a dedicated dev daemon (never the installed one
 on 47749/47750), then run
@@ -312,7 +317,7 @@ through the proxy.
 ## Build and weld
 
 `npm run build` writes `dist/index.html`: one self-contained page with all
-scripts, styles and assets inlined, about 143 KiB (36 KiB gzipped).
+scripts, styles and assets inlined, about 369 KiB (99 KiB gzipped).
 [`scripts/verify-bundle.js`](scripts/verify-bundle.js) fails the build if
 `dist/` holds anything else or if the page contains any `http(s)://` URL. It
 rejects even XML namespace strings, which is why the UI uses a CSS spinner
@@ -338,16 +343,18 @@ is.
 
 `Directory.Build.props` and `Directory.Packages.props` here replace the
 repository root's files for this subtree. The root pins Fable.Core 4.5.0 for
-`bozzetto-vscode` (Fable 4.29), and Partas.Solid 2.1.3 needs Fable.Core
-5.0.0-beta.1 or later, which would otherwise raise NU1605. The subtree keeps
+`bozzetto-vscode` (Fable 4.29), and Ranvier 0.2.0 and Ranvier.View 0.1.50 need
+Fable.Core 5.3.0 or later, which would otherwise raise NU1605. The subtree keeps
 central package management, net10.0, warnings as errors (Fable honours them)
-and committed `packages.lock.json` files. The Fable CLI is pinned to
-5.0.0-alpha.14 in `.config/dotnet-tools.json`, because the published
-Partas.Solid.FablePlugin 2.1.3 is ABI-bound to Fable.AST 5.0.0-beta.2. Partas
-comes from NuGet, not from a local checkout.
+and committed `packages.lock.json` files. The Fable CLI is pinned to 5.17.2 in
+`.config/dotnet-tools.json`; it type-checks against each project's own
+FSharp.Core, so every project here references the one FSharp.Core pinned in
+`Directory.Packages.props`. Ranvier, Ranvier.Dom, Ranvier.View and
+Ranvier.View.Dom come from NuGet, not from local checkouts.
 
 Why the frontend codec does not use Fidelity.Data.JSON: under Fable
-5.0.0-alpha.14, its `JsonParser.fs` fails to emit. The lone-surrogate char
+5.0.0-alpha.14 (the CLI pinned when this was measured), its `JsonParser.fs`
+fails to emit. The lone-surrogate char
 literals `'\uD800'`…`'\uDFFF'` cannot be written as JavaScript output. Its
 TOML and XML parsers also fail FS0748 on `return { … } : T`. With those
 literals rewritten as `char 0xD800` in a scratch copy, the JSON subset

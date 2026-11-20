@@ -4,17 +4,18 @@
     "net10.0": {
       "Fable.Core": {
         "type": "Direct",
-        "requested": "[5.0.0-beta.1, )",
-        "resolved": "5.0.0-beta.1",
-        "contentHash": "9jzeGj0GRse7v84YK+7Bx1atXtKxhA9tgn1K3IF4lSuRDQ/SmWAI5e+WKoZ1e2F7pqqG/EdGrjwigvKrUlInJA==",
+        "requested": "[5.3.0, )",
+        "resolved": "5.3.0",
+        "contentHash": "UAAdJeT3OEayd2x97U+fXxj6SCTByzTbjw8Rw5VKuYfcereVG4rYMAfoykIxm+Zr0g2FXwlcw1LR9c+AAXeyMQ==",
         "dependencies": {
           "FSharp.Core": "4.7.2"
         }
       },
       "FSharp.Core": {
-        "type": "Transitive",
-        "resolved": "4.7.2",
-        "contentHash": "w3XFVTnyZUbC8e2QT6a85ern6y7eQPPk+MYemz1FP0iBfgZcembL+wmo5cIZ1kxB8jfoXC8Q9KVkOMsGpkBKbA=="
+        "type": "Direct",
+        "requested": "[10.1.202, )",
+        "resolved": "10.1.202",
+        "contentHash": "AEGcKK+UJOEa+g7+Y5N/R+EtafmIuqufCDeRdWXoIko1/JQT4jr+zH2PnNHVC4gPB19/pmIpQiuAs01pH8Ao5Q=="
       }
     }
   }

@@ -1238,13 +1238,13 @@ module McpTools =
     leaseDecisionJson kind decision
 
   let releaseWorkLease (agent: string) (leaseId: string) : Result<string, BozzettoError> =
-    match String.IsNullOrWhiteSpace leaseId with
-    | true -> Error (BozzettoError.JsonParseError("release_work_lease", "lease_id is required"))
-    | false ->
+    if String.IsNullOrWhiteSpace leaseId then Error (BozzettoError.JsonParseError("release_work_lease", "lease_id is required"))
+    else
       let id = Bozzetto.ExpensiveWorkLease.LeaseId.ofWire leaseId
-      let holder = resolvedKey agent
-      match Bozzetto.Features.LeaseWatch.releaseOwned holder id with
-      | Bozzetto.ExpensiveWorkLease.ReleaseOutcome.Released -> Ok "released"
+      match Bozzetto.Features.LeaseWatch.releaseOwned (resolvedKey agent) id with
+      | Bozzetto.ExpensiveWorkLease.ReleaseOutcome.Released ->
+        Bozzetto.Server.HealthTick.sample () |> ignore
+        Ok "released"
       | Bozzetto.ExpensiveWorkLease.ReleaseOutcome.AlreadyGone -> Ok "already_gone_or_not_owned"
 
   let getSessionStatus

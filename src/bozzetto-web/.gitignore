@@ -1,4 +1,4 @@
-# Fable outputs (frontend JSX, mock bridge, codec tests)
+# Fable outputs (frontend JS, mock bridge, codec tests)
 output/
 output-mock/
 output-test/

@@ -1,21 +1,20 @@
-/// The model, MVU as a metaphor without the Elmish machinery: Solid stores are
-/// the model, the backend is the update function, `dispatch` sends a Command
-/// over the bridge, and every Event that comes back folds into the stores.
-///
-/// Store contents are F# anonymous records, which Fable emits as plain
-/// JavaScript objects. Solid stores proxy only plain objects and arrays (an
-/// F# record or union is a class instance, an opaque leaf), so this is what
-/// lets `reconcile` diff a whole snapshot field by field and touch only the
-/// DOM that changed. Arrays are matched on each element's `id`.
+// The model, MVU as a metaphor without the Elmish machinery: Ranvier signals
+// are the model, the backend is the update function, `dispatch` sends a
+// Command over the bridge, and every Event that comes back folds into the
+// signals inside one batch.
+//
+// The model is fine-grained: one signal per slice the backend reports (health,
+// uptime, leases, work nodes, sessions, ...). An Event writes only the slices
+// it carries, so only the bindings that read those slices recompute, and a
+// binding rewrites its own DOM node only when the value it shows changed.
 module Bozzetto.Web.Frontend.Model
 
 open System.Collections.Generic
-open Fable.Core
-open Partas.Solid
+open global.Ranvier
 open Bozzetto.Web.Shared.Protocol
 open Bozzetto.Web.Frontend
 
-// ── View records (store contents) ──────────────────────────────────────────
+// ── View records (signal contents) ─────────────────────────────────────────
 
 type ArtifactView =
   {|
@@ -47,7 +46,7 @@ type SessionView =
     cleanupPending: bool
     formatterCleanupPending: bool
     hasCurrent: bool
-    /// Meaningful only when hasCurrent (stores hold no options).
+    // Meaningful only when hasCurrent (view records hold no options).
     current: ArtifactView
     notices: NoticeView array
   |}
@@ -68,8 +67,8 @@ type AgentView = {| id: string; memberId: string; name: string; role: string; mo
                     project: string; focus: string; operation: string; status: string; updatedAt: float; reportSequence: string
                     usage: string; cost: string; activity: string; omitted: string |}
 
-/// An agent the daemon derives from a fact it owns (a lease, a membership),
-/// shown whether or not the agent ever reports.
+// An agent the daemon derives from a fact it owns (a lease, a membership),
+// shown whether or not the agent ever reports.
 type PresenceView = {| id: string; name: string; source: string; project: string; detail: string; since: float |}
 
 type AlarmView = {| id: string; signal: string; state: string; message: string |}
@@ -89,7 +88,7 @@ type HealthView =
     cpu: float
     processes: ProcessView array
     alarms: AlarmView array
-    /// When the daemon last read the machine and last took its record (epoch ms; 0 = never).
+    // When the daemon last read the machine and last took its record (epoch ms; 0 = never).
     sampledAt: float
     recordAt: float
   |}
@@ -112,7 +111,7 @@ let private noTranscript () : TranscriptView =
   {| node = ""; incarnation = ""; journal = ""; sequence = ""; stream = Stdout; correlation = 0
      bytes = [||]; text = ""; next = ""; total = ""; truncated = false; status = "not loaded" |}
 
-/// Controller-admitted node facts. Availability is separate from a retained sample.
+// Controller-admitted node facts. Availability is separate from a retained sample.
 type NodeWorkView = {|
   id: string; incarnation: string; local: bool; status: string; note: string
   hasValue: bool; sequence: string; sampledAt: float
@@ -120,11 +119,11 @@ type NodeWorkView = {|
   journal: string; storageError: string; transcriptsOmitted: bool; operations: NodeOperationView array
 |}
 
-/// One command outcome, as the activity log and a session card show it.
+// One command outcome, as the activity log and a session card show it.
 type OutcomeView = {| id: int; at: float; ok: bool; scope: string; text: string |}
 
-/// One settled Composer operation from the daemon's journal: every caller's,
-/// with the adapter's label for who asked (a label, not an identity).
+// One settled Composer operation from the daemon's journal: every caller's,
+// with the adapter's label for who asked (a label, not an identity).
 type OperationView =
   {|
     id: string; sequence: float; at: float; caller: string; operation: string; session: string; project: string
@@ -144,80 +143,61 @@ type RunView =
     stderr: string
   |}
 
-/// What the backend has told us, plus the UI's own logs.
-type ModelView =
-  {|
-    welcomed: bool
-    daemonVersion: string
-    /// When the daemon started (epoch ms), from Welcome: shown as a fixed
-    /// time. The running uptime is the daemon's own push (Stores.Uptime).
-    startedAt: float
-    protocolMismatch: bool
-    revision: string
-    worker: WorkerView
-    sessions: SessionView array
-    agents: AgentView array
-    presence: PresenceView array
-    agentIncarnation: string
-    agentSequence: string
-    executionHost: string
-    agentOmittedRuns: string
-    agentRefusal: string
-    nodes: NodeWorkView array
-    nodesRevision: string
-    nodeFocus: string
-    nodeIncarnation: string
-    nodeCorrelation: int
-    transcript: TranscriptView
-    resources: ResourcesView
-    resourceMetrics: ResourceMetricView array
-    resourceProcesses: ResourceProcessView array
-    healthSeen: bool
-    /// Meaningful only when healthSeen.
-    health: HealthView
-    leases: LeaseView array
-    queue: WaitView array
-    /// The lease board's stamp as last applied: a page keeps the newest.
-    leaseRevision: float
-    /// The daemon's operations journal, newest first, and its stamp as last applied.
-    operations: OperationView array
-    operationsRevision: float
-    activity: OutcomeView array
-    runs: RunView array
-  |}
-
-/// UI-local facts per key (a session id, "open" or "worker"). Reservation
-/// tokens live here because the backend does not report them back (a gap:
-/// a reload forgets them, and another tab never sees them).
-type LocalView =
-  {|
-    reservations: Interop.JsDict<string>
-    outcomes: Interop.JsDict<OutcomeView>
-    pending: Interop.JsDict<string>
-  |}
-
+// What the backend has told us, plus the UI's own logs, one signal per slice.
+// UI-local facts keyed by a session id, "open" or "worker" live beside them:
+// reservation tokens are here because the backend does not report them back
+// (a gap: a reload forgets them, and another tab never sees them).
 type Stores =
-  { Model: ModelView
-    SetModel: SolidStoreSetter<ModelView>
-    Local: LocalView
-    SetLocal: SolidStoreSetter<LocalView>
-    /// The daemon's uptime in ms as its clock last pushed it; negative until
-    /// the first Uptime of a connection. A signal rather than a store field:
-    /// it changes every second and only the text that shows it reads it. The
-    /// page runs no timer for it.
-    Uptime: Accessor<float>
-    SetUptime: Setter<float> }
+  { Welcomed: Signal<bool>
+    DaemonVersion: Signal<string>
+    // When the daemon started (epoch ms), from Welcome: shown as a fixed
+    // time. The running uptime is the daemon's own push (Uptime).
+    StartedAt: Signal<float>
+    ProtocolMismatch: Signal<bool>
+    Revision: Signal<string>
+    Worker: Signal<WorkerView>
+    Sessions: Signal<SessionView array>
+    Agents: Signal<AgentView array>
+    Presence: Signal<PresenceView array>
+    AgentIncarnation: Signal<string>
+    AgentSequence: Signal<string>
+    ExecutionHost: Signal<string>
+    AgentOmittedRuns: Signal<string>
+    AgentRefusal: Signal<string>
+    Nodes: Signal<NodeWorkView array>
+    NodesRevision: Signal<string>
+    NodeFocus: Signal<string>
+    NodeIncarnation: Signal<string>
+    NodeCorrelation: Signal<int>
+    Transcript: Signal<TranscriptView>
+    Resources: Signal<ResourcesView>
+    ResourceMetrics: Signal<ResourceMetricView array>
+    ResourceProcesses: Signal<ResourceProcessView array>
+    HealthSeen: Signal<bool>
+    // Meaningful only when HealthSeen.
+    Health: Signal<HealthView>
+    Leases: Signal<LeaseView array>
+    Queue: Signal<WaitView array>
+    // The lease board's stamp as last applied: a page keeps the newest.
+    LeaseRevision: Signal<float>
+    // The daemon's operations journal, newest first, and its stamp as last applied.
+    Operations: Signal<OperationView array>
+    OperationsRevision: Signal<float>
+    Activity: Signal<OutcomeView array>
+    Runs: Signal<RunView array>
+    Reservations: Signal<Map<string, string>>
+    Outcomes: Signal<Map<string, OutcomeView>>
+    Pending: Signal<Map<string, string>>
+    // The daemon's uptime in ms as its clock last pushed it; negative until
+    // the first Uptime of a connection. It changes every second and only the
+    // text that shows it reads it. The page runs no timer for it.
+    Uptime: Signal<float> }
 
 [<Literal>]
 let OpenKey = "open"
 
 [<Literal>]
 let WorkerKey = "worker"
-
-// Store hazard: setting a store path to an object whose previous value is an
-// object MERGES into that node, and reconcile mutates the existing node in
-// place. An object placed at two store locations is therefore one node seen
-// twice. Placeholders are functions and every location gets its own object.
 
 let private noWorker () : WorkerView = {| state = "idle"; host = ""; epoch = ""; compilerVersion = ""; pid = "" |}
 
@@ -243,52 +223,44 @@ let private noHealth () : HealthView =
     recordAt = 0.0
   |}
 
+// Signals belong to the ambient graph: call inside the page graph's Run.
 let create () : Stores =
-  let model, setModel =
-    createStore
-      {|
-        welcomed = false
-        daemonVersion = ""
-        startedAt = 0.0
-        protocolMismatch = false
-        revision = ""
-        worker = noWorker ()
-        sessions = Array.empty<SessionView>
-        agents = Array.empty<AgentView>
-        presence = Array.empty<PresenceView>
-        agentIncarnation = ""
-        agentSequence = ""
-        executionHost = ""
-        agentOmittedRuns = "0"
-        agentRefusal = ""
-        nodes = Array.empty<NodeWorkView>
-        nodesRevision = ""
-        nodeFocus = ""
-        nodeIncarnation = ""
-        nodeCorrelation = 0
-        transcript = noTranscript ()
-        resources = noResources ()
-        resourceMetrics = Array.empty<ResourceMetricView>
-        resourceProcesses = Array.empty<ResourceProcessView>
-        healthSeen = false
-        health = noHealth ()
-        leases = Array.empty<LeaseView>
-        queue = Array.empty<WaitView>
-        leaseRevision = 0.0
-        operations = Array.empty<OperationView>
-        operationsRevision = 0.0
-        activity = Array.empty<OutcomeView>
-        runs = Array.empty<RunView>
-      |}
-  let local, setLocal =
-    createStore
-      {|
-        reservations = Interop.emptyDict<string> ()
-        outcomes = Interop.emptyDict<OutcomeView> ()
-        pending = Interop.emptyDict<string> ()
-      |}
-  let uptime, setUptime = createSignal (-1.0)
-  { Model = model; SetModel = setModel; Local = local; SetLocal = setLocal; Uptime = uptime; SetUptime = setUptime }
+  { Welcomed = Api.createSignal false
+    DaemonVersion = Api.createSignal ""
+    StartedAt = Api.createSignal 0.0
+    ProtocolMismatch = Api.createSignal false
+    Revision = Api.createSignal ""
+    Worker = Api.createSignal (noWorker ())
+    Sessions = Api.createSignal Array.empty<SessionView>
+    Agents = Api.createSignal Array.empty<AgentView>
+    Presence = Api.createSignal Array.empty<PresenceView>
+    AgentIncarnation = Api.createSignal ""
+    AgentSequence = Api.createSignal ""
+    ExecutionHost = Api.createSignal ""
+    AgentOmittedRuns = Api.createSignal "0"
+    AgentRefusal = Api.createSignal ""
+    Nodes = Api.createSignal Array.empty<NodeWorkView>
+    NodesRevision = Api.createSignal ""
+    NodeFocus = Api.createSignal ""
+    NodeIncarnation = Api.createSignal ""
+    NodeCorrelation = Api.createSignal 0
+    Transcript = Api.createSignal (noTranscript ())
+    Resources = Api.createSignal (noResources ())
+    ResourceMetrics = Api.createSignal Array.empty<ResourceMetricView>
+    ResourceProcesses = Api.createSignal Array.empty<ResourceProcessView>
+    HealthSeen = Api.createSignal false
+    Health = Api.createSignal (noHealth ())
+    Leases = Api.createSignal Array.empty<LeaseView>
+    Queue = Api.createSignal Array.empty<WaitView>
+    LeaseRevision = Api.createSignal 0.0
+    Operations = Api.createSignal Array.empty<OperationView>
+    OperationsRevision = Api.createSignal 0.0
+    Activity = Api.createSignal Array.empty<OutcomeView>
+    Runs = Api.createSignal Array.empty<RunView>
+    Reservations = Api.createSignal Map.empty
+    Outcomes = Api.createSignal Map.empty
+    Pending = Api.createSignal Map.empty
+    Uptime = Api.createSignal (-1.0) }
 
 // ── Identities ─────────────────────────────────────────────────────────────
 
@@ -298,7 +270,7 @@ let sessionKey (target: SessionTarget) =
 let targetOf (session: SessionView) : SessionTarget =
   { SessionTarget.Worker = { WorkerTarget.Host = session.host; Epoch = session.epoch }; Session = session.session }
 
-/// Which UI element a command's pending state and outcome belong to.
+// Which UI element a command's pending state and outcome belong to.
 let commandKey (command: Command) =
   match command with
   | ObserveResources _ | ObserveNodeResources _ -> "resources"
@@ -326,24 +298,20 @@ let commandLabel (command: Command) =
   | RetireWorker _ -> "retire worker"
 
 // ── Formatting (pure) ──────────────────────────────────────────────────────
-// Times are shown as the instants they are, never relative to "now": a
-// relative time would need a ticking clock, and the page keeps none. The one
-// duration shown, the uptime, is the value the daemon's clock pushed.
+// Times are shown as the instants they are (LocalTime.fs). The one duration
+// shown, the uptime, is the value the daemon's clock pushed.
 
-[<Emit("(() => { const d = new Date($0); const ref = new Date($1 > 0 ? $1 : Date.now()); if (d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth() && d.getDate() === ref.getDate()) return d.toLocaleTimeString(); return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + d.toLocaleTimeString(); })()")>]
-let localTimestampAt (epochMs: float) (referenceMs: float) : string = jsNative
+let localTimestampAt = LocalTime.localTimestampAt
 
-[<Emit("Date.parse($0)")>]
-let parseIsoMs (iso: string) : float = jsNative
+let clockTime = LocalTime.clockTime
 
-// Single local-zone timestamp format used across every view: local time today,
-// local date + local time whenever the instant is on another local calendar day.
-let clockTime (epochMs: float) : string = localTimestampAt epochMs 0.
+let dateTime = LocalTime.dateTime
 
-let dateTime (epochMs: float) : string = localTimestampAt epochMs 0.
+[<Fable.Core.Emit("Date.parse($0)")>]
+let parseIsoMs (iso: string) : float = Fable.Core.Util.jsNative
 
-[<Emit("$0.toFixed($1)")>]
-let fixedPoint (value: float) (digits: int) : string = jsNative
+[<Fable.Core.Emit("$0.toFixed($1)")>]
+let fixedPoint (value: float) (digits: int) : string = Fable.Core.Util.jsNative
 
 let fileName (path: string) =
   let cut = path.LastIndexOf '/'
@@ -351,8 +319,8 @@ let fileName (path: string) =
 
 let shortHash (sha: string) = if sha.Length > 12 then sha.Substring(0, 12) else sha
 
-/// A pushed uptime as the page shows it: "42s", "7m 05s", "3h 04m 05s",
-/// "2d 03h 04m 05s".
+// A pushed uptime as the page shows it: "42s", "7m 05s", "3h 04m 05s",
+// "2d 03h 04m 05s".
 let duration (milliseconds: float) =
   let total = int (floor (max 0.0 milliseconds / 1000.0))
   let two (n: int) = (if n < 10 then "0" else "") + string n
@@ -484,103 +452,97 @@ let private nodeView (node: NodeWork) : NodeWorkView =
           startedAt = e.Lease |> Option.map (fun l -> float l.StartedAtMs) |> Option.defaultValue 0.
           label = clockTime (float e.AtMs) + " · " + e.Operation + " · " + e.Project + " · " + outcome |})) |> Option.defaultValue [||] |}
 
-// ── Store writes ───────────────────────────────────────────────────────────
+// ── Signal writes ──────────────────────────────────────────────────────────
 
-/// Replace one top-level slice, diffing it against what is there.
-let private reconcileSlice (stores: Stores) (slice: string) (value: obj) =
-  stores.SetModel.UpdatePath [| box slice; box (reconcile<obj, obj> value) |]
+let private set (signal: Signal<'T>) (value: 'T) = signal.Value <- value
 
-let private setSlice (stores: Stores) (slice: string) (value: obj) =
-  stores.SetModel.UpdatePath [| box slice; value |]
-
-/// A focus change withdraws only the view; the caller sends the matching stop/start.
+// A focus change withdraws only the view; the caller sends the matching stop/start.
 let focusNode (stores: Stores) node incarnation =
-  setSlice stores "nodeFocus" (box node)
-  setSlice stores "nodeIncarnation" (box incarnation)
-  setSlice stores "nodeCorrelation" (box 0)
-  setSlice stores "resources" (box (noResources ()))
-  reconcileSlice stores "resourceMetrics" (box Array.empty<ResourceMetricView>)
-  reconcileSlice stores "resourceProcesses" (box Array.empty<ResourceProcessView>)
+  set stores.NodeFocus node
+  set stores.NodeIncarnation incarnation
+  set stores.NodeCorrelation 0
+  set stores.Resources (noResources ())
+  set stores.ResourceMetrics Array.empty
+  set stores.ResourceProcesses Array.empty
 
-let private applyResources stores (r: HostResources) =
-  if stores.Model.resources.sequence = "" || r.Sequence >= int64 stores.Model.resources.sequence then
-    reconcileSlice stores "resources" (box {|
-      sequence = string r.Sequence; status = r.Status; sampledAt = float r.SampledAtMs; interval = r.IntervalMs; cost = r.SampleCostMs
-      count = r.ProcessCount; unreadable = r.UnreadableCount; omitted = r.OmittedCount; note = r.Note |})
-    reconcileSlice stores "resourceMetrics" (box (r.Metrics |> Array.map (fun m ->
-      {| id = m.Name; known = m.Value.IsSome; value = Option.defaultValue 0. m.Value; unit = m.Unit |})))
-    reconcileSlice stores "resourceProcesses" (box (r.Processes |> Array.map (fun p ->
+let private applyResources (stores: Stores) (r: HostResources) =
+  let current = stores.Resources.Value
+  if current.sequence = "" || r.Sequence >= int64 current.sequence then
+    set stores.Resources
+      {| sequence = string r.Sequence; status = r.Status; sampledAt = float r.SampledAtMs; interval = r.IntervalMs; cost = r.SampleCostMs
+         count = r.ProcessCount; unreadable = r.UnreadableCount; omitted = r.OmittedCount; note = r.Note |}
+    set stores.ResourceMetrics (r.Metrics |> Array.map (fun m ->
+      {| id = m.Name; known = m.Value.IsSome; value = Option.defaultValue 0. m.Value; unit = m.Unit |}))
+    set stores.ResourceProcesses (r.Processes |> Array.map (fun p ->
       {| id = string p.ProcessId + ":" + p.StartTicks; pid = p.ProcessId; parent = p.ParentId; name = p.Name; context = p.Context
-         cpuKnown = p.CpuPercent.IsSome; cpu = Option.defaultValue 0. p.CpuPercent; rss = p.ResidentBytes; threads = p.Threads |})))
+         cpuKnown = p.CpuPercent.IsSome; cpu = Option.defaultValue 0. p.CpuPercent; rss = p.ResidentBytes; threads = p.Threads |}))
 
-/// Set (Some) or delete (None) one key of a LocalView dictionary.
-let private setLocal (stores: Stores) (dict: string) (key: string) (value: obj option) =
-  let written = match value with Some v -> v | None -> unbox<obj> JS.undefined
-  stores.SetLocal.UpdatePath [| box dict; box key; written |]
+// Set (Some) or delete (None) one key of a UI-local map.
+let private setLocal (signal: Signal<Map<string, 'T>>) (key: string) (value: 'T option) =
+  match value with
+  | Some v -> signal.Value <- Map.add key v signal.Value
+  | None -> if signal.Value.ContainsKey key then signal.Value <- Map.remove key signal.Value
 
 let mutable private nextEntry = 0
 
 let private projectOf (stores: Stores) (key: string) =
-  stores.Model.sessions
+  stores.Sessions.Value
   |> Array.tryFind (fun s -> s.id = key)
   |> Option.map (fun s -> fileName s.project)
   |> Option.defaultValue ""
 
-/// Record an outcome once in the activity log and as the last outcome of
-/// every given key ("" = no card, e.g. a frame-level refusal).
+// Record an outcome once in the activity log and as the last outcome of
+// every given key ("" = no card, e.g. a frame-level refusal).
 let private log (stores: Stores) (keys: string list) (ok: bool) (text: string) =
   nextEntry <- nextEntry + 1
   let scope =
     match keys |> List.tryFind (fun k -> k <> OpenKey && k <> WorkerKey && k <> "") with
     | Some session -> projectOf stores session
     | None -> keys |> List.tryHead |> Option.defaultValue ""
-  let at = Interop.nowMs ()
-  // A fresh object per location (see the store hazard note above).
-  let entry () : OutcomeView = {| id = nextEntry; at = at; ok = ok; scope = scope; text = text |}
-  setSlice stores "activity" (box (Array.append [| entry () |] (Array.truncate 199 stores.Model.activity)))
+  let entry: OutcomeView = {| id = nextEntry; at = Interop.nowMs (); ok = ok; scope = scope; text = text |}
+  set stores.Activity (Array.append [| entry |] (Array.truncate 199 stores.Activity.Value))
   for key in keys do
-    if key <> "" then setLocal stores "outcomes" key (Some(box (entry ())))
+    if key <> "" then setLocal stores.Outcomes key (Some entry)
 
-/// Correlation -> (key, label, typed request) still awaiting its outcome.
+// Correlation -> (key, label, typed request) still awaiting its outcome.
 type Dispatcher =
   { InFlight: Dictionary<int32, string * string * Command>
     mutable Next: int32 }
 
 let dispatcher () = { InFlight = Dictionary(); Next = 0 }
 
-/// Allocate a correlation and mark the command pending. Returns the frame.
+// Allocate a correlation and mark the command pending. Returns the frame.
 let begin' (stores: Stores) (d: Dispatcher) (command: Command) : CommandFrame =
   d.Next <- d.Next + 1
   let key, label = commandKey command, commandLabel command
   d.InFlight[d.Next] <- (key, label, command)
-  setLocal stores "pending" key (Some(box label))
+  setLocal stores.Pending key (Some label)
   match command with
-  | Build build -> setLocal stores "reservations" (sessionKey build.Target) None // single use
-  | ObserveNodeResources request when request.Node = stores.Model.nodeFocus ->
-    setSlice stores "nodeCorrelation" (box d.Next)
+  | Build build -> setLocal stores.Reservations (sessionKey build.Target) None // single use
+  | ObserveNodeResources request when request.Node = stores.NodeFocus.Value ->
+    set stores.NodeCorrelation d.Next
   | ReadNodeTranscript request ->
-    let previous = if request.Offset = 0L then noTranscript () else stores.Model.transcript
-    let selected =
+    let previous = if request.Offset = 0L then noTranscript () else stores.Transcript.Value
+    set stores.Transcript
       {| previous with
           node = request.Source.Node; incarnation = request.Source.Incarnation; journal = request.Journal
           sequence = string request.Sequence; stream = request.Stream; correlation = d.Next; status = "reading transcript" |}
-    setSlice stores "transcript" (box selected)
   | _ -> ()
   { CommandFrame.Correlation = d.Next; Command = command }
 
-/// The frame never left (link down): settle it locally as a refusal.
+// The frame never left (link down): settle it locally as a refusal.
 let abandon (stores: Stores) (d: Dispatcher) (frame: CommandFrame) =
   match d.InFlight.TryGetValue frame.Correlation with
   | true, (key, label, _) ->
     d.InFlight.Remove frame.Correlation |> ignore
-    setLocal stores "pending" key None
+    setLocal stores.Pending key None
     log stores [ key ] false (label + " not sent: the bridge is disconnected.")
   | _ -> ()
 
-/// Every pending command is lost with the connection that carried it.
+// Every pending command is lost with the connection that carried it.
 let abandonAll (stores: Stores) (d: Dispatcher) =
   for KeyValue(_, (key, label, _)) in d.InFlight |> Seq.toArray do
-    setLocal stores "pending" key None
+    setLocal stores.Pending key None
     log stores [ key ] false (label + ": connection lost before its outcome arrived; check the session status.")
   d.InFlight.Clear()
 
@@ -588,7 +550,7 @@ let private settle (stores: Stores) (d: Dispatcher) (correlation: int32) (fallba
   match d.InFlight.TryGetValue correlation with
   | true, (key, label, _) ->
     d.InFlight.Remove correlation |> ignore
-    setLocal stores "pending" key None
+    setLocal stores.Pending key None
     key, label
   | _ -> fallbackKey, "command"
 
@@ -606,80 +568,73 @@ let private completionText (c: Completion) =
   | WorkerRetired -> "worker retired; reopen projects on a fresh epoch"
   | SnapshotSent -> "refreshed"
 
-/// The fold: one backend Event into the stores.
+// The fold: one backend Event into the signals, as one batch.
 let apply (stores: Stores) (d: Dispatcher) (event: Event) =
-  batch (fun () ->
+  Api.batch (fun () ->
     match event with
     | Welcome w ->
       // A new connection, perhaps to a restarted daemon: until its clock
       // ticks, the page shows only the start time.
-      stores.SetUptime(-1.0)
-      reconcileSlice stores "agents" (box Array.empty<AgentView>)
-      reconcileSlice stores "presence" (box Array.empty<PresenceView>)
-      setSlice stores "agentIncarnation" (box "")
-      setSlice stores "agentSequence" (box "")
-      setSlice stores "executionHost" (box "")
-      setSlice stores "agentOmittedRuns" (box "0")
-      setSlice stores "agentRefusal" (box "")
-      reconcileSlice stores "nodes" (box Array.empty<NodeWorkView>)
-      setSlice stores "nodesRevision" (box "")
+      set stores.Uptime (-1.0)
+      set stores.Agents Array.empty
+      set stores.Presence Array.empty
+      set stores.AgentIncarnation ""
+      set stores.AgentSequence ""
+      set stores.ExecutionHost ""
+      set stores.AgentOmittedRuns "0"
+      set stores.AgentRefusal ""
+      set stores.Nodes Array.empty
+      set stores.NodesRevision ""
       focusNode stores "" ""
-      setSlice stores "transcript" (box (noTranscript ()))
-      setSlice stores "resources" (box (noResources ()))
-      reconcileSlice stores "resourceMetrics" (box Array.empty<ResourceMetricView>)
-      reconcileSlice stores "resourceProcesses" (box Array.empty<ResourceProcessView>)
+      set stores.Transcript (noTranscript ())
       // A restarted daemon stamps its facts from one again: forget the old stamps,
       // and show health only once the new daemon has published it.
-      setSlice stores "healthSeen" (box false)
-      setSlice stores "leaseRevision" (box 0.0)
-      setSlice stores "operationsRevision" (box 0.0)
-      reconcileSlice stores "operations" (box Array.empty<OperationView>)
-      setSlice stores "welcomed" (box true)
-      setSlice stores "daemonVersion" (box w.DaemonVersion)
-      setSlice stores "startedAt" (box (float w.StartedAtMs))
-      setSlice stores "protocolMismatch" (box (w.ProtocolVersion <> ProtocolVersion))
+      set stores.HealthSeen false
+      set stores.LeaseRevision 0.0
+      set stores.OperationsRevision 0.0
+      set stores.Operations Array.empty
+      set stores.Welcomed true
+      set stores.DaemonVersion w.DaemonVersion
+      set stores.StartedAt (float w.StartedAtMs)
+      set stores.ProtocolMismatch (w.ProtocolVersion <> ProtocolVersion)
     | Snapshot snapshot ->
-      setSlice stores "revision" (box (string snapshot.Revision))
-      reconcileSlice stores "worker" (box (workerView snapshot.Worker))
+      set stores.Revision (string snapshot.Revision)
+      set stores.Worker (workerView snapshot.Worker)
       let sessions = snapshot.Sessions |> Array.map sessionView
-      reconcileSlice stores "sessions" (box sessions)
+      set stores.Sessions sessions
       // A reservation cannot outlive its open session.
-      for key in Interop.dictKeys stores.Local.reservations do
+      for KeyValue(key, _) in stores.Reservations.Value do
         let live = sessions |> Array.exists (fun s -> s.id = key && not s.closed)
-        if not live then setLocal stores "reservations" key None
+        if not live then setLocal stores.Reservations key None
     | Accepted accepted ->
       match d.InFlight.TryGetValue accepted.Correlation with
       | true, (_, _, ObserveNodeResources request)
-          when request.Seconds = 0 && request.Node = stores.Model.nodeFocus
-               && accepted.Correlation = stores.Model.nodeCorrelation
+          when request.Seconds = 0 && request.Node = stores.NodeFocus.Value
+               && accepted.Correlation = stores.NodeCorrelation.Value
                && accepted.Completion = SnapshotSent ->
         // This exact stop acknowledgement follows the owner's disposal/join.
         // Retain the sampled values and timestamp; it is not a new host sample.
-        let stopped = {| stores.Model.resources with status = "stopped"; note = "Observation stopped; sampled values are retained." |}
-        setSlice stores "resources" (box stopped)
+        set stores.Resources {| stores.Resources.Value with status = "stopped"; note = "Observation stopped; sampled values are retained." |}
       | _ -> ()
       let target = sessionKey accepted.Target
       let key, label = settle stores d accepted.Correlation target
       match accepted.Completion with
-      | EditReserved reservation -> setLocal stores "reservations" target (Some(box reservation))
-      | WorkCanceled | SessionClosed -> setLocal stores "reservations" target None
-      | WorkerRetired ->
-        for reserved in Interop.dictKeys stores.Local.reservations do
-          setLocal stores "reservations" reserved None
+      | EditReserved reservation -> setLocal stores.Reservations target (Some reservation)
+      | WorkCanceled | SessionClosed -> setLocal stores.Reservations target None
+      | WorkerRetired -> set stores.Reservations Map.empty
       | SessionOpened | ReservationBuilt _ | RunFinished _ | SnapshotSent -> ()
       let text = label + ": " + completionText accepted.Completion
       if accepted.Completion = SnapshotSent then ()
       elif key = OpenKey then log stores [ target; OpenKey ] true text
       else log stores [ key ] true text
     | Refused refused ->
-      if refused.Correlation = stores.Model.transcript.correlation then
-        let value = {| stores.Model.transcript with status = refused.Code + ": " + refused.Message |}
-        setSlice stores "transcript" (box value)
+      if refused.Correlation = stores.Transcript.Value.correlation then
+        set stores.Transcript {| stores.Transcript.Value with status = refused.Code + ": " + refused.Message |}
       let key, label = settle stores d refused.Correlation (sessionKey refused.Target)
       // An empty target ("||") is a frame-level refusal: no card owns it.
       let key = if key = "||" then "" else key
       if key <> "" && (refused.Code = "invalid_reservation" || refused.Code = "closed") then
-        setLocal stores "reservations" key None
+        setLocal stores.Reservations key None
       log stores [ key ] false (label + " refused · " + refused.Code + ": " + refused.Message)
     | RunOutput run ->
       nextEntry <- nextEntry + 1
@@ -694,13 +649,13 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
           stdout = run.StandardOutput
           stderr = run.StandardError
         |}
-      setSlice stores "runs" (box (Array.append [| view |] (Array.truncate 19 stores.Model.runs)))
+      set stores.Runs (Array.append [| view |] (Array.truncate 19 stores.Runs.Value))
     | Operations board ->
       // Stamped per publication; an older journal arriving after a newer one is kept out.
-      if float board.Revision >= stores.Model.operationsRevision then
-        setSlice stores "operationsRevision" (box (float board.Revision))
+      if float board.Revision >= stores.OperationsRevision.Value then
+        set stores.OperationsRevision (float board.Revision)
         // This secondary pane is compiler-owned; all node operations remain in WorkNodes.
-        reconcileSlice stores "operations" (box (board.Entries |> Array.filter (fun e -> e.Lease.IsNone) |> Array.map (fun e ->
+        set stores.Operations (board.Entries |> Array.filter (fun e -> e.Lease.IsNone) |> Array.map (fun e ->
           let run = e.Run
           {|
             id = string e.Sequence; sequence = float e.Sequence; at = float e.AtMs; caller = e.CallerLabel; operation = e.Operation
@@ -712,48 +667,47 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
             stdout = run |> Option.map (fun r -> r.StandardOutput) |> Option.defaultValue ""
             stderr = run |> Option.map (fun r -> r.StandardError) |> Option.defaultValue ""
             dropped = run |> Option.map (fun r -> r.Dropped) |> Option.defaultValue false
-          |} : OperationView)))
+          |} : OperationView))
     | AgentWork board ->
-      if stores.Model.agentIncarnation <> board.Incarnation || stores.Model.agentSequence = "" || board.Sequence >= int64 stores.Model.agentSequence then
-        setSlice stores "agentIncarnation" (box board.Incarnation)
-        setSlice stores "agentSequence" (box (string board.Sequence))
-        setSlice stores "executionHost" (box board.ExecutionHost)
-        setSlice stores "agentOmittedRuns" (box (string board.OmittedRuns))
-        setSlice stores "agentRefusal" (box board.Refusal)
-        reconcileSlice stores "agents" (box (board.Runs |> Array.map (fun r ->
+      if stores.AgentIncarnation.Value <> board.Incarnation || stores.AgentSequence.Value = "" || board.Sequence >= int64 stores.AgentSequence.Value then
+        set stores.AgentIncarnation board.Incarnation
+        set stores.AgentSequence (string board.Sequence)
+        set stores.ExecutionHost board.ExecutionHost
+        set stores.AgentOmittedRuns (string board.OmittedRuns)
+        set stores.AgentRefusal board.Refusal
+        set stores.Agents (board.Runs |> Array.map (fun r ->
           {| id = r.Id; memberId = r.Member; name = r.Name; role = r.Role; model = r.Model; endpoint = r.Endpoint; session = r.Session
              project = r.Project; focus = r.Focus; operation = r.Operation; status = r.Status
              updatedAt = float r.UpdatedAtMs; reportSequence = string r.ReportSequence
              usage = r.Usage |> Option.map (fun u -> string u.Total + " tokens (cumulative)") |> Option.defaultValue "usage unavailable"
              cost = r.Usage |> Option.bind _.EstimateUsd |> Option.map (fun c -> "$" + string c + " Pi estimate") |> Option.defaultValue "price unavailable"
-             activity = String.concat " · " r.Activity; omitted = string r.OmittedActivity |})))
-        reconcileSlice stores "presence" (box (board.Presence |> Array.map (fun p ->
+             activity = String.concat " · " r.Activity; omitted = string r.OmittedActivity |}))
+        set stores.Presence (board.Presence |> Array.map (fun p ->
           {| id = p.Source + "|" + p.Member + "|" + p.Detail; name = p.Name; source = p.Source
-             project = p.Project; detail = p.Detail; since = float p.SinceMs |})))
+             project = p.Project; detail = p.Detail; since = float p.SinceMs |}))
     | WorkNodes board ->
-      if stores.Model.nodesRevision = "" || board.Revision >= int64 stores.Model.nodesRevision then
-        setSlice stores "nodesRevision" (box (string board.Revision))
-        reconcileSlice stores "nodes" (box (board.Nodes |> Array.map nodeView))
-        if stores.Model.nodeFocus <> "" then
-          match board.Nodes |> Array.tryFind (fun n -> n.Source.Node = stores.Model.nodeFocus) with
-          | Some node when node.Source.Incarnation = stores.Model.nodeIncarnation -> ()
+      if stores.NodesRevision.Value = "" || board.Revision >= int64 stores.NodesRevision.Value then
+        set stores.NodesRevision (string board.Revision)
+        set stores.Nodes (board.Nodes |> Array.map nodeView)
+        let focus = stores.NodeFocus.Value
+        if focus <> "" then
+          match board.Nodes |> Array.tryFind (fun n -> n.Source.Node = focus) with
+          | Some node when node.Source.Incarnation = stores.NodeIncarnation.Value -> ()
           | Some node -> focusNode stores node.Source.Node node.Source.Incarnation
           | None -> focusNode stores "" ""
     | NodeResources resource ->
-      if resource.Correlation = stores.Model.nodeCorrelation && resource.Correlation > 0
-         && resource.Source.Node = stores.Model.nodeFocus && resource.Source.Incarnation = stores.Model.nodeIncarnation then
+      if resource.Correlation = stores.NodeCorrelation.Value && resource.Correlation > 0
+         && resource.Source.Node = stores.NodeFocus.Value && resource.Source.Incarnation = stores.NodeIncarnation.Value then
         applyResources stores resource.Value
     | NodeTranscript response ->
-      let current = stores.Model.transcript
+      let current = stores.Transcript.Value
       match d.InFlight.TryGetValue response.Correlation with
       | true, (_, _, ReadNodeTranscript request)
           when response.Correlation = current.correlation && response.Source = request.Source
                && response.Source.Node = current.node && response.Source.Incarnation = current.incarnation
                && request.Journal = current.journal && string request.Sequence = current.sequence && request.Stream = current.stream
-               && (stores.Model.nodes |> Array.exists (fun node -> node.id = current.node && node.incarnation = current.incarnation && node.journal = current.journal)) ->
-        let refuse message =
-          let value = {| current with status = message; next = "" |}
-          setSlice stores "transcript" (box value)
+               && (stores.Nodes.Value |> Array.exists (fun node -> node.id = current.node && node.incarnation = current.incarnation && node.journal = current.journal)) ->
+        let refuse message = set stores.Transcript {| current with status = message; next = "" |}
         match response.Outcome with
         | TranscriptRefused(code, message) -> refuse (code + ": " + message)
         | TranscriptPage page ->
@@ -774,26 +728,25 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
             match decoded with
             | None -> refuse "invalid_transcript_utf8: stored bytes are not valid UTF-8"
             | Some text ->
-              let value =
+              set stores.Transcript
                 {| current with
                     bytes = bytes; text = text; next = page.NextOffset |> Option.map string |> Option.defaultValue ""
                     total = string page.TotalBytes; truncated = current.truncated || page.Truncated
                     status = if page.NextOffset.IsSome then "more available" else "loaded" |}
-              setSlice stores "transcript" (box value)
         settle stores d response.Correlation "transcript" |> ignore
       | _ -> ()
     | Resources r ->
-      if stores.Model.nodeFocus = "" then applyResources stores r
+      if stores.NodeFocus.Value = "" then applyResources stores r
     | Health health ->
       // A connect or snapshot answer can arrive after a pushed change; the
       // revision stamped at the daemon's read keeps the newest.
-      if not stores.Model.healthSeen || float health.Revision >= stores.Model.health.revision then
-        setSlice stores "healthSeen" (box true)
-        reconcileSlice stores "health" (box (healthView health))
+      if not stores.HealthSeen.Value || float health.Revision >= stores.Health.Value.revision then
+        set stores.Health (healthView health)
+        set stores.HealthSeen true
     | Leases board ->
       // Stamped per publication; an older board arriving after a newer one is kept out.
-      if float board.Revision >= stores.Model.leaseRevision then
-        setSlice stores "leaseRevision" (box (float board.Revision))
-        reconcileSlice stores "leases" (box (board.Active |> Array.map leaseView))
-        reconcileSlice stores "queue" (box (board.Queued |> Array.map waitView))
-    | Uptime tick -> stores.SetUptime(float tick.UptimeMs))
+      if float board.Revision >= stores.LeaseRevision.Value then
+        set stores.LeaseRevision (float board.Revision)
+        set stores.Leases (board.Active |> Array.map leaseView)
+        set stores.Queue (board.Queued |> Array.map waitView)
+    | Uptime tick -> set stores.Uptime (float tick.UptimeMs))

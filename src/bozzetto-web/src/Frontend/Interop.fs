@@ -105,16 +105,3 @@ let preventDefault (event: obj) : unit = jsNative
 /// Bridge hop tracing, visible in the browser console.
 [<Emit("console.log($0)")>]
 let consoleLog (line: string) : unit = jsNative
-
-/// A plain JavaScript object used as a string-keyed dictionary inside a Solid
-/// store, so each key is tracked on its own.
-type JsDict<'T> = interface end
-
-[<Emit("({})")>]
-let emptyDict<'T> () : JsDict<'T> = jsNative
-
-[<Emit("$0[$1]")>]
-let dictTryGet (dict: JsDict<'T>) (key: string) : 'T option = jsNative
-
-[<Emit("Object.keys($0)")>]
-let dictKeys (dict: JsDict<'T>) : string array = jsNative

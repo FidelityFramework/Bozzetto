@@ -1590,10 +1590,16 @@ let run
     Bozzetto.ComposerIntegration.ComposerSupervisor.fromEnvironmentWithJournal
       (LocalData.operationsPath DaemonState.BozzettoDir)
   use unleasedWakeGate = new System.Threading.SemaphoreSlim(0, 1)
+  let immediateCleanupRequested = ref 0
+  let wakeUnleasedMonitor () =
+    if not cts.IsCancellationRequested then
+      try
+        if unleasedWakeGate.CurrentCount = 0 then unleasedWakeGate.Release() |> ignore
+      with :? System.ObjectDisposedException | :? System.Threading.SemaphoreFullException -> ()
   let wakeUnleasedCleanup () =
-    try
-      if unleasedWakeGate.CurrentCount = 0 then unleasedWakeGate.Release() |> ignore
-    with :? System.ObjectDisposedException | :? System.Threading.SemaphoreFullException -> ()
+    Interlocked.Exchange(&immediateCleanupRequested.contents, 1) |> ignore
+    wakeUnleasedMonitor ()
+  use _composerHealthWakeup = composer.Changed.Subscribe(fun () -> wakeUnleasedMonitor ())
   let publishLeasedLiveness () =
     let leaseExpiry leaseId =
       Bozzetto.Features.LeaseWatch.leaseExpiresAt (Bozzetto.ExpensiveWorkLease.LeaseId.ofWire leaseId)
@@ -2337,6 +2343,23 @@ let run
   // Create the multi-agent coordination tracker (in-memory, daemon-lifetime)
   let activityTracker = AgentActivityTracker.create ()
 
+  let ownedProcesses () =
+    DaemonTelemetry.ownedProcesses
+      Environment.ProcessId
+      composer.WorkerPid
+      (SessionManager.QuerySnapshot.allSessions (readSnapshot ())
+       |> List.choose (fun session ->
+         WorkerProtocol.SessionLifecycleStatus.workerPid session.Status
+         |> Option.map (fun pid -> pid, "worker:" + WorkerProtocol.SessionId.value session.Id)))
+  let ownedPids () = ownedProcesses () |> List.map fst |> Set.ofList
+  let healthAnomalies () = Features.HealthWatch.troubled () @ Option.toList (DaemonTelemetry.currentUnleasedVerdict ())
+  let alarmStates verdicts =
+    verdicts
+    |> List.choose (fun verdict ->
+      Features.HealthAnomaly.signalNameOfVerdict verdict
+      |> Option.map (fun signal -> signal, Features.HealthAnomaly.verdictName verdict))
+    |> Set.ofList
+
   let getDaemonHealth () : Bozzetto.Features.HealthSnapshot option =
     let model = elmRuntime.GetModel()
     let sessions =
@@ -2380,19 +2403,8 @@ let run
     // sequencer: the level reported below is the one this reading implies now.
     let tick = Bozzetto.Server.HealthTick.observe (Bozzetto.Features.MachineMemory.current ())
     let machineMemory = tick.Machine
-    let ownedProcessList =
-      Bozzetto.Server.DaemonTelemetry.ownedProcesses
-        (System.Diagnostics.Process.GetCurrentProcess().Id)
-        composer.WorkerPid
-        (SessionManager.QuerySnapshot.allSessions (readSnapshot ())
-         |> List.choose (fun session ->
-           WorkerProtocol.SessionLifecycleStatus.workerPid session.Status
-           |> Option.map (fun pid -> pid, "worker:" + WorkerProtocol.SessionId.value session.Id)))
-    let _telemetry = Bozzetto.Server.DaemonTelemetry.sample ownedProcessList
+    DaemonTelemetry.sample (ownedProcesses ()) |> ignore
     publishLeasedLiveness ()
-    // Read latest unleased-subprocess observation published by the background async monitor
-    // in O(1) — zero synchronous /proc directory scans on HTTP/MCP request threads.
-    let unleasedAnomaly = Bozzetto.Server.DaemonTelemetry.currentUnleasedVerdict ()
     let rssBytes = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64
     let memoryMB = int (rssBytes / 1_048_576L)
     let rssVerdict =
@@ -2415,7 +2427,7 @@ let run
             SessionSummaries = sessions
             LiveTestingSummary = testingSummary
             MemoryMB = memoryMB
-            Anomalies = Bozzetto.Features.HealthWatch.troubled () @ Option.toList unleasedAnomaly
+            Anomalies = healthAnomalies ()
             GcDumpOutcome = Bozzetto.Features.GcDumpWatch.lastCaptureOutcome ()
             MemoryPressure = tick.Level }
       : Bozzetto.Features.HealthSnapshot)
@@ -2424,16 +2436,7 @@ let run
   // only journal entries whose LeaseId is live in LeaseWatch count as tracked, and
   // only live untracked FullBuild/TestSuiteRun/Rebuild leases spare non-orphaned builds.
   let collectUnleasedInputs () =
-    let ownedPidSet =
-      Bozzetto.Server.DaemonTelemetry.ownedProcesses
-        (System.Diagnostics.Process.GetCurrentProcess().Id)
-        composer.WorkerPid
-        (SessionManager.QuerySnapshot.allSessions (readSnapshot ())
-         |> List.choose (fun session ->
-           WorkerProtocol.SessionLifecycleStatus.workerPid session.Status
-           |> Option.map (fun pid -> pid, "worker:" + WorkerProtocol.SessionId.value session.Id)))
-      |> List.map fst
-      |> Set.ofList
+    let ownedPidSet = ownedPids ()
     let liveTracked =
       composer.Journal.Entries
       |> List.choose (fun entry ->
@@ -2452,36 +2455,50 @@ let run
 
   Bozzetto.Server.DaemonTelemetry.installSessionDisconnectWakeup wakeUnleasedCleanup
 
-  // Background async unleased-subprocess sampler & persistent-orphan reaper.
+  // Background health sampler, unleased-subprocess scanner and persistent-orphan reaper.
   // Runs completely off Kestrel/MCP request threads and stops cleanly on cts.Token.
+  let initialOwnedPids = ownedPids ()
   let unleasedMonitorTask =
     Async.StartAsTask(
       async {
+        let scanIntervalMs = 5_000L
         let orphanAutoReapGraceMs = 60_000L
+        let mutable nextScanAt = Environment.TickCount64 + scanIntervalMs
+        let mutable previousOwnedPids = initialOwnedPids
         while not cts.IsCancellationRequested do
-          let! wokenForImmediateCleanup =
-            async {
-              try
-                let! signaled = unleasedWakeGate.WaitAsync(5_000, cts.Token) |> Async.AwaitTask
-                return signaled
-              with
-              | :? OperationCanceledException
-              | :? System.ObjectDisposedException -> return false
-            }
-          if not cts.IsCancellationRequested then
-            try
-              let graceMs = if wokenForImmediateCleanup then 0L else orphanAutoReapGraceMs
-              let! cleanup, changed =
-                Bozzetto.Server.DaemonTelemetry.cleanupOrphanedSubprocessesWithCancellationAsync
-                  collectUnleasedInputs graceMs 300 cts.Token
-              if not (List.isEmpty cleanup.Targets) then
-                log.LogWarning("Background anomaly cleanup reaped {Count} orphaned watched subprocess group(s).", cleanup.Targets.Length)
-              if changed || not (List.isEmpty cleanup.Targets) then
-                Bozzetto.Server.HealthTick.refresh () |> ignore
-            with
-            | :? OperationCanceledException when cts.IsCancellationRequested -> ()
-            | ex ->
-              log.LogWarning("Background unleased-subprocess scan failed: {Error}", ex.Message)
+          try
+            let timeoutMs = int (max 0L (nextScanAt - Environment.TickCount64))
+            let! _ = unleasedWakeGate.WaitAsync(timeoutMs, cts.Token) |> Async.AwaitTask
+            if not cts.IsCancellationRequested then
+              let immediateCleanup = Interlocked.Exchange(&immediateCleanupRequested.contents, 0) <> 0
+              // Composer wakes health without advancing the orphan scan or bypassing its grace period.
+              let! cleanupChanged =
+                if immediateCleanup || Environment.TickCount64 >= nextScanAt then
+                  async {
+                    try
+                      let graceMs = if immediateCleanup then 0L else orphanAutoReapGraceMs
+                      let! cleanup, changed =
+                        DaemonTelemetry.cleanupOrphanedSubprocessesWithCancellationAsync
+                          collectUnleasedInputs graceMs 300 cts.Token
+                      if not (List.isEmpty cleanup.Targets) then
+                        log.LogWarning("Background anomaly cleanup reaped {Count} orphaned watched subprocess group(s).", cleanup.Targets.Length)
+                      return changed
+                    finally
+                      nextScanAt <- Environment.TickCount64 + scanIntervalMs
+                  }
+                else async.Return false
+              if not cts.IsCancellationRequested then
+                let currentOwnedPids = ownedPids ()
+                let alarmsChanged =
+                  HealthTick.current ()
+                  |> Option.bind _.Record
+                  |> Option.exists (fun record -> alarmStates record.Anomalies <> alarmStates (healthAnomalies ()))
+                HealthTick.observeTransition (cleanupChanged || alarmsChanged) previousOwnedPids currentOwnedPids (Features.MachineMemory.current ())
+                previousOwnedPids <- currentOwnedPids
+          with
+          | :? OperationCanceledException when cts.IsCancellationRequested -> ()
+          | ex ->
+            log.LogWarning("Background health and unleased-subprocess monitor failed: {Error}", ex.Message)
       },
       cancellationToken = cts.Token)
 

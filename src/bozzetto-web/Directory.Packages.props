@@ -1,19 +1,26 @@
 <Project>
   <!-- Central package versions for the Fable subtree only. Isolated from the
        repository root's Directory.Packages.props, which pins Fable.Core 4.5.0
-       for bozzetto-vscode (Fable 4.29): Partas.Solid 2.1.3 requires
-       Fable.Core >= 5.0.0-beta.1, and inheriting the root pin is an NU1605
-       downgrade. Partas.Solid.FablePlugin 2.1.3 is ABI-bound to Fable.AST
-       5.0.0-beta.2, hence the Fable CLI 5.0.0-alpha.14 tool pin. -->
+       for bozzetto-vscode (Fable 4.29): Ranvier 0.2.0 and Ranvier.View 0.1.50
+       require Fable.Core >= 5.3.0, and inheriting the root pin is an NU1605
+       downgrade. The Fable CLI is pinned in .config/dotnet-tools.json. -->
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
-    <!-- NuGet package, not the local Partas.Solid checkout. -->
-    <PackageVersion Include="Partas.Solid" Version="2.1.3" />
-    <!-- The minimum Partas.Solid 2.1.3 accepts; the mock bridge and the codec
+    <!-- The reactive graph and its browser renderer. -->
+    <PackageVersion Include="Ranvier" Version="0.2.0" />
+    <PackageVersion Include="Ranvier.Dom" Version="0.1.0" />
+    <PackageVersion Include="Ranvier.View" Version="0.1.50" />
+    <PackageVersion Include="Ranvier.View.Dom" Version="0.1.50" />
+    <!-- The minimum Ranvier 0.2.0 accepts; the mock bridge and the codec
          tests use the same JS interop surface as the frontend. -->
-    <PackageVersion Include="Fable.Core" Version="5.0.0-beta.1" />
+    <PackageVersion Include="Fable.Core" Version="5.3.0" />
+    <!-- Fable 5.17.2 type-checks against the project's own FSharp.Core
+         reference; without one, the codec tests and mock resolve Fable.Core's
+         4.7.2 floor. Pinned to the cached release nearest the FSharp.Core the
+         Fable CLI ships (10.1.203). -->
+    <PackageVersion Include="FSharp.Core" Version="10.1.202" />
   </ItemGroup>
 </Project>

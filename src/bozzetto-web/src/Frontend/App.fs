@@ -1,20 +1,53 @@
-/// Bozzetto's browser UI: separate Dashboard and Work views, in
-/// Partas.Solid (SolidJS via Fable). Every action is a Command sent over the
-/// bridge; the backend is the update function; Events fold into the stores
-/// (Model.fs) and Solid updates only the DOM that reads what changed.
+// Bozzetto's browser UI: separate Dashboard and Work views on Ranvier
+// (Ranvier.View.Dom Program views over Ranvier signals). Every action is a
+// Command sent over the bridge; the backend is the update function; Events
+// fold into the signals (Model.fs), and each binding rewrites only its own DOM
+// node when a signal it reads changes.
 module Bozzetto.Web.Frontend.App
 
-open Partas.Solid
+open Fable.Core
+open global.Ranvier
 open Bozzetto.Web.Shared.Protocol
 open Bozzetto.Web.Frontend
 open Bozzetto.Web.Frontend.Model
+open Bozzetto.Web.Frontend.View
+
+// ── Elements ───────────────────────────────────────────────────────────────
+
+let private div m c = el "div" m c
+let private span m c = el "span" m c
+let private para m c = el "p" m c
+let private h2 m c = el "h2" m c
+let private h3 m c = el "h3" m c
+let private h4 m c = el "h4" m c
+let private pre m c = el "pre" m c
+let private button m c = el "button" m c
+let private anchor m c = el "a" m c
+let private details m c = el "details" m c
+let private summary m c = el "summary" m c
+let private dialog m c = el "dialog" m c
+let private label m c = el "label" m c
+let private select m c = el "select" m c
+let private option m c = el "option" m c
+let private table m c = el "table" m c
+let private thead m c = el "thead" m c
+let private tbody m c = el "tbody" m c
+let private tr m c = el "tr" m c
+let private th m c = el "th" m c
+let private td m c = el "td" m c
+let private input m = el "input" m [||]
 
 // ── Display helpers (pure; full class names so Tailwind keeps them) ────────
 
+[<Emit("location.pathname")>]
+let private pathname () : string = jsNative
+
+[<Emit("document.title = $0")>]
+let private setTitle (value: string) : unit = jsNative
+
 // Both routes share a bundle and bridge, not a layout. The route is fixed for
 // this page lifetime; ordinary links open a fresh, independent page.
-let private isWorkPage () =
-  Browser.Dom.window.location.pathname.TrimEnd('/') = "/work"
+let private isWorkPage () = pathname().TrimEnd('/') = "/work"
 
 let private linkDot (link: Bridge.Link) =
   match link with
@@ -48,18 +81,12 @@ let private workerBadge (state: string) =
   | "idle" -> "badge badge-sm badge-ghost"
   | _ -> "badge badge-sm badge-warning"
 
-let private workerText (worker: WorkerView) =
-  match worker.state with
-  | "running" -> "worker running"
-  | "idle" -> "worker idle"
-  | _ -> "Compiler worker not configured"
-
 let private processRole = function
   | "composer-worker" -> "Compiler worker"
   | role -> role
 
-/// A CSS-only spinner. (DaisyUI's spinner component masks are data-URI SVGs that
-/// carry the SVG namespace URL, which the self-contained check forbids.)
+// A CSS-only spinner. (DaisyUI's spinner component masks are data-URI SVGs that
+// carry the SVG namespace URL, which the self-contained check forbids.)
 let private spinner = "inline-block w-2.5 h-2.5 rounded-full border-2 border-current border-t-transparent animate-spin"
 
 let private exitBadge (exitCode: int) =
@@ -73,146 +100,143 @@ let private diagnosticTokenClass (severity: string) =
   | _ -> ""
 
 // ── Components ─────────────────────────────────────────────────────────────
-// Partas compiles each [<SolidComponent>] function to a plain JS function, and
-// a call inside JSX runs within Solid's insert effect. So a component must not
-// read reactive state in its setup code (only inside its JSX expressions or
-// event handlers), or the whole component would re-run on that change.
-// Literal text children are JSX text: keep spaces inside expressions, not at
-// the edges of a literal, and keep double quotes out of literal attributes.
+// A component function builds its view once. Anything that changes is read
+// inside a reader (`rx`, `clsRx`, `attrRx`, `flagRx`, a list's items or a
+// condition), never in the function body, so the read subscribes only the
+// binding that shows it. A component with local signals creates them in
+// `comp`, once per mounted instance.
 
-[<SolidComponent>]
-let Information (label: string) (paragraphs: unit -> string array) =
-  div (class' = "inline-flex") {
-    (button(class' = "information-button", title = label + " information", onClick = Interop.openInformation).attr("aria-label", label + " information")) { "ⓘ" }
-    (dialog(class' = "modal", onClick = fun event ->
-      if Interop.isCurrentTarget event then Interop.closeInformation event).attr("aria-label", label)) {
-      div (class' = "modal-box") {
-        h3 (class' = "text-base font-semibold") { label }
-        div (class' = "space-y-3 text-sm py-4") {
-          For (each = paragraphs ()) { yield fun text _ -> p () { text } }
-        }
-        div (class' = "modal-action") {
-          button (class' = "btn btn-sm btn-ghost", onClick = Interop.closeInformation) { "Close" }
-        }
-      }
-    }
-  }
+let private information (title: string) (paragraphs: unit -> string array) =
+  div [| cls "inline-flex" |] [|
+    button [| cls "information-button"; View.title (title + " information"); aria "label" (title + " information"); on "click" Interop.openInformation |] [| text "ⓘ" |]
+    dialog [| cls "modal"; aria "label" title; on "click" (fun event -> if Interop.isCurrentTarget event then Interop.closeInformation event) |] [|
+      div [| cls "modal-box" |] [|
+        h3 [| cls "text-base font-semibold" |] [| text title |]
+        div [| cls "space-y-3 text-sm py-4" |] [|
+          eachIndexed paragraphs (fun paragraph -> para [||] [| rx paragraph |])
+        |]
+        div [| cls "modal-action" |] [|
+          button [| cls "btn btn-sm btn-ghost"; on "click" Interop.closeInformation |] [| text "Close" |]
+        |]
+      |]
+    |]
+  |]
 
-[<SolidComponent>]
-let TraceText (text: unit -> string) =
-  For (each = DiagnosticText.segments (text ())) {
-    yield fun token _ -> span (class' = diagnosticTokenClass token.severity) { token.text }
-  }
+let private traceText (value: unit -> string) =
+  each (fun (segment: DiagnosticText.Segment) -> segment.id) (fun () -> DiagnosticText.segments (value ())) (fun segment ->
+    span [| clsRx (fun () -> diagnosticTokenClass (segment ()).severity) |] [| rx (fun () -> (segment ()).text) |])
 
-[<SolidComponent>]
-let DiagnosticBlock (errorContext: bool) (label: unit -> string) (text: unit -> string) =
-  div (class' = (if errorContext then "diagnostic diagnostic-error" else "diagnostic")) {
-    div (class' = "diagnostic-header") {
-      span (class' = (if errorContext then "badge badge-sm badge-outline badge-error" else "badge badge-sm badge-ghost")) {
-        if errorContext then "Diagnostic" else "Output"
-      }
-      h3 (class' = "text-sm font-semibold") { label () }
-    }
+let private diagnosticBlock (errorContext: bool) (heading: unit -> string) (value: unit -> string) =
+  div [| cls (if errorContext then "diagnostic diagnostic-error" else "diagnostic") |] [|
+    div [| cls "diagnostic-header" |] [|
+      span [| cls (if errorContext then "badge badge-sm badge-outline badge-error" else "badge badge-sm badge-ghost") |] [|
+        text (if errorContext then "Diagnostic" else "Output")
+      |]
+      h3 [| cls "text-sm font-semibold" |] [| rx heading |]
+    |]
     // A text child preserves the trace without executing markup from a compiler.
-    pre (class' = "diagnostic-trace") { TraceText text }
-  }
+    pre [| cls "diagnostic-trace" |] [| traceText value |]
+  |]
 
-[<SolidComponent>]
-let CommandOutcome (outcome: unit -> OutcomeView option) =
+let private commandOutcome (outcome: unit -> OutcomeView option) =
   let field pick = outcome () |> Option.map pick |> Option.defaultValue ""
-  Show (when' = (outcome ()).IsSome) {
-    Show (
-      when' = (outcome () |> Option.exists (fun value -> not value.ok)),
-      fallback = (div (class' = "text-xs text-success whitespace-pre-wrap break-words") {
-        field (fun value -> clockTime value.at + " · " + value.text)
-      })
-    ) {
-      div (class' = "diagnostic diagnostic-error") {
-        div (class' = "diagnostic-header") {
-          span (class' = "badge badge-sm badge-outline badge-error") { "Refused" }
-          h3 (class' = "text-sm font-semibold") { "Command outcome" }
-          span (class' = "text-xs opacity-70") { field (fun value -> clockTime value.at) }
-        }
-        pre (class' = "diagnostic-trace") { TraceText (fun () -> field (fun value -> value.text)) }
-      }
-    }
-  }
+  show (fun () -> (outcome ()).IsSome) (fun () ->
+    showElse (fun () -> outcome () |> Option.exists (fun value -> not value.ok))
+      (fun () ->
+        div [| cls "diagnostic diagnostic-error" |] [|
+          div [| cls "diagnostic-header" |] [|
+            span [| cls "badge badge-sm badge-outline badge-error" |] [| text "Refused" |]
+            h3 [| cls "text-sm font-semibold" |] [| text "Command outcome" |]
+            span [| cls "text-xs opacity-70" |] [| rx (fun () -> field (fun value -> clockTime value.at)) |]
+          |]
+          pre [| cls "diagnostic-trace" |] [| traceText (fun () -> field (fun value -> value.text)) |]
+        |])
+      (fun () ->
+        div [| cls "text-xs text-success whitespace-pre-wrap break-words" |] [|
+          rx (fun () -> field (fun value -> clockTime value.at + " · " + value.text))
+        |]))
 
-[<SolidComponent>]
-let TopBar (link: unit -> Bridge.Link) (dark: unit -> bool) (toggleTheme: unit -> unit) =
+let private topBar (link: Signal<Bridge.Link>) (dark: Signal<bool>) (toggleTheme: unit -> unit) =
   let workPage = isWorkPage ()
-  div (class' = "navbar flex-wrap shrink-0 min-h-12 px-4 py-2 gap-2 bg-base-100 shadow-sm border-b border-base-content/10") {
-    div (class' = "flex-1 flex items-center gap-3 min-w-0") {
-      span (class' = "font-heading font-extrabold text-lg tracking-tight") { "Bozzetto" }
-      div (class' = "flex items-center gap-1") {
-        a (
-          href = "/dashboard",
-          class' = (if workPage then "btn btn-ghost btn-sm" else "btn btn-ghost btn-sm btn-active text-accent"),
-          title = "Daemon resources and health"
-        ) { "Dashboard" }
-        a (
-          href = "/work",
-          class' = (if workPage then "btn btn-ghost btn-sm btn-active text-accent" else "btn btn-ghost btn-sm"),
-          title = "Compiler worker, project sessions, build/test leases and run output"
-        ) { "Work" }
-      }
-      span (class' = "flex items-center gap-1.5 text-xs") {
-        span (class' = linkDot (link ()))
-        span (class' = "opacity-70") { linkText (link ()) }
-      }
-    }
-    div (class' = "flex-none flex items-center gap-2") {
-      button (class' = "btn btn-ghost btn-sm btn-circle text-base", title = "Toggle theme", onClick = fun _ -> toggleTheme ()) {
-        if dark () then "☀" else "☾"
-      }
-    }
-  }
+  div [| cls "navbar flex-wrap shrink-0 min-h-12 px-4 py-2 gap-2 bg-base-100 shadow-sm border-b border-base-content/10" |] [|
+    div [| cls "flex-1 flex items-center gap-3 min-w-0" |] [|
+      span [| cls "font-heading font-extrabold text-lg tracking-tight" |] [| text "Bozzetto" |]
+      div [| cls "flex items-center gap-1" |] [|
+        anchor [|
+          attr "href" "/dashboard"
+          cls (if workPage then "btn btn-ghost btn-sm" else "btn btn-ghost btn-sm btn-active text-accent")
+          View.title "Daemon resources and health"
+        |] [| text "Dashboard" |]
+        anchor [|
+          attr "href" "/work"
+          cls (if workPage then "btn btn-ghost btn-sm btn-active text-accent" else "btn btn-ghost btn-sm")
+          View.title "Compiler worker, project sessions, build/test leases and run output"
+        |] [| text "Work" |]
+      |]
+      span [| cls "flex items-center gap-1.5 text-xs" |] [|
+        span [| clsRx (fun () -> linkDot link.Value) |] [||]
+        span [| cls "opacity-70" |] [| rx (fun () -> linkText link.Value) |]
+      |]
+    |]
+    div [| cls "flex-none flex items-center gap-2" |] [|
+      button [| cls "btn btn-ghost btn-sm btn-circle text-base"; View.title "Toggle theme"; on "click" (fun _ -> toggleTheme ()) |] [|
+        rx (fun () -> if dark.Value then "☀" else "☾")
+      |]
+    |]
+  |]
 
-/// The uptime the daemon's clock pushed, with the start time from Welcome.
+// The uptime the daemon's clock pushed, with the start time from Welcome.
 let private uptimeText (uptime: float) (startedAt: float) =
   if uptime < 0.0 then "up since " + dateTime startedAt
   else "up " + duration uptime + " · since " + dateTime startedAt
 
-[<SolidComponent>]
-let HealthStrip (model: ModelView) (uptime: unit -> float) =
-  div (class' = "daemon-health flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 text-xs bg-base-200 border-b border-base-content/10") {
-    Show (when' = model.healthSeen, fallback = (span (class' = "opacity-50") { "waiting for daemon health…" })) {
-      span (class' = overallBadge model.health.overall) { model.health.overall }
-      span (class' = "font-mono") { "v" + model.health.version }
-      span (class' = "opacity-70") { "pid " + string model.health.pid + " · :" + string model.health.port }
-      span (class' = "opacity-70 font-mono", title = "Daemon uptime, pushed by the daemon's clock each second, and the process start time") {
-        uptimeText (uptime ()) model.startedAt
-      }
-      span () {
-        span (class' = "opacity-50 mr-1") { "boz rss" }
-        span (class' = "font-mono") { bytes model.health.rss }
-      }
-      span () {
-        span (class' = "opacity-50 mr-1") { "machine" }
-        span (class' = "font-mono") { bytes model.health.available + " available / " + bytes model.health.total }
-      }
-      span () {
-        span (class' = "opacity-50 mr-1") { "owned cpu" }
-        span (class' = "font-mono") { fixedPoint model.health.cpu 1 + "%" }
-      }
-      span (class' = pressureBadge model.health.pressure, title = model.health.note) { "memory " + model.health.pressure }
-      Show (when' = (model.health.pressure <> "Normal" && model.health.note <> "")) {
-        span (class' = "opacity-60 text-xs") { model.health.note }
-      }
-      // The age of what this strip shows: the daemon reads when asked, not on a timer, and says when it last looked.
-      span (class' = "health-age opacity-50 font-mono", title = "When the daemon last read the machine, and last took its own record") {
-        "read " + duration (max 0.0 (model.startedAt + uptime () - model.health.sampledAt)) + " ago"
-        + (if model.health.recordAt > 0.0 then " · record " + duration (max 0.0 (model.startedAt + uptime () - model.health.recordAt)) + " ago" else " · no record yet")
-      }
-      For (each = model.health.processes) {
-        yield fun p _ ->
-          span (class' = "font-mono opacity-60") { processRole p.role + " " + string p.pid + " " + bytes p.rss }
-      }
-      For (each = model.health.alarms) {
-        yield fun a _ -> span (class' = "badge badge-sm badge-warning", title = a.message) { "⚠ " + a.signal + " " + a.state }
-      }
-    }
-  }
+// The daemon's health, bound directly to the signals the pushed Health,
+// Welcome and Uptime events write: a pushed verdict or memory-pressure change
+// rewrites its badge in place, with no reload, request or timer.
+let private healthStrip (stores: Stores) =
+  let health () = stores.Health.Value
+  div [| cls "daemon-health flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 text-xs bg-base-200 border-b border-base-content/10" |] [|
+    showElse (fun () -> stores.HealthSeen.Value)
+      (fun () ->
+        fragment [|
+          span [| clsRx (fun () -> overallBadge (health ()).overall) |] [| rx (fun () -> (health ()).overall) |]
+          span [| cls "font-mono" |] [| rx (fun () -> "v" + (health ()).version) |]
+          span [| cls "opacity-70" |] [| rx (fun () -> "pid " + string (health ()).pid + " · :" + string (health ()).port) |]
+          span [| cls "opacity-70 font-mono"; View.title "Daemon uptime, pushed by the daemon's clock each second, and the process start time" |] [|
+            rx (fun () -> uptimeText stores.Uptime.Value stores.StartedAt.Value)
+          |]
+          span [||] [|
+            span [| cls "opacity-50 mr-1" |] [| text "boz rss" |]
+            span [| cls "font-mono" |] [| rx (fun () -> bytes (health ()).rss) |]
+          |]
+          span [||] [|
+            span [| cls "opacity-50 mr-1" |] [| text "machine" |]
+            span [| cls "font-mono" |] [| rx (fun () -> bytes (health ()).available + " available / " + bytes (health ()).total) |]
+          |]
+          span [||] [|
+            span [| cls "opacity-50 mr-1" |] [| text "owned cpu" |]
+            span [| cls "font-mono" |] [| rx (fun () -> fixedPoint (health ()).cpu 1 + "%") |]
+          |]
+          span [| clsRx (fun () -> pressureBadge (health ()).pressure); titleRx (fun () -> (health ()).note) |] [|
+            rx (fun () -> "memory " + (health ()).pressure)
+          |]
+          show (fun () -> (health ()).pressure <> "Normal" && (health ()).note <> "") (fun () ->
+            span [| cls "opacity-60 text-xs" |] [| rx (fun () -> (health ()).note) |])
+          // The age of what this strip shows: the daemon reads when asked, not on a timer, and says when it last looked.
+          span [| cls "health-age opacity-50 font-mono"; View.title "When the daemon last read the machine, and last took its own record" |] [|
+            rx (fun () ->
+              let now = stores.StartedAt.Value + stores.Uptime.Value
+              let h = health ()
+              "read " + duration (max 0.0 (now - h.sampledAt)) + " ago"
+              + (if h.recordAt > 0.0 then " · record " + duration (max 0.0 (now - h.recordAt)) + " ago" else " · no record yet"))
+          |]
+          each (fun (process': ProcessView) -> process'.id) (fun () -> (health ()).processes) (fun process' ->
+            span [| cls "font-mono opacity-60" |] [| rx (fun () -> let x = process' () in processRole x.role + " " + string x.pid + " " + bytes x.rss) |])
+          each (fun (alarm: AlarmView) -> alarm.id) (fun () -> (health ()).alarms) (fun alarm ->
+            span [| cls "badge badge-sm badge-warning"; titleRx (fun () -> (alarm ()).message) |] [| rx (fun () -> "⚠ " + (alarm ()).signal + " " + (alarm ()).state) |])
+        |])
+      (fun () -> span [| cls "opacity-50" |] [| text "waiting for daemon health…" |])
+  |]
 
 let private metricText (m: ResourceMetricView) =
   if not m.known then "unavailable / warming up"
@@ -224,596 +248,584 @@ let private metricText (m: ResourceMetricView) =
 let private resourceNodeLabel (node: NodeWorkView) =
   if node.local then "Workstation" else node.id.ToUpperInvariant()
 
-[<SolidComponent>]
-let HostPanel (model: ModelView) (local: LocalView) (uptime: unit -> float) (connected: unit -> bool)
-    (selectedNode: unit -> NodeWorkView option) (selectNode: string -> unit) (dispatch: Command -> unit) =
+let private headlineMetric (m: ResourceMetricView) =
+  m.id = "Host CPU busy" || m.id = "RAM occupied" || m.id = "RAM available" || m.id = "RAM total (OS managed)" || m.id = "Swap used" || m.id.Contains "GPU busy"
+
+let private hostPanel (stores: Stores) (connected: unit -> bool) (selectedNode: unit -> NodeWorkView option) (selectNode: string -> unit) (dispatch: Command -> unit) =
+  let resources () = stores.Resources.Value
   let status () =
     if not (connected ()) then "disconnected — last reading only"
-    elif model.resources.status = "observing" && model.startedAt + uptime () - model.resources.sampledAt > 6000. then "stale — no recent observation"
-    else model.resources.status
-  div (class' = "card card-compact panel") {
-    div (class' = "card-body gap-3") {
-      div (class' = "flex flex-wrap items-center gap-2") {
-        h2 (class' = "text-lg font-bold flex-1") { "Whole-machine resources" }
-        span (class' = "badge badge-outline") { status () }
-        Information "Resource readings" (fun () -> [|
+    elif (resources ()).status = "observing" && stores.StartedAt.Value + stores.Uptime.Value - (resources ()).sampledAt > 6000. then "stale — no recent observation"
+    else (resources ()).status
+  let unavailable () = not (connected ()) || (selectedNode ()).IsNone
+  div [| cls "card card-compact panel" |] [|
+    div [| cls "card-body gap-3" |] [|
+      div [| cls "flex flex-wrap items-center gap-2" |] [|
+        h2 [| cls "text-lg font-bold flex-1" |] [| text "Whole-machine resources" |]
+        span [| cls "badge badge-outline" |] [| rx status |]
+        information "Resource readings" (fun () -> [|
           "Linux counters are sampled every two seconds during the selected observation window. Collection stops when the window ends."
           "Process CPU uses 100% for one logical CPU. RSS includes shared pages. Thread count shows the number of process threads."
-          model.resources.note
-          "Sequence " + model.resources.sequence + " · interval " + fixedPoint (model.resources.interval / 1000.) 1 + "s · collection " + fixedPoint model.resources.cost 1 + "ms"
+          (resources ()).note
+          "Sequence " + (resources ()).sequence + " · interval " + fixedPoint ((resources ()).interval / 1000.) 1 + "s · collection " + fixedPoint (resources ()).cost 1 + "ms"
         |])
-        button (class' = "btn btn-sm btn-accent", disabled = (not (connected ()) || (selectedNode ()).IsNone), onClick = fun _ -> dispatch (ObserveResources 120)) { "Observe for 2 minutes" }
-        button (class' = "btn btn-sm btn-ghost", disabled = (not (connected ()) || (selectedNode ()).IsNone), onClick = fun _ -> dispatch (ObserveResources 0)) { "Stop" }
-      }
-      label (class' = "flex flex-wrap items-center gap-2 text-sm") {
-        span (class' = "font-semibold") { "Node" }
-        (``select``(class' = "select select-bordered select-sm", value = (selectedNode () |> Option.map _.id |> Option.defaultValue ""), disabled = (not (connected ()) || model.nodes.Length = 0), onChange = (fun event -> selectNode (Interop.inputValue event))).attr("aria-label", "Resource node")) {
-          Show (when' = (model.nodes.Length = 0)) { option'(value = "") { "Awaiting node observations" } }
-          For (each = model.nodes) {
-            yield fun node _ -> option'(value = node.id) { resourceNodeLabel node }
-          }
-        }
-      }
-      Show (when' = (selectedNode () |> Option.exists (fun node -> node.status <> "available"))) {
-        p (class' = "resource-node-availability text-xs opacity-70") {
-          selectedNode () |> Option.map (fun node -> resourceNodeLabel node + " work observation: " + node.status + ". " + node.note) |> Option.defaultValue ""
-        }
-      }
-      CommandOutcome (fun () -> Interop.dictTryGet local.outcomes "resources")
-      Show (when' = (model.resources.sampledAt > 0.)) {
-        p (class' = "text-xs font-mono opacity-70") {
-          "Updated " + clockTime model.resources.sampledAt
-        }
-      }
-      Show (when' = (model.resources.sequence <> ""), fallback = (p (class' = "text-sm opacity-70") { "No measurements received for this node." })) {
-        div (class' = "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2") {
-          For (each = (model.resourceMetrics |> Array.filter (fun m -> m.id = "Host CPU busy" || m.id = "RAM occupied" || m.id = "RAM available" || m.id = "RAM total (OS managed)" || m.id = "Swap used" || m.id.Contains "GPU busy"))) {
-            yield fun m _ ->
-              div (class' = "panel p-3") {
-                div (class' = "text-xs opacity-70") { m.id }
-                div (class' = "text-xl font-mono font-semibold") { metricText m }
-              }
-          }
-        }
-        details () {
-          summary (class' = "cursor-pointer text-sm font-semibold") { "More metrics" }
-          table (class' = "table table-xs") {
-            tbody () {
-              For (each = model.resourceMetrics) {
-                yield fun m _ -> tr () { td () { m.id }; td (class' = "font-mono") { metricText m } }
-              }
-            }
-          }
-        }
-        h3 (class' = "text-sm font-semibold") { "Processes" }
-        p (class' = "text-xs opacity-50") {
-          string model.resources.count + " processes · " + string model.resources.unreadable + " unreadable · " + string model.resources.omitted + " omitted"
-        }
-        div (class' = "overflow-x-auto") {
-          table (class' = "table table-xs") {
-            thead () { tr () { th () { "process" }; th () { "PID / parent" }; th () { "CPU" }; th () { "RSS" }; th () { "threads" } } }
-            tbody () {
-              For (each = model.resourceProcesses) {
-                yield fun p _ ->
-                  tr () {
-                    td (class' = "font-mono", title = p.context + " · identity " + p.id) { p.name }
-                    td (class' = "font-mono") { string p.pid + " / " + string p.parent }
-                    td (class' = "font-mono") { if p.cpuKnown then fixedPoint p.cpu 1 + "%" else "—" }
-                    td (class' = "font-mono") { bytes p.rss }
-                    td (class' = "font-mono") { string p.threads }
-                  }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+        button [| cls "btn btn-sm btn-accent"; flagRx "disabled" unavailable; on "click" (fun _ -> dispatch (ObserveResources 120)) |] [| text "Observe for 2 minutes" |]
+        button [| cls "btn btn-sm btn-ghost"; flagRx "disabled" unavailable; on "click" (fun _ -> dispatch (ObserveResources 0)) |] [| text "Stop" |]
+      |]
+      label [| cls "flex flex-wrap items-center gap-2 text-sm" |] [|
+        span [| cls "font-semibold" |] [| text "Node" |]
+        select [|
+          cls "select select-bordered select-sm"
+          aria "label" "Resource node"
+          selectValue (fun () -> selectedNode () |> Option.map _.id |> Option.defaultValue "")
+          flagRx "disabled" (fun () -> not (connected ()) || stores.Nodes.Value.Length = 0)
+          on "change" (fun event -> selectNode (Interop.inputValue event))
+        |] [|
+          show (fun () -> stores.Nodes.Value.Length = 0) (fun () -> option [| attr "value" "" |] [| text "Awaiting node observations" |])
+          each (fun (node: NodeWorkView) -> node.id) (fun () -> stores.Nodes.Value) (fun node ->
+            option [| attrRx "value" (fun () -> (node ()).id) |] [| rx (fun () -> resourceNodeLabel (node ())) |])
+        |]
+      |]
+      show (fun () -> selectedNode () |> Option.exists (fun node -> node.status <> "available")) (fun () ->
+        para [| cls "resource-node-availability text-xs opacity-70" |] [|
+          rx (fun () -> selectedNode () |> Option.map (fun node -> resourceNodeLabel node + " work observation: " + node.status + ". " + node.note) |> Option.defaultValue "")
+        |])
+      commandOutcome (fun () -> stores.Outcomes.Value.TryFind "resources")
+      show (fun () -> (resources ()).sampledAt > 0.) (fun () ->
+        para [| cls "text-xs font-mono opacity-70" |] [| rx (fun () -> "Updated " + clockTime (resources ()).sampledAt) |])
+      showElse (fun () -> (resources ()).sequence <> "")
+        (fun () ->
+          fragment [|
+            div [| cls "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2" |] [|
+              each (fun (m: ResourceMetricView) -> m.id) (fun () -> stores.ResourceMetrics.Value |> Array.filter headlineMetric) (fun metric ->
+                div [| cls "panel p-3" |] [|
+                  div [| cls "text-xs opacity-70" |] [| rx (fun () -> (metric ()).id) |]
+                  div [| cls "text-xl font-mono font-semibold" |] [| rx (fun () -> metricText (metric ())) |]
+                |])
+            |]
+            details [||] [|
+              summary [| cls "cursor-pointer text-sm font-semibold" |] [| text "More metrics" |]
+              table [| cls "table table-xs" |] [|
+                tbody [||] [|
+                  each (fun (m: ResourceMetricView) -> m.id) (fun () -> stores.ResourceMetrics.Value) (fun metric ->
+                    tr [||] [| td [||] [| rx (fun () -> (metric ()).id) |]; td [| cls "font-mono" |] [| rx (fun () -> metricText (metric ())) |] |])
+                |]
+              |]
+            |]
+            h3 [| cls "text-sm font-semibold" |] [| text "Processes" |]
+            para [| cls "text-xs opacity-50" |] [|
+              rx (fun () -> string (resources ()).count + " processes · " + string (resources ()).unreadable + " unreadable · " + string (resources ()).omitted + " omitted")
+            |]
+            div [| cls "overflow-x-auto" |] [|
+              table [| cls "table table-xs" |] [|
+                thead [||] [| tr [||] [| th [||] [| text "process" |]; th [||] [| text "PID / parent" |]; th [||] [| text "CPU" |]; th [||] [| text "RSS" |]; th [||] [| text "threads" |] |] |]
+                tbody [||] [|
+                  each (fun (row: ResourceProcessView) -> row.id) (fun () -> stores.ResourceProcesses.Value) (fun row ->
+                    tr [||] [|
+                      td [| cls "font-mono"; titleRx (fun () -> (row ()).context + " · identity " + (row ()).id) |] [| rx (fun () -> (row ()).name) |]
+                      td [| cls "font-mono" |] [| rx (fun () -> string (row ()).pid + " / " + string (row ()).parent) |]
+                      td [| cls "font-mono" |] [| rx (fun () -> if (row ()).cpuKnown then fixedPoint (row ()).cpu 1 + "%" else "—") |]
+                      td [| cls "font-mono" |] [| rx (fun () -> bytes (row ()).rss) |]
+                      td [| cls "font-mono" |] [| rx (fun () -> string (row ()).threads) |]
+                    |])
+                |]
+              |]
+            |]
+          |])
+        (fun () -> para [| cls "text-sm opacity-70" |] [| text "No measurements received for this node." |])
+    |]
+  |]
 
-/// This roster is daemon-owned processes only, not a whole-host inventory.
-[<SolidComponent>]
-let ResourcesPanel (model: ModelView) =
-  div (class' = "card card-compact panel") {
-    div (class' = "card-body gap-2") {
-      div (class' = "flex items-center gap-2") {
-        h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80 flex-1") { "Daemon resources" }
-        Information "Daemon snapshot" (fun () -> [|
+// This roster is daemon-owned processes only, not a whole-host inventory.
+let private resourcesPanel (stores: Stores) =
+  div [| cls "card card-compact panel" |] [|
+    div [| cls "card-body gap-2" |] [|
+      div [| cls "flex items-center gap-2" |] [|
+        h2 [| cls "text-sm font-bold uppercase tracking-wider opacity-80 flex-1" |] [| text "Daemon resources" |]
+        information "Daemon snapshot" (fun () -> [|
           "These readings capture the daemon and its compiler worker at connection time."
           "CPU is normalized by processor count. Summed RSS can count shared pages more than once."
         |])
-      }
-      Show (when' = model.healthSeen, fallback = (p (class' = "text-xs opacity-50") { "Waiting for daemon health…" })) {
-        div (class' = "overflow-x-auto") {
-          table (class' = "table table-xs") {
-            thead () {
-              tr () {
-                th () { "role" }
-                th () { "pid" }
-                th () { "resident" }
-                th () { "normalized CPU" }
-              }
-            }
-            tbody () {
-              For (each = model.health.processes) {
-                yield fun p _ ->
-                  tr () {
-                    td (class' = "font-mono") { processRole p.role }
-                    td (class' = "font-mono") { string p.pid }
-                    td (class' = "font-mono") { bytes p.rss }
-                    td (class' = "font-mono") { fixedPoint p.cpu 1 + "%" }
-                  }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+      |]
+      showElse (fun () -> stores.HealthSeen.Value)
+        (fun () ->
+          div [| cls "overflow-x-auto" |] [|
+            table [| cls "table table-xs" |] [|
+              thead [||] [|
+                tr [||] [|
+                  th [||] [| text "role" |]
+                  th [||] [| text "pid" |]
+                  th [||] [| text "resident" |]
+                  th [||] [| text "normalized CPU" |]
+                |]
+              |]
+              tbody [||] [|
+                each (fun (process': ProcessView) -> process'.id) (fun () -> stores.Health.Value.processes) (fun process' ->
+                  tr [||] [|
+                    td [| cls "font-mono" |] [| rx (fun () -> processRole (process' ()).role) |]
+                    td [| cls "font-mono" |] [| rx (fun () -> string (process' ()).pid) |]
+                    td [| cls "font-mono" |] [| rx (fun () -> bytes (process' ()).rss) |]
+                    td [| cls "font-mono" |] [| rx (fun () -> fixedPoint (process' ()).cpu 1 + "%") |]
+                  |])
+              |]
+            |]
+          |])
+        (fun () -> para [| cls "text-xs opacity-50" |] [| text "Waiting for daemon health…" |])
+    |]
+  |]
 
-[<SolidComponent>]
-let OpenBar (local: LocalView) (connected: unit -> bool) (dispatch: Command -> unit) =
-  let path, setPath = createSignal ""
-  let submit () =
-    let project = path().Trim()
-    if project <> "" then dispatch (OpenProject project)
-  div (class' = "flex flex-col gap-1") {
-    div (class' = "join w-full") {
-      input (
-        class' = "input input-bordered input-sm join-item flex-1 font-mono",
-        placeholder = "/absolute/path/Project.fidproj",
-        value = path (),
-        onInput = (fun e -> setPath (Interop.inputValue e)),
-        onKeyDown = (fun e -> if Interop.keyOf e = "Enter" then submit ())
-      )
-      button (
-        class' = "btn btn-sm btn-accent join-item",
-        disabled = (not (connected ()) || (Interop.dictTryGet local.pending OpenKey).IsSome || path().Trim() = ""),
-        onClick = fun _ -> submit ()
-      ) { "Open project" }
-    }
-    CommandOutcome (fun () -> Interop.dictTryGet local.outcomes OpenKey)
-  }
+let private openBar (stores: Stores) (connected: unit -> bool) (dispatch: Command -> unit) =
+  comp (fun () ->
+    let path = Api.createSignal ""
+    let submit () =
+      let project = path.Value.Trim()
+      if project <> "" then dispatch (OpenProject project)
+    div [| cls "flex flex-col gap-1" |] [|
+      div [| cls "join w-full" |] [|
+        input [|
+          cls "input input-bordered input-sm join-item flex-1 font-mono"
+          attr "placeholder" "/absolute/path/Project.fidproj"
+          propRx "value" (fun () -> path.Value)
+          on "input" (fun event -> path.Value <- Interop.inputValue event)
+          on "keydown" (fun event -> if Interop.keyOf event = "Enter" then submit ())
+        |]
+        button [|
+          cls "btn btn-sm btn-accent join-item"
+          flagRx "disabled" (fun () -> not (connected ()) || stores.Pending.Value.ContainsKey OpenKey || path.Value.Trim() = "")
+          on "click" (fun _ -> submit ())
+        |] [| text "Open project" |]
+      |]
+      commandOutcome (fun () -> stores.Outcomes.Value.TryFind OpenKey)
+    |])
 
-[<SolidComponent>]
-let SessionCard (s: SessionView) (local: LocalView) (connected: unit -> bool) (dispatch: Command -> unit) =
-  let label, setLabel = createSignal "source edit"
-  let args, setArgs = createSignal "[]"
-  let argsError, setArgsError = createSignal ""
-  let reservation () = Interop.dictTryGet local.reservations s.id
-  let pending () = Interop.dictTryGet local.pending s.id
-  let ready () = connected () && not s.closed && (pending ()).IsNone
-  let reserve () = dispatch (Reserve { ReserveEdit.Target = targetOf s; Label = label () })
-  let build () =
-    match reservation () with
-    | Some token -> dispatch (Build { BuildReserved.Target = targetOf s; Reservation = token })
-    | None -> ()
-  let run () =
-    match Interop.parseArguments (args ()) with
-    | Some arguments ->
-      setArgsError ""
-      dispatch (Run { RunCurrent.Target = targetOf s; Arguments = arguments })
-    | None -> setArgsError "Arguments must be a JSON array of strings, e.g. [\"--verbose\"]."
-  div (class' = (if s.closed then "card card-compact panel opacity-60" else "card card-compact panel")) {
-    div (class' = "card-body gap-2") {
-      div (class' = "flex items-start gap-2") {
-        div (class' = "flex-1 min-w-0") {
-          div (class' = "font-heading font-bold truncate", title = s.project) { fileName s.project }
-          div (class' = "text-xs font-mono opacity-50 truncate", title = s.project) { s.project }
-        }
-        div (class' = "flex flex-wrap justify-end gap-1") {
-          Show (when' = s.busy) {
-            span (class' = "badge badge-sm badge-info gap-1") {
-              span (class' = spinner)
-              "busy"
-            }
-          }
-          Show (when' = (pending ()).IsSome) {
-            span (class' = "badge badge-sm badge-outline badge-secondary gap-1") {
-              span (class' = spinner)
-              pending () |> Option.defaultValue ""
-            }
-          }
-          Show (when' = s.closed) { span (class' = "badge badge-sm badge-neutral") { "closed" } }
-          Show (when' = not s.fresh) { span (class' = "badge badge-sm badge-ghost", title = "Status is being re-read") { "stale" } }
-          Show (when' = s.revocationPending) { span (class' = "badge badge-sm badge-warning") { "revoking" } }
-          Show (when' = (s.cleanupPending || s.formatterCleanupPending)) {
-            span (class' = "badge badge-sm badge-warning") { "cleanup" }
-          }
-          Show (when' = (reservation ()).IsSome) {
-            span (class' = "badge badge-sm badge-plum font-mono", title = (reservation () |> Option.defaultValue "")) {
-              "reserved " + shortHash (reservation () |> Option.defaultValue "")
-            }
-          }
-        }
-      }
-      div (class' = "text-xs font-mono opacity-60 truncate") {
-        "session " + s.session + " · epoch " + s.epoch + " · rev " + s.generation
-      }
-      Show (when' = s.hasCurrent, fallback = (div (class' = "text-xs opacity-50") { "no accepted artifact" })) {
-        div (class' = "text-xs font-mono flex flex-wrap items-center gap-x-3 gap-y-0.5 border-l-2 border-success pl-2") {
-          span (class' = "text-success") {
-            span (class' = "mr-1") { "✓ accepted gen" }
-            s.current.generation
-          }
-          span (class' = "chip-code", title = s.current.sha) { shortHash s.current.sha }
-          span (class' = "opacity-70") { "src " + shortHash s.current.sourceVersion }
-          span (class' = "opacity-70") {
-            string s.current.compiled + " compiled · " + string s.current.reused + " reused · "
-            + string s.current.retired + " retired · " + string s.current.changed + " witnesses changed"
-          }
-        }
-        // What the change recompiled and what it reused, region by region: the
-        // differential fact itself, not only its totals.
-        Show (when' = (s.current.regions.Length > 0)) {
-          table (class' = "table table-xs mt-1") {
-            thead () {
-              tr () {
-                th () { "region" }
-                th () { "witness" }
-                th (class' = "text-right") { "visits" }
-                th () { "object" }
-              }
-            }
-            tbody () {
-              For (each = s.current.regions) {
-                yield fun r _ ->
-                  tr () {
-                    td (class' = "font-mono break-all max-w-[28rem]") { r.Identity }
-                    td () { r.Witness }
-                    td (class' = "text-right font-mono") { string r.Visits }
-                    td () { r.Object }
-                  }
-              }
-            }
-          }
-        }
-      }
-      For (each = s.notices) {
-        yield fun n _ -> DiagnosticBlock true (fun () -> n.label) (fun () -> n.text)
-      }
-      div (class' = "flex flex-wrap items-center gap-1.5") {
-        div (class' = "join") {
-          input (
-            class' = "input input-bordered input-xs join-item w-36",
-            placeholder = "edit label",
-            value = label (),
-            onInput = (fun e -> setLabel (Interop.inputValue e))
-          )
-          button (class' = "btn btn-xs btn-plum join-item", disabled = not (ready ()), onClick = fun _ -> reserve ()) { "Reserve" }
-        }
-        button (
-          class' = "btn btn-xs btn-outline btn-accent",
-          title = "Build the reserved revision",
-          disabled = (not (ready ()) || (reservation ()).IsNone),
-          onClick = fun _ -> build ()
-        ) { "Build" }
-        div (class' = "join") {
-          input (
-            class' = "input input-bordered input-xs join-item w-36 font-mono",
-            placeholder = "JSON args: []",
-            value = args (),
-            onInput = (fun e -> setArgs (Interop.inputValue e)),
-            onKeyDown = (fun e -> if Interop.keyOf e = "Enter" then run ())
-          )
-          button (class' = "btn btn-xs btn-outline btn-accent join-item", disabled = (not (ready ()) || not s.hasCurrent), onClick = fun _ -> run ()) { "Run" }
-        }
-        button (class' = "btn btn-xs btn-ghost", disabled = (not (connected ()) || s.closed), onClick = fun _ -> dispatch (Cancel(targetOf s))) { "Cancel" }
-        button (class' = "btn btn-xs btn-rust", disabled = (not (connected ()) || s.closed), onClick = fun _ -> dispatch (CloseSession(targetOf s))) { "Close" }
-      }
-      div (class' = (if argsError () = "" then "hidden" else "text-xs text-error")) { argsError () }
-      CommandOutcome (fun () -> Interop.dictTryGet local.outcomes s.id)
-    }
-  }
+let private sessionCard (session: unit -> SessionView) (stores: Stores) (connected: unit -> bool) (dispatch: Command -> unit) =
+  comp (fun () ->
+    let editLabel = Api.createSignal "source edit"
+    let args = Api.createSignal "[]"
+    let argsError = Api.createSignal ""
+    let id = (Api.untrack session).id
+    let reservation () = stores.Reservations.Value.TryFind id
+    let pending () = stores.Pending.Value.TryFind id
+    let ready () = connected () && not (session ()).closed && (pending ()).IsNone
+    let reserve () = dispatch (Reserve { ReserveEdit.Target = targetOf (session ()); Label = editLabel.Value })
+    let build () =
+      match reservation () with
+      | Some token -> dispatch (Build { BuildReserved.Target = targetOf (session ()); Reservation = token })
+      | None -> ()
+    let run () =
+      match Interop.parseArguments args.Value with
+      | Some arguments ->
+        argsError.Value <- ""
+        dispatch (Run { RunCurrent.Target = targetOf (session ()); Arguments = arguments })
+      | None -> argsError.Value <- "Arguments must be a JSON array of strings, e.g. [\"--verbose\"]."
+    let current () = (session ()).current
+    div [| clsRx (fun () -> if (session ()).closed then "card card-compact panel opacity-60" else "card card-compact panel") |] [|
+      div [| cls "card-body gap-2" |] [|
+        div [| cls "flex items-start gap-2" |] [|
+          div [| cls "flex-1 min-w-0" |] [|
+            div [| cls "font-heading font-bold truncate"; titleRx (fun () -> (session ()).project) |] [| rx (fun () -> fileName (session ()).project) |]
+            div [| cls "text-xs font-mono opacity-50 truncate"; titleRx (fun () -> (session ()).project) |] [| rx (fun () -> (session ()).project) |]
+          |]
+          div [| cls "flex flex-wrap justify-end gap-1" |] [|
+            show (fun () -> (session ()).busy) (fun () ->
+              span [| cls "badge badge-sm badge-info gap-1" |] [| span [| cls spinner |] [||]; text "busy" |])
+            show (fun () -> (pending ()).IsSome) (fun () ->
+              span [| cls "badge badge-sm badge-outline badge-secondary gap-1" |] [|
+                span [| cls spinner |] [||]
+                rx (fun () -> pending () |> Option.defaultValue "")
+              |])
+            show (fun () -> (session ()).closed) (fun () -> span [| cls "badge badge-sm badge-neutral" |] [| text "closed" |])
+            show (fun () -> not (session ()).fresh) (fun () -> span [| cls "badge badge-sm badge-ghost"; View.title "Status is being re-read" |] [| text "stale" |])
+            show (fun () -> (session ()).revocationPending) (fun () -> span [| cls "badge badge-sm badge-warning" |] [| text "revoking" |])
+            show (fun () -> (session ()).cleanupPending || (session ()).formatterCleanupPending) (fun () ->
+              span [| cls "badge badge-sm badge-warning" |] [| text "cleanup" |])
+            show (fun () -> (reservation ()).IsSome) (fun () ->
+              span [| cls "badge badge-sm badge-plum font-mono"; titleRx (fun () -> reservation () |> Option.defaultValue "") |] [|
+                rx (fun () -> "reserved " + shortHash (reservation () |> Option.defaultValue ""))
+              |])
+          |]
+        |]
+        div [| cls "text-xs font-mono opacity-60 truncate" |] [|
+          rx (fun () -> "session " + (session ()).session + " · epoch " + (session ()).epoch + " · rev " + (session ()).generation)
+        |]
+        showElse (fun () -> (session ()).hasCurrent)
+          (fun () ->
+            fragment [|
+              div [| cls "text-xs font-mono flex flex-wrap items-center gap-x-3 gap-y-0.5 border-l-2 border-success pl-2" |] [|
+                span [| cls "text-success" |] [|
+                  span [| cls "mr-1" |] [| text "✓ accepted gen" |]
+                  rx (fun () -> (current ()).generation)
+                |]
+                span [| cls "chip-code"; titleRx (fun () -> (current ()).sha) |] [| rx (fun () -> shortHash (current ()).sha) |]
+                span [| cls "opacity-70" |] [| rx (fun () -> "src " + shortHash (current ()).sourceVersion) |]
+                span [| cls "opacity-70" |] [|
+                  rx (fun () ->
+                    let c = current ()
+                    string c.compiled + " compiled · " + string c.reused + " reused · "
+                    + string c.retired + " retired · " + string c.changed + " witnesses changed")
+                |]
+              |]
+              // What the change recompiled and what it reused, region by region: the
+              // differential fact itself, not only its totals.
+              show (fun () -> (current ()).regions.Length > 0) (fun () ->
+                table [| cls "table table-xs mt-1" |] [|
+                  thead [||] [|
+                    tr [||] [|
+                      th [||] [| text "region" |]
+                      th [||] [| text "witness" |]
+                      th [| cls "text-right" |] [| text "visits" |]
+                      th [||] [| text "object" |]
+                    |]
+                  |]
+                  tbody [||] [|
+                    each (fun (region: RegionRow) -> region.Identity) (fun () -> (current ()).regions) (fun region ->
+                      tr [||] [|
+                        td [| cls "font-mono break-all max-w-[28rem]" |] [| rx (fun () -> (region ()).Identity) |]
+                        td [||] [| rx (fun () -> (region ()).Witness) |]
+                        td [| cls "text-right font-mono" |] [| rx (fun () -> string (region ()).Visits) |]
+                        td [||] [| rx (fun () -> (region ()).Object) |]
+                      |])
+                  |]
+                |])
+            |])
+          (fun () -> div [| cls "text-xs opacity-50" |] [| text "no accepted artifact" |])
+        each (fun (notice: NoticeView) -> notice.id) (fun () -> (session ()).notices) (fun notice ->
+          diagnosticBlock true (fun () -> (notice ()).label) (fun () -> (notice ()).text))
+        div [| cls "flex flex-wrap items-center gap-1.5" |] [|
+          div [| cls "join" |] [|
+            input [|
+              cls "input input-bordered input-xs join-item w-36"
+              attr "placeholder" "edit label"
+              propRx "value" (fun () -> editLabel.Value)
+              on "input" (fun event -> editLabel.Value <- Interop.inputValue event)
+            |]
+            button [| cls "btn btn-xs btn-plum join-item"; flagRx "disabled" (fun () -> not (ready ())); on "click" (fun _ -> reserve ()) |] [| text "Reserve" |]
+          |]
+          button [|
+            cls "btn btn-xs btn-outline btn-accent"
+            View.title "Build the reserved revision"
+            flagRx "disabled" (fun () -> not (ready ()) || (reservation ()).IsNone)
+            on "click" (fun _ -> build ())
+          |] [| text "Build" |]
+          div [| cls "join" |] [|
+            input [|
+              cls "input input-bordered input-xs join-item w-36 font-mono"
+              attr "placeholder" "JSON args: []"
+              propRx "value" (fun () -> args.Value)
+              on "input" (fun event -> args.Value <- Interop.inputValue event)
+              on "keydown" (fun event -> if Interop.keyOf event = "Enter" then run ())
+            |]
+            button [| cls "btn btn-xs btn-outline btn-accent join-item"; flagRx "disabled" (fun () -> not (ready ()) || not (session ()).hasCurrent); on "click" (fun _ -> run ()) |] [| text "Run" |]
+          |]
+          button [| cls "btn btn-xs btn-ghost"; flagRx "disabled" (fun () -> not (connected ()) || (session ()).closed); on "click" (fun _ -> dispatch (Cancel(targetOf (session ())))) |] [| text "Cancel" |]
+          button [| cls "btn btn-xs btn-rust"; flagRx "disabled" (fun () -> not (connected ()) || (session ()).closed); on "click" (fun _ -> dispatch (CloseSession(targetOf (session ())))) |] [| text "Close" |]
+        |]
+        div [| clsRx (fun () -> if argsError.Value = "" then "hidden" else "text-xs text-error") |] [| rx (fun () -> argsError.Value) |]
+        commandOutcome (fun () -> stores.Outcomes.Value.TryFind id)
+      |]
+    |])
 
-[<SolidComponent>]
-let SessionsPanel (model: ModelView) (local: LocalView) (connected: unit -> bool) (dispatch: Command -> unit) =
-  div (class' = "flex flex-col gap-2") {
-    div (class' = "flex items-baseline gap-2") {
-      h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80") { "Composer sessions" }
-      span (class' = "text-xs opacity-50") { string model.sessions.Length }
-    }
-    Show (
-      when' = (model.sessions.Length > 0),
-      fallback = (div (class' = "text-sm opacity-60 border border-dashed border-base-content/20 rounded-xl p-6 text-center") {
-        "No open projects."
-      })
-    ) {
-      div (class' = (if model.sessions.Length = 1 then "grid grid-cols-1 gap-2" else "grid grid-cols-1 xl:grid-cols-2 gap-2")) {
-        For (each = model.sessions) {
-          yield fun s _ -> SessionCard s local connected dispatch
-        }
-      }
-    }
-  }
-
-[<SolidComponent>]
-let WorkerPanel (model: ModelView) (local: LocalView) (connected: unit -> bool) (dispatch: Command -> unit) =
-  // Armed by the first click, fired by the second; leaving the button (pointer
-  // or focus) disarms it. No timer: the page keeps none but reconnect backoff.
-  let confirming, setConfirming = createSignal false
-  let retire () =
-    if confirming () then
-      setConfirming false
-      dispatch (RetireWorker { WorkerTarget.Host = model.worker.host; Epoch = model.worker.epoch })
-    else
-      setConfirming true
-  div (class' = "card card-compact panel") {
-    div (class' = "card-body gap-1.5") {
-      div (class' = "flex items-center gap-2") {
-        h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80 flex-1") { "Compiler worker" }
-        span (class' = workerBadge model.worker.state) { model.worker.state }
-        Information "Compiler worker" (fun () -> [|
-          "Opening a Clef project starts the worker. BOZZETTO_COMPOSER_WORKER selects the installed worker."
-          "Retire the worker before replacing compiler binaries. Retirement closes its sessions."
+let private sessionsPanel (stores: Stores) (connected: unit -> bool) (dispatch: Command -> unit) =
+  let sessions () = stores.Sessions.Value
+  div [| cls "flex flex-col gap-2" |] [|
+    div [| cls "flex items-baseline gap-2" |] [|
+      h2 [| cls "text-sm font-bold uppercase tracking-wider opacity-80" |] [| text "Composer sessions" |]
+      span [| cls "text-xs opacity-50" |] [| rx (fun () -> string (sessions ()).Length) |]
+    |]
+    showElse (fun () -> (sessions ()).Length > 0)
+      (fun () ->
+        div [| clsRx (fun () -> if (sessions ()).Length = 1 then "grid grid-cols-1 gap-2" else "grid grid-cols-1 xl:grid-cols-2 gap-2") |] [|
+          each (fun (session: SessionView) -> session.id) sessions (fun session -> sessionCard session stores connected dispatch)
         |])
-      }
-      Show (when' = (model.worker.state = "running")) {
-        div (class' = "text-xs font-mono opacity-70 break-all") {
-          "compiler " + model.worker.compilerVersion + " · pid " + (if model.worker.pid = "" then "?" else model.worker.pid)
-        }
-        div (class' = "text-xs font-mono opacity-50 break-all") { model.worker.host + " · " + model.worker.epoch }
-      }
-      div (class' = "flex items-center gap-2 pt-1") {
-        button (
-          class' = (if confirming () then "btn btn-xs btn-rust-armed" else "btn btn-xs btn-rust"),
-          disabled = (not (connected ()) || model.worker.state <> "running" || (Interop.dictTryGet local.pending WorkerKey).IsSome),
-          onClick = (fun _ -> retire ()),
-          onMouseLeave = (fun _ -> setConfirming false),
-          onBlur = (fun _ -> setConfirming false)
-        ) { if confirming () then "Confirm: retire every session" else "Retire worker" }
-      }
-      CommandOutcome (fun () -> Interop.dictTryGet local.outcomes WorkerKey)
-    }
-  }
+      (fun () ->
+        div [| cls "text-sm opacity-60 border border-dashed border-base-content/20 rounded-xl p-6 text-center" |] [| text "No open projects." |])
+  |]
+
+let private workerPanel (stores: Stores) (connected: unit -> bool) (dispatch: Command -> unit) =
+  comp (fun () ->
+    // Armed by the first click, fired by the second; leaving the button (pointer
+    // or focus) disarms it. No timer: the page keeps none but reconnect backoff.
+    let confirming = Api.createSignal false
+    let worker () = stores.Worker.Value
+    let retire () =
+      if confirming.Value then
+        confirming.Value <- false
+        dispatch (RetireWorker { WorkerTarget.Host = (worker ()).host; Epoch = (worker ()).epoch })
+      else
+        confirming.Value <- true
+    div [| cls "card card-compact panel" |] [|
+      div [| cls "card-body gap-1.5" |] [|
+        div [| cls "flex items-center gap-2" |] [|
+          h2 [| cls "text-sm font-bold uppercase tracking-wider opacity-80 flex-1" |] [| text "Compiler worker" |]
+          span [| clsRx (fun () -> workerBadge (worker ()).state) |] [| rx (fun () -> (worker ()).state) |]
+          information "Compiler worker" (fun () -> [|
+            "Opening a Clef project starts the worker. BOZZETTO_COMPOSER_WORKER selects the installed worker."
+            "Retire the worker before replacing compiler binaries. Retirement closes its sessions."
+          |])
+        |]
+        show (fun () -> (worker ()).state = "running") (fun () ->
+          fragment [|
+            div [| cls "text-xs font-mono opacity-70 break-all" |] [|
+              rx (fun () -> "compiler " + (worker ()).compilerVersion + " · pid " + (if (worker ()).pid = "" then "?" else (worker ()).pid))
+            |]
+            div [| cls "text-xs font-mono opacity-50 break-all" |] [| rx (fun () -> (worker ()).host + " · " + (worker ()).epoch) |]
+          |])
+        div [| cls "flex items-center gap-2 pt-1" |] [|
+          button [|
+            clsRx (fun () -> if confirming.Value then "btn btn-xs btn-rust-armed" else "btn btn-xs btn-rust")
+            flagRx "disabled" (fun () -> not (connected ()) || (worker ()).state <> "running" || stores.Pending.Value.ContainsKey WorkerKey)
+            on "click" (fun _ -> retire ())
+            on "mouseleave" (fun _ -> confirming.Value <- false)
+            on "blur" (fun _ -> confirming.Value <- false)
+          |] [| rx (fun () -> if confirming.Value then "Confirm: retire every session" else "Retire worker") |]
+        |]
+        commandOutcome (fun () -> stores.Outcomes.Value.TryFind WorkerKey)
+      |]
+    |])
 
 let private currentAgent (agent: AgentView) =
   agent.status = "running" || agent.status = "unknown"
 
-[<SolidComponent>]
-let private AgentDetails (agent: AgentView) =
-  div (class' = "flex flex-col gap-1 py-2 text-xs break-words") {
-    div (class' = "flex items-center gap-2") {
-      span () { agent.model }
-      Information "Invocation" (fun () -> [|
-        "Member: " + agent.memberId
-        "Session: " + agent.session + " · run: " + agent.id
-        "Report sequence: " + agent.reportSequence + " · updated " + dateTime agent.updatedAt
-        "Reported inference endpoint: " + agent.endpoint
-      |])
-    }
-    div () { agent.project + " · " + agent.focus }
-    div () { agent.operation }
-    div () { agent.usage + " · " + agent.cost }
-    div (class' = "opacity-60") {
-      agent.activity + (if agent.omitted = "0" then "" else " · " + agent.omitted + " earlier omitted")
-    }
-  }
+let private agentDetails (agent: unit -> AgentView) =
+  div [| cls "flex flex-col gap-1 py-2 text-xs break-words" |] [|
+    div [| cls "flex items-center gap-2" |] [|
+      span [||] [| rx (fun () -> (agent ()).model) |]
+      information "Invocation" (fun () ->
+        let a = agent ()
+        [|
+          "Member: " + a.memberId
+          "Session: " + a.session + " · run: " + a.id
+          "Report sequence: " + a.reportSequence + " · updated " + dateTime a.updatedAt
+          "Reported inference endpoint: " + a.endpoint
+        |])
+    |]
+    div [||] [| rx (fun () -> (agent ()).project + " · " + (agent ()).focus) |]
+    div [||] [| rx (fun () -> (agent ()).operation) |]
+    div [||] [| rx (fun () -> (agent ()).usage + " · " + (agent ()).cost) |]
+    div [| cls "opacity-60" |] [|
+      rx (fun () -> let a = agent () in a.activity + (if a.omitted = "0" then "" else " · " + a.omitted + " earlier omitted"))
+    |]
+  |]
 
-[<SolidComponent>]
-let AgentsPanel (model: ModelView) =
-  div (class' = "card card-compact panel") {
-    div (class' = "card-body gap-2") {
-      div (class' = "flex items-center gap-2") {
-        h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80 flex-1") { "Agent work" }
-        Information "Agent accounting" (fun () -> [|
+let private agentsPanel (stores: Stores) =
+  let agents () = stores.Agents.Value
+  let newestFirst (rows: AgentView array) = rows |> Array.sortByDescending (fun agent -> agent.updatedAt, agent.id)
+  div [| cls "card card-compact panel" |] [|
+    div [| cls "card-body gap-2" |] [|
+      div [| cls "flex items-center gap-2" |] [|
+        h2 [| cls "text-sm font-bold uppercase tracking-wider opacity-80 flex-1" |] [| text "Agent work" |]
+        information "Agent accounting" (fun () -> [|
           "Current reporting activity stays visible. Earlier passes are expandable, newest first. Missing reports do not establish that no work is happening."
           "Presence rows derive from facts the daemon owns, a lease held or queued and cohort membership, so an agent that never reports is still seen."
           "Identity, progress and usage are participant-reported; unknown usage and cost are not zero."
-          "Execution host: " + model.executionHost + " · publication " + model.agentSequence
+          "Execution host: " + stores.ExecutionHost.Value + " · publication " + stores.AgentSequence.Value
           "The daemon retains its full history; the dashboard may omit oldest terminal runs to fit the wire."
         |])
-      }
-      if model.agentOmittedRuns <> "0" then
-        p (class' = "text-xs opacity-70") { model.agentOmittedRuns + " older terminal runs omitted from this board." }
-      if model.agentRefusal <> "" then
-        p (class' = "text-xs text-error") { model.agentRefusal }
-      Show (
-        when' = (model.agents |> Array.exists currentAgent || model.presence.Length > 0),
-        fallback = (p (class' = "text-xs opacity-50") {
-          // Absence is claimed only from a received board; before one arrives the
-          // daemon has said nothing about agents.
-          if model.agentRefusal <> "" then "Agent work is unavailable; the daemon could not publish the complete active board."
-          elif model.agentIncarnation = "" then "No agent board received from the daemon yet."
-          else "No agents present: no lease held or queued, no cohort member, no running report."
-        })
-      ) {
-        For (each = (model.agents |> Array.filter currentAgent |> Array.sortByDescending (fun agent -> agent.updatedAt, agent.id))) {
-          yield fun agent _ ->
-            div (class' = "border-t border-base-content/10 pt-2 text-xs break-words") {
-              div (class' = "font-semibold") { agent.name + " · " + agent.role + " · reported " + agent.status }
-              div (class' = "opacity-60") { "Updated " + clockTime agent.updatedAt + " · " + agent.model + " · " + agent.endpoint }
-              div () { agent.project + " · " + agent.operation }
-              details () {
-                summary (class' = "cursor-pointer opacity-60") { "Details" }
-                AgentDetails agent
-              }
-            }
-        }
-        For (each = (model.presence |> Array.sortByDescending (fun here -> here.since, here.id))) {
-          yield fun here _ ->
-            div (class' = "presence border-t border-base-content/10 pt-2 text-xs break-words") {
-              div (class' = "font-semibold") { here.name + " · " + here.detail }
-              div (class' = "opacity-60") {
-                // A lease's time is its grant or ask; a membership's is its latest renewal,
-                // which is what the daemon retains, not when the member joined.
-                here.source + (if here.source = "member" then " renewed " else " since ") + clockTime here.since
-                + (if here.project = "" then "" else " · " + here.project)
-              }
-            }
-        }
-      }
-      Show (when' = (model.agents |> Array.exists (currentAgent >> not))) {
-        details (class' = "border-t border-base-content/10 pt-2") {
-          summary (class' = "cursor-pointer text-xs opacity-60") {
-            "Earlier passes (" + string (model.agents |> Array.filter (currentAgent >> not) |> Array.length) + ")"
-          }
-          For (each = (model.agents |> Array.filter (currentAgent >> not) |> Array.sortByDescending (fun agent -> agent.updatedAt, agent.id))) {
-            yield fun agent _ ->
-              details (class' = "border-t border-base-content/10 mt-2 pt-2 text-xs break-words") {
-                summary (class' = "cursor-pointer font-semibold") {
-                  agent.name + " · " + agent.role + " · reported " + agent.status + " · " + clockTime agent.updatedAt
-                }
-                AgentDetails agent
-              }
-          }
-        }
-      }
-    }
-  }
+      |]
+      show (fun () -> stores.AgentOmittedRuns.Value <> "0") (fun () ->
+        para [| cls "text-xs opacity-70" |] [| rx (fun () -> stores.AgentOmittedRuns.Value + " older terminal runs omitted from this board.") |])
+      show (fun () -> stores.AgentRefusal.Value <> "") (fun () ->
+        para [| cls "text-xs text-error" |] [| rx (fun () -> stores.AgentRefusal.Value) |])
+      showElse (fun () -> agents () |> Array.exists currentAgent || stores.Presence.Value.Length > 0)
+        (fun () ->
+          fragment [|
+            each (fun (agent: AgentView) -> agent.id) (fun () -> agents () |> Array.filter currentAgent |> newestFirst) (fun agent ->
+              div [| cls "border-t border-base-content/10 pt-2 text-xs break-words" |] [|
+                div [| cls "font-semibold" |] [| rx (fun () -> (agent ()).name + " · " + (agent ()).role + " · reported " + (agent ()).status) |]
+                div [| cls "opacity-60" |] [| rx (fun () -> "Updated " + clockTime (agent ()).updatedAt + " · " + (agent ()).model + " · " + (agent ()).endpoint) |]
+                div [||] [| rx (fun () -> (agent ()).project + " · " + (agent ()).operation) |]
+                details [||] [|
+                  summary [| cls "cursor-pointer opacity-60" |] [| text "Details" |]
+                  agentDetails agent
+                |]
+              |])
+            each (fun (here: PresenceView) -> here.id) (fun () -> stores.Presence.Value |> Array.sortByDescending (fun here -> here.since, here.id)) (fun here ->
+              div [| cls "presence border-t border-base-content/10 pt-2 text-xs break-words" |] [|
+                div [| cls "font-semibold" |] [| rx (fun () -> (here ()).name + " · " + (here ()).detail) |]
+                div [| cls "opacity-60" |] [|
+                  // A lease's time is its grant or ask; a membership's is its latest renewal,
+                  // which is what the daemon retains, not when the member joined.
+                  rx (fun () ->
+                    let h = here ()
+                    h.source + (if h.source = "member" then " renewed " else " since ") + clockTime h.since
+                    + (if h.project = "" then "" else " · " + h.project))
+                |]
+              |])
+          |])
+        (fun () ->
+          para [| cls "text-xs opacity-50" |] [|
+            // Absence is claimed only from a received board; before one arrives the
+            // daemon has said nothing about agents.
+            rx (fun () ->
+              if stores.AgentRefusal.Value <> "" then "Agent work is unavailable; the daemon could not publish the complete active board."
+              elif stores.AgentIncarnation.Value = "" then "No agent board received from the daemon yet."
+              else "No agents present: no lease held or queued, no cohort member, no running report.")
+          |])
+      show (fun () -> agents () |> Array.exists (currentAgent >> not)) (fun () ->
+        details [| cls "border-t border-base-content/10 pt-2" |] [|
+          summary [| cls "cursor-pointer text-xs opacity-60" |] [|
+            rx (fun () -> "Earlier passes (" + string (agents () |> Array.filter (currentAgent >> not) |> Array.length) + ")")
+          |]
+          each (fun (agent: AgentView) -> agent.id) (fun () -> agents () |> Array.filter (currentAgent >> not) |> newestFirst) (fun agent ->
+            details [| cls "border-t border-base-content/10 mt-2 pt-2 text-xs break-words" |] [|
+              summary [| cls "cursor-pointer font-semibold" |] [|
+                rx (fun () -> (agent ()).name + " · " + (agent ()).role + " · reported " + (agent ()).status + " · " + clockTime (agent ()).updatedAt)
+              |]
+              agentDetails agent
+            |])
+        |])
+    |]
+  |]
 
-[<SolidComponent>]
-let LeasesPanel (model: ModelView) =
-  div (class' = "card card-compact panel") {
-    div (class' = "card-body gap-1.5") {
-      div (class' = "flex items-baseline gap-2") {
-        h2 (class' = "text-sm font-bold uppercase tracking-wider opacity-80 flex-1") { "Work leases" }
-        span (class' = "text-xs opacity-50") {
-          string model.leases.Length + " active · " + string model.queue.Length + " queued"
-        }
-      }
-      Show (
-        when' = (model.leases.Length + model.queue.Length > 0),
-        fallback = (div (class' = "text-xs opacity-60") { "No queued or active work." })
-      ) {
-        table (class' = "table table-xs") {
-          thead () {
-            tr () {
-              th () { "kind" }
-              th () { "holder" }
-              th () { "state" }
-            }
-          }
-          tbody () {
-            For (each = model.leases) {
-              yield fun l _ ->
-                tr () {
-                  td (class' = "font-mono") { l.kind }
-                  td (class' = "font-mono break-all max-w-[24rem]", title = l.holder + " · " + l.id) { l.holder }
-                  td () {
-                    span (class' = "badge badge-xs badge-info mr-1") { "granted" }
-                    span (class' = "opacity-70", title = "granted " + dateTime l.grantedAt) { "until " + clockTime l.expiresAt }
-                  }
-                }
-            }
-            For (each = model.queue) {
-              yield fun w _ ->
-                tr () {
-                  td (class' = "font-mono") { w.kind }
-                  td (class' = "font-mono break-all max-w-[24rem]", title = w.holder) { w.holder }
-                  td () {
-                    span (class' = "badge badge-xs badge-warning mr-1") { "queued" }
-                    span (class' = "opacity-70") { "since " + clockTime w.requestedAt }
-                  }
-                }
-            }
-          }
-        }
-      }
-    }
-  }
+let private leasesPanel (stores: Stores) =
+  div [| cls "card card-compact panel" |] [|
+    div [| cls "card-body gap-1.5" |] [|
+      div [| cls "flex items-baseline gap-2" |] [|
+        h2 [| cls "text-sm font-bold uppercase tracking-wider opacity-80 flex-1" |] [| text "Work leases" |]
+        span [| cls "text-xs opacity-50" |] [|
+          rx (fun () -> string stores.Leases.Value.Length + " active · " + string stores.Queue.Value.Length + " queued")
+        |]
+      |]
+      showElse (fun () -> stores.Leases.Value.Length + stores.Queue.Value.Length > 0)
+        (fun () ->
+          table [| cls "table table-xs" |] [|
+            thead [||] [|
+              tr [||] [|
+                th [||] [| text "kind" |]
+                th [||] [| text "holder" |]
+                th [||] [| text "state" |]
+              |]
+            |]
+            tbody [||] [|
+              each (fun (lease: LeaseView) -> lease.id) (fun () -> stores.Leases.Value) (fun lease ->
+                tr [||] [|
+                  td [| cls "font-mono" |] [| rx (fun () -> (lease ()).kind) |]
+                  td [| cls "font-mono break-all max-w-[24rem]"; titleRx (fun () -> (lease ()).holder + " · " + (lease ()).id) |] [| rx (fun () -> (lease ()).holder) |]
+                  td [||] [|
+                    span [| cls "badge badge-xs badge-info mr-1" |] [| text "granted" |]
+                    span [| cls "opacity-70"; titleRx (fun () -> "granted " + dateTime (lease ()).grantedAt) |] [| rx (fun () -> "until " + clockTime (lease ()).expiresAt) |]
+                  |]
+                |])
+              each (fun (wait: WaitView) -> wait.id) (fun () -> stores.Queue.Value) (fun wait ->
+                tr [||] [|
+                  td [| cls "font-mono" |] [| rx (fun () -> (wait ()).kind) |]
+                  td [| cls "font-mono break-all max-w-[24rem]"; titleRx (fun () -> (wait ()).holder) |] [| rx (fun () -> (wait ()).holder) |]
+                  td [||] [|
+                    span [| cls "badge badge-xs badge-warning mr-1" |] [| text "queued" |]
+                    span [| cls "opacity-70" |] [| rx (fun () -> "since " + clockTime (wait ()).requestedAt) |]
+                  |]
+                |])
+            |]
+          |])
+        (fun () -> div [| cls "text-xs opacity-60" |] [| text "No queued or active work." |])
+    |]
+  |]
 
-[<SolidComponent>]
-let OutputPane (model: ModelView) =
-  let tab, setTab = createSignal "runs"
-  // Runs come from two places: the daemon's journal (every caller's, pushed as
-  // facts) and this page's own commands. A pick names its source.
-  let selected, setSelected = createSignal ""
-  // The pane can be folded to its tab bar; the choice is this page's own.
-  let collapsed, setCollapsed = createSignal false
-  let picks () =
-    Array.append
-      (model.operations
-       |> Array.filter (fun o -> o.hasRun)
-       |> Array.map (fun o ->
-         {| key = "j:" + o.id; label = "#" + o.id + " " + o.caller + " " + o.project + " → " + string o.exitCode
-            project = o.project; exitCode = o.exitCode; generation = o.generation; sourceVersion = o.sourceVersion; at = o.at
-            stdout = (if o.dropped then "[transcript dropped for space]" else o.stdout); stderr = o.stderr; source = o.caller |}))
-      (model.runs
-       |> Array.map (fun r ->
-         {| key = "p:" + string r.id; label = "#" + string r.id + " " + r.project + " → " + string r.exitCode + " (this page)"
-            project = r.project; exitCode = r.exitCode; generation = r.generation; sourceVersion = r.sourceVersion; at = r.at
-            stdout = r.stdout; stderr = r.stderr; source = "this page" |}))
-  let run () =
-    let all = picks ()
-    match all |> Array.tryFind (fun r -> r.key = selected ()) with
-    | Some r -> Some r
-    | None -> Array.tryHead all
-  let stdoutText () = match run () with Some r -> r.stdout | None -> ""
-  let stderrText () = match run () with Some r -> r.stderr | None -> ""
-  let projectText () = match run () with Some r -> r.project | None -> ""
-  let sourceText () = match run () with Some r -> r.source | None -> ""
-  let exitCodeOf () = match run () with Some r -> r.exitCode | None -> 0
-  let generationText () = match run () with Some r -> "gen " + r.generation + " · src " + shortHash r.sourceVersion | None -> ""
-  let atText () = match run () with Some r -> clockTime r.at | None -> ""
-  let activityCount () = model.operations.Length + model.activity.Length
-  div (class' = (if collapsed () then "flex flex-col border-t border-base-content/10 bg-base-100" else "flex flex-col h-[34vh] min-h-40 border-t border-base-content/10 bg-base-100")) {
-    div (class' = "flex items-center gap-2 px-4 py-1 border-b border-base-content/10") {
-      button (
-        class' = "btn btn-xs btn-ghost output-fold",
-        title = (if collapsed () then "Show the output pane" else "Fold the output pane to its tabs"),
-        onClick = fun _ -> setCollapsed (not (collapsed ()))
-      ) { if collapsed () then "▲" else "▼" }
-      div (class' = "tabs tabs-bordered tabs-sm") {
-        button (class' = (if tab () = "runs" then "tab tab-active !border-accent text-accent font-semibold" else "tab"), onClick = fun _ -> setTab "runs") {
-          "Run output (" + string (picks ()).Length + ")"
-        }
-        button (class' = (if tab () = "activity" then "tab tab-active !border-accent text-accent font-semibold" else "tab"), onClick = fun _ -> setTab "activity") {
-          "Activity (" + string (activityCount ()) + ")"
-        }
-      }
-      div (class' = (if tab () = "runs" then "flex-1 flex gap-1 overflow-x-auto" else "hidden")) {
-        For (each = picks ()) {
-          yield fun r _ ->
-            button (
-              class' = (if (run () |> Option.map (fun x -> x.key)) = Some r.key then "btn btn-xs btn-active font-mono" else "btn btn-xs btn-ghost font-mono"),
-              onClick = fun _ -> setSelected r.key
-            ) { r.label }
-        }
-      }
-    }
-    div (class' = (if tab () = "runs" && not (collapsed ()) then "flex-1 min-h-0 overflow-auto px-4 py-3" else "hidden")) {
-      Show (when' = (run ()).IsSome, fallback = (div (class' = "text-xs opacity-50") { "No runs yet: runs from every caller appear here as the daemon journals them." })) {
-        div (class' = "flex items-center gap-2 text-xs mb-2") {
-          span (class' = exitBadge (exitCodeOf ())) { "exit " + string (exitCodeOf ()) }
-          span (class' = "font-semibold") { projectText () }
-          span (class' = "font-mono opacity-60") { generationText () }
-          span (class' = "font-mono opacity-60", title = "Who asked, as the adapter reported it; not an authenticated identity") { sourceText () }
-          span (class' = "opacity-50") { atText () }
-        }
-        pre (class' = "panel diagnostic-trace") { TraceText stdoutText }
-        div (class' = (if stderrText () = "" then "hidden" else "mt-2")) {
-          DiagnosticBlock false (fun () -> "Standard error") stderrText
-        }
-      }
-    }
-    div (class' = (if tab () = "activity" && not (collapsed ()) then "flex-1 min-h-0 overflow-auto px-4 py-1" else "hidden")) {
-      Show (when' = (activityCount () > 0), fallback = (div (class' = "text-xs opacity-50 py-2") { "No activity yet: every caller's Composer operations appear here as the daemon journals them." })) {
-        For (each = model.operations) {
-          yield fun o _ ->
-            div (class' = "flex gap-2 text-xs py-2 border-b border-base-content/5 operation") {
-              span (class' = "font-mono opacity-50 shrink-0") { clockTime o.at }
-              span (class' = (if o.ok then "text-success shrink-0" else "text-error shrink-0")) { if o.ok then "✓" else "✗" }
-              span (class' = "font-mono opacity-70 shrink-0", title = "Who asked, as the adapter reported it; not an authenticated identity") { o.caller }
-              span (class' = "font-semibold shrink-0") { o.operation }
-              span (class' = "font-mono opacity-70 shrink-0") { o.project }
-              Show (when' = not o.ok) { span (class' = "opacity-70") { o.code + ": " + o.message } }
-            }
-        }
-        Show (when' = (model.activity.Length > 0)) {
-          div (class' = "text-xs opacity-50 pt-2") { "this page" }
-          For (each = model.activity) {
-            yield fun a _ ->
-              div (class' = "flex gap-2 text-xs py-2 border-b border-base-content/5") {
-                span (class' = "font-mono opacity-50 shrink-0") { clockTime a.at }
-                span (class' = (if a.ok then "text-success shrink-0" else "text-error shrink-0")) { if a.ok then "✓" else "✗" }
-                span (class' = "font-mono opacity-70 shrink-0") { a.scope }
-                pre (class' = "activity-trace") { TraceText (fun () -> a.text) }
-              }
-          }
-        }
-      }
-    }
-  }
+type private RunPick =
+  {| key: string; label: string; project: string; exitCode: int; generation: string; sourceVersion: string; at: float
+     stdout: string; stderr: string; source: string |}
+
+let private outputPane (stores: Stores) =
+  comp (fun () ->
+    let tab = Api.createSignal "runs"
+    // Runs come from two places: the daemon's journal (every caller's, pushed as
+    // facts) and this page's own commands. A pick names its source.
+    let selected = Api.createSignal ""
+    // The pane can be folded to its tab bar; the choice is this page's own.
+    let collapsed = Api.createSignal false
+    let picks () : RunPick array =
+      Array.append
+        (stores.Operations.Value
+         |> Array.filter (fun o -> o.hasRun)
+         |> Array.map (fun o ->
+           {| key = "j:" + o.id; label = "#" + o.id + " " + o.caller + " " + o.project + " → " + string o.exitCode
+              project = o.project; exitCode = o.exitCode; generation = o.generation; sourceVersion = o.sourceVersion; at = o.at
+              stdout = (if o.dropped then "[transcript dropped for space]" else o.stdout); stderr = o.stderr; source = o.caller |}))
+        (stores.Runs.Value
+         |> Array.map (fun r ->
+           {| key = "p:" + string r.id; label = "#" + string r.id + " " + r.project + " → " + string r.exitCode + " (this page)"
+              project = r.project; exitCode = r.exitCode; generation = r.generation; sourceVersion = r.sourceVersion; at = r.at
+              stdout = r.stdout; stderr = r.stderr; source = "this page" |}))
+    let run () =
+      let all = picks ()
+      match all |> Array.tryFind (fun r -> r.key = selected.Value) with
+      | Some r -> Some r
+      | None -> Array.tryHead all
+    let field (pick: RunPick -> string) = match run () with Some r -> pick r | None -> ""
+    let stdoutText () = field _.stdout
+    let stderrText () = field _.stderr
+    let exitCodeOf () = match run () with Some r -> r.exitCode | None -> 0
+    let activityCount () = stores.Operations.Value.Length + stores.Activity.Value.Length
+    div [| clsRx (fun () -> if collapsed.Value then "flex flex-col border-t border-base-content/10 bg-base-100" else "flex flex-col h-[34vh] min-h-40 border-t border-base-content/10 bg-base-100") |] [|
+      div [| cls "flex items-center gap-2 px-4 py-1 border-b border-base-content/10" |] [|
+        button [|
+          cls "btn btn-xs btn-ghost output-fold"
+          titleRx (fun () -> if collapsed.Value then "Show the output pane" else "Fold the output pane to its tabs")
+          on "click" (fun _ -> collapsed.Value <- not collapsed.Value)
+        |] [| rx (fun () -> if collapsed.Value then "▲" else "▼") |]
+        div [| cls "tabs tabs-bordered tabs-sm" |] [|
+          button [| clsRx (fun () -> if tab.Value = "runs" then "tab tab-active !border-accent text-accent font-semibold" else "tab"); on "click" (fun _ -> tab.Value <- "runs") |] [|
+            rx (fun () -> "Run output (" + string (picks ()).Length + ")")
+          |]
+          button [| clsRx (fun () -> if tab.Value = "activity" then "tab tab-active !border-accent text-accent font-semibold" else "tab"); on "click" (fun _ -> tab.Value <- "activity") |] [|
+            rx (fun () -> "Activity (" + string (activityCount ()) + ")")
+          |]
+        |]
+        div [| clsRx (fun () -> if tab.Value = "runs" then "flex-1 flex gap-1 overflow-x-auto" else "hidden") |] [|
+          each (fun (r: RunPick) -> r.key) picks (fun pick ->
+            button [|
+              clsRx (fun () -> if (run () |> Option.map (fun x -> x.key)) = Some (pick ()).key then "btn btn-xs btn-active font-mono" else "btn btn-xs btn-ghost font-mono")
+              on "click" (fun _ -> selected.Value <- (pick ()).key)
+            |] [| rx (fun () -> (pick ()).label) |])
+        |]
+      |]
+      div [| clsRx (fun () -> if tab.Value = "runs" && not collapsed.Value then "flex-1 min-h-0 overflow-auto px-4 py-3" else "hidden") |] [|
+        showElse (fun () -> (run ()).IsSome)
+          (fun () ->
+            fragment [|
+              div [| cls "flex items-center gap-2 text-xs mb-2" |] [|
+                span [| clsRx (fun () -> exitBadge (exitCodeOf ())) |] [| rx (fun () -> "exit " + string (exitCodeOf ())) |]
+                span [| cls "font-semibold" |] [| rx (fun () -> field _.project) |]
+                span [| cls "font-mono opacity-60" |] [| rx (fun () -> field (fun r -> "gen " + r.generation + " · src " + shortHash r.sourceVersion)) |]
+                span [| cls "font-mono opacity-60"; View.title "Who asked, as the adapter reported it; not an authenticated identity" |] [| rx (fun () -> field _.source) |]
+                span [| cls "opacity-50" |] [| rx (fun () -> field (fun r -> clockTime r.at)) |]
+              |]
+              pre [| cls "panel diagnostic-trace" |] [| traceText stdoutText |]
+              div [| clsRx (fun () -> if stderrText () = "" then "hidden" else "mt-2") |] [|
+                diagnosticBlock false (fun () -> "Standard error") stderrText
+              |]
+            |])
+          (fun () -> div [| cls "text-xs opacity-50" |] [| text "No runs yet: runs from every caller appear here as the daemon journals them." |])
+      |]
+      div [| clsRx (fun () -> if tab.Value = "activity" && not collapsed.Value then "flex-1 min-h-0 overflow-auto px-4 py-1" else "hidden") |] [|
+        showElse (fun () -> activityCount () > 0)
+          (fun () ->
+            fragment [|
+              each (fun (o: OperationView) -> o.id) (fun () -> stores.Operations.Value) (fun operation ->
+                div [| cls "flex gap-2 text-xs py-2 border-b border-base-content/5 operation" |] [|
+                  span [| cls "font-mono opacity-50 shrink-0" |] [| rx (fun () -> clockTime (operation ()).at) |]
+                  span [| clsRx (fun () -> if (operation ()).ok then "text-success shrink-0" else "text-error shrink-0") |] [| rx (fun () -> if (operation ()).ok then "✓" else "✗") |]
+                  span [| cls "font-mono opacity-70 shrink-0"; View.title "Who asked, as the adapter reported it; not an authenticated identity" |] [| rx (fun () -> (operation ()).caller) |]
+                  span [| cls "font-semibold shrink-0" |] [| rx (fun () -> (operation ()).operation) |]
+                  span [| cls "font-mono opacity-70 shrink-0" |] [| rx (fun () -> (operation ()).project) |]
+                  show (fun () -> not (operation ()).ok) (fun () ->
+                    span [| cls "opacity-70" |] [| rx (fun () -> (operation ()).code + ": " + (operation ()).message) |])
+                |])
+              show (fun () -> stores.Activity.Value.Length > 0) (fun () ->
+                fragment [|
+                  div [| cls "text-xs opacity-50 pt-2" |] [| text "this page" |]
+                  each (fun (a: OutcomeView) -> a.id) (fun () -> stores.Activity.Value) (fun entry ->
+                    div [| cls "flex gap-2 text-xs py-2 border-b border-base-content/5" |] [|
+                      span [| cls "font-mono opacity-50 shrink-0" |] [| rx (fun () -> clockTime (entry ()).at) |]
+                      span [| clsRx (fun () -> if (entry ()).ok then "text-success shrink-0" else "text-error shrink-0") |] [| rx (fun () -> if (entry ()).ok then "✓" else "✗") |]
+                      span [| cls "font-mono opacity-70 shrink-0" |] [| rx (fun () -> (entry ()).scope) |]
+                      pre [| cls "activity-trace" |] [| traceText (fun () -> (entry ()).text) |]
+                    |])
+                |])
+            |])
+          (fun () -> div [| cls "text-xs opacity-50 py-2" |] [| text "No activity yet: every caller's Composer operations appear here as the daemon journals them." |])
+      |]
+    |])
 
 let private runningOperation (node: NodeWorkView) (operation: NodeOperationView) =
   operation.outcome = "running"
@@ -852,288 +864,303 @@ let private elapsedText (startMs: float) (endMs: float) =
   if startMs > 0. && endMs >= startMs then " · elapsed " + duration (endMs - startMs)
   else ""
 
-[<SolidComponent>]
-let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -> bool) (read: NodeWorkView -> NodeOperationView -> TranscriptStream -> unit) =
-  let retired, setRetired = createSignal (Interop.getRetiredWork ())
-  let olderOpenNodes, setOlderOpenNodes = createSignal Array.empty<string>
-  let olderWindowHours, setOlderWindowHours = createSignal (Interop.getOlderWindowHours ())
-  let olderWindowMs () = float (olderWindowHours ()) * 3600000.
-  let olderWindowLabel () =
-    match olderWindowHours () with
-    | 168 -> "7 days"
-    | hours -> string hours + " hours"
-  let setNodeOlderOpen (nodeId: string) (isOpen: bool) =
-    let current = olderOpenNodes ()
-    let next =
-      if isOpen then Array.append [| nodeId |] current |> Array.distinct
-      else current |> Array.filter (fun id -> id <> nodeId)
-    setOlderOpenNodes next
-  let nowOf (node: NodeWorkView) =
-    if uptime () < 0. then node.sampledAt else model.startedAt + uptime ()
-  let recent (node: NodeWorkView) =
-    let now = nowOf node
-    let windowMs = olderWindowMs ()
-    node.operations
-    |> Array.filter (fun operation ->
-      not (runningOperation node operation) && now - operation.at <= windowMs
-      && not (retired () |> Array.contains (operationKey node operation)))
-    |> Array.sortByDescending (fun operation -> operation.at, int64 operation.sequence)
-    |> Array.truncate 20
-  let older (node: NodeWorkView) =
-    let now = nowOf node
-    let windowMs = olderWindowMs ()
-    node.operations
-    |> Array.filter (fun operation ->
-      not (runningOperation node operation) && now - operation.at > windowMs
-      && not (retired () |> Array.contains (operationKey node operation)))
-    |> Array.sortByDescending (fun operation -> operation.at, int64 operation.sequence)
-  let retireFor (node: NodeWorkView) keys =
-    let next = Array.append keys (retired ()) |> Array.distinct |> Array.truncate 256
-    Interop.saveRetiredWork next
-    setRetired next
-    if (older node).Length = 0 then setNodeOlderOpen node.id false
-  let active (node: NodeWorkView) = node.operations |> Array.filter (runningOperation node)
-  let renderHistoryRow (node: NodeWorkView) (operation: NodeOperationView) =
-    let startMs () = if operation.startedAt > 0. then operation.startedAt else operation.at
-    let elapsed () = if operation.hasLease then elapsedText (startMs ()) operation.at else ""
-    let callerSuffix () = if operation.caller <> "" then " · " + operation.caller else ""
-    details (class' = "node-operation py-2 border-t border-base-300") {
-      summary (class' = "cursor-pointer text-xs font-mono break-words") {
-        span (class' = operationStateBadge operation) { operationStateLabel operation }
-        operation.project + " · " + operation.operation + " · " + operation.outcome
-        + (if operation.hasRun then " · exit " + string operation.exitCode else "")
-        + callerSuffix () + " · " + clockTime operation.at + elapsed ()
-      }
-      div (class' = "flex flex-col gap-2 pt-2") {
-        Show (when' = (operation.caller <> "")) {
-          p (class' = "text-xs font-mono opacity-70 break-words") { "Caller " + operation.caller + " · node " + node.id }
-        }
-        Show (when' = operation.hasLease) {
-          p (class' = "text-xs font-mono break-words") { "PID " + string operation.pid + " · started " + clockTime (startMs ()) + elapsed () }
-          pre (class' = "text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto", title = "Executable, followed by one argument per line") { operation.executable + "\n" + String.concat "\n" operation.arguments }
-          p (class' = "text-xs font-mono opacity-60 break-words") { "Lease " + operation.leaseId + " · run " + operation.runId }
-        }
-        Show (when' = operation.dropped) { p (class' = "text-xs text-warning") { "Source transcript was not retained." } }
-        Show (when' = operation.hasRun) {
-          div (class' = "flex gap-2") {
-            button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stdout) { "Load stdout" }
-            button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stderr) { "Load stderr" }
-          }
-        }
-        button (class' = "btn btn-xs btn-ghost self-start", onClick = fun _ -> retireFor node [| operationKey node operation |]) { "Retire entry" }
-      }
-    }
-  details (open' = true, class' = "work-nodes flex flex-col gap-3") {
-    summary (class' = "cursor-pointer text-lg font-bold") { "Work across nodes" }
-    div (class' = "flex flex-wrap items-center gap-2 text-xs opacity-70") {
-      span () { "Finished and abandoned entries older than " + olderWindowLabel () + " collapse behind Show older; at most 20 recent entries per node are shown." }
-      label (class' = "flex items-center gap-1") {
-        span () { "Window" }
-        (``select``(
-          class' = "select select-bordered select-xs",
-          value = string (olderWindowHours ()),
-          onChange = fun ev ->
-            match System.Int32.TryParse(Interop.inputValue ev) with
-            | true, hours when hours = 6 || hours = 24 || hours = 72 || hours = 168 ->
-              Interop.saveOlderWindowHours hours
-              setOlderWindowHours hours
-              setOlderOpenNodes [||]
-            | _ -> ()).attr("aria-label", "History window")) {
-          option'(value = "6") { "6h" }
-          option'(value = "24") { "24h" }
-          option'(value = "72") { "72h" }
-          option'(value = "168") { "7d" }
-        }
-      }
-      Show (when' = ((retired ()).Length > 0)) {
-        button (class' = "btn btn-xs btn-ghost", onClick = fun _ ->
-          Interop.saveRetiredWork [||]
-          setRetired [||]
-          setOlderOpenNodes [||]) { "Restore retired entries" }
-      }
-      Information "Work history" (fun () -> [|
-        "Running work, queued leases and open compiler projects never retire from this view."
-        "Retiring or hiding an entry affects this browser only. The node's SQLite journal retains its stored evidence."
-        "Compiler sessions are opened Clef projects. Leased command projects are displayed separately; a checkout alone is not an open compiler session."
-      |])
-    }
-    Show (when' = (model.nodes.Length = 0)) {
-      p (class' = "text-sm opacity-70") { "No node work observation has arrived. Availability is unknown." }
-    }
-    div (class' = "grid grid-cols-1 lg:grid-cols-2 gap-3") {
-      For (each = model.nodes) {
-        yield fun node _ ->
-          div (class' = "card card-compact panel") {
-            div (class' = "card-body gap-2") {
-              div (class' = "flex flex-wrap gap-2 items-center") {
-                h3 (class' = "font-bold flex-1") { node.id }
-                span (class' = "badge badge-outline") { if node.local then "controller" else "remote · read-only" }
-                span (class' = "badge badge-outline") { if connected () then node.status else "controller disconnected" }
-              }
-              p (class' = "text-xs opacity-70") { node.note }
-              Show (when' = node.hasValue, fallback = (p (class' = "text-sm opacity-70") { "Work state unavailable; no idle state inferred." })) {
-                p (class' = "work-sample-age text-xs opacity-60 font-mono") {
-                  "Work sample " + clockTime node.sampledAt + " · "
-                  + (if uptime () < 0. then "age unavailable (awaiting clock)"
-                     else duration (max 0. (model.startedAt + uptime () - node.sampledAt)) + " ago")
-                }
-                p (class' = "text-sm") {
-                  string (node.sessions |> Array.filter (fun session -> not session.closed)).Length + " compiler sessions · " + string node.leases.Length + " active leases · " + string node.queue.Length + " queued"
-                }
-                Show (when' = (node.status <> "available" || not (connected ()))) {
-                  p (class' = "text-xs text-warning") { "Retained observation; current work is unavailable." }
-                }
-                p (class' = "text-xs font-mono node-worker") {
-                  "Compiler worker · " + node.worker.state
-                  + (if node.worker.pid = "" then "" else " · PID " + node.worker.pid)
-                }
-                div (class' = "node-projects flex flex-col gap-1") {
-                  h4 (class' = "text-sm font-semibold") { "Compiler projects" }
-                  Show (when' = (node.sessions |> Array.exists (fun session -> not session.closed)), fallback = (p (class' = "text-xs opacity-60") { "No open compiler projects in this observation." })) {
-                    For (each = (node.sessions |> Array.filter (fun session -> not session.closed))) {
-                      yield fun session _ ->
-                        p (class' = "text-xs font-mono break-words node-session") {
-                          session.project + " · " + (if session.busy then "busy" else "open")
-                        }
-                    }
-                  }
-                }
-                For (each = node.leases) {
-                  yield fun lease _ ->
-                    div (class' = "text-xs font-mono break-words node-lease") {
-                      p (class' = "font-semibold") { lease.kind + " · active" }
-                      p () { lease.holder }
-                      p (class' = "opacity-60") { "Lease " + lease.id + " · granted " + clockTime lease.grantedAt }
-                      Show (when' = not (node.operations |> Array.exists (fun operation -> operation.hasLease && operation.leaseId = lease.id))) {
-                        p (class' = "opacity-60") { "Command process details have not been reported for this lease." }
-                      }
-                    }
-                }
-                For (each = node.queue) {
-                  yield fun ask _ ->
-                    p (class' = "text-xs font-mono break-words opacity-70") { ask.holder + " · " + ask.kind + " · queued since " + clockTime ask.requestedAt }
-                }
-                Show (when' = (connected () && node.status = "available" && node.leases.Length = 0 && node.queue.Length = 0)) {
-                  p (class' = "text-xs opacity-70") { "No active or queued leases in this observation." }
-                }
-                For (each = active node) {
-                  yield fun operation _ ->
-                    let matchedLease () = node.leases |> Array.tryFind (fun lease -> lease.id = operation.leaseId)
-                    let startMs () = if operation.startedAt > 0. then operation.startedAt else operation.at
-                    let livenessText () =
-                      if operation.outcome = "running" then
-                        if operation.message <> "" then formatLivenessMessage operation.message
-                        else "Owner liveness not yet verified"
-                      else ""
-                    let leaseHeartbeatText () =
-                      match matchedLease () with
-                      | Some lease -> " · heartbeat until " + clockTime lease.expiresAt
-                      | None -> " · no live lease heartbeat"
-                    div (class' = "node-operation node-active py-2 border-t border-base-300") {
-                      p (class' = "text-sm font-semibold break-words") {
-                        span (class' = operationStateBadge operation) { operationStateLabel operation }
-                        operation.project
-                      }
-                      p (class' = "text-xs font-mono break-words") { operation.operation + " · " + operation.outcome + " · PID " + string operation.pid }
-                      p (class' = "node-operation-meta text-xs font-mono opacity-70 break-words") {
-                        (if operation.caller <> "" then "Caller " + operation.caller + " · " else "")
-                        + "started " + clockTime (startMs ())
-                        + (if uptime () >= 0. then elapsedText (startMs ()) (model.startedAt + uptime ()) else "")
-                      }
-                      Show (when' = (livenessText () <> "")) {
-                        p (class' = "node-operation-liveness text-xs opacity-70 font-mono break-words") { livenessText () }
-                      }
-                      p (class' = "text-xs font-mono break-words") { operation.executable + (operation.arguments |> Array.tryHead |> Option.map (fun argument -> " · " + argument) |> Option.defaultValue "") }
-                      details () {
-                        summary (class' = "cursor-pointer text-xs opacity-60") { "Command arguments" }
-                        pre (class' = "text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto") { String.concat "\n" operation.arguments }
-                      }
-                      p (class' = "node-operation-lease text-xs opacity-60 break-words") { "Lease " + operation.leaseId + " · run " + operation.runId + leaseHeartbeatText () }
-                    }
-                }
-                Show (when' = ((recent node).Length > 0)) {
-                  div (class' = "node-recent-projects flex flex-col gap-1") {
-                    h4 (class' = "text-sm font-semibold") { "Recent project activity" }
-                    For (each = (recent node |> Array.distinctBy _.project |> Array.truncate 3)) {
-                      yield fun operation _ ->
-                        p (class' = "text-xs font-mono break-words") {
-                          span (class' = operationStateBadge operation) { operationStateLabel operation }
-                          operation.project + " · " + operation.outcome + " · " + clockTime operation.at
-                        }
-                    }
-                  }
-                }
-                details (class' = "node-operations") {
-                  summary (class' = "cursor-pointer text-sm font-semibold") { "Recent operations (" + string (recent node).Length + ")" }
-                  div (class' = "flex flex-col gap-2 pt-2") {
-                    Show (when' = (node.storageError <> "")) { p (class' = "text-xs text-warning") { "Transcript store unavailable: " + node.storageError } }
-                    Show (when' = ((recent node).Length = 0)) { p (class' = "text-xs opacity-70") { "No recent completed operations in this view." } }
-                    Show (when' = node.transcriptsOmitted) { p (class' = "text-xs opacity-70") { "Transcript bytes are loaded from the node on request." } }
-                    Show (when' = ((recent node).Length > 0)) {
-                      button (class' = "btn btn-xs btn-ghost self-start", onClick = fun _ -> retireFor node (recent node |> Array.map (operationKey node))) { "Retire shown entries" }
-                    }
-                    For (each = recent node) {
-                      yield fun operation _ -> renderHistoryRow node operation
-                    }
-                  }
-                }
-                Show (when' = ((older node).Length > 0)) {
-                  details (class' = "node-older-operations", open' = (olderOpenNodes () |> Array.contains node.id)) {
-                    summary (class' = "cursor-pointer text-xs opacity-70", onClick = fun ev ->
-                      Interop.preventDefault ev
-                      setNodeOlderOpen node.id (not (olderOpenNodes () |> Array.contains node.id))) {
-                      "Show older (" + string (older node).Length + ")"
-                    }
-                    Show (when' = (olderOpenNodes () |> Array.contains node.id)) {
-                      div (class' = "flex flex-col gap-2 pt-2") {
-                        For (each = older node) {
-                          yield fun operation _ -> renderHistoryRow node operation
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-      }
-    }
-  }
+let private stateBadge (operation: unit -> NodeOperationView) =
+  span [| clsRx (fun () -> operationStateBadge (operation ())) |] [| rx (fun () -> operationStateLabel (operation ())) |]
 
-[<SolidComponent>]
-let App () =
+let private workNodesPanel (stores: Stores) (connected: unit -> bool) (read: NodeWorkView -> NodeOperationView -> TranscriptStream -> unit) =
+  comp (fun () ->
+    let retired = Api.createSignal (Interop.getRetiredWork ())
+    let olderOpenNodes = Api.createSignal Array.empty<string>
+    let olderWindowHours = Api.createSignal (Interop.getOlderWindowHours ())
+    let uptime () = stores.Uptime.Value
+    let olderWindowMs () = float olderWindowHours.Value * 3600000.
+    let olderWindowLabel () =
+      match olderWindowHours.Value with
+      | 168 -> "7 days"
+      | hours -> string hours + " hours"
+    let setNodeOlderOpen (nodeId: string) (isOpen: bool) =
+      let current = olderOpenNodes.Value
+      olderOpenNodes.Value <-
+        if isOpen then Array.append [| nodeId |] current |> Array.distinct
+        else current |> Array.filter (fun id -> id <> nodeId)
+    let nowOf (node: NodeWorkView) =
+      if uptime () < 0. then node.sampledAt else stores.StartedAt.Value + uptime ()
+    let settledWhere (inWindow: float -> bool) (node: NodeWorkView) =
+      let now = nowOf node
+      node.operations
+      |> Array.filter (fun operation ->
+        not (runningOperation node operation) && inWindow (now - operation.at)
+        && not (retired.Value |> Array.contains (operationKey node operation)))
+      |> Array.sortByDescending (fun operation -> operation.at, int64 operation.sequence)
+    let recent (node: NodeWorkView) = settledWhere (fun age -> age <= olderWindowMs ()) node |> Array.truncate 20
+    let older (node: NodeWorkView) = settledWhere (fun age -> age > olderWindowMs ()) node
+    let retireFor (node: NodeWorkView) keys =
+      let next = Array.append keys retired.Value |> Array.distinct |> Array.truncate 256
+      Interop.saveRetiredWork next
+      retired.Value <- next
+      if (older node).Length = 0 then setNodeOlderOpen node.id false
+    let active (node: NodeWorkView) = node.operations |> Array.filter (runningOperation node)
+    let operationRowKey (operation: NodeOperationView) = operation.id
+    let historyRow (node: unit -> NodeWorkView) (operation: unit -> NodeOperationView) =
+      let startMs () = let o = operation () in if o.startedAt > 0. then o.startedAt else o.at
+      let elapsed () = if (operation ()).hasLease then elapsedText (startMs ()) (operation ()).at else ""
+      details [| cls "node-operation py-2 border-t border-base-300" |] [|
+        summary [| cls "cursor-pointer text-xs font-mono break-words" |] [|
+          stateBadge operation
+          rx (fun () ->
+            let o = operation ()
+            o.project + " · " + o.operation + " · " + o.outcome
+            + (if o.hasRun then " · exit " + string o.exitCode else "")
+            + (if o.caller <> "" then " · " + o.caller else "") + " · " + clockTime o.at + elapsed ())
+        |]
+        div [| cls "flex flex-col gap-2 pt-2" |] [|
+          show (fun () -> (operation ()).caller <> "") (fun () ->
+            para [| cls "text-xs font-mono opacity-70 break-words" |] [| rx (fun () -> "Caller " + (operation ()).caller + " · node " + (node ()).id) |])
+          show (fun () -> (operation ()).hasLease) (fun () ->
+            fragment [|
+              para [| cls "text-xs font-mono break-words" |] [| rx (fun () -> "PID " + string (operation ()).pid + " · started " + clockTime (startMs ()) + elapsed ()) |]
+              pre [| cls "text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto"; View.title "Executable, followed by one argument per line" |] [|
+                rx (fun () -> (operation ()).executable + "\n" + String.concat "\n" (operation ()).arguments)
+              |]
+              para [| cls "text-xs font-mono opacity-60 break-words" |] [| rx (fun () -> "Lease " + (operation ()).leaseId + " · run " + (operation ()).runId) |]
+            |])
+          show (fun () -> (operation ()).dropped) (fun () -> para [| cls "text-xs text-warning" |] [| text "Source transcript was not retained." |])
+          show (fun () -> (operation ()).hasRun) (fun () ->
+            div [| cls "flex gap-2" |] [|
+              button [| cls "btn btn-xs btn-outline"; flagRx "disabled" (fun () -> not (connected ())); on "click" (fun _ -> read (node ()) (operation ()) Stdout) |] [| text "Load stdout" |]
+              button [| cls "btn btn-xs btn-outline"; flagRx "disabled" (fun () -> not (connected ())); on "click" (fun _ -> read (node ()) (operation ()) Stderr) |] [| text "Load stderr" |]
+            |])
+          button [| cls "btn btn-xs btn-ghost self-start"; on "click" (fun _ -> retireFor (node ()) [| operationKey (node ()) (operation ()) |]) |] [| text "Retire entry" |]
+        |]
+      |]
+    let activeRow (node: unit -> NodeWorkView) (operation: unit -> NodeOperationView) =
+      let matchedLease () = (node ()).leases |> Array.tryFind (fun lease -> lease.id = (operation ()).leaseId)
+      let startMs () = let o = operation () in if o.startedAt > 0. then o.startedAt else o.at
+      let livenessText () =
+        let o = operation ()
+        if o.outcome = "running" then
+          if o.message <> "" then formatLivenessMessage o.message
+          else "Owner liveness not yet verified"
+        else ""
+      let leaseHeartbeatText () =
+        match matchedLease () with
+        | Some lease -> " · heartbeat until " + clockTime lease.expiresAt
+        | None -> " · no live lease heartbeat"
+      div [| cls "node-operation node-active py-2 border-t border-base-300" |] [|
+        para [| cls "text-sm font-semibold break-words" |] [|
+          stateBadge operation
+          rx (fun () -> (operation ()).project)
+        |]
+        para [| cls "text-xs font-mono break-words" |] [| rx (fun () -> (operation ()).operation + " · " + (operation ()).outcome + " · PID " + string (operation ()).pid) |]
+        para [| cls "node-operation-meta text-xs font-mono opacity-70 break-words" |] [|
+          rx (fun () ->
+            let o = operation ()
+            (if o.caller <> "" then "Caller " + o.caller + " · " else "")
+            + "started " + clockTime (startMs ())
+            + (if uptime () >= 0. then elapsedText (startMs ()) (stores.StartedAt.Value + uptime ()) else ""))
+        |]
+        show (fun () -> livenessText () <> "") (fun () ->
+          para [| cls "node-operation-liveness text-xs opacity-70 font-mono break-words" |] [| rx livenessText |])
+        para [| cls "text-xs font-mono break-words" |] [|
+          rx (fun () -> (operation ()).executable + ((operation ()).arguments |> Array.tryHead |> Option.map (fun argument -> " · " + argument) |> Option.defaultValue ""))
+        |]
+        details [||] [|
+          summary [| cls "cursor-pointer text-xs opacity-60" |] [| text "Command arguments" |]
+          pre [| cls "text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto" |] [| rx (fun () -> String.concat "\n" (operation ()).arguments) |]
+        |]
+        para [| cls "node-operation-lease text-xs opacity-60 break-words" |] [| rx (fun () -> "Lease " + (operation ()).leaseId + " · run " + (operation ()).runId + leaseHeartbeatText ()) |]
+      |]
+    let nodeCard (node: unit -> NodeWorkView) =
+      let openSessions () = (node ()).sessions |> Array.filter (fun session -> not session.closed)
+      let olderOpen () = olderOpenNodes.Value |> Array.contains (node ()).id
+      div [| cls "card card-compact panel" |] [|
+        div [| cls "card-body gap-2" |] [|
+          div [| cls "flex flex-wrap gap-2 items-center" |] [|
+            h3 [| cls "font-bold flex-1" |] [| rx (fun () -> (node ()).id) |]
+            span [| cls "badge badge-outline" |] [| rx (fun () -> if (node ()).local then "controller" else "remote · read-only") |]
+            span [| cls "badge badge-outline" |] [| rx (fun () -> if connected () then (node ()).status else "controller disconnected") |]
+          |]
+          para [| cls "text-xs opacity-70" |] [| rx (fun () -> (node ()).note) |]
+          showElse (fun () -> (node ()).hasValue)
+            (fun () ->
+              fragment [|
+                para [| cls "work-sample-age text-xs opacity-60 font-mono" |] [|
+                  rx (fun () ->
+                    let n = node ()
+                    "Work sample " + clockTime n.sampledAt + " · "
+                    + (if uptime () < 0. then "age unavailable (awaiting clock)"
+                       else duration (max 0. (stores.StartedAt.Value + uptime () - n.sampledAt)) + " ago"))
+                |]
+                para [| cls "text-sm" |] [|
+                  rx (fun () -> string (openSessions ()).Length + " compiler sessions · " + string (node ()).leases.Length + " active leases · " + string (node ()).queue.Length + " queued")
+                |]
+                show (fun () -> (node ()).status <> "available" || not (connected ())) (fun () ->
+                  para [| cls "text-xs text-warning" |] [| text "Retained observation; current work is unavailable." |])
+                para [| cls "text-xs font-mono node-worker" |] [|
+                  rx (fun () ->
+                    let w = (node ()).worker
+                    "Compiler worker · " + w.state + (if w.pid = "" then "" else " · PID " + w.pid))
+                |]
+                div [| cls "node-projects flex flex-col gap-1" |] [|
+                  h4 [| cls "text-sm font-semibold" |] [| text "Compiler projects" |]
+                  showElse (fun () -> (openSessions ()).Length > 0)
+                    (fun () ->
+                      each (fun (session: SessionView) -> session.id) openSessions (fun session ->
+                        para [| cls "text-xs font-mono break-words node-session" |] [|
+                          rx (fun () -> (session ()).project + " · " + (if (session ()).busy then "busy" else "open"))
+                        |]))
+                    (fun () -> para [| cls "text-xs opacity-60" |] [| text "No open compiler projects in this observation." |])
+                |]
+                each (fun (lease: LeaseView) -> lease.id) (fun () -> (node ()).leases) (fun lease ->
+                  div [| cls "text-xs font-mono break-words node-lease" |] [|
+                    para [| cls "font-semibold" |] [| rx (fun () -> (lease ()).kind + " · active") |]
+                    para [||] [| rx (fun () -> (lease ()).holder) |]
+                    para [| cls "opacity-60" |] [| rx (fun () -> "Lease " + (lease ()).id + " · granted " + clockTime (lease ()).grantedAt) |]
+                    show (fun () -> not ((node ()).operations |> Array.exists (fun operation -> operation.hasLease && operation.leaseId = (lease ()).id))) (fun () ->
+                      para [| cls "opacity-60" |] [| text "Command process details have not been reported for this lease." |])
+                  |])
+                each (fun (ask: WaitView) -> ask.id) (fun () -> (node ()).queue) (fun ask ->
+                  para [| cls "text-xs font-mono break-words opacity-70" |] [| rx (fun () -> (ask ()).holder + " · " + (ask ()).kind + " · queued since " + clockTime (ask ()).requestedAt) |])
+                show (fun () -> connected () && (node ()).status = "available" && (node ()).leases.Length = 0 && (node ()).queue.Length = 0) (fun () ->
+                  para [| cls "text-xs opacity-70" |] [| text "No active or queued leases in this observation." |])
+                each operationRowKey (fun () -> active (node ())) (fun operation -> activeRow node operation)
+                show (fun () -> (recent (node ())).Length > 0) (fun () ->
+                  div [| cls "node-recent-projects flex flex-col gap-1" |] [|
+                    h4 [| cls "text-sm font-semibold" |] [| text "Recent project activity" |]
+                    each operationRowKey (fun () -> recent (node ()) |> Array.distinctBy _.project |> Array.truncate 3) (fun operation ->
+                      para [| cls "text-xs font-mono break-words" |] [|
+                        stateBadge operation
+                        rx (fun () -> (operation ()).project + " · " + (operation ()).outcome + " · " + clockTime (operation ()).at)
+                      |])
+                  |])
+                details [| cls "node-operations" |] [|
+                  summary [| cls "cursor-pointer text-sm font-semibold" |] [| rx (fun () -> "Recent operations (" + string (recent (node ())).Length + ")") |]
+                  div [| cls "flex flex-col gap-2 pt-2" |] [|
+                    show (fun () -> (node ()).storageError <> "") (fun () -> para [| cls "text-xs text-warning" |] [| rx (fun () -> "Transcript store unavailable: " + (node ()).storageError) |])
+                    show (fun () -> (recent (node ())).Length = 0) (fun () -> para [| cls "text-xs opacity-70" |] [| text "No recent completed operations in this view." |])
+                    show (fun () -> (node ()).transcriptsOmitted) (fun () -> para [| cls "text-xs opacity-70" |] [| text "Transcript bytes are loaded from the node on request." |])
+                    show (fun () -> (recent (node ())).Length > 0) (fun () ->
+                      button [| cls "btn btn-xs btn-ghost self-start"; on "click" (fun _ -> retireFor (node ()) (recent (node ()) |> Array.map (operationKey (node ())))) |] [| text "Retire shown entries" |])
+                    each operationRowKey (fun () -> recent (node ())) (fun operation -> historyRow node operation)
+                  |]
+                |]
+                show (fun () -> (older (node ())).Length > 0) (fun () ->
+                  details [| cls "node-older-operations"; flagRx "open" olderOpen |] [|
+                    summary [|
+                      cls "cursor-pointer text-xs opacity-70"
+                      on "click" (fun event ->
+                        Interop.preventDefault event
+                        setNodeOlderOpen (node ()).id (not (olderOpen ())))
+                    |] [| rx (fun () -> "Show older (" + string (older (node ())).Length + ")") |]
+                    show olderOpen (fun () ->
+                      div [| cls "flex flex-col gap-2 pt-2" |] [|
+                        each operationRowKey (fun () -> older (node ())) (fun operation -> historyRow node operation)
+                      |])
+                  |])
+              |])
+            (fun () -> para [| cls "text-sm opacity-70" |] [| text "Work state unavailable; no idle state inferred." |])
+        |]
+      |]
+    details [| flag "open" true; cls "work-nodes flex flex-col gap-3" |] [|
+      summary [| cls "cursor-pointer text-lg font-bold" |] [| text "Work across nodes" |]
+      div [| cls "flex flex-wrap items-center gap-2 text-xs opacity-70" |] [|
+        span [||] [| rx (fun () -> "Finished and abandoned entries older than " + olderWindowLabel () + " collapse behind Show older; at most 20 recent entries per node are shown.") |]
+        label [| cls "flex items-center gap-1" |] [|
+          span [||] [| text "Window" |]
+          select [|
+            cls "select select-bordered select-xs"
+            aria "label" "History window"
+            selectValue (fun () -> string olderWindowHours.Value)
+            on "change" (fun event ->
+              match System.Int32.TryParse(Interop.inputValue event) with
+              | true, hours when hours = 6 || hours = 24 || hours = 72 || hours = 168 ->
+                Interop.saveOlderWindowHours hours
+                olderWindowHours.Value <- hours
+                olderOpenNodes.Value <- [||]
+              | _ -> ())
+          |] [|
+            option [| attr "value" "6" |] [| text "6h" |]
+            option [| attr "value" "24" |] [| text "24h" |]
+            option [| attr "value" "72" |] [| text "72h" |]
+            option [| attr "value" "168" |] [| text "7d" |]
+          |]
+        |]
+        show (fun () -> retired.Value.Length > 0) (fun () ->
+          button [|
+            cls "btn btn-xs btn-ghost"
+            on "click" (fun _ ->
+              Interop.saveRetiredWork [||]
+              retired.Value <- [||]
+              olderOpenNodes.Value <- [||])
+          |] [| text "Restore retired entries" |])
+        information "Work history" (fun () -> [|
+          "Running work, queued leases and open compiler projects never retire from this view."
+          "Retiring or hiding an entry affects this browser only. The node's SQLite journal retains its stored evidence."
+          "Compiler sessions are opened Clef projects. Leased command projects are displayed separately; a checkout alone is not an open compiler session."
+        |])
+      |]
+      show (fun () -> stores.Nodes.Value.Length = 0) (fun () ->
+        para [| cls "text-sm opacity-70" |] [| text "No node work observation has arrived. Availability is unknown." |])
+      div [| cls "grid grid-cols-1 lg:grid-cols-2 gap-3" |] [|
+        each (fun (node: NodeWorkView) -> node.id) (fun () -> stores.Nodes.Value) nodeCard
+      |]
+    |])
+
+let private transcriptPanel (stores: Stores) (connected: unit -> bool) (readNext: unit -> unit) =
+  let transcript () = stores.Transcript.Value
+  div [| cls "xl:col-span-3 card card-compact panel transcript-readback" |] [|
+    div [| cls "card-body gap-2" |] [|
+      h2 [| cls "text-lg font-bold" |] [| rx (fun () -> "Transcript · " + (transcript ()).node + " · " + (if (transcript ()).stream = Stdout then "stdout" else "stderr")) |]
+      para [| cls "text-xs font-mono break-words" |] [| rx (fun () -> (transcript ()).journal + " · entry " + (transcript ()).sequence) |]
+      para [| cls "text-sm" |] [| rx (fun () -> (transcript ()).status) |]
+      para [| cls "text-xs opacity-70" |] [|
+        rx (fun () -> let t = transcript () in string t.bytes.Length + " stored bytes loaded" + (if t.total = "" then "" else " of " + t.total))
+      |]
+      show (fun () -> (transcript ()).truncated) (fun () ->
+        para [| cls "text-xs text-warning" |] [| text "Truncated at the source; this is the retained transcript, not complete process output." |])
+      show (fun () -> (transcript ()).text <> "") (fun () ->
+        pre [| cls "text-xs font-mono whitespace-pre-wrap break-words max-h-80 overflow-auto" |] [| rx (fun () -> (transcript ()).text) |])
+      show (fun () -> (transcript ()).next <> "") (fun () ->
+        button [|
+          cls "btn btn-sm btn-outline self-start"
+          flagRx "disabled" (fun () -> not (connected ()) || (transcript ()).status = "reading transcript")
+          on "click" (fun _ -> readNext ())
+        |] [| text "Next transcript page" |])
+    |]
+  |]
+
+// The page: call inside the page graph's Run.
+let app () : V =
   let workPage = isWorkPage ()
-  Browser.Dom.document.title <- (if workPage then "Work · Bozzetto" else "Dashboard · Bozzetto")
+  setTitle (if workPage then "Work · Bozzetto" else "Dashboard · Bozzetto")
 
   // ── Model ────────────────────────────────────────────────────────────────
-  // Stores hold what the backend reported; the backend is the update.
+  // Signals hold what the backend reported; the backend is the update.
   let stores = Model.create ()
-  let model = stores.Model
-  let local = stores.Local
   let commands = Model.dispatcher ()
 
   // Pure UI state: link status and theme. No clock: times are shown as
   // instants, the uptime is the daemon's push, and the page runs no timer but
   // the bridge's reconnect backoff.
-  let link, setLink = createSignal Bridge.Connecting
+  let link = Api.createSignal Bridge.Connecting
   let connected () =
-    match link () with
+    match link.Value with
     | Bridge.Connected -> true
     | Bridge.Connecting | Bridge.Retrying _ -> false
 
   let initialDark = Interop.getSavedTheme () <> "light"
-  let dark, setDark = createSignal initialDark
+  let dark = Api.createSignal initialDark
   Interop.setTheme (if initialDark then "dark" else "light")
   let toggleTheme () =
-    let next = not (dark ())
-    setDark next
+    let next = not dark.Value
+    dark.Value <- next
     let name = if next then "dark" else "light"
     Interop.setTheme name
     Interop.saveTheme name
 
   // ── Update ───────────────────────────────────────────────────────────────
   // dispatch sends a Command across the bridge; the backend's Events come
-  // back through `receive` and fold into the stores. Each hop is echoed to
+  // back through `receive` and fold into the signals. Each hop is echoed to
   // the browser console with its wire payload.
   let dispatch (command: Command) =
     let frame = Model.begin' stores commands command
@@ -1147,30 +1174,26 @@ let App () =
       match event with
       | Health _ | Leases _ | Uptime _ | Resources _ | AgentWork _ | WorkNodes _ | NodeResources _ | NodeTranscript _ -> ()
       | _ -> Interop.consoleLog (sprintf "← binary frame (%d bytes)" payload.Length)
-      Model.apply stores commands event
+      act (fun () -> Model.apply stores commands event)
     | Error message -> Interop.consoleLog ("← undecodable binary frame: " + message)
 
-  Bridge.start receive (fun next ->
-    match next with
-    | Bridge.Retrying _ -> Model.abandonAll stores commands
-    | Bridge.Connecting | Bridge.Connected -> ()
-    setLink next)
-
   let focus (node: NodeWorkView) =
-    if model.nodeFocus <> "" && model.nodeFocus <> node.id then
-      dispatch (ObserveNodeResources { Node = model.nodeFocus; Seconds = 0 })
+    let current = stores.NodeFocus.Value
+    if current <> "" && current <> node.id then
+      dispatch (ObserveNodeResources { Node = current; Seconds = 0 })
     Model.focusNode stores node.id node.incarnation
     dispatch (ObserveNodeResources { Node = node.id; Seconds = 120 })
   let selectedResourceNode () =
-    model.nodes |> Array.tryFind (fun node -> node.id = model.nodeFocus)
-    |> Option.orElseWith (fun () -> model.nodes |> Array.tryFind _.local)
+    let nodes = stores.Nodes.Value
+    nodes |> Array.tryFind (fun node -> node.id = stores.NodeFocus.Value)
+    |> Option.orElseWith (fun () -> nodes |> Array.tryFind _.local)
   let selectResourceNode nodeId =
-    model.nodes |> Array.tryFind (fun node -> node.id = nodeId) |> Option.iter focus
+    stores.Nodes.Value |> Array.tryFind (fun node -> node.id = nodeId) |> Option.iter focus
   let resourceDispatch = function
     | ObserveResources seconds ->
       match selectedResourceNode () with
       | Some node ->
-        if model.nodeFocus <> node.id || model.nodeIncarnation <> node.incarnation then
+        if stores.NodeFocus.Value <> node.id || stores.NodeIncarnation.Value <> node.incarnation then
           Model.focusNode stores node.id node.incarnation
         dispatch (ObserveNodeResources { Node = node.id; Seconds = seconds })
       | None -> ()
@@ -1180,75 +1203,62 @@ let App () =
       Source = { Node = node.id; Incarnation = node.incarnation }; Journal = node.journal
       Sequence = int64 operation.sequence; Stream = stream; Offset = 0L; MaxBytes = MaxTranscriptPageBytes })
   let readNextTranscript () =
-    let value = model.transcript
+    let value = stores.Transcript.Value
     if value.next <> "" then
       dispatch (ReadNodeTranscript {
         Source = { Node = value.node; Incarnation = value.incarnation }; Journal = value.journal
         Sequence = int64 value.sequence; Stream = value.stream; Offset = int64 value.next; MaxBytes = MaxTranscriptPageBytes })
 
   // ── View ─────────────────────────────────────────────────────────────────
-  div (class' = "flex flex-col h-screen bg-base-100 text-base-content text-sm") {
-    TopBar link dark toggleTheme
-    Show (when' = not (connected ())) {
-      div (class' = "px-4 py-1 text-xs bg-warning text-warning-content") {
-        "Disconnected · last received state · commands unavailable"
-      }
-    }
-    Show (when' = model.protocolMismatch) {
-      div (class' = "px-4 py-1 text-xs bg-error text-error-content") {
-        "UI version changed. Reload this page."
-      }
-    }
-    div (class' = (if connected () then "flex-1 min-h-0 overflow-auto" else "flex-1 min-h-0 overflow-auto opacity-70")) {
-      Show (
-        when' = workPage,
-        fallback = (div (class' = "flex flex-col gap-4 p-4") {
-          HealthStrip model stores.Uptime
-          AgentsPanel model
-          HostPanel model local stores.Uptime connected selectedResourceNode selectResourceNode resourceDispatch
-          details () {
-            summary (class' = "cursor-pointer text-xs opacity-60") { "Daemon snapshot" }
-            ResourcesPanel model
-          }
-        })
-      ) {
-        div (class' = "grid grid-cols-1 xl:grid-cols-3 gap-4 p-4") {
-          details (open' = true, class' = "xl:col-span-3 controller-compiler") {
-            summary (class' = "cursor-pointer text-sm font-semibold") { "Controller compiler controls" }
-            div (class' = "grid grid-cols-1 xl:grid-cols-3 gap-4 mt-3") {
-              div (class' = "xl:col-span-2 flex flex-col gap-3 min-w-0") {
-                SessionsPanel model local connected dispatch
-                details () {
-                  summary (class' = "cursor-pointer text-xs opacity-60") { "Open project" }
-                  OpenBar local connected dispatch
-                }
-              }
-              div (class' = "flex flex-col gap-3 min-w-0") {
-                WorkerPanel model local connected dispatch
-              }
-            }
-          }
-          div (class' = "xl:col-span-3") { WorkNodesPanel model stores.Uptime connected readTranscript }
-          Show (when' = (model.transcript.node <> "")) {
-            div (class' = "xl:col-span-3 card card-compact panel transcript-readback") {
-              div (class' = "card-body gap-2") {
-                h2 (class' = "text-lg font-bold") { "Transcript · " + model.transcript.node + " · " + (if model.transcript.stream = Stdout then "stdout" else "stderr") }
-                p (class' = "text-xs font-mono break-words") { model.transcript.journal + " · entry " + model.transcript.sequence }
-                p (class' = "text-sm") { model.transcript.status }
-                p (class' = "text-xs opacity-70") { string model.transcript.bytes.Length + " stored bytes loaded" + (if model.transcript.total = "" then "" else " of " + model.transcript.total) }
-                Show (when' = model.transcript.truncated) { p (class' = "text-xs text-warning") { "Truncated at the source; this is the retained transcript, not complete process output." } }
-                Show (when' = (model.transcript.text <> "")) {
-                  pre (class' = "text-xs font-mono whitespace-pre-wrap break-words max-h-80 overflow-auto") { model.transcript.text }
-                }
-                Show (when' = (model.transcript.next <> "")) {
-                  button (class' = "btn btn-sm btn-outline self-start", disabled = (not (connected ()) || model.transcript.status = "reading transcript"), onClick = fun _ -> readNextTranscript ()) { "Next transcript page" }
-                }
-              }
-            }
-          }
+  let view =
+    div [| cls "flex flex-col h-screen bg-base-100 text-base-content text-sm" |] [|
+      topBar link dark toggleTheme
+      show (fun () -> not (connected ())) (fun () ->
+        div [| cls "px-4 py-1 text-xs bg-warning text-warning-content" |] [| text "Disconnected · last received state · commands unavailable" |])
+      show (fun () -> stores.ProtocolMismatch.Value) (fun () ->
+        div [| cls "px-4 py-1 text-xs bg-error text-error-content" |] [| text "UI version changed. Reload this page." |])
+      div [| clsRx (fun () -> if connected () then "flex-1 min-h-0 overflow-auto" else "flex-1 min-h-0 overflow-auto opacity-70") |] [|
+        if workPage then
+          div [| cls "grid grid-cols-1 xl:grid-cols-3 gap-4 p-4" |] [|
+            details [| flag "open" true; cls "xl:col-span-3 controller-compiler" |] [|
+              summary [| cls "cursor-pointer text-sm font-semibold" |] [| text "Controller compiler controls" |]
+              div [| cls "grid grid-cols-1 xl:grid-cols-3 gap-4 mt-3" |] [|
+                div [| cls "xl:col-span-2 flex flex-col gap-3 min-w-0" |] [|
+                  sessionsPanel stores connected dispatch
+                  details [||] [|
+                    summary [| cls "cursor-pointer text-xs opacity-60" |] [| text "Open project" |]
+                    openBar stores connected dispatch
+                  |]
+                |]
+                div [| cls "flex flex-col gap-3 min-w-0" |] [|
+                  workerPanel stores connected dispatch
+                |]
+              |]
+            |]
+            div [| cls "xl:col-span-3" |] [| workNodesPanel stores connected readTranscript |]
+            show (fun () -> stores.Transcript.Value.node <> "") (fun () -> transcriptPanel stores connected readNextTranscript)
+          |]
+        else
+          div [| cls "flex flex-col gap-4 p-4" |] [|
+            healthStrip stores
+            agentsPanel stores
+            hostPanel stores connected selectedResourceNode selectResourceNode resourceDispatch
+            details [||] [|
+              summary [| cls "cursor-pointer text-xs opacity-60" |] [| text "Daemon snapshot" |]
+              resourcesPanel stores
+            |]
+          |]
+      |]
+      if workPage then
+        show (fun () -> stores.Operations.Value.Length > 0 || stores.Runs.Value.Length > 0 || stores.Activity.Value.Length > 0) (fun () -> outputPane stores)
+    |]
 
-        }
-      }
-    }
-    Show (when' = (workPage && (model.operations.Length > 0 || model.runs.Length > 0 || model.activity.Length > 0))) { OutputPane model }
-  }
+  // The bridge starts once the view's signals exist; its callbacks arrive
+  // from outside the graph and run on it as batches.
+  Bridge.start receive (fun next ->
+    act (fun () ->
+      match next with
+      | Bridge.Retrying _ -> Model.abandonAll stores commands
+      | Bridge.Connecting | Bridge.Connected -> ()
+      link.Value <- next))
+  view

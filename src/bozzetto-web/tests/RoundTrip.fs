@@ -14,9 +14,26 @@ open Bozzetto.Web.Shared.Protocol
 module FrontendCodec = Bozzetto.Web.Frontend.Codec
 module BackendCodec = Bozzetto.Web.Mock.Codec
 module DiagnosticText = Bozzetto.Web.Frontend.DiagnosticText
+module LocalTime = Bozzetto.Web.Frontend.LocalTime
 
 [<Emit("process.exitCode = $0")>]
 let private setExitCode (code: int) : unit = jsNative
+
+// An instant from local calendar fields (month 0-based, as JavaScript's Date).
+[<Emit("new Date($0, $1, $2, $3, $4, $5).getTime()")>]
+let private localMs (year: int) (month: int) (day: int) (hour: int) (minute: int) (second: int) : float = jsNative
+
+[<Emit("new Date($0).toLocaleTimeString().replace(/\\u202f/g, ' ')")>]
+let private localTimeOf (epochMs: float) : string = jsNative
+
+[<Emit("new Date($0).toLocaleDateString([], { month: 'short', day: 'numeric' })")>]
+let private shortDayOf (epochMs: float) : string = jsNative
+
+[<Emit("new Date($0).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\\u202f/g, ' ')")>]
+let private shortTimeOf (epochMs: float) : string = jsNative
+
+[<Emit("Intl.DateTimeFormat().resolvedOptions().locale")>]
+let private defaultLocale () : string = jsNative
 
 let mutable private failures = 0
 let mutable private checks = 0
@@ -323,6 +340,38 @@ let private run () =
         let segments = DiagnosticText.segments trace
         check "severity aliases preserve every line/tab/text character" (segments |> Array.map (fun token -> token.text) |> String.concat "" = trace)
         check "severity aliases mark only their explicit prefix" (segments |> Array.filter (fun token -> token.severity <> "") |> Array.map (fun token -> token.severity, token.text) = [| kind, label |])
+
+  // Bozzetto #14: Work entries not from today show a short local date
+  // ("Nov 5, 9:03 PM"); today's show the local time alone; another year's
+  // carry the year. The reference is fixed, so the run does not depend on
+  // when it happens.
+  let reference = localMs 2026 10 20 12 0 0
+  let sameDay = localMs 2026 10 20 8 15 30
+  let firstOfToday = localMs 2026 10 20 0 0 0
+  let lastOfYesterday = localMs 2026 10 19 23 59 0
+  let earlier = localMs 2026 10 5 21 3 0
+  let priorYear = localMs 2025 10 5 21 3 0
+  // The short form: the short local day, a comma, the short local time, no year.
+  let shortDated (instant: float) (shown: string) =
+    shown = shortDayOf instant + ", " + shortTimeOf instant && not (shown.Contains "2026") && not (shown.Contains "2025")
+  let today = LocalTime.localTimestampAt sameDay reference
+  check "same local day shows the local time alone" (today = localTimeOf sameDay)
+  check "same local day omits the month and day" (not (today.Contains (shortDayOf sameDay)) && not (today.Contains ","))
+  check "local midnight starts today" (LocalTime.localTimestampAt firstOfToday reference = localTimeOf firstOfToday)
+  check "the last minute of yesterday is another day" (shortDated lastOfYesterday (LocalTime.localTimestampAt lastOfYesterday reference))
+  let older = LocalTime.localTimestampAt earlier reference
+  check "an earlier day of the same year shows the short date and time" (shortDated earlier older)
+  check "an earlier day of the same year omits the year" (not (older.Contains "2026"))
+  let previous = LocalTime.localTimestampAt priorYear reference
+  check "a prior year's entry includes the year" (previous.Contains "2025" && previous.Contains (shortTimeOf priorYear))
+  check "a prior year's entry is not the short same-year form" (not (shortDated priorYear previous))
+  if defaultLocale () = "en-US" then
+    check "en-US earlier day reads exactly Nov 5, 9:03 PM" (older = "Nov 5, 9:03 PM")
+    check "en-US prior year reads exactly Nov 5, 2025, 9:03 PM" (previous = "Nov 5, 2025, 9:03 PM")
+  // Fault injection: the shape check refuses the two regressions it guards,
+  // a bare time on an earlier day and a year on a same-year day.
+  check "short-date check refuses a bare time on an earlier day" (not (shortDated earlier (localTimeOf earlier)))
+  check "short-date check refuses a year on a same-year day" (not (shortDated earlier (shortDayOf earlier + ", 2026, " + shortTimeOf earlier)))
 
   commands |> List.iteri (fun i command ->
     let frame = { CommandFrame.Correlation = (if i = 0 then System.Int32.MaxValue else i + 1); Command = command }

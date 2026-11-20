@@ -1,13 +1,8 @@
-/// The one sequencer of the daemon's observations of itself and its machine.
-///
-/// Every acquisition point the daemon already has — a lease request or
-/// renewal, the resource sample a page drives, a health request, the health
-/// record DaemonMode builds — hands its reading here. The tick folds the
-/// machine reading into the memory level (MemoryPressureWatch owns the level
-/// and its hysteresis), stamps one serial per publication and publishes the
-/// whole reading as one immutable value, so Health derives from one fact with
-/// one age instead of three samplers racing. No timer runs: the daemon reports
-/// as often as it is asked and says when it last looked.
+// The daemon's observations of itself and its machine are sequenced here.
+// Lease operations, health requests and the background monitor hand in their
+// memory readings. MemoryPressureWatch settles the level with hysteresis.
+// Each publication carries a serial and both acquisition times. Background
+// checks publish only when pressure or daemon accounting changes.
 module Bozzetto.Server.HealthTick
 
 open System
@@ -57,21 +52,54 @@ let private empty =
   { Serial = 0L; SampledAtMs = 0L; Machine = { MachineMemory.Stats.TotalBytes = 0L; AvailableBytes = 0L }
     Level = MemoryPressure.Normal; Record = None; Telemetry = None; RecordAtMs = 0L }
 
-/// Under the gate: fold one machine reading into the level and retain it.
-let private fold (machine: MachineMemory.Stats) =
-  let level = MemoryPressureWatch.observe MemorySupervisor.defaultThresholds machine
+let private observeLevel machine = MemoryPressureWatch.observe MemorySupervisor.defaultThresholds machine
+
+// Under the gate: retain one machine reading with its settled level.
+let private retain machine level =
   let previous = latest |> Option.defaultValue empty
-  let moved = latest |> Option.exists (fun earlier -> earlier.Level <> level)
   let tick = { previous with Serial = previous.Serial + 1L; SampledAtMs = now (); Machine = machine; Level = level }
   latest <- Some tick
-  tick, moved
+  tick
 
-/// Fold one machine reading into the level and publish the reading. A level
-/// move is news about the daemon too, so its record follows, once.
-let rec observe (machine: MachineMemory.Stats) : Tick =
-  let tick, moved, publish = lock gate (fun () -> let tick, moved = fold machine in tick, moved, refreshing = 0)
-  if publish then changed.Trigger tick
-  if moved && publish then refresh () |> ignore
+// Under the gate: reserve a refresh before any other observation can publish.
+let private startRefresh () =
+  refreshing <- refreshing + 1
+  started <- started + 1L
+  reader, started
+
+let private finishRefresh (read, ordinal) =
+  let obtained =
+    try Ok (read |> Option.bind (fun read -> read ()))
+    with error -> Error error
+  let tick =
+    lock gate (fun () ->
+      try
+        if latest.IsNone then
+          let machine = MachineMemory.current ()
+          retain machine (observeLevel machine) |> ignore
+        let previous = latest |> Option.defaultValue empty
+        let record, telemetry, recordAt =
+          match obtained with
+          | Ok (Some record) when ordinal > installed ->
+            let telemetry = DaemonTelemetry.current ()
+            let recordAt = now ()
+            installed <- ordinal
+            Some record, telemetry, recordAt
+          | _ -> previous.Record, previous.Telemetry, previous.RecordAtMs
+        let tick =
+          { previous with
+              Serial = previous.Serial + 1L
+              Record = record
+              Telemetry = telemetry
+              RecordAtMs = recordAt }
+        latest <- Some tick
+        tick
+      finally
+        refreshing <- refreshing - 1)
+  match obtained with
+  | Error error -> Log.warn "[health-tick] the health record failed: %s" error.Message
+  | Ok _ -> ()
+  changed.Trigger tick
   tick
 
 /// Ask the daemon for its health record and publish the reading with it. The
@@ -80,41 +108,32 @@ let rec observe (machine: MachineMemory.Stats) : Tick =
 /// that fails, or that a later-started refresh has already superseded, leaves
 /// the installed record and its time as they were; the reading is still
 /// published, with its own time.
-and refresh () : Tick =
-  let read, ordinal =
+let refresh () : Tick = lock gate startRefresh |> finishRefresh
+
+// Fold one machine reading into the level and publish the reading. A level
+// move is news about the daemon too, so its record follows, once.
+let observe (machine: MachineMemory.Stats) : Tick =
+  let tick, moved, publish =
     lock gate (fun () ->
-      refreshing <- refreshing + 1
-      started <- started + 1L
-      reader, started)
-  // A record obtained, or nothing: a reader that fails or has no record to give
-  // leaves the installed record, its telemetry and its time untouched.
-  let obtained =
-    read |> Option.bind (fun read ->
-      try read ()
-      with error ->
-        Log.warn "[health-tick] the health record failed: %s" error.Message
-        None)
-  let tick =
-    lock gate (fun () ->
-      refreshing <- refreshing - 1
-      if latest.IsNone then fold (MachineMemory.current ()) |> ignore
-      let previous = latest |> Option.defaultValue empty
-      let record, telemetry, recordAt =
-        match obtained with
-        | Some record when ordinal > installed ->
-          installed <- ordinal
-          Some record, DaemonTelemetry.current (), now ()
-        | _ -> previous.Record, previous.Telemetry, previous.RecordAtMs
-      let tick =
-        { previous with
-            Serial = previous.Serial + 1L
-            Record = record
-            Telemetry = telemetry
-            RecordAtMs = recordAt }
-      latest <- Some tick
-      tick)
-  changed.Trigger tick
+      let level = observeLevel machine
+      let moved = latest |> Option.exists (fun earlier -> earlier.Level <> level)
+      retain machine level, moved, refreshing = 0)
+  if publish then changed.Trigger tick
+  if moved && publish then refresh () |> ignore
   tick
+
+// A background transition publishes one tick with refreshed accounting.
+// Steady checks leave the last published tick and its acquisition times alone.
+let observeTransition forceRefresh (previousOwnedPids: Set<int>) ownedPids (machine: MachineMemory.Stats) : unit =
+  let pending =
+    lock gate (fun () ->
+      let level = observeLevel machine
+      let moved = latest |> Option.forall (fun earlier -> earlier.Level <> level)
+      if moved || previousOwnedPids <> ownedPids || forceRefresh then
+        retain machine level |> ignore
+        Some (startRefresh ())
+      else None)
+  pending |> Option.iter (finishRefresh >> ignore)
 
 /// One fresh reading of this machine, folded in and published: what a lease
 /// decision or a heartbeat does before it reports the level.
