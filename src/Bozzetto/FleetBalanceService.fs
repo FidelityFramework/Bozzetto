@@ -237,8 +237,8 @@ module FleetBalanceService =
       let openClaims =
         frame.ClaimState
         |> Array.sumBy (function
-          | Cohort.ClaimState.Held _
-          | Cohort.ClaimState.Orphaned _ -> 1
+          | Cohort.ClaimState.Held _ -> 1
+          | Cohort.ClaimState.Orphaned _
           | Cohort.ClaimState.Released _ -> 0)
       let unsettledLandings =
         frame.LandingState
@@ -249,12 +249,6 @@ module FleetBalanceService =
           | Cohort.LandingState.Blocked _
           | Cohort.LandingState.Landed _
           | Cohort.LandingState.Withdrawn -> 0)
-      let orphanedClaims =
-        frame.ClaimState
-        |> Array.sumBy (function
-          | Cohort.ClaimState.Orphaned _ -> 1
-          | Cohort.ClaimState.Held _
-          | Cohort.ClaimState.Released _ -> 0)
       let unauditedRuns =
         match workOpt with
         | None -> 0
@@ -292,7 +286,7 @@ module FleetBalanceService =
       { Members = members
         OpenClaimCount = openClaims
         UnauditedRunCount = unauditedRuns
-        DirtyTrancheCount = unsettledLandings + orphanedClaims }
+        DirtyTrancheCount = unsettledLandings }
 
   let computeWorkContext
       (localId: string)

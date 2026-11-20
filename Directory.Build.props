@@ -15,7 +15,7 @@
          Change this only for a deliberate release. Builds, commits and pushes
          retain it; source revisions and artifact hashes identify each build.
          The SDK derives the assembly/file versions from this release value. -->
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <!-- Reproducible/tamper-evident restore: commit packages.lock.json per
          project and fail restore if it drifts from Directory.Packages.props
          without a regenerate. RestoreLockedMode is scoped to CI so local

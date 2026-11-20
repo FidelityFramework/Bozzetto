@@ -240,29 +240,17 @@ let private uptimeText (uptime: float) (startedAt: float) =
   else "up " + duration uptime + " · since " + dateTime startedAt
 
 // Live fleet rebalancing and silent-agent visibility banner (pure Ranvier binding to pushed FleetBalance).
-let private fleetBalanceBanner (stores: Stores) =
+let private rebalanceAdvisoryBanner (stores: Stores) =
   let balance () = stores.FleetBalance.Value
-  let isUrgent () =
-    let b = balance ()
-    (b.hasAdvisory && b.advisory.throttled)
-    || (b.silentAlerts |> Array.exists (fun a -> a.kind = "silent_auditor"))
-  let silentLabel kind =
-    match kind with
-    | "silent_auditor" -> "Silent auditor"
-    | "silent_implementer" -> "Silent implementer"
-    | _ -> "Silent observer"
-  show (fun () ->
-    stores.FleetBalanceSeen.Value
-    && (balance().hasAdvisory || balance().silentAlerts.Length > 0)) (fun () ->
+  show (fun () -> stores.FleetBalanceSeen.Value && (balance ()).hasAdvisory) (fun () ->
+    let adv () = (balance ()).advisory
     div [|
       clsRx (fun () ->
-        let tone = if isUrgent () then "border-error/40" else "border-warning/40"
-        "fleet-balance-banner flex flex-col gap-2 p-3 rounded-box bg-base-200 border text-xs w-full max-w-full min-w-0 " + tone)
+        let tone = if (adv ()).throttled then "border-error/40" else "border-warning/40"
+        "fleet-balance-banner fleet-rebalance-banner flex flex-wrap items-center gap-2 p-3 rounded-box bg-base-200 border text-xs w-full max-w-full min-w-0 " + tone)
       attr "role" "status"
     |] [|
-      show (fun () -> (balance ()).hasAdvisory) (fun () ->
-        let adv () = (balance ()).advisory
-        div [| cls "fleet-balance-rebalance flex flex-wrap items-center gap-2 min-w-0" |] [|
+      div [| cls "fleet-balance-rebalance flex flex-wrap items-center gap-2 min-w-0" |] [|
           span [| clsRx (fun () -> if (adv ()).throttled then "badge badge-sm badge-error" else "badge badge-sm badge-warning") |] [|
             rx (fun () -> if (adv ()).throttled then "Z13 throttled" else "Rebalance advisory")
           |]
@@ -282,35 +270,55 @@ let private fleetBalanceBanner (stores: Stores) =
               let detail = (adv ()).reason
               if cands = "" then detail else detail + " [" + cands + "]")
           |]
-        |])
-      show (fun () -> (balance ()).silentAlerts.Length > 0) (fun () ->
-        div [| cls "fleet-balance-silent flex flex-col gap-1 min-w-0" |] [|
-          div [| cls "flex flex-wrap items-center gap-2 min-w-0 opacity-80" |] [|
-            span [| cls "font-semibold" |] [|
-              rx (fun () -> string (balance ()).silentAlerts.Length + " idle/silent cohort member(s)")
-            |]
-            span [| cls "font-mono text-xs" |] [|
-              rx (fun () ->
-                let b = balance ()
-                string b.activeLeaseCount + " active lease · " + string b.openClaimCount + " open claims · " + string b.unauditedRunCount + " unaudited · " + string b.dirtyTrancheCount + " dirty")
-            |]
+        |]
+      |])
+
+// Live silent cohort alert banner (Dashboard-only, pure Ranvier binding to pushed FleetBalance).
+let private silentAgentsBanner (stores: Stores) =
+  let balance () = stores.FleetBalance.Value
+  let isUrgent () = (balance ()).silentAlerts |> Array.exists (fun a -> a.kind = "silent_auditor")
+  let silentLabel kind =
+    match kind with
+    | "silent_auditor" -> "Silent auditor"
+    | "silent_implementer" -> "Silent implementer"
+    | _ -> "Silent observer"
+  let formatMember (a: SilentAgentAlertView) =
+    if a.agentFamily = "" || a.agentFamily = a.displayName then a.displayName + " (" + a.role + ")"
+    else a.displayName + " (" + a.agentFamily + ", " + a.role + ")"
+  show (fun () -> stores.FleetBalanceSeen.Value && (balance ()).silentAlerts.Length > 0) (fun () ->
+    div [|
+      clsRx (fun () ->
+        let tone = if isUrgent () then "border-error/40" else "border-warning/40"
+        "fleet-balance-banner fleet-silent-banner flex flex-col gap-1.5 p-3 rounded-box bg-base-200 border text-xs w-full max-w-full min-w-0 " + tone)
+      attr "role" "status"
+    |] [|
+      div [| cls "fleet-balance-silent flex flex-col gap-1 min-w-0" |] [|
+        div [| cls "flex flex-wrap items-center gap-2 min-w-0 opacity-80" |] [|
+          span [| cls "font-semibold" |] [|
+            rx (fun () -> string (balance ()).silentAlerts.Length + " idle/silent cohort member(s)")
           |]
-          each (fun (a: SilentAgentAlertView) -> a.memberKey) (fun () -> (balance ()).silentAlerts) (fun alert ->
-            div [| cls "fleet-silent-row flex flex-wrap items-center gap-2 min-w-0 break-words" |] [|
-              span [|
-                clsRx (fun () ->
-                  if (alert ()).kind = "silent_auditor" then "badge badge-xs badge-error"
-                  else "badge badge-xs badge-warning")
-              |] [| rx (fun () -> silentLabel (alert ()).kind) |]
-              span [| cls "font-semibold" |] [|
-                rx (fun () -> (alert ()).displayName + " (" + (alert ()).agentFamily + ", " + (alert ()).role + ")")
-              |]
-              span [| cls "font-mono opacity-75" |] [|
-                rx (fun () -> "silent " + string (int64 (alert ()).idleSeconds) + "s")
-              |]
-              span [| cls "opacity-80 min-w-0 break-words" |] [| rx (fun () -> (alert ()).reason) |]
-            |])
-        |])
+          span [| cls "font-mono text-xs" |] [|
+            rx (fun () ->
+              let b = balance ()
+              string b.activeLeaseCount + " active lease · " + string b.openClaimCount + " open claims · " + string b.unauditedRunCount + " unaudited · " + string b.dirtyTrancheCount + " dirty")
+          |]
+        |]
+        each (fun (a: SilentAgentAlertView) -> a.memberKey) (fun () -> (balance ()).silentAlerts) (fun alert ->
+          div [|
+            cls "fleet-silent-row flex flex-wrap items-center gap-2 min-w-0 break-words"
+            titleRx (fun () -> (alert ()).reason)
+          |] [|
+            span [|
+              clsRx (fun () ->
+                if (alert ()).kind = "silent_auditor" then "badge badge-xs badge-error"
+                else "badge badge-xs badge-warning")
+            |] [| rx (fun () -> silentLabel (alert ()).kind) |]
+            span [| cls "font-semibold" |] [| rx (fun () -> formatMember (alert ())) |]
+            span [| cls "font-mono opacity-75" |] [|
+              rx (fun () -> "silent " + duration ((alert ()).idleSeconds * 1000.))
+            |]
+          |])
+      |]
     |])
 
 // The daemon's health, bound directly to the signals the pushed Health,
@@ -1270,7 +1278,7 @@ let private workNodesPanel (stores: Stores) (connected: unit -> bool) (read: Nod
             (fun () -> para [| cls "text-sm opacity-70" |] [| text "Work state unavailable; no idle state inferred." |])
         |]
       |]
-    details [| flag "open" true; cls "work-nodes flex flex-col gap-3" |] [|
+    details [| flag "open" false; cls "work-nodes flex flex-col gap-3" |] [|
       summary [| cls "cursor-pointer text-lg font-bold" |] [| text "Work across nodes" |]
       div [| cls "flex flex-wrap items-center gap-2 text-xs opacity-70" |] [|
         span [||] [| rx (fun () -> "Finished and abandoned entries older than " + olderWindowLabel () + " collapse behind Show older; at most 20 recent entries per node are shown.") |]
@@ -1434,7 +1442,7 @@ let app () : V =
       div [| clsRx (fun () -> if connected () then "flex-1 min-h-0 overflow-auto" else "flex-1 min-h-0 overflow-auto opacity-70") |] [|
         if workPage then
           div [| cls "grid grid-cols-1 xl:grid-cols-3 gap-4 p-4" |] [|
-            div [| cls "xl:col-span-3" |] [| fleetBalanceBanner stores |]
+            div [| cls "xl:col-span-3" |] [| rebalanceAdvisoryBanner stores |]
             div [| cls "xl:col-span-3" |] [| fleetCapacityGrid stores connected |]
             details [| flag "open" true; cls "xl:col-span-3 controller-compiler" |] [|
               summary [| cls "cursor-pointer text-sm font-semibold" |] [| text "Controller compiler controls" |]
@@ -1457,7 +1465,7 @@ let app () : V =
         else
           div [| cls "flex flex-col gap-4 p-4" |] [|
             healthStrip stores
-            fleetBalanceBanner stores
+            silentAgentsBanner stores
             agentsPanel stores
             hostPanel stores connected selectedResourceNode selectResourceNode resourceDispatch
             details [||] [|

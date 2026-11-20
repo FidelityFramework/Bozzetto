@@ -10,6 +10,11 @@ open Bozzetto.Measures
 /// Explicit schema for the existing cohort ledger JSON. Union tags and arrays
 /// retain the recorded adjacent-tag format; no runtime type inspection is used.
 module CohortJson =
+  type private DecodeError = DecodeError of string
+  let private fail msg = Error (DecodeError msg)
+  let private unwrap (res: Result<'a, DecodeError>) : Result<'a, string> =
+    res |> Result.mapError (fun (DecodeError msg) -> msg)
+
   let private variant name fields =
     JsonValue.Object (["type", JsonValue.String name]
       @ (if List.isEmpty fields then [] else ["value", JsonValue.Array fields]))
@@ -21,17 +26,17 @@ module CohortJson =
       match fields.TryFind "type", fields.TryFind "value" with
       | Some (JsonValue.String tag), None -> Ok (tag, [])
       | Some (JsonValue.String tag), Some (JsonValue.Array values) -> Ok (tag, values)
-      | _ -> Error "A cohort union needs a string type and an optional value array."
-    | _ -> Error "A cohort union must be an object."
+      | _ -> fail "A cohort union needs a string type and an optional value array."
+    | _ -> fail "A cohort union must be an object."
 
   let private text = JsonValue.String
-  let private readText = function JsonValue.String value -> Ok value | _ -> Error "Expected a string."
+  let private readText = function JsonValue.String value -> Ok value | _ -> fail "Expected a string."
   let private signed (value: int64) = JsonValue.ofInt64 value
-  let private readSigned value = match JsonValue.tryAsInt64 value with Some number -> Ok number | None -> Error "Expected an exact integer-spelled Int64."
+  let private readSigned value = match JsonValue.tryAsInt64 value with Some number -> Ok number | None -> fail "Expected an exact integer-spelled Int64."
   let private integer (value: int) = signed (int64 value)
   let private readInteger value =
     readSigned value |> Result.bind (fun number ->
-      if number < int64 Int32.MinValue || number > int64 Int32.MaxValue then Error "Integer exceeds Int32."
+      if number < int64 Int32.MinValue || number > int64 Int32.MaxValue then fail "Integer exceeds Int32."
       else Ok (int number))
   let private fence (value: int64<fence>) = signed (int64 value)
   let private readFence value = readSigned value |> Result.map LanguagePrimitives.Int64WithMeasure<fence>
@@ -40,14 +45,14 @@ module CohortJson =
     readText value |> Result.bind (fun raw ->
       match DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
       | true, parsed -> Ok parsed
-      | false, _ -> Error "Expected an ISO date-time string.")
+      | false, _ -> fail "Expected an ISO date-time string.")
   let private array encode values = JsonValue.Array (List.map encode values)
   let private readArray decode = function
     | JsonValue.Array values ->
       values |> List.fold (fun previous value ->
         previous |> Result.bind (fun decoded -> decode value |> Result.map (fun item -> item :: decoded))) (Ok [])
       |> Result.map List.rev
-    | _ -> Error "Expected an array."
+    | _ -> fail "Expected an array."
   let private map2 constructor a b =
     a |> Result.bind (fun a -> b |> Result.map (fun b -> constructor a b))
   let private map3 constructor a b c =
@@ -61,12 +66,12 @@ module CohortJson =
     | MemberId.Mcp a -> variant "Mcp" [text a]
     | MemberId.Minted a -> variant "Minted" [text a]
 
-  let readMember value : Result<MemberId, string> =
+  let private readMember value : Result<MemberId, DecodeError> =
     tagged value |> Result.bind (function
       | "Browser", [a] -> readText a |> Result.map MemberId.Browser
       | "Mcp", [a] -> readText a |> Result.map MemberId.Mcp
       | "Minted", [a] -> readText a |> Result.map MemberId.Minted
-      | tag, _ -> Error ("Unknown MemberId case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown MemberId case or invalid field count: " + tag))
 
   let roleValue (value: JoinableRole) =
     match value with
@@ -74,50 +79,50 @@ module CohortJson =
     | JoinableRole.Verifier -> variant "Verifier" []
     | JoinableRole.Observer -> variant "Observer" []
 
-  let readRole value : Result<JoinableRole, string> =
+  let private readRole value : Result<JoinableRole, DecodeError> =
     tagged value |> Result.bind (function
       | "Implementer", [] -> Ok JoinableRole.Implementer
       | "Verifier", [] -> Ok JoinableRole.Verifier
       | "Observer", [] -> Ok JoinableRole.Observer
-      | tag, _ -> Error ("Unknown JoinableRole case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown JoinableRole case or invalid field count: " + tag))
 
   let scopeValue (value: ClaimScope) =
     match value with
     | ClaimScope.File a -> variant "File" [text a]
     | ClaimScope.Project a -> variant "Project" [text a]
 
-  let readScope value : Result<ClaimScope, string> =
+  let private readScope value : Result<ClaimScope, DecodeError> =
     tagged value |> Result.bind (function
       | "File", [a] -> readText a |> Result.map ClaimScope.File
       | "Project", [a] -> readText a |> Result.map ClaimScope.Project
-      | tag, _ -> Error ("Unknown ClaimScope case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown ClaimScope case or invalid field count: " + tag))
 
   let claimIdValue (value: ClaimId) =
     match value with
     | ClaimId a -> variant "ClaimId" [text a]
 
-  let readClaimId value : Result<ClaimId, string> =
+  let private readClaimId value : Result<ClaimId, DecodeError> =
     tagged value |> Result.bind (function
       | "ClaimId", [a] -> readText a |> Result.map ClaimId
-      | tag, _ -> Error ("Unknown ClaimId case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown ClaimId case or invalid field count: " + tag))
 
   let landingIdValue (value: LandingId) =
     match value with
     | LandingId a -> variant "LandingId" [text a]
 
-  let readLandingId value : Result<LandingId, string> =
+  let private readLandingId value : Result<LandingId, DecodeError> =
     tagged value |> Result.bind (function
       | "LandingId", [a] -> readText a |> Result.map LandingId
-      | tag, _ -> Error ("Unknown LandingId case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown LandingId case or invalid field count: " + tag))
 
   let testIdValue (value: TestId) =
     match value with
     | TestId a -> variant "TestId" [text a]
 
-  let readTestId value : Result<TestId, string> =
+  let private readTestId value : Result<TestId, DecodeError> =
     tagged value |> Result.bind (function
       | "TestId", [a] -> readText a |> Result.map TestId
-      | tag, _ -> Error ("Unknown TestId case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown TestId case or invalid field count: " + tag))
 
   let nextActionValue (value: NextAction) =
     match value with
@@ -126,13 +131,13 @@ module CohortJson =
     | NextAction.FixTests a -> variant "FixTests" [(array testIdValue) a]
     | NextAction.Withdraw -> variant "Withdraw" []
 
-  let readNextAction value : Result<NextAction, string> =
+  let private readNextAction value : Result<NextAction, DecodeError> =
     tagged value |> Result.bind (function
       | "RebaseAndResubmit", [] -> Ok NextAction.RebaseAndResubmit
       | "AwaitConductor", [] -> Ok NextAction.AwaitConductor
       | "FixTests", [a] -> (readArray readTestId) a |> Result.map NextAction.FixTests
       | "Withdraw", [] -> Ok NextAction.Withdraw
-      | tag, _ -> Error ("Unknown NextAction case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown NextAction case or invalid field count: " + tag))
 
   let blockerValue (value: LandingBlocker<MemberId>) =
     match value with
@@ -143,7 +148,7 @@ module CohortJson =
     | LandingBlocker.VetoedBy (a, b) -> variant "VetoedBy" [memberValue a; text b]
     | LandingBlocker.Inconclusive a -> variant "Inconclusive" [text a]
 
-  let readBlocker value : Result<LandingBlocker<MemberId>, string> =
+  let private readBlocker value : Result<LandingBlocker<MemberId>, DecodeError> =
     tagged value |> Result.bind (function
       | "RebaseConflict", [a] -> (readArray readText) a |> Result.map LandingBlocker.RebaseConflict
       | "FailingTests", [a] -> (readArray readTestId) a |> Result.map LandingBlocker.FailingTests
@@ -151,7 +156,7 @@ module CohortJson =
       | "HeadMoved", [a; b] -> map2 (fun a b -> LandingBlocker.HeadMoved(a, b)) (readText a) (readText b)
       | "VetoedBy", [a; b] -> map2 (fun a b -> LandingBlocker.VetoedBy(a, b)) (readMember a) (readText b)
       | "Inconclusive", [a] -> readText a |> Result.map LandingBlocker.Inconclusive
-      | tag, _ -> Error ("Unknown LandingBlocker case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown LandingBlocker case or invalid field count: " + tag))
 
   let landingStateValue (value: LandingState<MemberId>) =
     match value with
@@ -162,7 +167,7 @@ module CohortJson =
     | LandingState.Landed a -> variant "Landed" [text a]
     | LandingState.Withdrawn -> variant "Withdrawn" []
 
-  let readLandingState value : Result<LandingState<MemberId>, string> =
+  let private readLandingState value : Result<LandingState<MemberId>, DecodeError> =
     tagged value |> Result.bind (function
       | "Queued", [] -> Ok LandingState.Queued
       | "Rebasing", [a] -> readText a |> Result.map LandingState.Rebasing
@@ -170,7 +175,7 @@ module CohortJson =
       | "Blocked", [a; b] -> map2 (fun a b -> LandingState.Blocked(a, b)) (readBlocker a) (readNextAction b)
       | "Landed", [a] -> readText a |> Result.map LandingState.Landed
       | "Withdrawn", [] -> Ok LandingState.Withdrawn
-      | tag, _ -> Error ("Unknown LandingState case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown LandingState case or invalid field count: " + tag))
 
   let pruneReasonValue (value: ClaimPruneReason) =
     match value with
@@ -178,12 +183,12 @@ module CohortJson =
     | ClaimPruneReason.ReleasedPastRetention a -> variant "ReleasedPastRetention" [date a]
     | ClaimPruneReason.SupersededBy a -> variant "SupersededBy" [claimIdValue a]
 
-  let readPruneReason value : Result<ClaimPruneReason, string> =
+  let private readPruneReason value : Result<ClaimPruneReason, DecodeError> =
     tagged value |> Result.bind (function
       | "OrphanedPastRetention", [a] -> readDate a |> Result.map ClaimPruneReason.OrphanedPastRetention
       | "ReleasedPastRetention", [a] -> readDate a |> Result.map ClaimPruneReason.ReleasedPastRetention
       | "SupersededBy", [a] -> readClaimId a |> Result.map ClaimPruneReason.SupersededBy
-      | tag, _ -> Error ("Unknown ClaimPruneReason case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown ClaimPruneReason case or invalid field count: " + tag))
 
   let private session = function
     | Some value -> variant "Some" [text value]
@@ -192,13 +197,13 @@ module CohortJson =
     tagged value |> Result.bind (function
       | "Some", [value] -> readText value |> Result.map Some
       | "None", [] -> Ok None
-      | _ -> Error "Invalid optional session identity.")
+      | _ -> fail "Invalid optional session identity.")
   let private claims values =
     values |> array (fun (claim, stamp) -> JsonValue.Array [claimIdValue claim; fence stamp])
   let private readClaims value =
     value |> readArray (function
       | JsonValue.Array [claim; stamp] -> map2 (fun claim stamp -> claim, stamp) (readClaimId claim) (readFence stamp)
-      | _ -> Error "A claim fence requires a two-element array.")
+      | _ -> fail "A claim fence requires a two-element array.")
   let private rebaseResult = function
     | Ok sha -> variant "Ok" [text sha]
     | Error files -> variant "Error" [array text files]
@@ -206,7 +211,7 @@ module CohortJson =
     tagged value |> Result.bind (function
       | "Ok", [sha] -> readText sha |> Result.map Ok
       | "Error", [files] -> readArray readText files |> Result.map Error
-      | _ -> Error "Invalid rebase result.")
+      | _ -> fail "Invalid rebase result.")
 
   let commandValue (value: CohortCommand<MemberId>) =
     match value with
@@ -235,7 +240,7 @@ module CohortJson =
     | CohortCommand.SetIntegrationHead (a, b) -> variant "SetIntegrationHead" [memberValue a; text b]
     | CohortCommand.ResolveVeto (a, b) -> variant "ResolveVeto" [memberValue a; landingIdValue b]
 
-  let readCommand value : Result<CohortCommand<MemberId>, string> =
+  let private readCommand value : Result<CohortCommand<MemberId>, DecodeError> =
     tagged value |> Result.bind (function
       | "Join", [a; b; c] -> map3 (fun a b c -> CohortCommand.Join(a, b, c)) (readMember a) (readRole b) (readSession c)
       | "JoinNamed", [a; b; c; d] -> map4 (fun a b c d -> CohortCommand.JoinNamed(a, b, c, d)) (readMember a) (readRole b) (readSession c) (readText d)
@@ -261,7 +266,7 @@ module CohortJson =
       | "VetoLanding", [a; b; c] -> map3 (fun a b c -> CohortCommand.VetoLanding(a, b, c)) (readMember a) (readLandingId b) (readText c)
       | "SetIntegrationHead", [a; b] -> map2 (fun a b -> CohortCommand.SetIntegrationHead(a, b)) (readMember a) (readText b)
       | "ResolveVeto", [a; b] -> map2 (fun a b -> CohortCommand.ResolveVeto(a, b)) (readMember a) (readLandingId b)
-      | tag, _ -> Error ("Unknown CohortCommand case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown CohortCommand case or invalid field count: " + tag))
 
   let eventValue (value: CohortEvent<MemberId>) =
     match value with
@@ -287,7 +292,7 @@ module CohortJson =
     | CohortEvent.LandingPruned (a, b) -> variant "LandingPruned" [landingIdValue a; date b]
     | CohortEvent.MemberPurged (a, b) -> variant "MemberPurged" [memberValue a; date b]
 
-  let readEvent value : Result<CohortEvent<MemberId>, string> =
+  let private readEvent value : Result<CohortEvent<MemberId>, DecodeError> =
     tagged value |> Result.bind (function
       | "MemberJoined", [a; b; c] -> map3 (fun a b c -> CohortEvent.MemberJoined(a, b, c)) (readMember a) (readRole b) (readSession c)
       | "MemberDeparted", [a; b] -> map2 (fun a b -> CohortEvent.MemberDeparted(a, b)) (readMember a) (readDate b)
@@ -310,7 +315,7 @@ module CohortJson =
       | "ClaimPruned", [a; b] -> map2 (fun a b -> CohortEvent.ClaimPruned(a, b)) (readClaimId a) (readPruneReason b)
       | "LandingPruned", [a; b] -> map2 (fun a b -> CohortEvent.LandingPruned(a, b)) (readLandingId a) (readDate b)
       | "MemberPurged", [a; b] -> map2 (fun a b -> CohortEvent.MemberPurged(a, b)) (readMember a) (readDate b)
-      | tag, _ -> Error ("Unknown CohortEvent case or invalid field count: " + tag))
+      | tag, _ -> fail ("Unknown CohortEvent case or invalid field count: " + tag))
 
   let entryValue (entry: LedgerEntry<MemberId>) =
     JsonValue.Object [
@@ -321,28 +326,28 @@ module CohortJson =
       "events", array eventValue entry.Events
     ]
 
-  let readEntry value =
+  let private readEntry value =
     match value with
     | JsonValue.Object properties ->
       let fields = Map.ofList properties
       let field name decode =
         match fields.TryFind name with
         | Some value -> decode value
-        | None -> Error ("Missing cohort ledger field: " + name)
+        | None -> fail ("Missing cohort ledger field: " + name)
       let entropy = field "entropy" readText |> Result.bind (fun value ->
         try Ok (Convert.FromBase64String value)
-        with :? FormatException -> Error "Invalid base64 ledger entropy.")
+        with :? FormatException -> fail "Invalid base64 ledger entropy.")
       map4 (fun sequence clock entropy command -> sequence, clock, entropy, command)
         (field "seq" readSigned) (field "clock" readDate) entropy (field "command" readCommand)
       |> Result.bind (fun (sequence, clock, entropy, command) ->
         field "events" (readArray readEvent) |> Result.map (fun events ->
           { Seq = LanguagePrimitives.Int64WithMeasure<ledgerSeq> sequence
             Clock = clock; Entropy = entropy; Command = command; Events = events }))
-    | _ -> Error "A cohort ledger entry must be an object."
+    | _ -> fail "A cohort ledger entry must be an object."
 
   let commandToJson value = commandValue value |> Json.serialize
-  let commandFromJson json = Json.parse json |> Result.bind readCommand
+  let commandFromJson json = Json.parse json |> Result.bind (readCommand >> unwrap)
   let eventsToJson values = array eventValue values |> Json.serialize
-  let eventsFromJson json = Json.parse json |> Result.bind (readArray readEvent)
+  let eventsFromJson json = Json.parse json |> Result.bind (readArray readEvent >> unwrap)
   let entryToJson value = entryValue value |> Json.serialize
-  let entryFromJson json = Json.parse json |> Result.bind readEntry
+  let entryFromJson json = Json.parse json |> Result.bind (readEntry >> unwrap)

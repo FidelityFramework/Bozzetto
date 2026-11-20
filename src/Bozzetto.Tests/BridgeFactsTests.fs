@@ -193,25 +193,26 @@ let factsTests =
       graph.StoredResults |> Expect.equal "still one result per work: each Withdraw released the superseded one" 2
       sink.Seen |> List.choose (function _, Leases l -> Some l.Revision | _ -> None) |> Expect.equal "lease stamps increase by one per publication" [ 1L .. 6L ]
 
-    testCase "a page registering while another thread publishes sees a snapshot and then only newer stamps, strictly increasing" <| fun () ->
+    testCaseTask "a page registering while another thread publishes sees a snapshot and then only newer stamps, strictly increasing" <| fun () -> task {
       // Controlled overlap: the publisher runs on its own thread; the registration lands somewhere in its sequence.
       // Mutation caught: deliver before committing the registration's snapshot and a stamp below the snapshot's could follow it.
       let graph = Facts.Graph(constants, incarnation)
-      let started = new ManualResetEventSlim(false)
+      let started = Tasks.TaskCompletionSource<unit>(Tasks.TaskCreationOptions.RunContinuationsAsynchronously)
       let publisher =
         Tasks.Task.Run(fun () ->
           for serial in 1L .. 400L do
             graph.Tick(tick serial (if serial % 2L = 0L then MemoryPressure.Tight else MemoryPressure.Normal)) |> ignore
-            if serial = 50L then started.Set())
-      started.Wait(TimeSpan.FromSeconds 5.) |> Expect.isTrue "the publisher is running"
+            if serial = 50L then started.TrySetResult() |> ignore)
+      do! started.Task.WaitAsync(TimeSpan.FromSeconds 5.)
       let sink = Sink()
       let current, _ = graph.Register sink.Push
-      publisher.Wait(TimeSpan.FromSeconds 10.) |> Expect.isTrue "the publisher finished"
+      do! publisher.WaitAsync(TimeSpan.FromSeconds 10.)
       let snapshot = (healthOf current).Revision
       let later = sink.Healths |> List.map _.Revision
       (later |> List.forall (fun r -> r > snapshot)) |> Expect.isTrue "every delivered stamp is newer than the snapshot's"
       (later |> List.pairwise |> List.forall (fun (a, b) -> b > a)) |> Expect.isTrue "stamps reach the page strictly increasing"
       (healthOf (graph.Current())).Revision |> Expect.equal "the final value is the last reading" 400L
+    }
 
     testCase "shutdown retires the epoch: nothing is admitted or delivered afterwards, and the core reports drained" <| fun () ->
       // Mutation caught: forget Retire and the core would not report drained; forget the flag and a late callback would be admitted.

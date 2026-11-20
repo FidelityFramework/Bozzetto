@@ -144,6 +144,9 @@ async function check() {
   await writeFile(join(evidence, 'views.json'), JSON.stringify({dashboard: d, work: c}, null, 2));
   assert.equal(d.title, 'Dashboard · Bozzetto');
   assert.equal(c.title, 'Work · Bozzetto');
+  assert.equal(await evaluate(work, "document.querySelector('.work-nodes').open"), false, 'legacy Work across nodes starts collapsed behind Fleet capacity');
+  await evaluate(work, "document.querySelector('.work-nodes > summary').click()");
+  assert.equal(await evaluate(work, "document.querySelector('.work-nodes').open"), true, 'Work across nodes expands on demand');
   const initialNode = name => `[...document.querySelectorAll('h3')].find(h => h.textContent === '${name}').closest('.card')`;
   const initialOne = await evaluate(work, `${initialNode('one')}.innerText`);
   for (const text of ['/mock/clef', 'test_suite_run · running', 'PID 6543', '/mock/dotnet', 'fixture-lease', 'fixture-test-run', 'fixture queued build · /mock/Farscape', 'Compiler worker · running · PID 7654']) assert.ok(initialOne.includes(text), `cross-node running work: ${text}`);
@@ -584,8 +587,16 @@ async function check() {
     for (const [name, page] of retrievalTabs) {
       await waitFor(page, `${balanceBanner} !== null`);
       const text = await evaluate(page, `${balanceBanner}.innerText`);
-      for (const snippet of ['Z13 throttled', 'Recommend ONE', 'policy enforce_when_lan_idle', 'Silent auditor', 'pi-auditor (pi, Verifier)', 'silent 420s']) {
-        assert.ok(text.includes(snippet), `${name}: fleet-balance-banner shows ${snippet}: ${text}`);
+      if (name === 'dashboard') {
+        for (const snippet of ['Silent auditor', 'pi-auditor (pi, Verifier)', 'silent 7m 00s']) {
+          assert.ok(text.includes(snippet), `dashboard: silent banner shows ${snippet}: ${text}`);
+        }
+        assert.ok(!text.includes('Z13 throttled') && !text.includes('Recommend ONE'), `dashboard: excludes Work rebalance advisory: ${text}`);
+      } else {
+        for (const snippet of ['Z13 throttled', 'Recommend ONE', 'policy enforce_when_lan_idle']) {
+          assert.ok(text.includes(snippet), `work: rebalance banner shows ${snippet}: ${text}`);
+        }
+        assert.ok(!text.includes('Silent auditor') && !text.includes('pi-auditor'), `work: excludes Dashboard silent cohort alerts: ${text}`);
       }
       await call('Emulation.setDeviceMetricsOverride', { width: 480, height: 900, deviceScaleFactor: 1, mobile: false }, page);
       assert.equal((await inspect(page)).overflow, false, `${name}: active fleet-balance-banner fits 480px viewport`);

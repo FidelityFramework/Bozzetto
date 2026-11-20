@@ -539,6 +539,22 @@ let private pureAndSimTests =
       (FleetBalanceService.extractCohortWorkFacts (Some landedFrame) (Some baseWork) activityAfterRead).UnauditedRunCount
       |> Expect.equal "historic LandingState.Landed does not clear unaudited run" 1
 
+      // Positive & negative control (#44): live Held claims count as OpenClaimCount, while historical Orphaned claims
+      // do not inflate OpenClaimCount or DirtyTrancheCount on an otherwise idle workstation.
+      let orphanOnlyFrame =
+        { frame with
+            ClaimState = [| ClaimState.Orphaned(implA, t0.AddHours -6.0); ClaimState.Released(implA, t0.AddHours -8.0) |] }
+      let orphanFacts = FleetBalanceService.extractCohortWorkFacts (Some orphanOnlyFrame) None Map.empty
+      orphanFacts.OpenClaimCount |> Expect.equal "historical Orphaned claims excluded from OpenClaimCount" 0
+      orphanFacts.DirtyTrancheCount |> Expect.equal "historical Orphaned claims excluded from DirtyTrancheCount" 0
+      let heldAndQueuedFrame =
+        { frame with
+            ClaimState = [| ClaimState.Held implA; ClaimState.Orphaned(implA, t0.AddHours -2.0) |]
+            LandingState = [| LandingState.Queued |] }
+      let heldFacts = FleetBalanceService.extractCohortWorkFacts (Some heldAndQueuedFrame) None Map.empty
+      heldFacts.OpenClaimCount |> Expect.equal "live Held claim counted in OpenClaimCount" 1
+      heldFacts.DirtyTrancheCount |> Expect.equal "unsettled Queued landing counted in DirtyTrancheCount" 1
+
       // Negative control: older completed verifier run (UpdatedAt < run.UpdatedAt) does NOT clear it.
       let olderAuditWork =
         AgentWork.report (oldTime.AddMinutes -5.0) verActive JoinableRole.Verifier (mkWorkReport "ver-older" "pi-active" "/repo/Bozzetto" "completed" 1L) baseWork

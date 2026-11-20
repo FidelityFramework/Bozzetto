@@ -20,6 +20,11 @@ let private entropy : Cohort.Entropy = [| 1uy |]
 
 /// Apply one command through the real decide, ignoring refusals (a RenewLease
 /// of a non-member is a harmless no-op, exactly as in production).
+let inline private stepWith (seed: byte) (clock: DateTime) (st: CohortState<'m>) (cmd: CohortCommand<'m>) : CohortState<'m> =
+  match Cohort.decide clock [| seed |] st cmd with
+  | Result.Ok(st', _, _) -> st'
+  | Result.Error err -> failtestf "expected setup command %A to succeed, got %A" cmd err
+
 let inline private step (clock: DateTime) (st: CohortState<'m>) (cmd: CohortCommand<'m>) : CohortState<'m> =
   match Cohort.decide clock entropy st cmd with
   | Result.Ok(st', _, _) -> st'
@@ -76,8 +81,8 @@ let tests =
         (CohortState.empty () : CohortState<string>)
         |> fun s -> step t0 s (CohortCommand.Join("busy", JoinableRole.Implementer, Some "sA"))
         |> fun s -> step t0 s (CohortCommand.Join("idle", JoinableRole.Implementer, Some "sB"))
-        |> fun s -> step t0 s (CohortCommand.AcquireClaim("busy", ClaimScope.File "/repo/a.fs", "editing"))
-        |> fun s -> step t0 s (CohortCommand.AcquireClaim("idle", ClaimScope.File "/repo/b.fs", "editing"))
+        |> fun s -> stepWith 1uy t0 s (CohortCommand.AcquireClaim("busy", ClaimScope.File "/repo/a.fs", "editing"))
+        |> fun s -> stepWith 2uy t0 s (CohortCommand.AcquireClaim("idle", ClaimScope.File "/repo/b.fs", "editing"))
       // 90 minutes of 60s ticks (3x the 30-min lease). "busy" active every tick.
       let final =
         [ 1 .. 90 ]
