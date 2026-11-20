@@ -5,7 +5,7 @@ module Bozzetto.Web.Shared.Protocol
 
 /// Binary envelope and vocabulary version, also carried in Welcome.
 [<Literal>]
-let ProtocolVersion = 11
+let ProtocolVersion = 12
 
 /// Existing observation requests are unchanged; deployed v9 peers remain readable.
 [<Literal>]
@@ -412,6 +412,29 @@ type PeerFrame =
   | PeerUnavailable of string
   | PeerHeartbeat of UptimeTick
 
+type RetrievalRevision = { Source: string; Revision: string option }
+type RetrievalStatus = {
+  Revision: int64
+  // "fresh" | "crossing_held" | "indexing" | "unavailable" | "unconfigured"
+  State: string
+  // "on_main_indexed" | "indexing_pending" | "quarantined_branch" | "branch_unknown" | "unavailable" | "unconfigured"
+  BranchStatus: string
+  BranchName: string
+  OnMain: bool
+  Generation: int64
+  SnapshotId: string
+  PublishedAtMs: int64
+  ChangedAtMs: int64 option
+  HeldUntilMs: int64 option
+  QueuedRetrievals: int32
+  ExpectedSources: string array
+  PendingSources: string array
+  StaleSources: string array
+  Reasons: string array
+  Revisions: RetrievalRevision array
+  Note: string
+}
+
 /// What the backend pushes to the UI. Events fold into the UI's model.
 type Event =
   | Welcome of BridgeWelcome
@@ -428,3 +451,4 @@ type Event =
   | WorkNodes of WorkBoard
   | NodeResources of NodeResources
   | NodeTranscript of NodeTranscript
+  | Retrieval of RetrievalStatus

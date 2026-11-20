@@ -107,7 +107,7 @@ module Frames =
   }
 
 let validateRequest (identity: NodeIdentity) (request: PeerObserveRequest) =
-  if request.ProtocolVersion <> ProtocolVersion && request.ProtocolVersion <> LegacyProtocolVersion then Error "protocol_mismatch"
+  if not (isPeerProtocolVersion request.ProtocolVersion) then Error "protocol_mismatch"
   elif request.Node <> identity.Node then Error "node_mismatch"
   else
     match request.Topic, request.Seconds with
@@ -118,7 +118,7 @@ let validateRequest (identity: NodeIdentity) (request: PeerObserveRequest) =
 type private ReadRequest = Observe of PeerObserveRequest | Transcript of PeerTranscriptRequest
 
 let validateTranscriptRequest (identity: NodeIdentity) (request: PeerTranscriptRequest) =
-  if request.ProtocolVersion <> ProtocolVersion && request.ProtocolVersion <> LegacyProtocolVersion then Error "protocol_mismatch"
+  if not (isPeerProtocolVersion request.ProtocolVersion) then Error "protocol_mismatch"
   elif request.Request.Source <> identity then Error "node_mismatch"
   elif request.Request.MaxBytes < 1 || request.Request.MaxBytes > MaxTranscriptPageBytes then Error "invalid_limit"
   elif request.Request.Offset < 0L || request.Request.Sequence < 1L || String.IsNullOrWhiteSpace request.Request.Journal then Error "invalid_cursor"

@@ -44,7 +44,7 @@ native Clef backend compiled by Composer.
 ├────────────────────────────────────────────────────────────┤
 │  src/Shared/Protocol.fs: Command / Event, types only       │
 │  one WebSocket on the daemon's MCP port: /ui/bridge        │
-│  (today: JSON text frames; roadmap: BAREWire binary)       │
+│  one binary CommandFrame or Event per WebSocket frame     │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -60,11 +60,9 @@ native Clef backend compiled by Composer.
   arrays rather than lists, no Map, and int32/int64 rather than `int` on the
   wire.
 - **Codecs per side.** [`src/Frontend/Codec.fs`](src/Frontend/Codec.fs)
-  encodes `CommandFrame`s and decodes `Event`s. The backend's codec is written
-  inside Bozzetto. [`src/Mock/Codec.fs`](src/Mock/Codec.fs) is its Fable twin,
-  used by the mock bridge and the tests, and is the reference for the .NET
-  codec. When BAREWire compiles under both Fable and Composer, the codecs swap
-  to binary framing; `Protocol.fs` and the UI stay as they are.
+  encodes `CommandFrame`s and decodes `Event`s. Bozzetto and the
+  [mock codec](src/Mock/Codec.fs) use the opposite direction of the same
+  [binary codec](src/Shared/BinaryCodec.fs).
 - **MVU as a metaphor.** There is no Elmish. Ranvier signals are the model
   ([`Model.fs`](src/Frontend/Model.fs)), one per slice the backend reports
   (health, uptime, leases, work nodes, sessions, ...). The backend is the
@@ -219,17 +217,15 @@ picks the correlation: positive, and unique for the page's lifetime.
 | `Refused` | correlation, target, Composer refusal code, message | as above; correlation 0 = undecodable frame |
 | `RunOutput` | transcript: generation, exit code, stdout, stderr | before the `Accepted` of a `Run` |
 | `Health` | version, pid, verdict, memory pressure, processes, alarms; RSS, machine memory and CPU as read when sent | connection/request snapshot; not live service health |
+| `Retrieval` | revision, index and branch status, published generation, snapshot, and source progress | on connect, on request, and on retrieval observation changes (binary protocol v12, event tag 14) |
 | `Leases` | active grants and queued requests | on connect, on request, on a pool change (see below) |
 | `Uptime` | `UptimeTick`: the daemon's uptime in ms | once a second from the daemon's clock, while at least one page is connected |
 | `Resources` | sequenced Linux host metrics, process incarnations and acquisition coverage | only within an explicit 1–120 second observation window |
 | `AgentWork` | daemon incarnation, publication sequence, bounded per-run reports, activity and optional usage/price | on connect/resync and common cohort-owned publication changes; client reports are not tool/test/audit acceptance |
 
-**Interim wire format:** one JSON object per WebSocket text frame. The full
-grammar is in the header of `Protocol.fs`. int64 values travel as decimal
-strings and int32/float as numbers. An option is `null` or the value. A
-`SessionTarget` is flattened to `{"host","epoch","session"}`. Commands look
-like `{"correlation":7,"command":"reserve","target":{…},"label":"…"}` and
-events like `{"event":"accepted","correlation":7,"target":{…},"completion":{"kind":"edit_reserved","reservation":"…"}}`.
+The bridge sends one typed message per binary WebSocket frame. The `BZW1`
+envelope carries protocol version 12, the message family, and the payload
+encoded by [`BinaryCodec.fs`](src/Shared/BinaryCodec.fs).
 
 Project and lease updates are owner-driven, not scan-and-diff. Counter-only
 host metrics use the explicit bounded window described below. The start time
@@ -283,7 +279,7 @@ current native API has no queued-request withdrawal operation.
 | `npm run dev` | Vite, proxying `/ui/bridge` to `$BOZZETTO_DAEMON` (default `http://127.0.0.1:47759`) |
 | `npm run preview:mock` | Serves the **built** `dist/index.html` with the mock bridge |
 | `npm test` | Codec round trip under node, for every Command and Event case plus malformed frames, and the local short-date format (#14) |
-| `npm run test:pages` | Chromium mock checks: live pushed Health transitions on an open Dashboard (Healthy/Normal → Degraded/Tight → Healthy/Normal, no reload or request), populated agent rows and usage distinctions, route separation, visible health, information-dialog visibility/accessibility/focus, caught stylesheet mutation, navigation/shared-owner command/reload and 900/480 px layouts |
+| `npm run test:pages` | Chromium mock checks: in-place Health changes on Dashboard and Retrieval changes on both routes, including a distinct quarantined branch, with no browser requests or reloads during the transitions. Also checks agent rows and usage, route separation, information dialogs, navigation, and 900/480 px layouts. |
 | `npm run build` | Fable → `vite build` → verify → weld |
 | `npm run build:daemon` | The same verified build, welded into `../Bozzetto/WebAssets.fs` for the daemon |
 
@@ -303,7 +299,11 @@ and a run a `run_app` lease, one of each kind at a time, so a second build
 queues. The mock pushes Leases on every grant, queue and release, and Health
 when its verdict, memory pressure, process set or alarms change; three open
 sessions degrade it to Degraded with Tight memory, and closing one restores
-it. Its state is shared by every tab, as the daemon's is.
+it. The mock starts with retrieval generation 12. Reserving an edit for
+`/mock/retrieval-index.fidproj` pushes Indexing and a successful build publishes
+the next generation. Opening `/mock/quarantined-branch.fidproj` shows the
+quarantined branch until that session is closed or canceled. Every tab sees
+the same state.
 
 **Against a daemon.** Bring up a dedicated dev daemon (never the installed one
 on 47749/47750), then run

@@ -29,12 +29,12 @@ let anomalyJson (verdict: Bozzetto.Features.HealthAnomaly.Verdict) =
   | Bozzetto.Features.HealthAnomaly.Verdict.InsufficientHistory
   | Bozzetto.Features.HealthAnomaly.Verdict.Normal -> None
 
-/// Observe and encode daemon resource state with exact byte counts.
-let serializeWithLiveness
+let serializeWithStatus
   (mcpPort: int)
   (health: Bozzetto.Features.HealthSnapshot option)
   (telemetry: Bozzetto.Server.DaemonTelemetry.Snapshot option)
-  (leasedCommands: Bozzetto.Server.DaemonTelemetry.LeasedCommandLiveness list) : string =
+  (leasedCommands: Bozzetto.Server.DaemonTelemetry.LeasedCommandLiveness list)
+  (retrieval: Bozzetto.Web.Shared.Protocol.RetrievalStatus) : string =
   let machineMemory = Bozzetto.Features.MachineMemory.current ()
   let leases = Bozzetto.Features.LeaseWatch.snapshot ()
   let anomalyValues =
@@ -139,7 +139,15 @@ let serializeWithLiveness
       "leaseLive", (cmd.LeaseLive |> boolean)
       "leaseExpiresAt", (cmd.LeaseExpiresAt |> optional timestamp) ]))
     "anomalies", (anomalyValues |> array id)
+    "retrieval", Bozzetto.Server.RetrievalObservation.daemonStatusJson retrieval
     "available", (payload.available |> strings) ] |> render)
+
+let serializeWithLiveness
+  (mcpPort: int)
+  (health: Bozzetto.Features.HealthSnapshot option)
+  (telemetry: Bozzetto.Server.DaemonTelemetry.Snapshot option)
+  (leasedCommands: Bozzetto.Server.DaemonTelemetry.LeasedCommandLiveness list) : string =
+  serializeWithStatus mcpPort health telemetry leasedCommands (Bozzetto.Server.RetrievalObservation.currentForStatus None)
 
 let serialize
   (mcpPort: int)

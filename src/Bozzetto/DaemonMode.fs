@@ -1589,6 +1589,26 @@ let run
   let composer =
     Bozzetto.ComposerIntegration.ComposerSupervisor.fromEnvironmentWithJournal
       (LocalData.operationsPath DaemonState.BozzettoDir)
+  let daemonWorkspaceRoot =
+    let envRoot = Environment.GetEnvironmentVariable "BOZZETTO_WORKSPACE_ROOT"
+    if not (String.IsNullOrWhiteSpace envRoot) && System.IO.Directory.Exists(envRoot.Trim()) then
+      System.IO.Path.GetFullPath(envRoot.Trim())
+    else
+      Environment.CurrentDirectory
+  let resolveActiveRetrievalDir () =
+    composer.NewestOpenProjectDirectory()
+    |> Option.defaultValue daemonWorkspaceRoot
+    |> Some
+  let retrievalConfig = Bozzetto.Server.RetrievalObservation.loadConfig None
+  use retrievalController =
+    Bozzetto.Server.RetrievalObservation.Controller.FromConfigResult(
+      retrievalConfig,
+      daemonWorkspaceRoot,
+      cts.Token)
+  let refreshRetrievalCheckout () = retrievalController.RefreshCheckout resolveActiveRetrievalDir
+  use _composerRetrievalSync = composer.Changed.Subscribe refreshRetrievalCheckout
+  refreshRetrievalCheckout ()
+  use _retrievalAmbient = Bozzetto.Server.RetrievalObservation.install retrievalController
   use unleasedWakeGate = new System.Threading.SemaphoreSlim(0, 1)
   let immediateCleanupRequested = ref 0
   let wakeUnleasedMonitor () =
@@ -2497,6 +2517,7 @@ let run
                 previousOwnedPids <- currentOwnedPids
           with
           | :? OperationCanceledException when cts.IsCancellationRequested -> ()
+          | :? System.ObjectDisposedException when cts.IsCancellationRequested -> ()
           | ex ->
             log.LogWarning("Background health and unleased-subprocess monitor failed: {Error}", ex.Message)
       },
@@ -3205,6 +3226,12 @@ let run
     log.LogWarning("unleasedMonitorTask shutdown wait timed out — background scan may still be running")
   | ex ->
     log.LogWarning("unleasedMonitorTask shutdown wait observed error: {Error}", ex.Message)
+  // Join background retrieval SSE observer cleanly before disposal.
+  try _composerRetrievalSync.Dispose() with _ -> ()
+  try
+    do! retrievalController.Close() |> Async.StartAsTask
+  with ex ->
+    log.LogWarning("retrievalController shutdown wait observed error: {Error}", ex.Message)
   // Also what roots frictionPruneTimer for the daemon's lifetime (see its def).
   try frictionPruneTimer.Dispose()
   with :? System.ObjectDisposedException -> ()

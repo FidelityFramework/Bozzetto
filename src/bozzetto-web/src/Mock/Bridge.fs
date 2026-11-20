@@ -118,6 +118,31 @@ let private healthValue () : DaemonHealth =
 
 let private health () = Health(healthValue ())
 
+let private retrievalSources = [| "clef"; "Fidelity.PSG" |]
+let private retrievalProject = "/mock/retrieval-index.fidproj"
+let private quarantineProject = "/mock/quarantined-branch.fidproj"
+
+let private freshRetrieval generation publishedAt : RetrievalStatus =
+  { Revision = 1L
+    State = "fresh"
+    BranchStatus = "on_main_indexed"
+    BranchName = "main"
+    OnMain = true
+    Generation = generation
+    SnapshotId = "snap-gen-" + string generation
+    PublishedAtMs = publishedAt
+    ChangedAtMs = None
+    HeldUntilMs = None
+    QueuedRetrievals = 0
+    ExpectedSources = retrievalSources
+    PendingSources = [||]
+    StaleSources = [||]
+    Reasons = [||]
+    Revisions = [||]
+    Note = "Mock index publication" }
+
+let mutable private retrieval = freshRetrieval 12L (int64 startedAt)
+
 /// Explicitly synthetic reports cover populated rows, unknown usage and known
 /// zero. They are never model-worker, compiler or installed-delivery evidence.
 let private agentWork () =
@@ -244,6 +269,15 @@ let private broadcast (event: Event) =
     let nodes = Codec.encodeEvent (workNodes ())
     for send in clients.Values |> Seq.toArray do send nodes
   | _ -> ()
+
+let private publishRetrieval status =
+  retrieval <- { status with Revision = retrieval.Revision + 1L; ChangedAtMs = Some(int64 (nowMs ())) }
+  broadcast (Retrieval retrieval)
+
+let private restoreRetrieval project =
+  if (project = retrievalProject && retrieval.State = "indexing")
+     || (project = quarantineProject && retrieval.BranchStatus = "quarantined_branch") then
+    publishRetrieval (freshRetrieval retrieval.Generation retrieval.PublishedAtMs)
 
 /// The mock's one clock, as the daemon's: a clock-owned push, not a poll. Each
 /// tick pushes the uptime it measures and reads nothing else. It runs only
@@ -398,6 +432,7 @@ let private handle (send: byte array -> unit) (frame: CommandFrame) =
   | RequestSnapshot ->
     reply send (snapshot ())
     reply send (health ())
+    reply send (Retrieval retrieval)
     reply send (leases ())
     accept send correlation noTarget SnapshotSent
   | OpenProject project ->
@@ -428,6 +463,13 @@ let private handle (send: byte array -> unit) (frame: CommandFrame) =
       sessions.Add { Status = status; Reservation = None }
       changed ()
       broadcast (agentWork ())
+      if project = quarantineProject then
+        publishRetrieval
+          { retrieval with
+              BranchStatus = "quarantined_branch"
+              BranchName = "fidelity/pi-checkout-coaching"
+              OnMain = false
+              Note = "Mock side-branch checkout" }
       accept send correlation target SessionOpened
   | Reserve edit ->
     withSession send correlation edit.Target (fun session ->
@@ -436,6 +478,16 @@ let private handle (send: byte array -> unit) (frame: CommandFrame) =
         let reservation = "rsv-" + token () + token ()
         session.Reservation <- Some reservation
         update session (fun s -> { s with Generation = s.Generation + 1L; Current = None })
+        if session.Status.Project = retrievalProject then
+          publishRetrieval
+            { retrieval with
+                State = "indexing"
+                BranchStatus = "indexing_pending"
+                BranchName = "main"
+                OnMain = true
+                PendingSources = retrievalSources
+                Reasons = [| "Main revisions changed" |]
+                Note = "" }
         accept send correlation session.Status.Target (EditReserved reservation))
   | Build build ->
     withSession send correlation build.Target (fun session ->
@@ -452,6 +504,8 @@ let private handle (send: byte array -> unit) (frame: CommandFrame) =
             else
               let artifact = artifactFor session
               update session (fun s -> { s with Busy = false; StatusFresh = true; Generation = s.Generation + 1L; Current = Some artifact })
+              if session.Status.Project = retrievalProject && retrieval.State = "indexing" then
+                publishRetrieval (freshRetrieval (retrieval.Generation + 1L) (int64 (nowMs ())))
               accept send correlation session.Status.Target (ReservationBuilt artifact)))
       | _ -> refuse send correlation build.Target "invalid_reservation" "Reserve an edit first; a reservation builds once.")
   | Run run ->
@@ -482,12 +536,14 @@ let private handle (send: byte array -> unit) (frame: CommandFrame) =
     withSession send correlation target (fun session ->
       session.Reservation <- None
       update session (fun s -> { s with Busy = false; Current = None; RevocationPending = true })
+      restoreRetrieval session.Status.Project
       after 500 (fun () -> update session (fun s -> { s with RevocationPending = false }))
       accept send correlation session.Status.Target WorkCanceled)
   | CloseSession target ->
     withSession send correlation target (fun session ->
       session.Reservation <- None
       update session (fun s -> { s with Closed = true; Busy = false; Current = None; CleanupPending = true })
+      restoreRetrieval session.Status.Project
       after 900 (fun () -> update session (fun s -> { s with CleanupPending = false }))
       accept send correlation session.Status.Target SessionClosed)
   | RetireWorker target ->
@@ -530,11 +586,12 @@ let connect (send: byte array -> unit) : obj =
   reply send (Welcome { BridgeWelcome.ProtocolVersion = ProtocolVersion; DaemonVersion = daemonVersion; StartedAtMs = int64 startedAt })
   reply send (snapshot ())
   reply send (health ())
+  reply send (Retrieval retrieval)
   reply send (leases ())
   reply send (agentWork ())
   reply send (operations ())
   reply send (workNodes ())
-  // Pushes (snapshots, leases, health, uptime) follow the prologue.
+  // Pushes follow the prologue.
   clients[id] <- send
   attachClock ()
   let receive (payload: byte array) =

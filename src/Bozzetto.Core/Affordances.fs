@@ -160,6 +160,7 @@ let private gatingDomain : Map<string, ToolGate> =
   Map.ofList [
     // Tools with no session-state dependence.
     "get_daemon_status", ToolGate.AlwaysAvailable
+    "await_retrieval_fresh", ToolGate.AlwaysAvailable
     "get_session_status", ToolGate.AlwaysAvailable
     "get_friction_report", ToolGate.AlwaysAvailable
     "get_available_projects", ToolGate.AlwaysAvailable

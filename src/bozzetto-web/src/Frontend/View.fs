@@ -79,7 +79,8 @@ let flagRx (name: string) (read: unit -> bool) : M = Typed.reactiveBooleanAttrib
 
 // A live DOM property (an input's or select's current value).
 let propRx (name: string) (read: unit -> 'T) : M =
-  Typed.reactiveProperty (fun (node: Ranvier.Dom.HTMLElement) (value: 'T) -> node?(name) <- value) read
+  Typed.reactiveProperty (fun (node: Ranvier.Dom.HTMLElement) (value: 'T) ->
+    if node?(name) <> value then node?(name) <- value) read
 
 [<Emit("queueMicrotask($0)")>]
 let private afterCommit (action: unit -> unit) : unit = jsNative

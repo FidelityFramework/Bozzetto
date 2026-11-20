@@ -260,11 +260,10 @@ let descriptionPropertyTests =
 
     testCase "reduced MCP surface keeps the tool count surgical"
     <| fun _ ->
-      // Only report_agent_work/get_agent_work, and reclaim_claim (Bozzetto
-      // #24: an orphaned claim's previous holder takes it back with its
-      // fence), expand this exact surface. The owner's deferred tool-bloat
-      // review remains outstanding.
-      registeredToolDescriptions.Length |> Expect.equal "tool count should stay intentionally small" 56
+      // Only report_agent_work/get_agent_work, reclaim_claim (Bozzetto #24),
+      // and await_retrieval_fresh (Bozzetto #43) expand this exact surface.
+      // The owner's deferred tool-bloat review remains outstanding.
+      registeredToolDescriptions.Length |> Expect.equal "tool count should stay intentionally small" 57
 
     testCase "every tool-shaped member is registered — no write-only MCP surface"
     <| fun _ ->

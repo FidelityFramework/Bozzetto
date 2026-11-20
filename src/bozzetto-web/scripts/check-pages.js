@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import WebSocket from 'ws';
 import { encodeCommand, decodeCommand, decodeEvent } from '../output-test/src/Shared/BinaryCodec.js';
-import { Command, CommandFrame } from '../output-test/src/Shared/Protocol.js';
+import { BuildReserved, Command, CommandFrame, ReserveEdit } from '../output-test/src/Shared/Protocol.js';
 
 const cache = join(process.env.XDG_CACHE_HOME ?? join(homedir(), '.cache'), 'bozzetto', 'page-checks');
 await mkdir(cache, { recursive: true });
@@ -255,6 +255,30 @@ async function check() {
     assert.equal(await evaluate(page, "[...document.querySelectorAll('button')].some(b => b.innerText.includes('Refresh'))"), false, 'no manual refresh chore');
   }
   assert.equal(await evaluate(work, "document.querySelector('input[placeholder=\"/absolute/path/Project.fidproj\"]').closest('details').open"), false, 'manual opener is not the primary view');
+  const midPathEdit = await evaluate(work, `(() => {
+    const input = document.querySelector('input[placeholder="/absolute/path/Project.fidproj"]');
+    const disclosure = input.closest('details');
+    const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    let reactiveWrites = 0;
+    Object.defineProperty(input, 'value', {
+      configurable: true, get: nativeValue.get,
+      set(value) { reactiveWrites++; nativeValue.set.call(this, value); },
+    });
+    const edit = (insert, from, to) => {
+      input.setRangeText(insert, from, to, 'end');
+      input.dispatchEvent(new InputEvent('input', {bubbles: true}));
+    };
+    disclosure.open = true;
+    input.focus();
+    edit('/mock/Project.fidproj', 0, 0);
+    edit('My', 6, 6);
+    const result = {value: input.value, caret: input.selectionStart, reactiveWrites};
+    delete input.value;
+    edit('', 0, input.value.length);
+    disclosure.open = false;
+    return result;
+  })()`);
+  assert.deepEqual(midPathEdit, {value: '/mock/MyProject.fidproj', caret: 8, reactiveWrites: 0}, 'editing inside the path keeps the caret and avoids writing the same input value');
   assert.deepEqual(d.links, [
     {path: '/dashboard', title: 'Daemon resources and health', active: true},
     {path: '/work', title: 'Compiler worker, project sessions, build/test leases and run output', active: false},
@@ -340,7 +364,7 @@ async function check() {
   const agent = new WebSocket(origin.replace(/^http/, 'ws') + '/ui/bridge', {origin});
   try {
     await new Promise((resolve, reject) => { agent.once('open', resolve); agent.once('error', reject); });
-    const openProject = (name, correlation) => new Promise((resolve, reject) => {
+    const sendCommand = (command, correlation) => new Promise((resolve, reject) => {
       const receive = data => {
         const decoded = decodeEvent(new Uint8Array(data));
         if (decoded.tag !== 0) return reject(new Error(decoded.fields[0]));
@@ -349,11 +373,13 @@ async function check() {
         const frame = event.fields[0];
         if (frame.Correlation !== correlation) return;
         agent.off('message', receive);
-        event.tag === 2 ? resolve(frame.Target) : reject(new Error(frame.Message));
+        event.tag === 2 ? resolve(frame) : reject(new Error(frame.Message));
       };
       agent.on('message', receive);
-      agent.send(encodeCommand(new CommandFrame(correlation, new Command(3, [`/mock/${name}.fidproj`]))));
+      agent.send(encodeCommand(new CommandFrame(correlation, command)));
     });
+    const openProject = async (name, correlation) => (await sendCommand(new Command(3, [`/mock/${name}.fidproj`]), correlation)).Target;
+    const closeProject = (target, correlation) => sendCommand(new Command(8, [target]), correlation);
     await openProject('SideBySide', 101);
     await waitFor(dashboard, "document.body.innerText.includes('mock read progressed')");
     // Stage 1 pushes a newer owner-liveness timestamp and renewed lease expiry on the active command:
@@ -407,18 +433,7 @@ async function check() {
     await waitFor(dashboard, `${healthState} === 'Degraded|memory Tight'`);
     const strainedClass = await evaluate(dashboard, 'window.__pressureBadge.className');
     assert.ok(strainedClass.includes('badge-warning'), `tight pressure restyles the same badge: ${strainedClass}`);
-    await new Promise((resolve, reject) => {
-      const receive = data => {
-        const decoded = decodeEvent(new Uint8Array(data));
-        if (decoded.tag !== 0) return reject(new Error(decoded.fields[0]));
-        const event = decoded.fields[0];
-        if ((event.tag !== 2 && event.tag !== 3) || event.fields[0].Correlation !== 104) return;
-        agent.off('message', receive);
-        event.tag === 2 ? resolve() : reject(new Error(event.fields[0].Message));
-      };
-      agent.on('message', receive);
-      agent.send(encodeCommand(new CommandFrame(104, new Command(8, [strained]))));
-    });
+    await closeProject(strained, 104);
     await waitFor(dashboard, `${healthState} === 'Healthy|memory Normal'`);
     const live = await evaluate(dashboard, `({
       states: window.__healthStates,
@@ -427,15 +442,86 @@ async function check() {
       pressureInPlace: [...${strip}.querySelectorAll('.badge')].find(b => b.textContent.startsWith('memory ')) === window.__pressureBadge,
       pressureClass: window.__pressureBadge.className,
     })`);
-    assert.deepEqual(live.states, ['Healthy|memory Normal', 'Degraded|memory Tight', 'Healthy|memory Normal'], 'pushed Health moves the header Healthy → Degraded/Tight → Healthy, with no mixed intermediate state');
+    const assertHealthTransition = states => assert.deepEqual(states, ['Healthy|memory Normal', 'Degraded|memory Tight', 'Healthy|memory Normal'], 'pushed Health moves the header Healthy → Degraded/Tight → Healthy, with no mixed intermediate state');
+    assertHealthTransition(live.states);
     assert.equal(live.sameDocument, 'dashboard-live-health', 'the dashboard was not reloaded');
     assert.equal(live.verdictInPlace && live.pressureInPlace, true, 'verdict and pressure badges are rewritten in place, not remounted');
     assert.ok(!live.pressureClass.includes('badge-warning'), `normal pressure restores the badge style: ${live.pressureClass}`);
     assert.deepEqual(liveTraffic(), trafficBeforeHealth, 'live health needs no dashboard fetch, XHR or bridge command');
     assert.equal(pageFrames.some(f => f.session === dashboard && f.command === 0), false, 'the dashboard never sends RequestSnapshot');
     // Negative control: the exact-sequence assertion refuses a missed transition.
-    assert.throws(() => assert.deepEqual(['Healthy|memory Normal', 'Healthy|memory Normal'], live.states), {code: 'ERR_ASSERTION'}, 'a header that never degraded fails the live-health check');
-    await writeFile(join(evidence, 'live-health.json'), JSON.stringify({...live, traffic: liveTraffic(), trafficBefore: trafficBeforeHealth}, null, 2));
+    const missedDegradation = [...live.states];
+    missedDegradation.splice(1, 1);
+    assert.throws(() => assertHealthTransition(missedDegradation), {code: 'ERR_ASSERTION'}, 'a header that never degraded fails the live-health check');
+    await writeFile(join(evidence, 'live-health.json'), JSON.stringify({...live, traffic: liveTraffic(), trafficBefore: trafficBeforeHealth, missedTransitionCaught: true}, null, 2));
+
+    // #43: one independent client drives retrieval, and both open tabs only receive pushes.
+    const retrievalTabs = [['dashboard', dashboard], ['work', work]];
+    const retrievalBadge = 'document.querySelector(".retrieval-pill .retrieval-badge")';
+    const retrievalStates = { dashboard: [], work: [] };
+    const assertRetrieval = async (label, style, tooltip, busy = false) => {
+      for (const [name, page] of retrievalTabs) {
+        await waitFor(page, `${retrievalBadge}?.innerText === ${JSON.stringify(label)}`);
+        const state = await evaluate(page, `(() => {
+          const badge = ${retrievalBadge};
+          if (${retrievalStates[name].length === 0}) window.__originalRetrievalBadge = badge;
+          return {
+            label: badge.innerText, style: badge.className, title: badge.title,
+            busy: !!badge.querySelector('.animate-spin'), visible: badge.getClientRects().length > 0,
+            sameBadge: badge === window.__originalRetrievalBadge, documentStartedAt: performance.timeOrigin,
+          };
+        })()`);
+        assert.ok(state.style.split(' ').includes(style), `${name}: ${label} uses ${style}`);
+        for (const part of tooltip) assert.ok(state.title.includes(part), `${name}: ${label} tooltip includes ${part}`);
+        assert.equal(state.busy, busy, `${name}: ${label} spinner`);
+        assert.equal(state.visible, true, `${name}: ${label} is visible`);
+        assert.equal(state.sameBadge, true, `${name}: ${label} updates the original badge`);
+        assert.equal(state.documentStartedAt, retrievalStates[name][0]?.documentStartedAt ?? state.documentStartedAt, `${name}: ${label} did not reload the page`);
+        retrievalStates[name].push(state);
+      }
+    };
+    const retrievalTraffic = () => Object.fromEntries(retrievalTabs.map(([name, page]) => [name, {
+      fetches: pageRequests.filter(r => r.session === page).length,
+      commands: pageFrames.filter(f => f.session === page).length,
+    }]));
+    const trafficBeforeRetrieval = retrievalTraffic();
+    await assertRetrieval('On main · Index gen 12 · Fresh', 'badge-success', ['Snapshot snap-gen-12', 'Published ', 'Mock index publication']);
+    const indexTarget = await openProject('retrieval-index', 105);
+    const reserved = await sendCommand(new Command(4, [new ReserveEdit(indexTarget, 'retrieval-check')]), 106);
+    assert.equal(reserved.Completion.tag, 1, 'the mock grants an edit reservation');
+    await assertRetrieval('Indexing (clef, Fidelity.PSG)…', 'badge-warning', ['Pending sources: clef, Fidelity.PSG', 'Main revisions changed'], true);
+    await sendCommand(new Command(5, [new BuildReserved(indexTarget, reserved.Completion.fields[0])]), 107);
+    const assertFresh13 = () => assertRetrieval('On main · Index gen 13 · Fresh', 'badge-success', ['Snapshot snap-gen-13', 'Published ']);
+    await assertFresh13();
+    await closeProject(indexTarget, 108);
+    const quarantineTarget = await openProject('quarantined-branch', 109);
+    await assertRetrieval('Quarantined branch (fidelity/pi-checkout-coaching) · gen 13', 'badge-plum', ['intentionally outside retrieval index', 'Mock side-branch checkout']);
+    await closeProject(quarantineTarget, 110);
+    await assertFresh13();
+    const expectedRetrievalLabels = [
+      'On main · Index gen 12 · Fresh',
+      'Indexing (clef, Fidelity.PSG)…',
+      'On main · Index gen 13 · Fresh',
+      'Quarantined branch (fidelity/pi-checkout-coaching) · gen 13',
+      'On main · Index gen 13 · Fresh',
+    ];
+    const assertRetrievalSequence = labels => assert.deepEqual(labels, expectedRetrievalLabels, 'retrieval pill tracks Fresh → Indexing → Fresh → Quarantined → Fresh across pushed frames');
+    for (const [name] of retrievalTabs) {
+      assertRetrievalSequence(retrievalStates[name].map(s => s.label));
+    }
+    const missedIndexing = retrievalStates.dashboard.map(s => s.label);
+    missedIndexing.splice(1, 1);
+    assert.throws(() => assertRetrievalSequence(missedIndexing), {code: 'ERR_ASSERTION'}, 'a header that missed Indexing fails the retrieval transition check');
+    const missedFresh13 = retrievalStates.dashboard.map(s => s.label);
+    missedFresh13.splice(2, 1);
+    assert.throws(() => assertRetrievalSequence(missedFresh13), {code: 'ERR_ASSERTION'}, 'a header that missed Fresh gen 13 fails the retrieval transition check');
+    const trafficAfterRetrieval = retrievalTraffic();
+    const traffic = Object.fromEntries(retrievalTabs.map(([name]) => [name, {
+      fetches: trafficAfterRetrieval[name].fetches - trafficBeforeRetrieval[name].fetches,
+      commands: trafficAfterRetrieval[name].commands - trafficBeforeRetrieval[name].commands,
+    }]));
+    for (const [name] of retrievalTabs) assert.deepEqual(traffic[name], {fetches: 0, commands: 0}, `${name}: retrieval updates require no browser requests or commands`);
+    await writeFile(join(evidence, 'live-retrieval.json'), JSON.stringify({states: retrievalStates, traffic, reloads: 0, missedTransitionCaught: true}, null, 2));
   } finally { agent.terminate(); }
   assert.equal(await evaluate(work, "document.querySelector('input[placeholder=\"/absolute/path/Project.fidproj\"]').closest('details').open"), false, 'no manual opening was needed');
   assert.ok(!(await inspect(dashboard)).text.includes('SideBySide.fidproj'));
@@ -550,7 +636,7 @@ async function check() {
     assert.equal((await inspect(session)).overflow, false, `${name} fits a narrow viewport`);
   }
   assert.deepEqual(browserErrors, [], 'no browser runtime errors');
-  console.log(`Page checks passed: live pushed health transition (#36), short local dates (#14), latest-first agent accordions, pushed progress/completion, retained disclosure state, isolated views, live collapsed store, native information controls, navigation, shared-owner command, reload, 900/480 px layouts. Evidence: ${evidence}`);
+  console.log(`Page checks passed: live retrieval on both pages (#43), live pushed health transition (#36), short local dates (#14), latest-first agent accordions, pushed progress/completion, retained disclosure state, isolated views, live collapsed store, native information controls, navigation, shared-owner command, reload, 900/480 px layouts. Evidence: ${evidence}`);
 }
 let timeout;
 try {

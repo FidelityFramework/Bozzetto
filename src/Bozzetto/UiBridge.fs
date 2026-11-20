@@ -611,6 +611,7 @@ type Push =
   | Operations
   | WorkNodes
   | NodeResources
+  | Retrieval
 
 [<RequireQualifiedAccess>]
 type Inbound =
@@ -640,7 +641,7 @@ type private Write =
 /// still runs.
 type internal Outbox(socket: IBridgeSocket, sendTimeout: TimeSpan, closeTimeout: TimeSpan) =
   let gate = obj ()
-  let pushes: Outbound option array = Array.create 9 None
+  let pushes: Outbound option array = Array.create 10 None
   let mutable closed = false
   let mutable wakePending = false
   // Owned by the writer agent.
@@ -659,6 +660,7 @@ type internal Outbox(socket: IBridgeSocket, sendTimeout: TimeSpan, closeTimeout:
     | Push.Operations -> 6
     | Push.WorkNodes -> 7
     | Push.NodeResources -> 8
+    | Push.Retrieval -> 9
 
   let send (frame: Outbound) = async {
     return!
@@ -922,6 +924,7 @@ module Facts =
     Membership: (IObservable<unit> * (unit -> Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTable.MemberId>)) option
     Journal: IObservable<unit> * (unit -> ComposerJournal.Journal)
     Liveness: (IObservable<LeasedLivenessSnapshot> * (unit -> LeasedLivenessSnapshot)) option
+    Retrieval: (IObservable<Bozzetto.Server.RetrievalObservation.Observation> * (unit -> Bozzetto.Server.RetrievalObservation.Observation)) option
   }
 
   /// Why a publication or subscription was not admitted.
@@ -945,6 +948,7 @@ module Facts =
     | Membership of Membership
     | Journal of ComposerJournal.Journal
     | Liveness of LeasedLivenessSnapshot
+    | Retrieval of RetrievalStatus
     | Observation of int64 * Result<HostResources, string>
     | PeerObservation of HostResources option * Result<HostResources, string>
     | NodeWork of NodeWork
@@ -956,10 +960,10 @@ module Facts =
     | Value of Event
     | Observation of int64 option * Result<HostResources, string>
 
-  let private tickInput, poolInput, agentsInput, membershipInput, journalInput, livenessInput =
-    InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL, InputId 5UL, InputId 6UL
+  let private tickInput, poolInput, agentsInput, membershipInput, journalInput, livenessInput, retrievalInput =
+    InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL, InputId 5UL, InputId 6UL, InputId 7UL
   let private healthWork, leasesWork, boardWork, operationsWork = WorkId 1UL, WorkId 2UL, WorkId 3UL, WorkId 4UL
-  let private workBoard = WorkId 5UL
+  let private workBoard, retrievalWork = WorkId 5UL, WorkId 6UL
   let private scope = ScopeId 1UL
 
   /// Sets admitted per epoch before the plane retires it and starts the next:
@@ -993,7 +997,7 @@ module Facts =
     // changes; no transport registry or duplicate fact store lives here.
     let mutable sourceSlots =
       owners @ (peers |> List.map (fun node -> { Source = { Node = node; Incarnation = "" }; Correlation = Guid.Empty }))
-      |> List.mapi (fun index owner -> owner.Source.Node, (owner, InputId(uint64 index * 2UL + 7UL), WorkId(uint64 index + 6UL)))
+      |> List.mapi (fun index owner -> owner.Source.Node, (owner, InputId(uint64 index * 2UL + 8UL), WorkId(uint64 index + 7UL)))
       |> Map.ofList
     let observationWorks = sourceSlots |> Map.toList |> List.map (fun (_, (_, input, work)) -> work, input) |> Map.ofList
     let nodeInputs = sourceSlots |> Map.toList |> List.map (fun (node, (_, InputId input, _)) -> node, InputId(input + 1UL)) |> Map.ofList
@@ -1015,13 +1019,14 @@ module Facts =
     let sinks = System.Collections.Generic.Dictionary<int64, Push -> Event -> unit>()
     let mutable nextSink = 0L
     let observers = System.Collections.Generic.Dictionary<Guid, ObservationBinding * DemandId * (Observation -> unit)>()
-    let mutable nextObserver = 5UL
+    let mutable nextObserver = 6UL
 
     let pushOf (work: WorkId) =
       if work = healthWork then Push.Health
       elif work = leasesWork then Push.Leases
       elif work = operationsWork then Push.Operations
       elif work = workBoard then Push.WorkNodes
+      elif work = retrievalWork then Push.Retrieval
       else Push.AgentWork
 
     /// The projection of one work over the facts its frozen reads name, with
@@ -1056,6 +1061,10 @@ module Facts =
         let nodes = facts |> Map.toArray |> Array.map (fun (_, value) ->
           match value with Fact.NodeWork node -> node | other -> invalidOp (sprintf "Bridge facts: Work node read %A" other))
         Payload.Value(WorkNodes { Revision = stamp; Nodes = nodes })
+      elif work = retrievalWork then
+        match fact 1UL with
+        | Some(Fact.Retrieval status) -> Payload.Value(Retrieval { status with Revision = stamp })
+        | other -> invalidOp (sprintf "Bridge facts: Retrieval read %A" other)
       else
         match fact 1UL, fact 2UL, fact 3UL with
         | Some(Fact.Agents state), Some(Fact.Pool pool), Some(Fact.Membership membership) ->
@@ -1143,6 +1152,9 @@ module Facts =
           Work = operationsWork; Stamp = DefinitionStamp 1UL
           Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input journalInput }
                     { Slot = ReadSlotId 2UL; Source = ReadSource.Input livenessInput } ] }
+        ScopeEntry.Define {
+          Work = retrievalWork; Stamp = DefinitionStamp 1UL
+          Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input retrievalInput } ] }
         if localNode.IsSome then
           ScopeEntry.Define { Work = workBoard; Stamp = DefinitionStamp 1UL
                               Reads = nodeInputs |> Map.toList |> List.mapi (fun i (_, input) -> { Slot = ReadSlotId(uint64 i + 1UL); Source = ReadSource.Input input }) }
@@ -1153,6 +1165,7 @@ module Facts =
       apply (Action.Demand(DemandId 3UL, boardWork))
       apply (Action.Demand(DemandId 4UL, operationsWork))
       if localNode.IsSome then apply (Action.Demand(DemandId 5UL, workBoard))
+      apply (Action.Demand(DemandId 6UL, retrievalWork))
       for binding, demand, _ in observers.Values do
         let _, _, work = sourceSlots[binding.Source.Node]
         apply (Action.Demand(demand, work))
@@ -1210,7 +1223,12 @@ module Facts =
 
     /// The eligible value of each work, in wire order: Health, Leases, the board, the operations.
     let current () : Event list =
-      [ healthWork; leasesWork; boardWork; operationsWork; if localNode.IsSome then workBoard ]
+      [ yield healthWork
+        yield leasesWork
+        yield boardWork
+        yield operationsWork
+        if localNode.IsSome then yield workBoard
+        yield retrievalWork ]
       |> List.choose (fun work ->
         Core.tryResult work core
         |> Option.bind (fun handle ->
@@ -1444,6 +1462,8 @@ module Facts =
       admit membershipInput membership.Version (Fact.Membership membership)
     member _.Liveness(snapshot: LeasedLivenessSnapshot) =
       admit livenessInput snapshot.Serial (Fact.Liveness snapshot)
+    member _.Retrieval(observation: Bozzetto.Server.RetrievalObservation.Observation) =
+      admit retrievalInput observation.Serial (Fact.Retrieval(Bozzetto.Server.RetrievalObservation.toWireStatus observation))
     /// The operations journal names its owner's incarnation; the plane binds to
     /// the one it started with and refuses any other.
     member _.Journal(journal: ComposerJournal.Journal) =
@@ -1470,7 +1490,8 @@ module Facts =
             yield journalChanged.Subscribe(fun () -> this.Journal(journalNow ()) |> ignore)
             yield! owners.Liveness |> Option.map (fun (changed, _) -> changed.Subscribe(fun snap -> this.Liveness snap |> ignore)) |> Option.toList
             yield! owners.Agents |> Option.map (fun (changed, read) -> changed.Subscribe(fun () -> this.Agents(read ()) |> ignore)) |> Option.toList
-            yield! owners.Membership |> Option.map (fun (changed, read) -> changed.Subscribe(fun () -> this.Membership(read ()) |> ignore)) |> Option.toList ]
+            yield! owners.Membership |> Option.map (fun (changed, read) -> changed.Subscribe(fun () -> this.Membership(read ()) |> ignore)) |> Option.toList
+            yield! owners.Retrieval |> Option.map (fun (changed, _) -> changed.Subscribe(fun obs -> this.Retrieval obs |> ignore)) |> Option.toList ]
         tickNow () |> Option.iter (fun tick -> this.Tick tick |> ignore)
         this.Pool(poolNow ()) |> ignore
         match owners.Liveness with
@@ -1479,6 +1500,7 @@ module Facts =
         this.Journal(journalNow ()) |> ignore
         owners.Agents |> Option.iter (fun (_, read) -> this.Agents(read ()) |> ignore)
         owners.Membership |> Option.iter (fun (_, read) -> this.Membership(read ()) |> ignore)
+        owners.Retrieval |> Option.iter (fun (_, read) -> this.Retrieval(read ()) |> ignore)
         { new IDisposable with member _.Dispose() = for subscription in subscriptions do subscription.Dispose() })
 
 // ── The hub ────────────────────────────────────────────────────────────────
@@ -1911,7 +1933,8 @@ let createObservedWithTranscripts (supervisor: ComposerSupervisor) (mcpPort: int
         Agents = owner |> Option.map (fun o -> o.WorkChanged, (fun () -> o.ReadWork()))
         Membership = owner |> Option.map (fun o -> (o.Events |> Observable.map ignore), (fun () -> o.ReadFrame()))
         Journal = supervisor.JournalChanged, (fun () -> supervisor.Journal)
-        Liveness = Some(supervisor.LivenessChanged, supervisor.CurrentLivenessSnapshot) }
+        Liveness = Some(supervisor.LivenessChanged, supervisor.CurrentLivenessSnapshot)
+        Retrieval = Some(Bozzetto.Server.RetrievalObservation.Changed, Bozzetto.Server.RetrievalObservation.current) }
   stopping.Register(fun () ->
     subscriptions.Dispose()
     graph.Stop()) |> ignore

@@ -27,6 +27,7 @@ open Bozzetto.Web.Shared.Protocol
 
 module Codec = Bozzetto.Server.UiBridgeCodec
 module Observe = Bozzetto.Server.WorkObservation
+module PeerCodec = Bozzetto.Web.Shared.BinaryCodec
 
 // ── The UI side, in .NET ───────────────────────────────────────────────────
 
@@ -209,6 +210,37 @@ let private events = [
   AgentWork { OmittedRuns = 0L; Refusal = ""; Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Runs = [||]; Presence = [||] }
   AgentWork { OmittedRuns = 0L; Refusal = ""; Incarnation = "daemon-b"; Sequence = 2L; ExecutionHost = "local"; Runs = [||]
               Presence = [| { Name = "pi"; Source = "lease"; Member = "pi · /repo/clef"; Project = "/repo/clef"; Detail = "holds full_build"; SinceMs = 1759420800000L } |] }
+  Retrieval {
+    Revision = 1L; State = "fresh"; BranchStatus = "on_main_indexed"; BranchName = "main"; OnMain = true
+    Generation = 42L; SnapshotId = "snap-42"; PublishedAtMs = 1759420800000L
+    ChangedAtMs = None; HeldUntilMs = None; QueuedRetrievals = 0
+    ExpectedSources = [||]; PendingSources = [||]; StaleSources = [||]; Reasons = [||]
+    Revisions = [| { Source = "FidelityFramework/Farscape"; Revision = Some "abcdef1234567890" }; { Source = "FidelityFramework/Bozzetto"; Revision = None } |]
+    Note = "" }
+  Retrieval {
+    Revision = 2L; State = "crossing_held"; BranchStatus = "indexing_pending"; BranchName = "main"; OnMain = true
+    Generation = 43L; SnapshotId = "snap-42"; PublishedAtMs = 0L
+    ChangedAtMs = Some 1759420810000L; HeldUntilMs = Some 1759420840000L; QueuedRetrievals = 3
+    ExpectedSources = [| "Farscape"; "Composer" |]; PendingSources = [| "Composer" |]; StaleSources = [| "Farscape" |]; Reasons = [| "crossing_window" |]
+    Revisions = [||]; Note = "" }
+  Retrieval {
+    Revision = 3L; State = "indexing"; BranchStatus = "quarantined_branch"; BranchName = "feat/ffi-nanopass"; OnMain = false
+    Generation = 44L; SnapshotId = "snap-43"; PublishedAtMs = 0L
+    ChangedAtMs = Some 1759420850000L; HeldUntilMs = None; QueuedRetrievals = 1
+    ExpectedSources = [||]; PendingSources = [| "clef" |]; StaleSources = [||]; Reasons = [| "push_webhook" |]
+    Revisions = [||]; Note = "" }
+  Retrieval {
+    Revision = 4L; State = "unavailable"; BranchStatus = "unavailable"; BranchName = ""; OnMain = false
+    Generation = 0L; SnapshotId = ""; PublishedAtMs = 0L
+    ChangedAtMs = None; HeldUntilMs = None; QueuedRetrievals = 0
+    ExpectedSources = [||]; PendingSources = [||]; StaleSources = [||]; Reasons = [||]
+    Revisions = [||]; Note = "stream_disconnected" }
+  Retrieval {
+    Revision = 5L; State = "unconfigured"; BranchStatus = "unconfigured"; BranchName = ""; OnMain = false
+    Generation = 0L; SnapshotId = ""; PublishedAtMs = 0L
+    ChangedAtMs = None; HeldUntilMs = None; QueuedRetrievals = 0
+    ExpectedSources = [||]; PendingSources = [||]; StaleSources = [||]; Reasons = [||]
+    Revisions = [||]; Note = "Retrieval observation is not configured." }
 ]
 
 /// The frames bozzetto-web's Fable codecs produce for the samples above:
@@ -559,9 +591,19 @@ let tests =
     testList "binary codec" [
       test "fixed command golden binds envelope and primitive byte order" {
         let frame = { CommandFrame.Correlation = 1; Command = RequestSnapshot }
-        let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 11uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+        let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 12uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
         Ui.encodeCommand frame |> Expect.equal "exact independently specified bytes" golden
         Codec.decodeCommand golden |> Expect.equal "golden decoded" (Ok frame)
+      }
+      test "retrieval status event round trips every readiness state at tag 14" {
+        let retrievalEvents = events |> List.filter (function Retrieval _ -> true | _ -> false)
+        retrievalEvents.Length |> Expect.equal "all five retrieval states covered" 5
+        for ev in retrievalEvents do
+          let encoded = Codec.encodeEvent ev
+          encoded[4] |> Expect.equal "envelope carries ProtocolVersion 12" (byte ProtocolVersion)
+          encoded[5] |> Expect.equal "event family is 2" 2uy
+          encoded[6] |> Expect.equal "Retrieval tag is 14" 14uy
+          Ui.decodeEvent encoded |> Expect.equal "round-trip preserves every field" (Ok ev)
       }
       test "version 9 agent board uses its historical capacity and version 10 is refused" {
         // v9 envelope, AgentWork tag, incarnation d, sequence 1, host h,
@@ -683,6 +725,43 @@ let tests =
         |> Expect.equal "bounded request" (Ok request)
         Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Array.zeroCreate 4097)
         |> Expect.equal "request cap before parsing" (Error "binary: frame too large")
+      }
+      test "v11 and v12 peer envelopes share the observation and transcript payloads" {
+        let source = { NodeIdentity.Node = "one"; Incarnation = "epoch-1" }
+        let observation = { PeerObserveRequest.ProtocolVersion = 11; Node = source.Node; Topic = "work"; Seconds = 0 }
+        let transcript =
+          { PeerTranscriptRequest.ProtocolVersion = 11
+            Request = { Source = source; Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; MaxBytes = 32 } }
+        let reply =
+          { PeerTranscriptReply.Source = source
+            Outcome = TranscriptPage { Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L
+                                       NextOffset = None; TotalBytes = 3L; Bytes = [|0uy; 128uy; 255uy|]; Truncated = false } }
+        let checkReply encode decode family value =
+          let bytes: byte array = encode value
+          bytes[..5] |> Expect.equal "v11 peer can read the reply envelope" [|66uy; 90uy; 87uy; 49uy; 11uy; family|]
+          decode bytes |> Expect.equal "v12 peer reads the v11 reply losslessly" (Ok value)
+          bytes[4] <- 12uy
+          decode bytes |> Expect.equal "v12 envelope carries the same reply payload" (Ok value)
+          bytes[4] <- 10uy
+          decode bytes |> Expect.equal "unknown peer envelope refused" (Error "binary: unsupported version")
+        checkReply PeerCodec.encodePeerFrame PeerCodec.decodePeerFrame 4uy (PeerHello source)
+        checkReply PeerCodec.encodePeerTranscriptReply PeerCodec.decodePeerTranscriptReply 6uy reply
+        for version in [11; 12] do
+          let observation = { observation with ProtocolVersion = version }
+          let transcript = { transcript with ProtocolVersion = version }
+          let observationBytes = PeerCodec.encodePeerObserveRequest observation
+          let transcriptBytes = PeerCodec.encodePeerTranscriptRequest transcript
+          observationBytes[4..5] |> Expect.equal "observation request envelope" [|byte version; 3uy|]
+          transcriptBytes[4..5] |> Expect.equal "transcript request envelope" [|byte version; 5uy|]
+          PeerCodec.decodePeerObserveRequest observationBytes |> Expect.equal "observation request round trip" (Ok observation)
+          PeerCodec.decodePeerTranscriptRequest transcriptBytes |> Expect.equal "transcript request round trip" (Ok transcript)
+          observationBytes[6] <- 10uy
+          transcriptBytes[6] <- 10uy
+          PeerCodec.decodePeerObserveRequest observationBytes |> Expect.equal "unsupported observation payload version refused" (Error "unsupported peer version")
+          PeerCodec.decodePeerTranscriptRequest transcriptBytes |> Expect.equal "unsupported transcript payload version refused" (Error "unsupported peer version")
+        let browser = Codec.encodeEvent (List.head events)
+        browser[4] <- 11uy
+        PeerCodec.decodeEvent browser |> Expect.equal "v11 browser envelopes remain unsupported" (Error "binary: unsupported version")
       }
     ]
 

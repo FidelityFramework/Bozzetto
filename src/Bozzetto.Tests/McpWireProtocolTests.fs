@@ -41,6 +41,7 @@ let mcpToolRegistrationTests = testList "MCP tool registration" [
       "acquire_full_build_lease"
       "acquire_run_app_lease"
       "acquire_test_suite_lease"
+      "await_retrieval_fresh"
       "cancel_eval"
       "check_fsharp_code"
       "composer_build"

@@ -56,6 +56,7 @@ type private Sink() =
   member _.Seen = lock seen (fun () -> List.ofSeq seen)
   member this.Healths = this.Seen |> List.choose (function _, Health h -> Some h | _ -> None)
   member this.Boards = this.Seen |> List.choose (function _, AgentWork b -> Some b | _ -> None)
+  member this.Retrievals = this.Seen |> List.choose (function Push.Retrieval, Retrieval r -> Some r | _ -> None)
 
 let private healthOf (events: Event list) = events |> List.pick (function Health h -> Some h | _ -> None)
 let private boardOf (events: Event list) = events |> List.pick (function AgentWork b -> Some b | _ -> None)
@@ -141,7 +142,8 @@ let factsTests =
             Agents = None
             Membership = None
             Journal = (Event<unit>()).Publish, (fun () -> ComposerIntegration.ComposerJournal.empty "")
-            Liveness = None }
+            Liveness = None
+            Retrieval = None }
       reads.Value |> Expect.equal "each owner is read once, at start" 2
       for _ in 1 .. 5 do graph.Current() |> ignore
       let _, registration = graph.Register(fun _ _ -> ())
@@ -163,7 +165,8 @@ let factsTests =
             Agents = None
             Membership = None
             Journal = (Event<unit>()).Publish, (fun () -> ComposerIntegration.ComposerJournal.empty "")
-            Liveness = None }
+            Liveness = None
+            Retrieval = None }
       let health = healthOf (graph.Current())
       (health.MemoryPressure, health.Revision) |> Expect.equal "the announced newer reading stands; the older current value was dropped" ("Tight", 1L)
 
@@ -279,6 +282,37 @@ let factsTests =
       (healthOf (graph.Current())).Revision |> Expect.equal "the stamp continues across the handover" (int64 readings + 1L)
       before |> List.choose (function Leases l -> Some l | _ -> None) |> List.length |> Expect.equal "the lease board survived the handover" 1
       (healthOf before).Revision |> Expect.equal "the value before the next reading is the last reading's" (int64 readings)
+
+    testCase "retrieval observations are admitted by monotonic serial, pushed to sinks, and delivered on connect" <| fun () ->
+      let graph = Facts.Graph(constants, incarnation)
+      let sink = Sink()
+      let _, _ = graph.Register sink.Push
+      let obs serial readiness : Server.RetrievalObservation.Observation =
+        { Serial = serial
+          ObservedAtMs = serial * 1000L
+          Branch = { BranchName = "main"; OnMain = true; Repository = Some "Farscape" }
+          Readiness = readiness
+          LastFreshSources = [||] }
+      let indexing =
+        obs 2L (Server.RetrievalObservation.Readiness.Indexing {
+          Generation = 4L; SnapshotId = "snap-4"; ChangedAtMs = Some 100L; QueuedRetrievals = 1
+          PendingSources = [| "Farscape" |]; StaleSources = [||]; Reasons = [| "webhook" |] })
+      let fresh =
+        obs 3L (Server.RetrievalObservation.Readiness.Fresh {
+          Generation = 5L; SnapshotId = "snap-5"; PublishedAtMs = 200L
+          Revisions = [| { Source = "FidelityFramework/Farscape"; Revision = Some "abcdef123456" } |] })
+      graph.Retrieval indexing |> Expect.equal "newer serial admitted" (Ok())
+      graph.Retrieval { indexing with Serial = 1L } |> Expect.equal "older serial dropped" (Error Facts.Refusal.Older)
+      graph.Retrieval indexing |> Expect.equal "exact duplicate ignored" (Error Facts.Refusal.Duplicate)
+      graph.Retrieval { fresh with Serial = 2L } |> Expect.equal "same serial with different content is a conflict" (Error Facts.Refusal.Conflict)
+      graph.Faults |> Expect.equal "conflict counted once" 1
+      graph.Retrieval fresh |> Expect.equal "next serial admitted" (Ok())
+      sink.Retrievals |> List.map (fun r -> r.Revision, r.State, r.BranchStatus, r.Generation)
+      |> Expect.equal "two retrieval pushes in order with stamped revisions"
+           [ 1L, "indexing", "indexing_pending", 4L; 2L, "fresh", "on_main_indexed", 5L ]
+      let current, _ = graph.Register (Sink()).Push
+      current |> List.choose (function Retrieval r -> Some(r.Revision, r.State, r.SnapshotId) | _ -> None)
+      |> Expect.equal "connecting page sees current retrieval state" [ 2L, "fresh", "snap-5" ]
   ]
 
 let private stats available : Features.MachineMemory.Stats = { TotalBytes = 100L; AvailableBytes = available }
@@ -302,7 +336,8 @@ let private withLiveHealth available read check =
           Agents = None
           Membership = None
           Journal = (Event<unit>()).Publish, (fun () -> ComposerIntegration.ComposerJournal.empty "")
-          Liveness = None }
+          Liveness = None
+          Retrieval = None }
     let sink = Sink()
     let snapshot, registration = graph.Register sink.Push
     use _registration = registration

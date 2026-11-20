@@ -35,6 +35,7 @@
         <Compile Include="ComposerBinaryProtocolTests.fs" />
         <Compile Include="UiBridgeTests.fs" />
         <Compile Include="WorkObservationTests.fs" />
+        <Compile Include="RetrievalObservationTests.fs" />
         <Compile Include="BridgeFactsTests.fs" />
         <Compile Include="ComposerJournalTests.fs" />
         <Compile Include="ResourceMonitoringTests.fs" />

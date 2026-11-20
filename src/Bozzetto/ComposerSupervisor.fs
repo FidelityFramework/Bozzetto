@@ -111,6 +111,8 @@ type ComposerSupervisor internal (
   let utcNow = defaultArg utcNow (fun () -> DateTimeOffset.UtcNow)
   let changedEvent = Event<unit>()
   let snapshots = Dictionary<string, ComposerResponse>()
+  let mutable openOrder : Map<string, int64> = Map.empty
+  let mutable nextOpenOrder = 0L
   let observations = Dictionary<string, StatusObservation>()
   let cleanupPendingSince = Dictionary<string, DateTimeOffset>()
   let mutable inFlightOpens = 0
@@ -204,6 +206,7 @@ type ComposerSupervisor internal (
 
   let evictSessionLocked (session: string) =
     snapshots.Remove session |> ignore
+    openOrder <- Map.remove session openOrder
     observations.Remove session |> ignore
     cleanupPendingSince.Remove session |> ignore
     preClosedSessions.Remove session |> ignore
@@ -313,6 +316,9 @@ type ComposerSupervisor internal (
             preClosedSessions.Add identity.Session |> ignore
         | _ -> ()
         snapshots[identity.Session] <- snapshot
+        if not (openOrder.ContainsKey identity.Session) then
+          nextOpenOrder <- nextOpenOrder + 1L
+          openOrder <- Map.add identity.Session nextOpenOrder openOrder
         true, None
     else false, None
 
@@ -1056,6 +1062,32 @@ type ComposerSupervisor internal (
   /// The directory as last observed, without a status read through the
   /// worker. Change pushes read this, so observing a change cannot cause one.
   member _.CachedDirectory() = directory ()
+
+  member _.NewestOpenProjectDirectory() : string option =
+    let newestProj =
+      lock gate (fun () ->
+        snapshots
+        |> Seq.choose (fun (KeyValue(session, snap)) ->
+          match snap.Reply.Outcome with
+          | Result.Ok(Observed status)
+              when not status.Closed
+                   && not status.CleanupPending
+                   && not status.FormatterCleanupPending
+                   && snap.WorkerError.IsNone
+                   && not (String.IsNullOrWhiteSpace status.Project) ->
+            let order = openOrder |> Map.tryFind session |> Option.defaultValue 0L
+            Some(order, status.Project)
+          | _ -> None)
+        |> Seq.sortByDescending fst
+        |> Seq.tryHead
+        |> Option.map snd)
+    newestProj
+    |> Option.bind (fun proj ->
+      if Directory.Exists proj then Some proj
+      else
+        match Path.GetDirectoryName proj with
+        | null | "" -> None
+        | dir -> Some dir)
 
   member _.StopAsync() = task {
     let failures = ResizeArray<exn>()

@@ -12,6 +12,8 @@ let MaxFrameBytes = 4 * 1024 * 1024
 [<Literal>]
 let MaxRequestBytes = 4096
 [<Literal>]
+let PeerCompatProtocolVersion = 11
+[<Literal>]
 let private MaxItems = 65536
 [<Literal>]
 let private MaxStringBytes = 1024 * 1024
@@ -982,6 +984,59 @@ let private peerFrame : Codec<PeerFrame> = {
     | _ -> fail "unknown PeerFrame tag"
 }
 
+let private retrievalRevision : Codec<RetrievalRevision> = {
+  Write = fun w value ->
+    text.Write w value.Source
+    (optional text).Write w value.Revision
+  Read = fun r ->
+    let f0 = text.Read r
+    let f1 = (optional text).Read r
+    { RetrievalRevision.Source = f0; Revision = f1 }
+}
+
+let private retrievalStatus : Codec<RetrievalStatus> = {
+  Write = fun w value ->
+    wide.Write w value.Revision
+    text.Write w value.State
+    text.Write w value.BranchStatus
+    text.Write w value.BranchName
+    flag.Write w value.OnMain
+    wide.Write w value.Generation
+    text.Write w value.SnapshotId
+    wide.Write w value.PublishedAtMs
+    (optional wide).Write w value.ChangedAtMs
+    (optional wide).Write w value.HeldUntilMs
+    whole.Write w value.QueuedRetrievals
+    (array text).Write w value.ExpectedSources
+    (array text).Write w value.PendingSources
+    (array text).Write w value.StaleSources
+    (array text).Write w value.Reasons
+    (array retrievalRevision).Write w value.Revisions
+    text.Write w value.Note
+  Read = fun r ->
+    let f0 = wide.Read r
+    let f1 = text.Read r
+    let f2 = text.Read r
+    let f3 = text.Read r
+    let f4 = flag.Read r
+    let f5 = wide.Read r
+    let f6 = text.Read r
+    let f7 = wide.Read r
+    let f8 = (optional wide).Read r
+    let f9 = (optional wide).Read r
+    let f10 = whole.Read r
+    let f11 = (array text).Read r
+    let f12 = (array text).Read r
+    let f13 = (array text).Read r
+    let f14 = (array text).Read r
+    let f15 = (array retrievalRevision).Read r
+    let f16 = text.Read r
+    { RetrievalStatus.Revision = f0; State = f1; BranchStatus = f2; BranchName = f3; OnMain = f4
+      Generation = f5; SnapshotId = f6; PublishedAtMs = f7; ChangedAtMs = f8; HeldUntilMs = f9
+      QueuedRetrievals = f10; ExpectedSources = f11; PendingSources = f12; StaleSources = f13
+      Reasons = f14; Revisions = f15; Note = f16 }
+}
+
 let private event : Codec<Event> = {
   Write = fun w value ->
     match value with
@@ -999,6 +1054,7 @@ let private event : Codec<Event> = {
     | WorkNodes item -> uint.Write w 11; workBoard.Write w item
     | NodeResources item -> uint.Write w 12; nodeResources.Write w item
     | NodeTranscript item -> uint.Write w 13; nodeTranscript.Write w item
+    | Retrieval item -> uint.Write w 14; retrievalStatus.Write w item
   Read = fun r ->
     match uint.Read r with
     | 0 -> Welcome(bridgeWelcome.Read r)
@@ -1015,6 +1071,7 @@ let private event : Codec<Event> = {
     | 11 -> WorkNodes(workBoard.Read r)
     | 12 -> NodeResources(nodeResources.Read r)
     | 13 -> NodeTranscript(nodeTranscript.Read r)
+    | 14 -> Retrieval(retrievalStatus.Read r)
     | _ -> fail "unknown Event tag"
 }
 
@@ -1092,6 +1149,9 @@ let private encodeVersion version family limit codec value =
 
 let private encode family limit codec value = encodeVersion ProtocolVersion family limit codec value
 
+let isPeerProtocolVersion version =
+  version = ProtocolVersion || version = PeerCompatProtocolVersion || version = LegacyProtocolVersion
+
 let private decode family limit codec (bytes: byte array) =
   try
     if isNull bytes || bytes.Length > limit then fail "frame too large"
@@ -1099,9 +1159,14 @@ let private decode family limit codec (bytes: byte array) =
     for b in [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy |] do
       if take reader <> b then fail "wrong magic"
     reader.Version <- uint.Read reader
-    let legacyFamily = family >= 1 && family <= 6
-    if reader.Version <> ProtocolVersion && (not legacyFamily || reader.Version <> LegacyProtocolVersion) then fail "unsupported version"
     if uint.Read reader <> family then fail "wrong message family"
+    let supported =
+      match family with
+      | 3 | 4 | 5 | 6 -> isPeerProtocolVersion reader.Version
+      | 1 | 2 -> reader.Version = ProtocolVersion || reader.Version = LegacyProtocolVersion
+      | 7 | 8 -> reader.Version = ProtocolVersion || reader.Version = 11
+      | _ -> false
+    if not supported then fail "unsupported version"
     let value = codec.Read reader
     if reader.Offset <> bytes.Length then fail "trailing bytes"
     Ok value
@@ -1124,7 +1189,7 @@ let private validateCommand (frame: CommandFrame) =
     | _ -> Ok frame
 
 let private validatePeer (request: PeerObserveRequest) =
-  if request.ProtocolVersion <> ProtocolVersion && request.ProtocolVersion <> LegacyProtocolVersion then Error "unsupported peer version"
+  if not (isPeerProtocolVersion request.ProtocolVersion) then Error "unsupported peer version"
   elif String.IsNullOrWhiteSpace request.Node then Error "node: required"
   elif request.Topic <> "work" && request.Topic <> "resources" then Error "unknown observation topic"
   elif request.Seconds < 0 || request.Seconds > 120 then Error "seconds: expected 0 through 120"
@@ -1137,19 +1202,20 @@ let encodeEvent value = encode 2 MaxFrameBytes event value
 let decodeEvent bytes = decode 2 MaxFrameBytes event bytes
 let encodePeerObserveRequest (value: PeerObserveRequest) = encodeVersion value.ProtocolVersion 3 MaxRequestBytes peerObserveRequest (validatePeer value |> require)
 let decodePeerObserveRequest bytes = decode 3 MaxRequestBytes peerObserveRequest bytes |> Result.bind validatePeer
-let encodePeerFrame value = encode 4 MaxFrameBytes peerFrame value
+let encodePeerFrame value = encodeVersion PeerCompatProtocolVersion 4 MaxFrameBytes peerFrame value
 let decodePeerFrame bytes = decode 4 MaxFrameBytes peerFrame bytes
 
 let private validatePeerTranscript (request: PeerTranscriptRequest) =
-  if request.ProtocolVersion <> ProtocolVersion && request.ProtocolVersion <> LegacyProtocolVersion then Error "unsupported peer version"
+  if not (isPeerProtocolVersion request.ProtocolVersion) then Error "unsupported peer version"
   else validateTranscript request.Request |> Result.map (fun _ -> request)
 let encodePeerTranscriptRequest (value: PeerTranscriptRequest) = encodeVersion value.ProtocolVersion 5 MaxRequestBytes peerTranscriptRequest (validatePeerTranscript value |> require)
 let decodePeerTranscriptRequest bytes = decode 5 MaxRequestBytes peerTranscriptRequest bytes |> Result.bind validatePeerTranscript
-let encodePeerTranscriptReply value = encode 6 MaxTranscriptBytes peerTranscriptReply value
+let encodePeerTranscriptReply value = encodeVersion PeerCompatProtocolVersion 6 MaxTranscriptBytes peerTranscriptReply value
 let decodePeerTranscriptReply bytes = decode 6 MaxTranscriptBytes peerTranscriptReply bytes
 
-// These new private reporting families have no legacy JSON or v9 representation.
-let encodeCommandObservationRequest value = encode 7 MaxCommandObservationBytes commandObservationRequest value
+// Private reporting families 7 & 8 keep their unchanged v11 wire layout (no v9
+// representation) so lease.fsx remains compatible across v11/v12 daemon rollouts.
+let encodeCommandObservationRequest value = encodeVersion 11 7 MaxCommandObservationBytes commandObservationRequest value
 let decodeCommandObservationRequest bytes = decode 7 MaxCommandObservationBytes commandObservationRequest bytes
-let encodeCommandObservationReply value = encode 8 MaxCommandObservationReplyBytes commandObservationReply value
+let encodeCommandObservationReply value = encodeVersion 11 8 MaxCommandObservationReplyBytes commandObservationReply value
 let decodeCommandObservationReply bytes = decode 8 MaxCommandObservationReplyBytes commandObservationReply bytes

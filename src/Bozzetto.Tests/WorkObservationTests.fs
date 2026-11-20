@@ -42,16 +42,21 @@ let tests =
     testCase "node and protocol are checked before scope admission" <| fun () ->
       validateRequest node { request "work" 0 with Node = "two" }
       |> Expect.equal "cannot observe another node by alias" (Error "node_mismatch")
-      validateRequest node { request "work" 0 with ProtocolVersion = ProtocolVersion - 1 }
-      |> Expect.equal "no protocol fallback" (Error "protocol_mismatch")
+      for version in [LegacyProtocolVersion; 11; ProtocolVersion] do
+        validateRequest node { request "work" 0 with ProtocolVersion = version }
+        |> Expect.equal "supported peer version admitted" (Ok ())
+      validateRequest node { request "work" 0 with ProtocolVersion = 10 }
+      |> Expect.equal "unsupported peer version refused" (Error "protocol_mismatch")
     testCase "transcript reads bind the node incarnation and bounded cursor" <| fun () ->
       let read = { PeerTranscriptRequest.ProtocolVersion = ProtocolVersion
                    Request = { Source = node; Journal = "journal"; Sequence = 1L; Stream = Stdout; Offset = 0L; MaxBytes = MaxTranscriptPageBytes } }
-      validateTranscriptRequest node read |> Expect.equal "bounded read admitted" (Ok())
+      for version in [LegacyProtocolVersion; 11; ProtocolVersion] do
+        validateTranscriptRequest node { read with ProtocolVersion = version }
+        |> Expect.equal "bounded read admitted on supported peer version" (Ok ())
       validateTranscriptRequest node { read with Request = { read.Request with Source = { node with Incarnation = "retired" } } }
       |> Expect.equal "same node name is insufficient" (Error "node_mismatch")
-      validateTranscriptRequest node { read with ProtocolVersion = ProtocolVersion - 1 }
-      |> Expect.equal "version mismatch has no fallback" (Error "protocol_mismatch")
+      validateTranscriptRequest node { read with ProtocolVersion = 10 }
+      |> Expect.equal "unsupported transcript version refused" (Error "protocol_mismatch")
       for limit in [0; MaxTranscriptPageBytes + 1] do
         validateTranscriptRequest node { read with Request = { read.Request with MaxBytes = limit } }
         |> Expect.equal "exact byte bound enforced" (Error "invalid_limit")

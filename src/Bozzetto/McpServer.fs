@@ -2809,6 +2809,86 @@ let mapStatusRoutes (app: WebApplication) (rctx: RouteContext) =
     } :> Task
   ) |> ignore
 
+let mapRetrievalRoutes (app: WebApplication) =
+  let parseOptionalInt64 (name: string) (doc: JsonValue) : Result<int64 option, string> =
+    match HttpJson.property name doc with
+    | None | Some JsonValue.Null -> Ok None
+    | Some v ->
+      match JsonValue.tryAsInt64 v with
+      | Some n -> Ok(Some n)
+      | None -> Error(sprintf "Field '%s' must be an integer." name)
+  let parseOptionalString (name: string) (doc: JsonValue) : Result<string option, string> =
+    match HttpJson.property name doc with
+    | None | Some JsonValue.Null -> Ok None
+    | Some(JsonValue.String s) -> Ok(Some s)
+    | Some _ -> Error(sprintf "Field '%s' must be a string." name)
+  let parseAwaitBody (doc: JsonValue) =
+    match doc with
+    | JsonValue.Object _ ->
+      match parseOptionalInt64 "minGeneration" doc,
+            parseOptionalString "expectedRepo" doc,
+            parseOptionalString "expectedSha" doc,
+            parseOptionalInt64 "timeoutSeconds" doc,
+            parseOptionalString "workingDirectory" doc with
+      | Ok minGen, Ok repo, Ok sha, Ok timeoutOpt, Ok wdOpt ->
+        let timeoutSecResult =
+          match timeoutOpt with
+          | None -> Ok 60
+          | Some v when v >= 1L && v <= 600L -> Ok(int v)
+          | Some _ -> Error "timeoutSeconds must be an integer between 1 and 600."
+        timeoutSecResult |> Result.map (fun timeoutSec ->
+          let normalizedWd = wdOpt |> Option.filter (String.IsNullOrWhiteSpace >> not)
+          minGen, repo, sha, timeoutSec, normalizedWd)
+      | Error e, _, _, _, _ | _, Error e, _, _, _ | _, _, Error e, _, _ | _, _, _, Error e, _ | _, _, _, _, Error e ->
+        Error e
+    | _ -> Error "Request body must be a JSON object."
+
+  app.MapGet("/api/retrieval/status", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
+    task {
+      let wdOpt =
+        match ctx.Request.Query.TryGetValue("workingDirectory") with
+        | true, values ->
+          let raw = string values
+          if String.IsNullOrWhiteSpace raw then None else Some raw
+        | _ -> None
+      ctx.Response.Headers.CacheControl <- Microsoft.Extensions.Primitives.StringValues "no-store"
+      let status = Bozzetto.Server.RetrievalObservation.currentForStatus wdOpt
+      do! jsonResponse ctx 200 (Bozzetto.Server.RetrievalObservation.statusToJson status)
+    } :> Task
+  ) |> ignore
+
+  app.MapPost("/api/retrieval/await", fun (ctx: Microsoft.AspNetCore.Http.HttpContext) ->
+    task {
+      ctx.Response.Headers.CacheControl <- Microsoft.Extensions.Primitives.StringValues "no-store"
+      let! parsedDoc =
+        task {
+          try
+            let! doc = readJsonBody ctx
+            return Ok doc
+          with
+          | HttpJson.InvalidJson reason -> return Error reason
+        }
+      match parsedDoc |> Result.bind parseAwaitBody with
+      | Error reason ->
+        let statusCode, body =
+          Bozzetto.Server.RetrievalObservation.outcomeToHttpJson
+            None
+            (Bozzetto.Server.RetrievalObservation.AwaitOutcome.InvalidFilter reason)
+        do! jsonResponse ctx statusCode body
+      | Ok(minGen, repo, sha, timeoutSec, wdOpt) ->
+        let! outcome =
+          Bozzetto.Server.RetrievalObservation.awaitFreshAsync
+            minGen
+            repo
+            sha
+            (TimeSpan.FromSeconds(float timeoutSec))
+            ctx.RequestAborted
+        if not ctx.RequestAborted.IsCancellationRequested then
+          let statusCode, body = Bozzetto.Server.RetrievalObservation.outcomeToHttpJson wdOpt outcome
+          do! jsonResponse ctx statusCode body
+    } :> Task
+  ) |> ignore
+
 /// Moved to `SessionPathValidation.validateSessionCreateRequest` (its own
 /// small module that compiles BEFORE this file, so the `create_session` MCP
 /// tool in Mcp.fs — which also compiles before McpServer.fs — can call the
@@ -3556,6 +3636,7 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       mapDiagnosticsRoutes app rctx
       mapEventsRoute app rctx
       mapStatusRoutes app rctx
+      mapRetrievalRoutes app
       mapSessionRoutes app rctx
       mapLiveTestingRoutes app rctx
       mapAnalysisRoutes app rctx

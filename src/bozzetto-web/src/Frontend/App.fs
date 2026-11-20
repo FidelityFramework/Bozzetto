@@ -156,10 +156,58 @@ let private commandOutcome (outcome: unit -> OutcomeView option) =
           rx (fun () -> field (fun value -> clockTime value.at + " · " + value.text))
         |]))
 
-let private topBar (link: Signal<Bridge.Link>) (dark: Signal<bool>) (toggleTheme: unit -> unit) =
+let private retrievalPill (stores: Stores) =
+  comp (fun () ->
+    let presentation = Api.createMemo (fun _ ->
+      let status = stores.Retrieval.Value
+      let badge style label details busy =
+        let checkoutDetail =
+          if status.branchStatus = "unmanaged_checkout" then "This checkout is outside Fanion's managed index." else ""
+        let tooltip = List.append details [ checkoutDetail; status.note ] |> List.filter (fun line -> line <> "") |> String.concat "\n"
+        {| style = style; label = label; tooltip = tooltip; busy = busy |}
+      let listDetail label sources =
+        if Array.isEmpty sources then "" else label + ": " + String.concat ", " sources
+      let sourcesInLabel sources =
+        if Array.isEmpty sources then "" else " (" + String.concat ", " sources + ")"
+      let queued =
+        if status.queuedRetrievals > 0 then " · " + string status.queuedRetrievals + " queued" else ""
+      let reasons = listDetail "Reasons" status.reasons
+      let pending = listDetail "Pending sources" status.pendingSources
+      match status.branchStatus, status.state with
+      | "quarantined_branch", _ ->
+        let generation = if status.generation > 0L then " · gen " + string status.generation else ""
+        let label = "Quarantined branch (" + status.branch + ")" + generation
+        let detail = "Quarantined branch (" + status.branch + ", intentionally outside retrieval index)"
+        badge "badge-plum" label [ detail ] false
+      | _, "fresh" ->
+        let prefix = if status.branchStatus = "on_main_indexed" then "On main · " else ""
+        let label = prefix + "Index gen " + string status.generation + " · Fresh"
+        let snapshot = if status.snapshotId = "" then "" else "Snapshot " + shortHash status.snapshotId
+        let published = if status.publishedAt > 0.0 then "Published " + dateTime status.publishedAt else ""
+        badge "badge-success" label [ snapshot; published ] false
+      | _, "crossing_held" ->
+        let sources = if Array.isEmpty status.pendingSources then status.expectedSources else status.pendingSources
+        let label = "Crossing held" + sourcesInLabel sources + "…" + queued
+        badge "badge-warning gap-1" label [ listDetail "Expected sources" status.expectedSources; pending; reasons ] true
+      | _, "indexing" ->
+        let label = "Indexing" + sourcesInLabel status.pendingSources + "…" + queued
+        badge "badge-warning gap-1" label [ pending; listDetail "Stale sources" status.staleSources; reasons ] true
+      | _, "unconfigured" -> badge "badge-ghost" "Index unconfigured" [] false
+      | _ -> badge "badge-error" "Index unavailable" [ reasons ] false)
+    span [| cls "retrieval-pill min-w-0"; attr "role" "status"; flagRx "hidden" (fun () -> not stores.RetrievalSeen.Value) |] [|
+      span [|
+        clsRx (fun () -> "retrieval-badge badge badge-sm " + presentation.Value.style + " max-w-full h-auto py-0.5")
+        titleRx (fun () -> presentation.Value.tooltip)
+      |] [|
+        span [| aria "hidden" "true"; clsRx (fun () -> if presentation.Value.busy then spinner else "hidden") |] [||]
+        span [| cls "min-w-0 break-words" |] [| rx (fun () -> presentation.Value.label) |]
+      |]
+    |])
+
+let private topBar (stores: Stores) (link: Signal<Bridge.Link>) (dark: Signal<bool>) (toggleTheme: unit -> unit) =
   let workPage = isWorkPage ()
   div [| cls "navbar flex-wrap shrink-0 min-h-12 px-4 py-2 gap-2 bg-base-100 shadow-sm border-b border-base-content/10" |] [|
-    div [| cls "flex-1 flex items-center gap-3 min-w-0" |] [|
+    div [| cls "grow flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0" |] [|
       span [| cls "font-heading font-extrabold text-lg tracking-tight" |] [| text "Bozzetto" |]
       div [| cls "flex items-center gap-1" |] [|
         anchor [|
@@ -178,8 +226,9 @@ let private topBar (link: Signal<Bridge.Link>) (dark: Signal<bool>) (toggleTheme
         span [| cls "opacity-70" |] [| rx (fun () -> linkText link.Value) |]
       |]
     |]
-    div [| cls "flex-none flex items-center gap-2" |] [|
-      button [| cls "btn btn-ghost btn-sm btn-circle text-base"; View.title "Toggle theme"; on "click" (fun _ -> toggleTheme ()) |] [|
+    div [| cls "flex max-w-full items-center gap-2" |] [|
+      retrievalPill stores
+      button [| cls "btn btn-ghost btn-sm btn-circle shrink-0 text-base"; View.title "Toggle theme"; on "click" (fun _ -> toggleTheme ()) |] [|
         rx (fun () -> if dark.Value then "☀" else "☾")
       |]
     |]
@@ -677,50 +726,6 @@ let private agentsPanel (stores: Stores) =
     |]
   |]
 
-let private leasesPanel (stores: Stores) =
-  div [| cls "card card-compact panel" |] [|
-    div [| cls "card-body gap-1.5" |] [|
-      div [| cls "flex items-baseline gap-2" |] [|
-        h2 [| cls "text-sm font-bold uppercase tracking-wider opacity-80 flex-1" |] [| text "Work leases" |]
-        span [| cls "text-xs opacity-50" |] [|
-          rx (fun () -> string stores.Leases.Value.Length + " active · " + string stores.Queue.Value.Length + " queued")
-        |]
-      |]
-      showElse (fun () -> stores.Leases.Value.Length + stores.Queue.Value.Length > 0)
-        (fun () ->
-          table [| cls "table table-xs" |] [|
-            thead [||] [|
-              tr [||] [|
-                th [||] [| text "kind" |]
-                th [||] [| text "holder" |]
-                th [||] [| text "state" |]
-              |]
-            |]
-            tbody [||] [|
-              each (fun (lease: LeaseView) -> lease.id) (fun () -> stores.Leases.Value) (fun lease ->
-                tr [||] [|
-                  td [| cls "font-mono" |] [| rx (fun () -> (lease ()).kind) |]
-                  td [| cls "font-mono break-all max-w-[24rem]"; titleRx (fun () -> (lease ()).holder + " · " + (lease ()).id) |] [| rx (fun () -> (lease ()).holder) |]
-                  td [||] [|
-                    span [| cls "badge badge-xs badge-info mr-1" |] [| text "granted" |]
-                    span [| cls "opacity-70"; titleRx (fun () -> "granted " + dateTime (lease ()).grantedAt) |] [| rx (fun () -> "until " + clockTime (lease ()).expiresAt) |]
-                  |]
-                |])
-              each (fun (wait: WaitView) -> wait.id) (fun () -> stores.Queue.Value) (fun wait ->
-                tr [||] [|
-                  td [| cls "font-mono" |] [| rx (fun () -> (wait ()).kind) |]
-                  td [| cls "font-mono break-all max-w-[24rem]"; titleRx (fun () -> (wait ()).holder) |] [| rx (fun () -> (wait ()).holder) |]
-                  td [||] [|
-                    span [| cls "badge badge-xs badge-warning mr-1" |] [| text "queued" |]
-                    span [| cls "opacity-70" |] [| rx (fun () -> "since " + clockTime (wait ()).requestedAt) |]
-                  |]
-                |])
-            |]
-          |])
-        (fun () -> div [| cls "text-xs opacity-60" |] [| text "No queued or active work." |])
-    |]
-  |]
-
 type private RunPick =
   {| key: string; label: string; project: string; exitCode: int; generation: string; sourceVersion: string; at: float
      stdout: string; stderr: string; source: string |}
@@ -1172,7 +1177,7 @@ let app () : V =
     match Codec.decodeEvent payload with
     | Ok event ->
       match event with
-      | Health _ | Leases _ | Uptime _ | Resources _ | AgentWork _ | WorkNodes _ | NodeResources _ | NodeTranscript _ -> ()
+      | Health _ | Retrieval _ | Leases _ | Uptime _ | Resources _ | AgentWork _ | WorkNodes _ | NodeResources _ | NodeTranscript _ -> ()
       | _ -> Interop.consoleLog (sprintf "← binary frame (%d bytes)" payload.Length)
       act (fun () -> Model.apply stores commands event)
     | Error message -> Interop.consoleLog ("← undecodable binary frame: " + message)
@@ -1212,7 +1217,7 @@ let app () : V =
   // ── View ─────────────────────────────────────────────────────────────────
   let view =
     div [| cls "flex flex-col h-screen bg-base-100 text-base-content text-sm" |] [|
-      topBar link dark toggleTheme
+      topBar stores link dark toggleTheme
       show (fun () -> not (connected ())) (fun () ->
         div [| cls "px-4 py-1 text-xs bg-warning text-warning-content" |] [| text "Disconnected · last received state · commands unavailable" |])
       show (fun () -> stores.ProtocolMismatch.Value) (fun () ->

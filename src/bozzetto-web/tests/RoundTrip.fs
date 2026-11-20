@@ -262,6 +262,25 @@ let private peerResources : HostResources = {
   Sequence = 8L; Status = "unavailable"; SampledAtMs = 0L; IntervalMs = 0.; SampleCostMs = 0.
   Metrics = [||]; Processes = [||]; ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = "not sampled"
 }
+let private freshRetrieval : RetrievalStatus =
+  { Revision = 9007199254740993L
+    State = "fresh"
+    BranchStatus = "on_main_indexed"
+    BranchName = "main"
+    OnMain = true
+    Generation = 12L
+    SnapshotId = "snap-gen-12"
+    PublishedAtMs = 1759420800123L
+    ChangedAtMs = None
+    HeldUntilMs = None
+    QueuedRetrievals = 0
+    ExpectedSources = [| "clef"; "Fidelity.PSG" |]
+    PendingSources = [||]
+    StaleSources = [||]
+    Reasons = [||]
+    Revisions = [| { Source = "clef"; Revision = Some "a2545afb" }; { Source = "Fidelity.PSG"; Revision = None } |]
+    Note = "Snapshot published" }
+
 let private events = baseEvents @ [
   WorkNodes { Revision = 5L; Nodes = [|
     { Source = source; Local = false; Status = "unavailable"; Note = "disconnected"; Value = Some peerWork }
@@ -270,6 +289,21 @@ let private events = baseEvents @ [
   NodeResources { Source = source; Correlation = 7; Value = peerResources }
   NodeTranscript { Source = source; Correlation = 8; Outcome = TranscriptPage { Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; NextOffset = None; TotalBytes = 3L; Bytes = [| 0uy; 128uy; 255uy |]; Truncated = true } }
   NodeTranscript { Source = source; Correlation = 9; Outcome = TranscriptRefused("missing_entry", "Unavailable") }
+  Retrieval freshRetrieval
+  Retrieval { freshRetrieval with
+                State = "crossing_held"; BranchStatus = "indexing_pending"; ChangedAtMs = Some 1759420800456L
+                HeldUntilMs = Some 1759420800789L; QueuedRetrievals = 2; PendingSources = [| "clef" |]
+                Reasons = [| "Waiting for companion revisions" |] }
+  Retrieval { freshRetrieval with
+                State = "indexing"; BranchStatus = "indexing_pending"; PendingSources = [| "clef"; "Fidelity.PSG" |]
+                StaleSources = [| "Fidelity.PSG" |]; Reasons = [| "Main revisions changed" |] }
+  Retrieval { freshRetrieval with State = "unavailable"; BranchStatus = "unavailable"; Reasons = [| "Observation stream disconnected" |] }
+  Retrieval { freshRetrieval with
+                State = "unconfigured"; BranchStatus = "unconfigured"; BranchName = ""; OnMain = false
+                Generation = 0L; SnapshotId = ""; PublishedAtMs = 0L; ExpectedSources = [||]; Revisions = [||]
+                Note = "Retrieval is unconfigured" }
+  Retrieval { freshRetrieval with BranchStatus = "quarantined_branch"; BranchName = "fidelity/pi-checkout-coaching"; OnMain = false }
+  Retrieval { freshRetrieval with BranchStatus = "branch_unknown"; BranchName = ""; OnMain = false }
 ]
 
 let private badEvents = [
@@ -399,7 +433,17 @@ let private run () =
     check ("malformed event refused " + wire) (FrontendCodec.decodeEvent (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
   for wire in badCommands do
     check ("malformed command refused " + wire) (BackendCodec.decodeCommand (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
-  let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 11uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+  check "bridge vocabulary is v12" (ProtocolVersion = 12)
+  let retrievalFrame = BackendCodec.encodeEvent (Retrieval freshRetrieval)
+  check "Retrieval emits the v12 event tag 14" (retrievalFrame[..6] = [| 66uy; 90uy; 87uy; 49uy; 12uy; 2uy; 14uy |])
+  let wrongTag = Array.copy retrievalFrame
+  wrongTag[6] <- 15uy
+  check "unknown retrieval event tag is refused" (FrontendCodec.decodeEvent wrongTag = Error "binary: unknown Event tag")
+  let wrongVersion = Array.copy retrievalFrame
+  wrongVersion[4] <- 11uy
+  check "retrieval in a v11 event envelope is refused" (FrontendCodec.decodeEvent wrongVersion = Error "binary: unsupported version")
+  check "truncated retrieval status is refused" (FrontendCodec.decodeEvent retrievalFrame[..retrievalFrame.Length - 2] = Error "binary: invalid string length")
+  let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 12uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
   let frame = { CommandFrame.Correlation = 1; Command = RequestSnapshot }
   check "independent binary golden" (FrontendCodec.encodeCommand frame = golden)
   check "golden decode" (BackendCodec.decodeCommand golden = Ok frame)
@@ -459,8 +503,11 @@ let private run () =
     check "every truncated golden prefix refused" (BackendCodec.decodeCommand golden[..length-1] |> Result.isError)
   let peers = [ PeerHello source; PeerWork peerWork; PeerResources peerResources; PeerUnavailable "closed"; PeerHeartbeat { UptimeMs = 33L } ]
   for value in peers do
-    check "peer case round trip" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value) = Ok value)
-    check "new peer frames explicitly emit v11" ((Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value)[4] = 11uy)
+    let bytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value
+    check "peer frame emits the v11 envelope" (bytes[4..5] = [|11uy; 4uy|])
+    check "v12 codec reads the v11 peer frame" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame bytes = Ok value)
+    bytes[4] <- 12uy
+    check "v12 envelope preserves the same peer frame payload" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame bytes = Ok value)
   // Fixed deployed v9 Operations bytes: one real compiler run, no lease field.
   let oldOperations = [|
     66uy; 90uy; 87uy; 49uy; 9uy; 2uy; 10uy; 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 106uy; 1uy
@@ -520,9 +567,19 @@ let private run () =
   let oldRead = { read with ProtocolVersion = LegacyProtocolVersion }
   let oldReadBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest oldRead
   check "v9 transcript request remains accepted" (oldReadBytes[4] = 9uy && Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest oldReadBytes = Ok oldRead)
+  let v11Request = { request with ProtocolVersion = 11 }
+  let v11RequestBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest v11Request
+  check "v11 observation request round trip" (v11RequestBytes[4..5] = [|11uy; 3uy|] && Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest v11RequestBytes = Ok v11Request)
+  let v11Read = { read with ProtocolVersion = 11 }
+  let v11ReadBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest v11Read
+  check "v11 transcript request round trip" (v11ReadBytes[4..5] = [|11uy; 5uy|] && Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest v11ReadBytes = Ok v11Read)
   let page = { Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; NextOffset = Some 32768L; TotalBytes = 32770L; Bytes = Array.create MaxTranscriptPageBytes 255uy; Truncated = false }
   let reply = { PeerTranscriptReply.Source = source; Outcome = TranscriptPage page }
-  check "exact maximum byte page" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply (Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptReply reply) = Ok reply)
+  let replyBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptReply reply
+  check "transcript reply emits the v11 envelope" (replyBytes[4..5] = [|11uy; 6uy|])
+  check "v12 codec reads a v11 maximum byte page" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply replyBytes = Ok reply)
+  replyBytes[4] <- 12uy
+  check "v12 envelope preserves the same transcript page" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply replyBytes = Ok reply)
   check "read request cannot be an observation" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest read) = Error "binary: wrong message family")
   check "transcript read request cap" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest (Array.zeroCreate 4097) = Error "binary: frame too large")
 

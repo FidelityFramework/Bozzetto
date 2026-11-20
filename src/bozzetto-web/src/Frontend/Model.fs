@@ -93,6 +93,21 @@ type HealthView =
     recordAt: float
   |}
 
+type RetrievalView =
+  { revision: float
+    state: string
+    branchStatus: string
+    branch: string
+    generation: int64
+    snapshotId: string
+    publishedAt: float
+    queuedRetrievals: int
+    expectedSources: string array
+    pendingSources: string array
+    staleSources: string array
+    reasons: string array
+    note: string }
+
 type LeaseView = {| id: string; kind: string; holder: string; grantedAt: float; expiresAt: float |}
 
 type WaitView = {| id: string; kind: string; holder: string; requestedAt: float |}
@@ -176,6 +191,8 @@ type Stores =
     HealthSeen: Signal<bool>
     // Meaningful only when HealthSeen.
     Health: Signal<HealthView>
+    RetrievalSeen: Signal<bool>
+    Retrieval: Signal<RetrievalView>
     Leases: Signal<LeaseView array>
     Queue: Signal<WaitView array>
     // The lease board's stamp as last applied: a page keeps the newest.
@@ -223,6 +240,21 @@ let private noHealth () : HealthView =
     recordAt = 0.0
   |}
 
+let private noRetrieval : RetrievalView =
+  { revision = 0.0
+    state = ""
+    branchStatus = ""
+    branch = ""
+    generation = 0L
+    snapshotId = ""
+    publishedAt = 0.0
+    queuedRetrievals = 0
+    expectedSources = [||]
+    pendingSources = [||]
+    staleSources = [||]
+    reasons = [||]
+    note = "" }
+
 // Signals belong to the ambient graph: call inside the page graph's Run.
 let create () : Stores =
   { Welcomed = Api.createSignal false
@@ -250,6 +282,8 @@ let create () : Stores =
     ResourceProcesses = Api.createSignal Array.empty<ResourceProcessView>
     HealthSeen = Api.createSignal false
     Health = Api.createSignal (noHealth ())
+    RetrievalSeen = Api.createSignal false
+    Retrieval = Api.createSignal noRetrieval
     Leases = Api.createSignal Array.empty<LeaseView>
     Queue = Api.createSignal Array.empty<WaitView>
     LeaseRevision = Api.createSignal 0.0
@@ -420,6 +454,21 @@ let private healthView (h: DaemonHealth) : HealthView =
     recordAt = float h.RecordAtMs
   |}
 
+let private retrievalView (status: RetrievalStatus) : RetrievalView =
+  { revision = float status.Revision
+    state = status.State
+    branchStatus = status.BranchStatus
+    branch = status.BranchName
+    generation = status.Generation
+    snapshotId = status.SnapshotId
+    publishedAt = float status.PublishedAtMs
+    queuedRetrievals = status.QueuedRetrievals
+    expectedSources = status.ExpectedSources
+    pendingSources = status.PendingSources
+    staleSources = status.StaleSources
+    reasons = status.Reasons
+    note = status.Note }
+
 let private leaseView (l: LeaseGrant) : LeaseView =
   {| id = l.Id; kind = l.Kind; holder = l.Holder; grantedAt = float l.GrantedAtMs; expiresAt = float l.ExpiresAtMs |}
 
@@ -588,8 +637,9 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       focusNode stores "" ""
       set stores.Transcript (noTranscript ())
       // A restarted daemon stamps its facts from one again: forget the old stamps,
-      // and show health only once the new daemon has published it.
+      // and wait for the new daemon's health and retrieval facts.
       set stores.HealthSeen false
+      set stores.RetrievalSeen false
       set stores.LeaseRevision 0.0
       set stores.OperationsRevision 0.0
       set stores.Operations Array.empty
@@ -743,6 +793,10 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       if not stores.HealthSeen.Value || float health.Revision >= stores.Health.Value.revision then
         set stores.Health (healthView health)
         set stores.HealthSeen true
+    | Retrieval status ->
+      if not stores.RetrievalSeen.Value || float status.Revision >= stores.Retrieval.Value.revision then
+        set stores.Retrieval (retrievalView status)
+        set stores.RetrievalSeen true
     | Leases board ->
       // Stamped per publication; an older board arriving after a newer one is kept out.
       if float board.Revision >= stores.LeaseRevision.Value then

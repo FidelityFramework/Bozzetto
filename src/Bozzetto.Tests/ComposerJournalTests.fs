@@ -757,6 +757,7 @@ PRAGMA user_version=1;"
             Membership = None
             Journal = supervisor.JournalChanged, (fun () -> supervisor.Journal)
             Liveness = Some(supervisor.LivenessChanged, supervisor.CurrentLivenessSnapshot)
+            Retrieval = None
           }
         let pushedOps = ResizeArray<Bozzetto.Web.Shared.Protocol.OperationsBoard>()
         let _, sinkReg =

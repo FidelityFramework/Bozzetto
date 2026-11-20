@@ -601,6 +601,46 @@ OUTPUT FORMAT: Each entry shows a timestamp, cell index, duration, whether it su
         getDaemonStatus ctx |> withEcho ctx "get_daemon_status"
 
     [<McpServerTool>]
+    [<Description("Wait on Bozzetto's zero-poll retrieval freshness signal until the Fanion lab retrieval index is fresh (optionally gated on a minimum generation or repository commit SHA). Reports live readiness and branch clarity (on_main_indexed, indexing_pending, quarantined_branch, branch_unknown) without polling.")>]
+    member _.await_retrieval_fresh(
+        [<Description("Optional minimum retrieval index generation to wait for (0 means any fresh generation).")>]
+        [<Optional; DefaultParameterValue(0L)>]
+        minGeneration: int64,
+        [<Description("Optional repository name (e.g. 'Farscape' or 'FidelityFramework/Farscape') to match alongside expectedSha.")>]
+        [<Optional; DefaultParameterValue("")>]
+        expectedRepo: string,
+        [<Description("Optional commit SHA prefix (7 to 64 hexadecimal characters) that must be present in the fresh retrieval snapshot.")>]
+        [<Optional; DefaultParameterValue("")>]
+        expectedSha: string,
+        [<Description("Maximum seconds to wait for a matching fresh signal (1 to 600, default 60).")>]
+        [<Optional; DefaultParameterValue(60)>]
+        timeoutSeconds: int,
+        [<Description("Optional checkout directory used to report branch clarity (on_main_indexed vs quarantined_branch vs branch_unknown).")>]
+        [<Optional; DefaultParameterValue("")>]
+        workingDirectory: string,
+        [<Optional; DefaultParameterValue(System.Threading.CancellationToken())>]
+        cancellationToken: System.Threading.CancellationToken
+    ) : Task<string> =
+        task {
+          let wdOpt = if System.String.IsNullOrWhiteSpace workingDirectory then None else Some workingDirectory
+          let! outcome =
+            if timeoutSeconds < 1 || timeoutSeconds > 600 then
+              Task.FromResult(Bozzetto.Server.RetrievalObservation.AwaitOutcome.InvalidFilter "timeoutSeconds must be between 1 and 600.")
+            else
+              let minGenOpt = if minGeneration = 0L then None else Some minGeneration
+              let repoOpt = if System.String.IsNullOrWhiteSpace expectedRepo then None else Some expectedRepo
+              let shaOpt = if System.String.IsNullOrWhiteSpace expectedSha then None else Some expectedSha
+              Bozzetto.Server.RetrievalObservation.awaitFreshAsync
+                minGenOpt
+                repoOpt
+                shaOpt
+                (System.TimeSpan.FromSeconds(float timeoutSeconds))
+                cancellationToken
+          let _, payload = Bozzetto.Server.RetrievalObservation.outcomeToHttpJson wdOpt outcome
+          return render payload
+        } |> withEcho ctx "await_retrieval_fresh"
+
+    [<McpServerTool>]
     [<Description("Get one session's status: explicit target, loaded projects, lifecycle, worker, workflow, evaluation state, health, and session-scoped facts. Use this to decide whether session-scoped work is safe; machine-wide facts are available from get_daemon_status.")>]
     member _.get_session_status(
         [<Description("Working directory of the MCP client. Routes to the matching session when exactly one session uses it; if multiple sessions match, switch_session first.")>]
