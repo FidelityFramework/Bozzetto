@@ -14,6 +14,7 @@
 
     <ItemGroup>
         <Compile Include="LiveTestingBudgets.fs" />
+        <Compile Include="../../tools/build/WatchdogCli.fs" Link="Build/WatchdogCli.fs" />
         <Compile Include="TestInfrastructure.fs" />
         <Compile Include="ReleaseVersionTests.fs" />
         <Compile Include="../Bozzetto.Composer/ProviderContracts.fs" Link="Composer/ProviderContracts.fs" />

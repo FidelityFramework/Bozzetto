@@ -486,6 +486,7 @@ let createSessionOpsWithRecovery
           match result with
           | Ok () ->
             let! committed = manifestOwner.Commit (Features.DaemonManifest.ManifestMutation.MarkStopped (sessionId, DateTimeOffset.UtcNow))
+            Bozzetto.Server.DaemonTelemetry.notifySessionDisconnected ()
             return
               match committed with
               | Ok _ -> Result.Ok (sprintf "Session '%s' stopped." sessionId)
@@ -511,6 +512,7 @@ let createSessionOpsWithRecovery
           // Remove the manifest entry entirely — the session is gone from the
           // resume picker too (purge = the corrupted-state escape hatch).
           let! committed = manifestOwner.Commit (Features.DaemonManifest.ManifestMutation.Remove sessionId)
+          Bozzetto.Server.DaemonTelemetry.notifySessionDisconnected ()
           match committed with
           | Ok _ -> ()
           | Error err ->
@@ -1528,6 +1530,41 @@ let run
   let composer =
     Bozzetto.ComposerIntegration.ComposerSupervisor.fromEnvironmentWithJournal
       (LocalData.operationsPath DaemonState.BozzettoDir)
+  use unleasedWakeGate = new System.Threading.SemaphoreSlim(0, 1)
+  let wakeUnleasedCleanup () =
+    try
+      if unleasedWakeGate.CurrentCount = 0 then unleasedWakeGate.Release() |> ignore
+    with :? System.ObjectDisposedException | :? System.Threading.SemaphoreFullException -> ()
+  let publishLeasedLiveness () =
+    let leaseExpiry leaseId =
+      Bozzetto.Features.LeaseWatch.leaseExpiresAt (Bozzetto.ExpensiveWorkLease.LeaseId.ofWire leaseId)
+    Bozzetto.Server.DaemonTelemetry.publishLeasedCommandLiveness (composer.LeasedCommandLivenessSnapshot leaseExpiry)
+  let reconcileDeadLeasedCommands (settleGraceMs: int64) =
+    let nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+    let hasLiveLease leaseId =
+      Bozzetto.Features.LeaseWatch.hasLiveLease (Bozzetto.ExpensiveWorkLease.LeaseId.ofWire leaseId)
+    let releaseLease leaseId =
+      match Bozzetto.Features.LeaseWatch.release (Bozzetto.ExpensiveWorkLease.LeaseId.ofWire leaseId) with
+      | Bozzetto.ExpensiveWorkLease.ReleaseOutcome.Released -> ()
+      | Bozzetto.ExpensiveWorkLease.ReleaseOutcome.AlreadyGone ->
+        log.LogDebug("Abandoned leased command {LeaseId} had no live lease remaining to release.", leaseId)
+    match composer.ReconcileLeasedCommands(
+            Bozzetto.Server.LinuxProcessEdge.probeProcessLiveness,
+            hasLiveLease,
+            settleGraceMs,
+            nowMs,
+            releaseLease) with
+    | Bozzetto.ComposerIntegration.ComposerJournal.ReconcileResult.Reconciled(_, abandoned, unknown, _) ->
+      publishLeasedLiveness ()
+      if not (List.isEmpty abandoned) then
+        log.LogWarning("Reconciled {Count} abandoned leased command(s) whose process exited or PID was reused.", abandoned.Length)
+        wakeUnleasedCleanup ()
+      if not (List.isEmpty unknown) then
+        log.LogWarning("Observed {Count} leased command(s) with unverified process liveness.", unknown.Length)
+    | Bozzetto.ComposerIntegration.ComposerJournal.ReconcileResult.StorageFailure reason ->
+      log.LogWarning("Leased command reconciliation failed: {Reason}", reason)
+  // On daemon start no leases from prior incarnations are live: reconcile immediately (grace = 0).
+  reconcileDeadLeasedCommands 0L
   // Cancellation starts cleanup; the final shutdown path joins that same work
   // and observes its failure instead of leaving a discarded faulted task.
   let composerShutdown = lazy (composer.StopAsync() :> Task)
@@ -2284,15 +2321,19 @@ let run
     // sequencer: the level reported below is the one this reading implies now.
     let tick = Bozzetto.Server.HealthTick.observe (Bozzetto.Features.MachineMemory.current ())
     let machineMemory = tick.Machine
-    let telemetry =
-      Bozzetto.Server.DaemonTelemetry.sample (
-        Bozzetto.Server.DaemonTelemetry.ownedProcesses
-          (System.Diagnostics.Process.GetCurrentProcess().Id)
-          composer.WorkerPid
-          (SessionManager.QuerySnapshot.allSessions (readSnapshot ())
-           |> List.choose (fun session ->
-             WorkerProtocol.SessionLifecycleStatus.workerPid session.Status
-             |> Option.map (fun pid -> pid, "worker:" + WorkerProtocol.SessionId.value session.Id))))
+    let ownedProcessList =
+      Bozzetto.Server.DaemonTelemetry.ownedProcesses
+        (System.Diagnostics.Process.GetCurrentProcess().Id)
+        composer.WorkerPid
+        (SessionManager.QuerySnapshot.allSessions (readSnapshot ())
+         |> List.choose (fun session ->
+           WorkerProtocol.SessionLifecycleStatus.workerPid session.Status
+           |> Option.map (fun pid -> pid, "worker:" + WorkerProtocol.SessionId.value session.Id)))
+    let _telemetry = Bozzetto.Server.DaemonTelemetry.sample ownedProcessList
+    publishLeasedLiveness ()
+    // Read latest unleased-subprocess observation published by the background async monitor
+    // in O(1) — zero synchronous /proc directory scans on HTTP/MCP request threads.
+    let unleasedAnomaly = Bozzetto.Server.DaemonTelemetry.currentUnleasedVerdict ()
     let rssBytes = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64
     let memoryMB = int (rssBytes / 1_048_576L)
     let rssVerdict =
@@ -2315,10 +2356,75 @@ let run
             SessionSummaries = sessions
             LiveTestingSummary = testingSummary
             MemoryMB = memoryMB
-            Anomalies = Bozzetto.Features.HealthWatch.troubled ()
+            Anomalies = Bozzetto.Features.HealthWatch.troubled () @ Option.toList unleasedAnomaly
             GcDumpOutcome = Bozzetto.Features.GcDumpWatch.lastCaptureOutcome ()
             MemoryPressure = tick.Level }
       : Bozzetto.Features.HealthSnapshot)
+
+  // Exact lease-identity attribution for background unleased-subprocess scanning:
+  // only journal entries whose LeaseId is live in LeaseWatch count as tracked, and
+  // only live untracked FullBuild/TestSuiteRun/Rebuild leases spare non-orphaned builds.
+  let collectUnleasedInputs () =
+    let ownedPidSet =
+      Bozzetto.Server.DaemonTelemetry.ownedProcesses
+        (System.Diagnostics.Process.GetCurrentProcess().Id)
+        composer.WorkerPid
+        (SessionManager.QuerySnapshot.allSessions (readSnapshot ())
+         |> List.choose (fun session ->
+           WorkerProtocol.SessionLifecycleStatus.workerPid session.Status
+           |> Option.map (fun pid -> pid, "worker:" + WorkerProtocol.SessionId.value session.Id)))
+      |> List.map fst
+      |> Set.ofList
+    let liveTracked =
+      composer.Journal.Entries
+      |> List.choose (fun entry ->
+        match entry.Outcome, entry.Context with
+        | Bozzetto.ComposerIntegration.ComposerJournal.Outcome.Running,
+          Bozzetto.ComposerIntegration.ComposerJournal.Context.LeasedCommand cmd
+        | Bozzetto.ComposerIntegration.ComposerJournal.Outcome.Unknown _,
+          Bozzetto.ComposerIntegration.ComposerJournal.Context.LeasedCommand cmd
+          when Bozzetto.Features.LeaseWatch.hasLiveLease (Bozzetto.ExpensiveWorkLease.LeaseId.ofWire cmd.LeaseId) ->
+          Some(cmd.ProcessId, cmd.LeaseId)
+        | _ -> None)
+    let leasedRootPidSet = liveTracked |> List.map fst |> Set.ofList
+    let trackedLeaseIdSet = liveTracked |> List.map snd |> Set.ofList
+    let untrackedBuildOrTest = Bozzetto.Features.LeaseWatch.untrackedBuildOrTestLeaseCount trackedLeaseIdSet
+    ownedPidSet, leasedRootPidSet, untrackedBuildOrTest
+
+  Bozzetto.Server.DaemonTelemetry.installSessionDisconnectWakeup wakeUnleasedCleanup
+
+  // Background async unleased-subprocess sampler & persistent-orphan reaper.
+  // Runs completely off Kestrel/MCP request threads and stops cleanly on cts.Token.
+  let unleasedMonitorTask =
+    Async.StartAsTask(
+      async {
+        let orphanAutoReapGraceMs = 60_000L
+        while not cts.IsCancellationRequested do
+          let! wokenForImmediateCleanup =
+            async {
+              try
+                let! signaled = unleasedWakeGate.WaitAsync(5_000, cts.Token) |> Async.AwaitTask
+                return signaled
+              with
+              | :? OperationCanceledException
+              | :? System.ObjectDisposedException -> return false
+            }
+          if not cts.IsCancellationRequested then
+            try
+              let graceMs = if wokenForImmediateCleanup then 0L else orphanAutoReapGraceMs
+              let! cleanup, changed =
+                Bozzetto.Server.DaemonTelemetry.cleanupOrphanedSubprocessesWithCancellationAsync
+                  collectUnleasedInputs graceMs 300 cts.Token
+              if not (List.isEmpty cleanup.Targets) then
+                log.LogWarning("Background anomaly cleanup reaped {Count} orphaned watched subprocess group(s).", cleanup.Targets.Length)
+              if changed || not (List.isEmpty cleanup.Targets) then
+                Bozzetto.Server.HealthTick.refresh () |> ignore
+            with
+            | :? OperationCanceledException when cts.IsCancellationRequested -> ()
+            | ex ->
+              log.LogWarning("Background unleased-subprocess scan failed: {Error}", ex.Message)
+      },
+      cancellationToken = cts.Token)
 
   // Both listeners share one origin set: the MCP port and the control
   // listener's port (mcpPort + 1, see controlPort below).
@@ -2499,6 +2605,7 @@ let run
   let mutable cohortReaperTimerRef : System.Threading.Timer = Unchecked.defaultof<_>
   let cohortReaperCallback _ =
     try
+      reconcileDeadLeasedCommands 5_000L
       let now = DateTime.UtcNow
       let state = cohortOwner.ReadCohortState()
       match Map.isEmpty state.Members with
@@ -2982,6 +3089,10 @@ let run
   with
   | :? OperationCanceledException -> ()
 
+  // Cancel background loops and detach disconnect wakeups before draining timers/tasks.
+  try cts.Cancel() with :? System.ObjectDisposedException -> ()
+  Bozzetto.Server.DaemonTelemetry.clearSessionDisconnectHandlers ()
+
   // Graceful shutdown: stop test cycle timer, file watcher, and all sessions
   // W30(R12): Use Dispose(WaitHandle) for testCycleTimer — matches cacheSaveTimer treatment.
   // Bare Dispose() returns immediately; any in-flight 200ms tick callback could still be running
@@ -3000,9 +3111,20 @@ let run
   // Dispose the orphaned-temp-dir sweep timer (best-effort — the sweep itself is idempotent)
   try orphanTempDirSweepTimer.Dispose()
   with :? System.ObjectDisposedException -> ()
-  // Dispose the cohort lease reaper (best-effort — Tick/RenewLease are idempotent)
-  try cohortReaperTimer.Dispose()
-  with :? System.ObjectDisposedException -> ()
+  // Wait for an in-flight cohortReaperCallback (which invokes reconcileDeadLeasedCommands)
+  // before joining unleasedMonitorTask and tearing down Composer/unleasedWakeGate.
+  match! disposeTimerAndWait cohortReaperTimer (TimeSpan.FromSeconds 5.0) with
+  | TimerStop.StillRunning -> log.LogWarning("cohortReaperTimer shutdown wait timed out — callback may still be running")
+  | TimerStop.Joined -> ()
+  // Join background unleased-subprocess monitor before unleasedWakeGate is disposed.
+  try
+    do! unleasedMonitorTask.WaitAsync(TimeSpan.FromSeconds 5.0)
+  with
+  | :? OperationCanceledException -> ()
+  | :? TimeoutException ->
+    log.LogWarning("unleasedMonitorTask shutdown wait timed out — background scan may still be running")
+  | ex ->
+    log.LogWarning("unleasedMonitorTask shutdown wait observed error: {Error}", ex.Message)
   // Also what roots frictionPruneTimer for the daemon's lifetime (see its def).
   try frictionPruneTimer.Dispose()
   with :? System.ObjectDisposedException -> ()

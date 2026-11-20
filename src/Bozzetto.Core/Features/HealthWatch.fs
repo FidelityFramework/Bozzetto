@@ -47,12 +47,14 @@ module HealthWatch =
     |> Seq.filter (fun verdict ->
       match verdict with
       | HealthAnomaly.Verdict.Broken _
+      | HealthAnomaly.Verdict.OperationalFault _
       | HealthAnomaly.Verdict.Drifting _ -> true
       | HealthAnomaly.Verdict.Normal
       | HealthAnomaly.Verdict.InsufficientHistory -> false)
     |> Seq.sortBy (fun verdict ->
       match verdict with
-      | HealthAnomaly.Verdict.Broken _ -> 0
+      | HealthAnomaly.Verdict.Broken _
+      | HealthAnomaly.Verdict.OperationalFault _ -> 0
       | _ -> 1)
     |> List.ofSeq
 

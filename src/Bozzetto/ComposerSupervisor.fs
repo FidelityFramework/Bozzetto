@@ -69,6 +69,15 @@ module ComposerState =
       | _ -> { value with Reply = { value.Reply with RequestId = "" } }
     normalize left = normalize right
 
+// Immutable owner-published liveness snapshot admitted into UiBridge Facts.Graph.
+type LeasedLivenessSnapshot = {
+  Serial: int64
+  VerifiedAtMs: Map<string, int64>
+}
+
+module LeasedLivenessSnapshot =
+  let empty : LeasedLivenessSnapshot = { Serial = 0L; VerifiedAtMs = Map.empty }
+
 /// Shared typed compiler owner. JSON exists only at external client adapters.
 type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, configured: bool, beforeMonitorExit: unit -> Task, ?monitorWindow: TimeSpan, ?journalStore: Result<ComposerJournal.Store, string>) =
   let gate = obj ()
@@ -95,7 +104,11 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
     | None -> empty
     | Some(Ok stored) -> stored
     | Some(Error reason) -> { empty with StorageError = Some reason }
+  let mutable lastLivenessVerifiedAtMs: Map<string, int64> = Map.empty
+  let mutable firstAbsentObservedAtMs: Map<string, int64> = Map.empty
+  let mutable livenessSerial = 0L
   let journalChanged = Event<unit>()
+  let livenessChanged = Event<LeasedLivenessSnapshot>()
 
   let changed () =
     lock gate (fun () -> revision <- revision + 1L)
@@ -412,7 +425,137 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
     this.ChangeLeasedCommand(fun store -> store.BeginCommand caller project command)
 
   member this.SettleLeasedCommand(caller: string, project: string, command: ComposerJournal.LeasedCommand, result: ComposerJournal.CommandResult) =
-    this.ChangeLeasedCommand(fun store -> store.SettleCommand caller project command result)
+    let outcome = this.ChangeLeasedCommand(fun store -> store.SettleCommand caller project command result)
+    let livenessUpdate =
+      match outcome with
+      | Ok _ ->
+        lock gate (fun () ->
+          firstAbsentObservedAtMs <- Map.remove command.RunId firstAbsentObservedAtMs
+          if Map.containsKey command.RunId lastLivenessVerifiedAtMs then
+            lastLivenessVerifiedAtMs <- Map.remove command.RunId lastLivenessVerifiedAtMs
+            livenessSerial <- livenessSerial + 1L
+            Some { Serial = livenessSerial; VerifiedAtMs = lastLivenessVerifiedAtMs }
+          else None)
+      | Error _ -> None
+    livenessUpdate |> Option.iter (fun snap -> try livenessChanged.Trigger snap with _ -> ())
+    outcome
+
+  // Last Unix ms when OS liveness actually confirmed a running leased command alive.
+  // Distinct from WorkSnapshot.SampledAtMs (transport refresh time) and Entry.AtMs.
+  member _.LastLivenessVerifiedAtMs(runId: string) : int64 option =
+    lock gate (fun () -> Map.tryFind runId lastLivenessVerifiedAtMs)
+
+  // Immutable monotonic owner-liveness publication for Fidelity.FSharp.Incremental consumers.
+  member _.LivenessChanged : IObservable<LeasedLivenessSnapshot> = livenessChanged.Publish
+  member _.CurrentLivenessSnapshot() : LeasedLivenessSnapshot =
+    lock gate (fun () -> { Serial = livenessSerial; VerifiedAtMs = lastLivenessVerifiedAtMs })
+
+  // Snapshot of active/unknown leased commands pairing OS liveness verification timestamps
+  // with live lease heartbeat expiries (distinct from transport snapshot age).
+  member _.LeasedCommandLivenessSnapshot(leaseExpiresAt: string -> DateTimeOffset option) : Bozzetto.Server.DaemonTelemetry.LeasedCommandLiveness list =
+    let entries, verifiedMap = lock gate (fun () -> journal.Entries, lastLivenessVerifiedAtMs)
+    entries
+    |> List.choose (fun entry ->
+      match entry.Outcome, entry.Context with
+      | ComposerJournal.Outcome.Running, ComposerJournal.Context.LeasedCommand cmd ->
+        let expires = leaseExpiresAt cmd.LeaseId
+        Some ({
+          RunId = cmd.RunId
+          LeaseId = cmd.LeaseDisplayId
+          ProcessId = cmd.ProcessId
+          Outcome = "running"
+          StartedAtMs = cmd.StartedAtMs
+          LastLivenessVerifiedAtMs = Map.tryFind cmd.RunId verifiedMap
+          LeaseLive = expires.IsSome
+          LeaseExpiresAt = expires
+        } : Bozzetto.Server.DaemonTelemetry.LeasedCommandLiveness)
+      | ComposerJournal.Outcome.Unknown detail, ComposerJournal.Context.LeasedCommand cmd ->
+        let expires = leaseExpiresAt cmd.LeaseId
+        Some ({
+          RunId = cmd.RunId
+          LeaseId = cmd.LeaseDisplayId
+          ProcessId = cmd.ProcessId
+          Outcome = "unknown: " + detail
+          StartedAtMs = cmd.StartedAtMs
+          LastLivenessVerifiedAtMs = Map.tryFind cmd.RunId verifiedMap
+          LeaseLive = expires.IsSome
+          LeaseExpiresAt = expires
+        } : Bozzetto.Server.DaemonTelemetry.LeasedCommandLiveness)
+      | _ -> None)
+
+  // Reconcile pending leased commands against OS liveness and live-lease ownership.
+  // OS probing runs outside lock gate and SQLite transactions; an exited process
+  // whose lease is still live gets a short settleGraceMs window before abandonment
+  // so normal lease.fsx completion never races periodic reconciliation.
+  member _.ReconcileLeasedCommands(
+      probe: int -> int64 -> Bozzetto.ProcessWatchdog.ProcessLiveness,
+      hasLiveLease: string -> bool,
+      settleGraceMs: int64,
+      observedAtMs: int64,
+      releaseLease: string -> unit) : ComposerJournal.ReconcileResult =
+    let storeChoice = lock gate (fun () -> journal.StorageError, journalStore, journal)
+    match storeChoice with
+    | Some reason, _, _ -> ComposerJournal.ReconcileResult.StorageFailure reason
+    | None, Some(Ok store), _ ->
+      let shouldAbandonExited (cmd: ComposerJournal.LeasedCommand) =
+        if not (hasLiveLease cmd.LeaseId) || settleGraceMs <= 0L then true
+        else
+          lock gate (fun () ->
+            match Map.tryFind cmd.RunId firstAbsentObservedAtMs with
+            | None ->
+              firstAbsentObservedAtMs <- Map.add cmd.RunId observedAtMs firstAbsentObservedAtMs
+              false
+            | Some firstSeen ->
+              observedAtMs - firstSeen >= settleGraceMs)
+      let result = store.ReconcileRunning probe shouldAbandonExited observedAtMs
+      match result with
+      | ComposerJournal.ReconcileResult.StorageFailure _ -> result
+      | ComposerJournal.ReconcileResult.Reconciled(stored, abandoned, unknown, verifiedAlive) ->
+        let publishJournal, livenessPublish = lock gate (fun () ->
+          let updated = stored.Sequence > journal.Sequence
+          if updated then journal <- stored
+          let pendingRunIds =
+            journal.Entries
+            |> List.choose (fun entry ->
+              match entry.Outcome, entry.Context with
+              | ComposerJournal.Outcome.Running, ComposerJournal.Context.LeasedCommand cmd
+              | ComposerJournal.Outcome.Unknown _, ComposerJournal.Context.LeasedCommand cmd -> Some cmd.RunId
+              | _ -> None)
+            |> Set.ofList
+          let beforeLiveness = lastLivenessVerifiedAtMs
+          let mutable nextLiveness =
+            lastLivenessVerifiedAtMs |> Map.filter (fun runId _ -> Set.contains runId pendingRunIds)
+          firstAbsentObservedAtMs <-
+            firstAbsentObservedAtMs |> Map.filter (fun runId _ -> Set.contains runId pendingRunIds)
+          for runId in verifiedAlive do
+            if Set.contains runId pendingRunIds then
+              nextLiveness <- Map.add runId observedAtMs nextLiveness
+              firstAbsentObservedAtMs <- Map.remove runId firstAbsentObservedAtMs
+          for cmd, _ in unknown do
+            firstAbsentObservedAtMs <- Map.remove cmd.RunId firstAbsentObservedAtMs
+          for cmd in abandoned do
+            nextLiveness <- Map.remove cmd.RunId nextLiveness
+            firstAbsentObservedAtMs <- Map.remove cmd.RunId firstAbsentObservedAtMs
+          lastLivenessVerifiedAtMs <- nextLiveness
+          let livenessSnap =
+            if nextLiveness <> beforeLiveness then
+              livenessSerial <- livenessSerial + 1L
+              Some { Serial = livenessSerial; VerifiedAtMs = nextLiveness }
+            else None
+          updated, livenessSnap)
+        for cmd in abandoned do
+          releaseLease cmd.LeaseId
+        livenessPublish |> Option.iter (fun snap -> try livenessChanged.Trigger snap with _ -> ())
+        if publishJournal then
+          try journalChanged.Trigger() with _ -> ()
+        result
+    | _, _, current -> ComposerJournal.ReconcileResult.Reconciled(current, [], [], [])
+
+  member this.ReconcileLeasedCommands(
+      probe: int -> int64 -> Bozzetto.ProcessWatchdog.ProcessLiveness,
+      observedAtMs: int64,
+      releaseLease: string -> unit) : ComposerJournal.ReconcileResult =
+    this.ReconcileLeasedCommands(probe, (fun _ -> false), 0L, observedAtMs, releaseLease)
 
   member _.FindLeasedCommand(leaseId: string, runId: string) =
     lock gate (fun () ->

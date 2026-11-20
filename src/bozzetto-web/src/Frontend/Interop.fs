@@ -62,6 +62,13 @@ let getRetiredWork () : string array = jsNative
 [<Emit("(function(v){try{localStorage.setItem('bozzetto-work-retired',JSON.stringify(v.slice(0,256)))}catch(e){}})($0)")>]
 let saveRetiredWork (keys: string array) : unit = jsNative
 
+// Client-local Work history collapse window in hours (default 24h).
+[<Emit("(function(){try{const n=Number(localStorage.getItem('bozzetto-work-window-hours'));return (n===6||n===24||n===72||n===168)?n:24}catch(e){return 24}})()")>]
+let getOlderWindowHours () : int = jsNative
+
+[<Emit("(function(h){try{localStorage.setItem('bozzetto-work-window-hours',String(h))}catch(e){}})($0)")>]
+let saveOlderWindowHours (hours: int) : unit = jsNative
+
 /// The tab icon follows the system color scheme, as clef-lang.com's does:
 /// favicon-dark.svg under a dark scheme, favicon.svg otherwise. It listens for
 /// the media query's change event; nothing is polled.
@@ -91,6 +98,9 @@ let closeInformation (event: obj) : unit = jsNative
 
 [<Emit("$0.target === $0.currentTarget")>]
 let isCurrentTarget (event: obj) : bool = jsNative
+
+[<Emit("$0.preventDefault()")>]
+let preventDefault (event: obj) : unit = jsNative
 
 /// Bridge hop tracing, visible in the browser console.
 [<Emit("console.log($0)")>]

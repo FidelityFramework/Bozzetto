@@ -112,6 +112,37 @@ module LeaseWatch =
   let matchesLive holder kind leaseId =
     lock gate (fun () -> matchesAt DateTimeOffset.UtcNow holder kind leaseId pool)
 
+  // True when leaseId is currently held and unexpired in the live pool.
+  let hasLiveLease (leaseId: ExpensiveWorkLease.LeaseId) : bool =
+    lock gate (fun () ->
+      let now = DateTimeOffset.UtcNow
+      pool.Active |> List.exists (fun lease -> lease.Id = leaseId && lease.ExpiresAt > now))
+
+  // Expiry of a live unexpired lease already known to the caller (never publishes unknown lease capabilities).
+  let leaseExpiresAt (leaseId: ExpensiveWorkLease.LeaseId) : DateTimeOffset option =
+    lock gate (fun () ->
+      let now = DateTimeOffset.UtcNow
+      pool.Active
+      |> List.tryFind (fun lease -> lease.Id = leaseId && lease.ExpiresAt > now)
+      |> Option.map _.ExpiresAt)
+
+  // Count live unexpired build/test/rebuild leases whose capability id is not in trackedLeaseIds.
+  // RunApp and SessionCreateOrWarmup leases never suppress unleased compiler/build detection.
+  let untrackedBuildOrTestLeaseCount (trackedLeaseIds: Set<string>) : int =
+    lock gate (fun () ->
+      let now = DateTimeOffset.UtcNow
+      pool.Active
+      |> List.filter (fun lease ->
+        lease.ExpiresAt > now
+        && (match lease.Kind with
+            | ExpensiveWorkLease.Kind.FullBuild
+            | ExpensiveWorkLease.Kind.TestSuiteRun
+            | ExpensiveWorkLease.Kind.Rebuild -> true
+            | ExpensiveWorkLease.Kind.RunApp
+            | ExpensiveWorkLease.Kind.SessionCreateOrWarmup -> false)
+        && not (Set.contains (ExpensiveWorkLease.LeaseId.value lease.Id) trackedLeaseIds))
+      |> List.length)
+
   let tryMatchingLive holder kind leaseId =
     lock gate (fun () ->
       matchingAt DateTimeOffset.UtcNow holder kind leaseId pool

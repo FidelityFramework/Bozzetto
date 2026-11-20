@@ -30,7 +30,7 @@ let private number (text: string) =
   | _ -> None
 let private read path = try Some(File.ReadAllText path) with _ -> None
 let private directories path =
-  try Directory.EnumerateDirectories path |> Seq.truncate 8193 |> Seq.toArray
+  try Directory.EnumerateDirectories path |> Seq.truncate (Bozzetto.ProcessWatchdog.maxProcScanEntries + 1) |> Seq.toArray
   with _ -> [||]
 let private metric name unit value : ResourceMetric = { Name = name; Unit = unit; Value = value }
 
@@ -48,18 +48,10 @@ let parseCpu (text: string) =
 /// comm may contain spaces and closing parentheses; numeric fields follow the
 /// last ')'. RSS is pages; utime+stime excludes separately reported child time.
 let parseProcess pageSize (text: string) =
-  try
-    let left, right = text.IndexOf('('), text.LastIndexOf(')')
-    if left < 1 || right < left then None
-    else
-      let xs = fields (text.Substring(right + 1))
-      let n at = Int64.Parse(xs[at], CultureInfo.InvariantCulture)
-      let pid = Int32.Parse(text.Substring(0, left).Trim(), CultureInfo.InvariantCulture)
-      let ticks, start, rss = n 11 + n 12, n 19, n 21
-      if ticks < 0L || start < 0L || rss < 0L then None
-      else Some { Pid = pid; Parent = int (n 1); Start = start; Name = text.Substring(left + 1, right - left - 1)
-                  Ticks = ticks; Resident = rss * int64 pageSize; Threads = int (n 17) }
-  with _ -> None
+  Bozzetto.ProcessWatchdog.parseProcStatFields text
+  |> Option.map (fun f ->
+    { Pid = f.Pid; Parent = f.Ppid; Start = f.StartTimeTicks; Name = f.Comm
+      Ticks = f.UtimeTicks + f.StimeTicks; Resident = f.RssPages * int64 pageSize; Threads = f.Threads })
 
 let parseValues (text: string) =
   text.Split('\n') |> Array.choose (fun line ->
@@ -99,13 +91,14 @@ let acquire () =
     Option.map2 (fun t a -> t,a) (mem total) (mem available)
     |> Option.bind (fun (t,a) -> if a <= t then Some(t-a) else None)
   let vm = read "/proc/vmstat" |> Option.map parseValues |> Option.defaultValue Map.empty
+  let maxScan = Bozzetto.ProcessWatchdog.maxProcScanEntries
   let paths =
     try
       Directory.EnumerateDirectories "/proc"
       |> Seq.filter (fun p -> Path.GetFileName p |> Seq.forall Char.IsDigit)
-      |> Seq.truncate 8193 |> Seq.toArray
+      |> Seq.truncate (maxScan + 1) |> Seq.toArray
     with _ -> [||]
-  let rows = paths |> Array.truncate 8192 |> Array.choose (fun p -> read (Path.Combine(p,"stat")) |> Option.bind (parseProcess Environment.SystemPageSize))
+  let rows = paths |> Array.truncate maxScan |> Array.choose (fun p -> read (Path.Combine(p,"stat")) |> Option.bind (parseProcess Environment.SystemPageSize))
   let pressure kind =
     read ("/proc/pressure/" + kind) |> Option.bind (fun text ->
       text.Split('\n') |> Array.tryFind (fun l -> l.StartsWith "some ") |> Option.bind (fun line ->
@@ -113,7 +106,7 @@ let acquire () =
   { At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); Clock = Stopwatch.GetTimestamp()
     Cpu = read "/proc/stat" |> Option.bind parseCpu; Processes = rows
     SwapIn = Map.tryFind "pswpin" vm; SwapOut = Map.tryFind "pswpout" vm
-    Count = paths.Length; Unreadable = min 8192 paths.Length - rows.Length; Truncated = paths.Length > 8192
+    Count = paths.Length; Unreadable = min maxScan paths.Length - rows.Length; Truncated = paths.Length > maxScan
     Metrics = Array.concat [
       [| metric "RAM used (total − available)" "bytes" (used "MemTotal" "MemAvailable")
          metric "RAM available" "bytes" (mem "MemAvailable")
@@ -152,5 +145,5 @@ let project (previous: Raw option) (current: Raw) : HostResources =
     Processes = selected; ProcessCount = current.Count; UnreadableCount = current.Unreadable
     OmittedCount = max 0 (current.Processes.Length - selected.Length)
     Note = "Linux host scope; GPU driver counters overlap host RAM on UMA—do not add them. RSS includes shared pages. First CPU/rate reading needs a second observation. "
-           + (if current.Truncated then "Process scan capped at 8192. " else "")
+           + (if current.Truncated then sprintf "Process scan capped at %d. " Bozzetto.ProcessWatchdog.maxProcScanEntries else "")
            + "No lease attribution, leak verdict or automatic termination in this slice." }

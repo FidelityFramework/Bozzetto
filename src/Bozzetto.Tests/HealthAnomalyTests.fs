@@ -29,13 +29,15 @@ let private reindexed (series: Observation list) : Observation list =
 let private fires =
   function
   | Verdict.Drifting _
-  | Verdict.Broken _ -> true
+  | Verdict.Broken _
+  | Verdict.OperationalFault _ -> true
   | Verdict.Normal
   | Verdict.InsufficientHistory -> false
 
 let private isBroken =
   function
-  | Verdict.Broken _ -> true
+  | Verdict.Broken _
+  | Verdict.OperationalFault _ -> true
   | _ -> false
 
 let private evaluate (series: Observation list) = evaluateSeries (SignalId.Custom "test") series
@@ -410,5 +412,34 @@ let tests =
           "each known signal has a stable name"
           [ "health_latency"; "eval_latency"; "worker_rss"; "mailbox_queue_depth"; "warmup_duration" ]
         signalName (SignalId.Custom "my_custom_signal") |> Expect.equal "Custom passes the name through" "my_custom_signal"
+
+      testCase "OperationalFault carries non-statistical fault details without fabricating EWMA/CUSUM baselines" <| fun _ ->
+        let now = DateTimeOffset(2026, 11, 19, 12, 0, 0, TimeSpan.Zero)
+        let unleased =
+          Verdict.OperationalFault {
+            Kind = OperationalFaultKind.UnleasedSubprocess
+            ObservedAt = now
+            Count = 2
+            Detail = "composer(pid=40,rss=1400MB,orphaned), solver:cvc5(pid=41,rss=250MB)"
+          }
+        let scanFail =
+          Verdict.OperationalFault {
+            Kind = OperationalFaultKind.ProcScanFailure
+            ObservedAt = now
+            Count = 1
+            Detail = "/proc inaccessible: EACCES"
+          }
+        operationalFaultName OperationalFaultKind.UnleasedSubprocess |> Expect.equal "unleased name" "unleased_subprocess"
+        operationalFaultName OperationalFaultKind.ProcScanFailure |> Expect.equal "scan failure name" "proc_scan_failure"
+        evidenceOf unleased |> Expect.isNone "OperationalFault never fabricates SignalEvidence"
+        operationalFaultOf unleased |> Expect.isSome "operationalFaultOf extracts OperationalFault"
+        signalNameOfVerdict unleased |> Expect.equal "signalNameOfVerdict unleased" (Some "unleased_subprocess")
+        signalNameOfVerdict scanFail |> Expect.equal "signalNameOfVerdict scan fail" (Some "proc_scan_failure")
+        verdictName unleased |> Expect.equal "verdictName operational fault" "broken"
+        describe unleased |> Option.get |> Expect.stringContains "describe includes detail" "composer(pid=40"
+        (describe unleased |> Option.get).Contains "baseline" |> Expect.isFalse "describe never fabricates EWMA baseline"
+        Bozzetto.MemoryPressure.ofAnomalyVerdict unleased |> Expect.equal "operational fault is not memory pressure" Bozzetto.MemoryPressure.Normal
+        let alarms = Bozzetto.Server.UiBridge.Project.alarms [ Verdict.Normal; unleased; scanFail ]
+        alarms |> Array.map _.Signal |> Expect.equal "UiBridge alarms project OperationalFault cleanly" [| "unleased_subprocess"; "proc_scan_failure" |]
     ]
   ]

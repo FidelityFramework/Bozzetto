@@ -104,9 +104,12 @@ type McpServerTracker() =
               return Some key
           })
           |> System.Threading.Tasks.Task.WhenAll
-        for deadId in results |> Array.choose id do
+        let deadIds = results |> Array.choose id
+        for deadId in deadIds do
           servers.TryRemove(deadId) |> ignore
           resourceSubscriptions.TryRemove(deadId) |> ignore
+        if deadIds.Length > 0 then
+          Bozzetto.Server.DaemonTelemetry.notifySessionDisconnected ()
     }
 
   /// Broadcast a structured logging notification to all connected MCP clients.
@@ -138,8 +141,12 @@ type McpServerTracker() =
               return Some key
           })
           |> System.Threading.Tasks.Task.WhenAll
-        for deadId in results |> Array.choose id do
+        let deadIds = results |> Array.choose id
+        for deadId in deadIds do
           servers.TryRemove(deadId) |> ignore
+          resourceSubscriptions.TryRemove(deadId) |> ignore
+        if deadIds.Length > 0 then
+          Bozzetto.Server.DaemonTelemetry.notifySessionDisconnected ()
     }
 
   /// Accumulate a structured event for delivery on the next tool response,
@@ -687,6 +694,27 @@ let originGuardMiddleware
 let useOriginGuard (own: Bozzetto.Server.HttpOriginGuard.OwnOrigins) (app: WebApplication) : unit =
   app.Use(Func<Microsoft.AspNetCore.Http.HttpContext, Func<Task>, Task>(fun ctx next ->
     originGuardMiddleware own ctx next :> Task)) |> ignore
+
+// Observe MCP session disconnects and accepted DELETEs strictly AFTER useOriginGuard
+// so untrusted cross-origin or rejected requests never evict sessions or wake cleanup.
+let useMcpDisconnectObservation (serverTracker: McpServerTracker) (app: WebApplication) : unit =
+  app.Use(Func<Microsoft.AspNetCore.Http.HttpContext, Func<Task>, Task>(fun ctx next ->
+    task {
+      let isMcpPath = ctx.Request.Path.Value = "/" || ctx.Request.Path.Value = "/mcp"
+      try
+        do! next.Invoke()
+      finally
+        if isMcpPath && ctx.RequestAborted.IsCancellationRequested then
+          Bozzetto.Server.DaemonTelemetry.notifySessionDisconnected ()
+      if Microsoft.AspNetCore.Http.HttpMethods.IsDelete ctx.Request.Method
+         && isMcpPath
+         && ctx.Response.StatusCode >= 200 && ctx.Response.StatusCode < 300 then
+        match ctx.Request.Headers.TryGetValue("mcp-session-id") with
+        | true, sid when sid.Count > 0 ->
+          serverTracker.Remove(sid.ToString())
+          Bozzetto.Server.DaemonTelemetry.notifySessionDisconnected ()
+        | _ -> ()
+    } :> Task)) |> ignore
 
 /// Read and parse the request body as a JSON document.
 let readJsonBody (ctx: Microsoft.AspNetCore.Http.HttpContext) = task {
@@ -2446,7 +2474,9 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
           SessionSummaries = sessionSummaries
           LiveTestingSummary = None
           MemoryMB = int (daemonProcess.WorkingSet64 / 1024L / 1024L)
-          Anomalies = Bozzetto.Features.HealthWatch.troubled ()
+          Anomalies =
+            Bozzetto.Features.HealthWatch.troubled ()
+            @ Option.toList (Bozzetto.Server.DaemonTelemetry.currentUnleasedVerdict ())
           // RSS is sampled (and a gcdump considered) on the dashboard's own
           // health tick (DaemonMode.GetDaemonHealth) — reported here too so
           // an MCP-only client sees the same evidence without a second
@@ -2487,21 +2517,9 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
       // a client sees `healthy` flip with nothing to explain it, which is
       // the silence the detector exists to end: say which signal, what
       // normal was, and what it is now.
-      let anomalies =
+      let anomaliesJson =
         healthSnapshot.Anomalies
-        |> List.choose (fun verdict ->
-          Bozzetto.Features.HealthAnomaly.evidenceOf verdict
-          |> Option.map (fun e ->
-            {| signal = Bozzetto.Features.HealthAnomaly.signalName e.Signal
-               state = Bozzetto.Features.HealthAnomaly.verdictName verdict
-               message = Bozzetto.Features.HealthAnomaly.describe verdict |> Option.defaultValue ""
-               observedValue = e.ObservedValue
-               baselineMean = e.BaselineMean
-               baselineStdDev = e.BaselineStdDev
-               deviationInSigmas = e.DeviationInSigmas
-               sustainedForSeconds = e.SustainedFor.TotalSeconds
-               samplesSustained = e.SamplesSustained |}))
-        |> List.toArray
+        |> List.choose Bozzetto.DaemonStatusPayload.anomalyJson
       // A daemon whose own signals are broken is not healthy, however well
       // its sessions are doing.
       let overall = Bozzetto.Features.DaemonHealth.overallStatus healthSnapshot
@@ -2520,14 +2538,7 @@ let mapHealthRoutes (app: WebApplication) (rctx: RouteContext) =
               "overall", JsonValue.String (Bozzetto.Features.DaemonHealth.healthLabel overall)
               "componentFailures", componentFailures |> List.map (fun f -> JsonValue.Object [
                 "name", JsonValue.String f.Component; "reason", JsonValue.String f.Reason; "hint", JsonValue.String f.Hint ]) |> JsonValue.Array
-              "anomalies", anomalies |> Array.map (fun a -> JsonValue.Object [
-                "signal", JsonValue.String a.signal; "state", JsonValue.String a.state; "message", JsonValue.String a.message
-                "observedValue", JsonValue.Number a.observedValue
-                "baselineMean", JsonValue.Number a.baselineMean
-                "baselineStdDev", JsonValue.Number a.baselineStdDev
-                "deviationInSigmas", JsonValue.Number a.deviationInSigmas
-                "sustainedForSeconds", JsonValue.Number a.sustainedForSeconds
-                "samplesSustained", HttpJson.integer a.samplesSustained ]) |> Array.toList |> JsonValue.Array
+              "anomalies", JsonValue.Array anomaliesJson
               "memoryMB", HttpJson.integer healthSnapshot.MemoryMB
               "memoryPressure", JsonValue.String (Bozzetto.MemoryPressure.describe healthSnapshot.MemoryPressure)
               "memoryPressureNote",
@@ -3095,6 +3106,7 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
       | None -> () // 400 already sent
       | Some sid ->
         let! result = rctx.Config.SessionOps.StopSession (Bozzetto.WorkerProtocol.SessionId.value sid)
+        Bozzetto.Server.DaemonTelemetry.notifySessionDisconnected ()
         match rctx.Dispatch with
         | Some d -> d (Bozzetto.BozzettoMsg.Editor Bozzetto.EditorAction.ListSessions)
         | None -> ()
@@ -3483,11 +3495,12 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       wireCoreLogs app
       app.UseResponseCompression() |> ignore
       app.Use(Func<Microsoft.AspNetCore.Http.HttpContext, Func<Task>, Task>(fun ctx next ->
-        errorHandlingMiddleware ctx next :> Task)) |> ignore
+        errorHandlingMiddleware ctx next)) |> ignore
       useOriginGuard cfg.OwnOrigins app
       // After the origin gate: a WebSocket handshake is a GET, and the gate's
       // exact-Origin check is what keeps other pages off the UI bridge.
       app.UseWebSockets() |> ignore
+      useMcpDisconnectObservation serverTracker app
       app.MapMcp() |> ignore
 
       // Phase 3: Route context + routes

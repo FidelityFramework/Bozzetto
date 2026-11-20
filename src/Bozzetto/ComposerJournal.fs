@@ -68,6 +68,10 @@ type Outcome =
   | Refused of RefusalCode * string
   /// An exception escaped the supervisor: journaled and rethrown.
   | Failed of string
+  // Leased command process exited or PID was reused without settling.
+  | Abandoned of string
+  // Leased command owner process could not be verified (inaccessible/unknown).
+  | Unknown of string
 
 type Entry = {
   /// The journal's serial, one per entry, increasing.
@@ -103,11 +107,17 @@ type TranscriptRefusal =
 
 type StoreUsage = { Bytes: int64; Rows: int64; OldestMs: int64 option }
 
+[<RequireQualifiedAccess>]
+type ReconcileResult =
+  | Reconciled of journal: Journal * abandoned: LeasedCommand list * unknown: (LeasedCommand * string) list * verifiedAlive: string list
+  | StorageFailure of reason: string
+
 type Store = {
   Read: unit -> Result<Journal, string>
   Append: Entry -> Result<Journal, string>
   BeginCommand: string -> string -> LeasedCommand -> Result<Journal * Entry, string>
   SettleCommand: string -> string -> LeasedCommand -> CommandResult -> Result<Journal * Entry, string>
+  ReconcileRunning: (int -> int64 -> Bozzetto.ProcessWatchdog.ProcessLiveness) -> (LeasedCommand -> bool) -> int64 -> ReconcileResult
   FindCommand: string -> string -> Result<Entry, string>
   ReadTranscript: TranscriptRequest -> Result<TranscriptPage, TranscriptRefusal>
   Usage: unit -> Result<StoreUsage, string>
@@ -157,6 +167,8 @@ let bound (entry: Entry) =
         match entry.Outcome with
         | Outcome.Refused(code, message) -> Outcome.Refused(code, clip textLimit message)
         | Outcome.Failed message -> Outcome.Failed(clip textLimit message)
+        | Outcome.Abandoned message -> Outcome.Abandoned(clip textLimit message)
+        | Outcome.Unknown message -> Outcome.Unknown(clip textLimit message)
         | Outcome.Running -> Outcome.Running
         | Outcome.Succeeded -> Outcome.Succeeded
       Run =
@@ -294,6 +306,8 @@ let openStore (dbPath: string) : Result<Store, string> =
       | 1 -> Outcome.Refused(caseOf<RefusalCode> (row.GetString 7), row.GetString 8)
       | 2 -> Outcome.Failed(row.GetString 8)
       | 3 -> Outcome.Running
+      | 4 -> Outcome.Abandoned(row.GetString 8)
+      | 5 -> Outcome.Unknown(row.GetString 8)
       | _ -> invalidOp "Unknown stored operations outcome."
     let run =
       if row.IsDBNull 9 then None
@@ -379,6 +393,8 @@ CREATE TABLE IF NOT EXISTS operations_entries (
       | Outcome.Refused(code, reason) -> 1, string code, reason
       | Outcome.Failed reason -> 2, "", reason
       | Outcome.Running -> 3, "", ""
+      | Outcome.Abandoned reason -> 4, "", reason
+      | Outcome.Unknown reason -> 5, "", reason
     let operation, session, leased =
       match entry.Context with
       | Context.Composer(operation, session) -> string operation, session, None
@@ -414,8 +430,8 @@ CREATE TABLE IF NOT EXISTS operations_entries (
       "$terminal", terminalDigest |> Option.map box |> Option.defaultValue (box DBNull.Value) ]
     |> List.iter (fun (name, item) -> add save name item)
     if save.ExecuteNonQuery() <> 1 then invalidOp "The journal row was not written."
-    // A running command cannot lose its record to unrelated settled operations.
-    use prune = command connection transaction "DELETE FROM operations_entries WHERE seq NOT IN (SELECT seq FROM operations_entries ORDER BY (outcome=3) DESC,seq DESC LIMIT $limit);"
+    // A running or unverified command cannot lose its record to unrelated settled operations.
+    use prune = command connection transaction "DELETE FROM operations_entries WHERE seq NOT IN (SELECT seq FROM operations_entries ORDER BY (outcome IN (3, 5)) DESC,seq DESC LIMIT $limit);"
     add prune "$limit" maxEntries
     prune.ExecuteNonQuery() |> ignore
   let validate caller project (context: LeasedCommand) =
@@ -432,32 +448,40 @@ CREATE TABLE IF NOT EXISTS operations_entries (
     if entry.Caller <> caller || entry.Project <> project || entry.Context <> Context.LeasedCommand context then
       invalidOp "The leased command owner or immutable context changed."
   protect initialize |> Result.map (fun () ->
-    let readAll () = protect (fun () ->
+    // Serialize all SQLite transactions in-process and open write transactions as
+    // BEGIN IMMEDIATE (deferred = false) so concurrent readers/writers never hit a
+    // SQLITE_BUSY SHARED->RESERVED upgrade deadlock. Phase 2 OS liveness probing in
+    // reconcileRunning runs strictly outside both storeGate and SQLite transactions.
+    let storeGate = obj ()
+    let withStoreLock work = lock storeGate (fun () -> protect work)
+    let beginWrite (connection: SqliteConnection) =
+      connection.BeginTransaction(Data.IsolationLevel.Unspecified, deferred = false)
+    let readAll () = withStoreLock (fun () ->
       use connection = connect ()
       use transaction = connection.BeginTransaction()
       let current = read connection transaction
       transaction.Commit()
       current)
-    let appendEntry entry = protect (fun () ->
+    let appendEntry entry = withStoreLock (fun () ->
       match entry.Context with
       | Context.LeasedCommand _ -> invalidOp "A leased command must use its begin and settle journal boundary."
       | Context.Composer _ -> ()
       use connection = connect ()
-      use transaction = connection.BeginTransaction()
+      use transaction = beginWrite connection
       let entry = { bound entry with Sequence = advance connection transaction }
       write connection transaction false None entry
       let current = read connection transaction
       transaction.Commit()
       current)
-    let beginCommand caller project context = protect (fun () ->
+    let beginCommand caller project context = withStoreLock (fun () ->
       validate caller project context
       use connection = connect ()
-      use transaction = connection.BeginTransaction()
+      use transaction = beginWrite connection
       let entry =
         match find connection transaction context.RunId with
         | Some entry -> requireContext caller project context entry; entry
         | None ->
-          use active = command connection transaction "SELECT count(*) FROM operations_entries WHERE outcome=3;"
+          use active = command connection transaction "SELECT count(*) FROM operations_entries WHERE outcome IN (3, 5);"
           if Convert.ToInt64(active.ExecuteScalar()) >= int64 maxEntries then invalidOp "The journal has no room for another running command."
           let entry = { Sequence = advance connection transaction; AtMs = context.StartedAtMs; Caller = caller
                         Context = Context.LeasedCommand context; Project = project; Outcome = Outcome.Running; Run = None }
@@ -466,12 +490,12 @@ CREATE TABLE IF NOT EXISTS operations_entries (
       let current = read connection transaction
       transaction.Commit()
       current, entry)
-    let settleCommand caller project context (result: CommandResult) = protect (fun () ->
+    let settleCommand caller project context (result: CommandResult) = withStoreLock (fun () ->
       validate caller project context
       if result.FinishedAtMs < context.StartedAtMs || isNull result.StandardOutput || isNull result.StandardError then
         invalidOp "Invalid leased command terminal result."
       use connection = connect ()
-      use transaction = connection.BeginTransaction()
+      use transaction = beginWrite connection
       let before = find connection transaction context.RunId |> Option.defaultWith (fun () -> invalidOp "The leased command was not begun in this journal.")
       requireContext caller project context before
       let after = bound { before with AtMs = result.FinishedAtMs
@@ -480,7 +504,11 @@ CREATE TABLE IF NOT EXISTS operations_entries (
                                                    StandardError = result.StandardError; OutputTruncated = result.OutputTruncated; ErrorTruncated = result.ErrorTruncated; Dropped = false } }
       let digest = resultIdentity result
       match before.Outcome with
-      | Outcome.Running ->
+      | Outcome.Running
+      | Outcome.Unknown _
+      | Outcome.Abandoned _ ->
+        // Abandoned carries no real exit result (terminal_digest is NULL), so an
+        // authenticated CommandFinished from the owner settles it truthfully.
         advance connection transaction |> ignore
         write connection transaction true (Some digest) after
       | _ ->
@@ -492,7 +520,108 @@ CREATE TABLE IF NOT EXISTS operations_entries (
       let current = read connection transaction
       transaction.Commit()
       current, after)
-    let findCommand leaseId runId = protect (fun () ->
+    let reconcileRunning
+        (probe: int -> int64 -> Bozzetto.ProcessWatchdog.ProcessLiveness)
+        (shouldAbandonExited: LeasedCommand -> bool)
+        (observedAtMs: int64)
+        : ReconcileResult =
+      // Phase 1: short read query to list pending entries (no write lock held).
+      let pendingRead =
+        withStoreLock (fun () ->
+          use connection = connect ()
+          use transaction = connection.BeginTransaction()
+          use query =
+            command connection transaction ("SELECT " + columns + " FROM operations_entries WHERE outcome IN (3, 5) ORDER BY seq ASC;")
+          let entries =
+            use rows = query.ExecuteReader()
+            [ while rows.Read() do yield readEntry rows ]
+          let snapshot = read connection transaction
+          transaction.Commit()
+          snapshot, entries)
+      match pendingRead with
+      | Error reason -> ReconcileResult.StorageFailure reason
+      | Ok(initialSnapshot, pendingEntries) ->
+        // Phase 2: probe OS liveness completely outside storeGate and SQLite transactions.
+        let observedText = DateTimeOffset.FromUnixTimeMilliseconds(observedAtMs).ToString("O")
+        let probed =
+          pendingEntries
+          |> List.choose (fun entry ->
+            match entry.Context with
+            | Context.LeasedCommand cmd -> Some(entry, cmd, probe cmd.ProcessId cmd.StartedAtMs)
+            | _ -> None)
+        let verifiedAlive =
+          probed
+          |> List.choose (fun (_, cmd, liveness) ->
+            match liveness with
+            | Bozzetto.ProcessWatchdog.ProcessLiveness.Alive -> Some cmd.RunId
+            | _ -> None)
+        let unknownReported =
+          probed
+          |> List.choose (fun (_, cmd, liveness) ->
+            match liveness with
+            | Bozzetto.ProcessWatchdog.ProcessLiveness.Unknown detail ->
+              let reason =
+                if String.IsNullOrWhiteSpace detail then
+                  sprintf "Process %d liveness could not be verified." cmd.ProcessId
+                else
+                  sprintf "Process %d liveness unknown: %s" cmd.ProcessId detail
+              Some(cmd, clip textLimit reason)
+            | _ -> None)
+        let plannedUpdates =
+          probed
+          |> List.choose (fun (entry, cmd, liveness) ->
+            match liveness with
+            | Bozzetto.ProcessWatchdog.ProcessLiveness.Alive ->
+              match entry.Outcome with
+              | Outcome.Unknown _ -> Some(entry.Sequence, cmd, false, Outcome.Running, entry.AtMs)
+              | _ -> None
+            | Bozzetto.ProcessWatchdog.ProcessLiveness.Exited ->
+              if shouldAbandonExited cmd then
+                let reason = sprintf "Process %d exited without settling (observed at %s)." cmd.ProcessId observedText
+                Some(entry.Sequence, cmd, true, Outcome.Abandoned reason, observedAtMs)
+              else None
+            | Bozzetto.ProcessWatchdog.ProcessLiveness.PidReused observedStartMs ->
+              let reason =
+                sprintf "Process %d was reused (recorded start %d, observed start %d; observed at %s)."
+                  cmd.ProcessId cmd.StartedAtMs observedStartMs observedText
+              Some(entry.Sequence, cmd, true, Outcome.Abandoned reason, observedAtMs)
+            | Bozzetto.ProcessWatchdog.ProcessLiveness.Unknown detail ->
+              let reason =
+                if String.IsNullOrWhiteSpace detail then
+                  sprintf "Process %d liveness could not be verified." cmd.ProcessId
+                else
+                  sprintf "Process %d liveness unknown: %s" cmd.ProcessId detail
+              let nextOutcome = Outcome.Unknown(clip textLimit reason)
+              if entry.Outcome <> nextOutcome then
+                Some(entry.Sequence, cmd, false, nextOutcome, entry.AtMs)
+              else None)
+        if List.isEmpty plannedUpdates then
+          ReconcileResult.Reconciled(initialSnapshot, [], unknownReported, verifiedAlive)
+        else
+          // Phase 3: short atomic BEGIN IMMEDIATE write transaction re-checking each row is still pending.
+          match withStoreLock (fun () ->
+            use connection = connect ()
+            use transaction = beginWrite connection
+            let abandoned =
+              plannedUpdates
+              |> List.fold (fun acc (_seq, cmd, isAbandon, nextOutcome, nextAtMs) ->
+                match find connection transaction cmd.RunId with
+                | Some currentEntry ->
+                  match currentEntry.Outcome with
+                  | Outcome.Running | Outcome.Unknown _ ->
+                    let updated = bound { currentEntry with AtMs = nextAtMs; Outcome = nextOutcome }
+                    advance connection transaction |> ignore
+                    write connection transaction true None updated
+                    if isAbandon then cmd :: acc else acc
+                  | _ -> acc
+                | None -> acc) []
+              |> List.rev
+            let current = read connection transaction
+            transaction.Commit()
+            current, abandoned) with
+          | Ok(current, abandoned) -> ReconcileResult.Reconciled(current, abandoned, unknownReported, verifiedAlive)
+          | Error reason -> ReconcileResult.StorageFailure reason
+    let findCommand leaseId runId = withStoreLock (fun () ->
       use connection = connect ()
       let entry = find connection null runId |> Option.defaultWith (fun () -> invalidOp "The leased command is not retained in this journal.")
       match entry.Context with
@@ -502,7 +631,7 @@ CREATE TABLE IF NOT EXISTS operations_entries (
       if request.MaxBytes < 1 || request.MaxBytes > Bozzetto.Web.Shared.Protocol.MaxTranscriptPageBytes then Error TranscriptRefusal.InvalidLimit
       elif request.Offset < 0L then Error TranscriptRefusal.InvalidCursor
       else
-        protect (fun () ->
+        withStoreLock (fun () ->
           use connection = connect ()
           use transaction = connection.BeginTransaction()
           let incarnation, _ = metadata connection transaction
@@ -526,7 +655,7 @@ CREATE TABLE IF NOT EXISTS operations_entries (
                      Truncated = row.GetBoolean truncated })
         |> Result.mapError TranscriptRefusal.StorageFailure
         |> Result.bind id
-    let usage () = protect (fun () ->
+    let usage () = withStoreLock (fun () ->
       use connection = connect ()
       let scalar sql = use query = command connection null sql in query.ExecuteScalar()
       let bytes = Convert.ToInt64(scalar "PRAGMA page_count;") * Convert.ToInt64(scalar "PRAGMA page_size;")
@@ -534,14 +663,15 @@ CREATE TABLE IF NOT EXISTS operations_entries (
       use row = query.ExecuteReader()
       row.Read() |> ignore
       { Bytes = bytes; Rows = row.GetInt64 0; OldestMs = if row.IsDBNull 1 then None else Some(row.GetInt64 1) })
-    let clear () = protect (fun () ->
+    let clear () = withStoreLock (fun () ->
       use connection = connect ()
-      use transaction = connection.BeginTransaction()
+      use transaction = beginWrite connection
       use delete =
-        command connection transaction "DELETE FROM operations_entries WHERE outcome<>3;"
+        command connection transaction "DELETE FROM operations_entries WHERE outcome NOT IN (3, 5);"
       let rows = int64 (delete.ExecuteNonQuery())
       // Clearing retained output never recycles an already issued identity.
       transaction.Commit()
       rows)
-    { Read = readAll; Append = appendEntry; BeginCommand = beginCommand; SettleCommand = settleCommand; FindCommand = findCommand
+    { Read = readAll; Append = appendEntry; BeginCommand = beginCommand; SettleCommand = settleCommand
+      ReconcileRunning = reconcileRunning; FindCommand = findCommand
       ReadTranscript = readTranscript; Usage = usage; Clear = clear })

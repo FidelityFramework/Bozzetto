@@ -99,7 +99,7 @@ type LeaseView = {| id: string; kind: string; holder: string; grantedAt: float; 
 type WaitView = {| id: string; kind: string; holder: string; requestedAt: float |}
 
 type NodeOperationView = {|
-  sequence: string; label: string; project: string; operation: string; outcome: string; at: float
+  id: string; sequence: string; label: string; caller: string; code: string; ok: bool; project: string; operation: string; outcome: string; message: string; at: float
   hasRun: bool; exitCode: int; dropped: bool; hasLease: bool; leaseId: string; runId: string
   executable: string; arguments: string array; pid: int; startedAt: float
 |}
@@ -330,11 +330,17 @@ let commandLabel (command: Command) =
 // relative time would need a ticking clock, and the page keeps none. The one
 // duration shown, the uptime, is the value the daemon's clock pushed.
 
-[<Emit("new Date($0).toLocaleTimeString()")>]
-let clockTime (epochMs: float) : string = jsNative
+[<Emit("(() => { const d = new Date($0); const ref = new Date($1 > 0 ? $1 : Date.now()); if (d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth() && d.getDate() === ref.getDate()) return d.toLocaleTimeString(); return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + d.toLocaleTimeString(); })()")>]
+let localTimestampAt (epochMs: float) (referenceMs: float) : string = jsNative
 
-[<Emit("new Date($0).toLocaleString()")>]
-let dateTime (epochMs: float) : string = jsNative
+[<Emit("Date.parse($0)")>]
+let parseIsoMs (iso: string) : float = jsNative
+
+// Single local-zone timestamp format used across every view: local time today,
+// local date + local time whenever the instant is on another local calendar day.
+let clockTime (epochMs: float) : string = localTimestampAt epochMs 0.
+
+let dateTime (epochMs: float) : string = localTimestampAt epochMs 0.
 
 [<Emit("$0.toFixed($1)")>]
 let fixedPoint (value: float) (digits: int) : string = jsNative
@@ -466,8 +472,8 @@ let private nodeView (node: NodeWork) : NodeWorkView =
      transcriptsOmitted = node.Value |> Option.exists _.TranscriptsOmitted
      operations = node.Value |> Option.map (fun v -> v.Operations.Entries |> Array.map (fun e ->
        let outcome = if e.Code = "running" then "running" elif e.Ok then "completed" else e.Code + ": " + e.Message
-       {| sequence = string e.Sequence; hasRun = e.Run.IsSome; dropped = e.Run |> Option.exists _.Dropped
-          project = e.Project; operation = e.Operation; outcome = outcome; at = float e.AtMs
+       {| id = string e.Sequence; sequence = string e.Sequence; caller = e.CallerLabel; code = e.Code; ok = e.Ok; hasRun = e.Run.IsSome; dropped = e.Run |> Option.exists _.Dropped
+          project = e.Project; operation = e.Operation; outcome = outcome; message = e.Message; at = float e.AtMs
           exitCode = e.Run |> Option.map _.ExitCode |> Option.defaultValue 0
           hasLease = e.Lease.IsSome
           leaseId = e.Lease |> Option.map _.LeaseId |> Option.defaultValue ""

@@ -103,7 +103,8 @@ module DaemonHealth =
     let broken =
       snap.Anomalies
       |> List.exists (function
-        | HealthAnomaly.Verdict.Broken _ -> true
+        | HealthAnomaly.Verdict.Broken _
+        | HealthAnomaly.Verdict.OperationalFault _ -> true
         | _ -> false)
     let hasFaulted =
       snap.SessionSummaries |> List.exists (fun s -> s.Status = SessionHealthStatus.Faulted)

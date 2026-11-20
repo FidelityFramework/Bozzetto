@@ -34,6 +34,9 @@ let private stopEvery (handle: obj) : unit = jsNative
 [<Emit("Date.now()")>]
 let private nowMs () : float = jsNative
 
+[<Emit("new Date($0).toISOString()")>]
+let private isoString (epochMs: float) : string = jsNative
+
 [<Emit("Math.random()")>]
 let private random () : float = jsNative
 
@@ -177,12 +180,16 @@ let private workNodes () =
   }
   let remote = { snapshot with Snapshot = { Revision = 0L; Worker = Idle; Sessions = [||] }; Leases = { Revision = 0L; Active = [||]; Queued = [||] } }
   let finished = sessions.Count >= 2
+  let progressed = sessions.Count = 1
+  let livenessAt = if progressed then startedAt + 45000. else startedAt - 2000.
+  let leaseExpiresAt = if progressed then int64 startedAt + 240000L else int64 startedAt + 120000L
   let run = {
-    OperationEntry.Sequence = 7L; AtMs = int64 startedAt; CallerLabel = "fixture"; Operation = "test_suite_run"; Session = ""
-    Project = "/mock/clef"; Ok = false; Code = (if finished then "command_failed" else "running"); Message = (if finished then "dotnet exited 1" else "")
+    OperationEntry.Sequence = 7L; AtMs = (if finished then int64 startedAt + 5000L else int64 startedAt); CallerLabel = "fixture"; Operation = "test_suite_run"; Session = ""
+    Project = "/mock/clef"; Ok = false; Code = (if finished then "command_failed" else "running")
+    Message = (if finished then "dotnet exited 1" else "owner liveness verified " + isoString livenessAt)
     Lease = Some { Kind = "test_suite_run"; LeaseId = "fixture-lease"; RunId = "fixture-test-run"; Executable = "/mock/dotnet"
                    Arguments = [| "vstest"; "/mock/clef/tests.dll"; "--TestCaseFilter:ForeignReferenceTests" |]
-                   ProcessId = 6543; StartedAtMs = int64 startedAt }
+                   ProcessId = 6543; StartedAtMs = int64 startedAt - 12000L }
     Run = if finished then Some { ExitCode = 1; Compiler = None; StandardOutput = ""; StandardError = ""; Dropped = false } else None
   }
   // Deliberately exceeds the presentation window; retained source evidence is
@@ -190,23 +197,36 @@ let private workNodes () =
   let history =
     Array.init 30 (fun index ->
       { run with Sequence = int64 index + 100L; AtMs = int64 startedAt - int64 index * 1000L
-                 Project = "/mock/history/Project" + string index; Code = ""; Ok = true
+                 CallerLabel = "history-runner-" + string index
+                 Project = "/mock/history/Project" + string index; Code = ""; Ok = true; Message = ""
                  Lease = None; Run = Some { ExitCode = 0; Compiler = None; StandardOutput = ""; StandardError = ""; Dropped = false } })
   let old = { history[0] with Sequence = 999L; Project = "/mock/retired-by-age"; AtMs = int64 startedAt - 86400001L }
   let expired =
-    { run with Sequence = 1000L; Project = "/mock/expired-lease"; Code = ""; AtMs = old.AtMs; Run = None
-               Lease = run.Lease |> Option.map (fun lease -> { lease with LeaseId = "expired-lease"; RunId = "expired-run" }) }
+    { run with Sequence = 1000L; Project = "/mock/expired-lease"; Code = ""; Ok = true; Message = ""; AtMs = old.AtMs; Run = None
+               Lease = run.Lease |> Option.map (fun lease -> { lease with LeaseId = "expired-lease"; RunId = "expired-run"; StartedAtMs = old.AtMs - 15000L }) }
+  let abandonedRecent =
+    { OperationEntry.Sequence = 201L; AtMs = int64 startedAt - 30000L; CallerLabel = "codex-reconcile"; Operation = "full_build"; Session = ""
+      Project = "/mock/abandoned-build"; Ok = false; Code = "abandoned"; Message = "Process 4031299 exited without settling."
+      Lease = Some { Kind = "full_build"; LeaseId = "abandoned-lease"; RunId = "abandoned-run"; Executable = "/mock/dotnet"
+                     Arguments = [| "build"; "/mock/abandoned-build" |]; ProcessId = 4031299; StartedAtMs = int64 startedAt - 95000L }
+      Run = None }
+  let abandonedOlder =
+    { OperationEntry.Sequence = 202L; AtMs = int64 startedAt - 172800000L; CallerLabel = "pi-old-run"; Operation = "full_build"; Session = ""
+      Project = "/mock/older-abandoned"; Ok = false; Code = "abandoned"; Message = "Process 33574 exited without settling."
+      Lease = Some { Kind = "full_build"; LeaseId = "older-abandoned-lease"; RunId = "older-abandoned-run"; Executable = "/mock/dotnet"
+                     Arguments = [| "build"; "/mock/older-abandoned" |]; ProcessId = 33574; StartedAtMs = int64 startedAt - 172860000L }
+      Run = None }
   let busy = { remote with
                 Snapshot = { remote.Snapshot with Worker = Running { Target = { Host = "fixture-host"; Epoch = "fixture-epoch" }; CompilerVersion = "fixture-compiler"; ProcessId = Some 7654 } }
                 Operations = { remote.Operations with Entries = Array.concat [ [| run |]; history; [| old; expired |] ] }
                 Leases = { remote.Leases with
-                             Active = if finished then [||] else [| { Id = "fixture-lease"; Kind = "test_suite_run"; Holder = "fixture ONE test · /mock/clef"; GrantedAtMs = int64 startedAt; ExpiresAtMs = int64 startedAt + 120000L } |]
+                             Active = if finished then [||] else [| { Id = "fixture-lease"; Kind = "test_suite_run"; Holder = "fixture ONE test · /mock/clef"; GrantedAtMs = int64 startedAt; ExpiresAtMs = leaseExpiresAt } |]
                              Queued = if finished then [||] else [| { Kind = "full_build"; Holder = "fixture queued build · /mock/Farscape"; RequestedAtMs = int64 startedAt } |] } }
   WorkNodes { Revision = workRevision; Nodes = [|
     { Source = { Node = "controller"; Incarnation = "mock-controller" }; Local = true; Status = "available"; Note = "Synthetic controller fixture"; Value = Some snapshot }
     { Source = { Node = "one"; Incarnation = "mock-one" }; Local = false; Status = "available"; Note = "Synthetic remote build fixture"; Value = Some busy }
     { Source = { Node = "two"; Incarnation = "mock-two" }; Local = false; Status = "available"; Note = "Synthetic observed idle fixture"
-      Value = Some { remote with Operations = { remote.Operations with Entries = [| { history[0] with Project = "/mock/recent-two-hour"; AtMs = int64 startedAt - 7200000L } |] } } }
+      Value = Some { remote with Operations = { remote.Operations with Entries = [| { history[0] with Project = "/mock/recent-two-hour"; AtMs = int64 startedAt - 7200000L }; abandonedRecent; abandonedOlder |] } } }
     { Source = { Node = "three"; Incarnation = "mock-three" }; Local = false; Status = "unavailable"; Note = "Synthetic disconnected fixture"; Value = None }
   |] }
 

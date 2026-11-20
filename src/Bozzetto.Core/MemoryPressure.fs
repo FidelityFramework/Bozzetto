@@ -118,7 +118,8 @@ module MemoryPressure =
     | HealthAnomaly.Verdict.Broken _ -> MemoryPressure.Critical
     | HealthAnomaly.Verdict.Drifting _ -> MemoryPressure.Tight
     | HealthAnomaly.Verdict.Normal
-    | HealthAnomaly.Verdict.InsufficientHistory -> MemoryPressure.Normal
+    | HealthAnomaly.Verdict.InsufficientHistory
+    | HealthAnomaly.Verdict.OperationalFault _ -> MemoryPressure.Normal
 
   /// The authoritative reading: the worse of (a) the machine's raw
   /// available-memory fraction, hysteresis-folded against the PREVIOUS

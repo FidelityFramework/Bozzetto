@@ -90,6 +90,14 @@ let runFixture socketPath =
       | Status target when target.Session = "hold-after-close" ->
         holdAfterClose <- true
         reply request (Observed(status target.Session 0))
+      | Status target when target.Session = "spawn-detached" ->
+        if OperatingSystem.IsLinux() then
+          let psi = System.Diagnostics.ProcessStartInfo("/bin/sh")
+          psi.ArgumentList.Add "-c"
+          psi.ArgumentList.Add "sleep 60 & sleep 60 &"
+          psi.UseShellExecute <- false
+          System.Diagnostics.Process.Start psi |> ignore
+        reply request (Observed(status target.Session 0))
       | Status target when target.Session = "diagnostic-evidence" ->
         let authority: Bozzetto.Providers.Authority =
           { Host = workerAddress.Host; Epoch = workerAddress.Epoch; Provider = workerAddress.Provider
@@ -401,6 +409,29 @@ let tests = testList "Composer worker socket client" [
     child.Kill(true)
     do! stopping.WaitAsync(TimeSpan.FromSeconds 10.)
     client.IsProcessAlive |> Expect.isFalse "joined child no longer owns a live process"
+  }
+  testTask "close terminates detached background grandchildren inside the worker process group with zero survivors" {
+    if OperatingSystem.IsLinux() then
+      let! (client: IComposerWorker) = start ignore (fun _ _ -> Task.CompletedTask)
+      let workerPgid = client.ProcessId
+      let! spawned = client.RequestAsync(request "spawn-detached", CancellationToken.None) |> bounded
+      succeeded spawned |> Expect.isTrue "fixture spawned background grandchildren"
+      let mutable beforePids = Set.empty
+      let deadline = DateTimeOffset.UtcNow.AddSeconds 3.0
+      while Set.count beforePids < 3 && DateTimeOffset.UtcNow < deadline do
+        do! Task.Delay 50
+        match Bozzetto.Server.LinuxProcessEdge.readLinuxProcesses false with
+        | Ok procs -> beforePids <- Bozzetto.ProcessWatchdog.subtreePids workerPgid (Some workerPgid) procs
+        | Error err -> failtestf "Unexpected /proc scan failure: %A" err
+      (Set.count beforePids >= 3) |> Expect.isTrue (sprintf "expected worker + nested grandchildren in PGID %d, saw %A" workerPgid beforePids)
+      do! client.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+      client.IsProcessAlive |> Expect.isFalse "worker process exited on StopAsync"
+      let afterProcs =
+        match Bozzetto.Server.LinuxProcessEdge.readLinuxProcesses false with
+        | Ok procs -> procs
+        | Error err -> failtestf "Unexpected /proc scan failure: %A" err
+      let survivors = Bozzetto.ProcessWatchdog.subtreePids workerPgid (Some workerPgid) afterProcs
+      Set.isEmpty survivors |> Expect.isTrue (sprintf "StopAsync terminated every detached grandchild in the worker process group, remaining=%A" survivors)
   }
   testTask "close retains ownership of a held cancellation callback after physical child exit" { do! closeRetainsCallback Operation.Build }
   testTask "close retains ownership of a held format cancellation callback after physical child exit" { do! closeRetainsCallback Operation.Format }

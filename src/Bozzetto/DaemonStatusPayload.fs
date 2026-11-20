@@ -4,29 +4,44 @@ open System
 open Bozzetto
 open Bozzetto.McpJson
 
+let anomalyJson (verdict: Bozzetto.Features.HealthAnomaly.Verdict) =
+  match verdict with
+  | Bozzetto.Features.HealthAnomaly.Verdict.Drifting evidence
+  | Bozzetto.Features.HealthAnomaly.Verdict.Broken evidence ->
+    Some(object [
+      "signal", (Bozzetto.Features.HealthAnomaly.signalName evidence.Signal |> text)
+      "state", (Bozzetto.Features.HealthAnomaly.verdictName verdict |> text)
+      "message", (Bozzetto.Features.HealthAnomaly.describe verdict |> Option.defaultValue "" |> text)
+      "observedValue", (evidence.ObservedValue |> real)
+      "baselineMean", (evidence.BaselineMean |> real)
+      "baselineStdDev", (evidence.BaselineStdDev |> real)
+      "deviationInSigmas", (evidence.DeviationInSigmas |> real)
+      "sustainedForSeconds", (evidence.SustainedFor.TotalSeconds |> real)
+      "samplesSustained", (evidence.SamplesSustained |> integer) ])
+  | Bozzetto.Features.HealthAnomaly.Verdict.OperationalFault fault ->
+    Some(object [
+      "signal", (Bozzetto.Features.HealthAnomaly.operationalFaultName fault.Kind |> text)
+      "state", (Bozzetto.Features.HealthAnomaly.verdictName verdict |> text)
+      "kind", ("operational" |> text)
+      "message", (Bozzetto.Features.HealthAnomaly.describe verdict |> Option.defaultValue "" |> text)
+      "count", (fault.Count |> integer)
+      "observedAt", (fault.ObservedAt |> timestamp) ])
+  | Bozzetto.Features.HealthAnomaly.Verdict.InsufficientHistory
+  | Bozzetto.Features.HealthAnomaly.Verdict.Normal -> None
+
 /// Observe and encode daemon resource state with exact byte counts.
-let serialize
+let serializeWithLiveness
   (mcpPort: int)
   (health: Bozzetto.Features.HealthSnapshot option)
-  (telemetry: Bozzetto.Server.DaemonTelemetry.Snapshot option) : string =
+  (telemetry: Bozzetto.Server.DaemonTelemetry.Snapshot option)
+  (leasedCommands: Bozzetto.Server.DaemonTelemetry.LeasedCommandLiveness list) : string =
   let machineMemory = Bozzetto.Features.MachineMemory.current ()
   let leases = Bozzetto.Features.LeaseWatch.snapshot ()
-  let anomalyRows =
+  let anomalyValues =
     health
-    |> Option.bind (fun h -> Some h.Anomalies)
+    |> Option.map _.Anomalies
     |> Option.defaultValue []
-    |> List.choose (fun verdict ->
-      Bozzetto.Features.HealthAnomaly.evidenceOf verdict
-      |> Option.map (fun evidence ->
-        {| signal = Bozzetto.Features.HealthAnomaly.signalName evidence.Signal
-           state = Bozzetto.Features.HealthAnomaly.verdictName verdict
-           message = Bozzetto.Features.HealthAnomaly.describe verdict |> Option.defaultValue ""
-           observedValue = evidence.ObservedValue
-           baselineMean = evidence.BaselineMean
-           baselineStdDev = evidence.BaselineStdDev
-           deviationInSigmas = evidence.DeviationInSigmas
-           sustainedForSeconds = evidence.SustainedFor.TotalSeconds
-           samplesSustained = evidence.SamplesSustained |}))
+    |> List.choose anomalyJson
   let sessionSummaries =
     health |> Option.map (fun h -> h.SessionSummaries) |> Option.defaultValue []
   let countStatus status =
@@ -69,7 +84,6 @@ let serialize
                 queueDepth = leases.QueueDepth
                 active = leases.Active
                 queue = leases.Queue |}
-    anomalies = anomalyRows
     available = Bozzetto.Affordances.availableTools Bozzetto.SessionState.Uninitialized
   |}
   (object [
@@ -115,14 +129,20 @@ let serialize
         "Holder", (value.Holder |> text)
         "Kind", (value.Kind |> text)
         "RequestedAt", (value.RequestedAt |> timestamp) ])) ]
-    "anomalies", (payload.anomalies |> array (fun value -> object [
-      "signal", (value.signal |> text)
-      "state", (value.state |> text)
-      "message", (value.message |> text)
-      "observedValue", (value.observedValue |> real)
-      "baselineMean", (value.baselineMean |> real)
-      "baselineStdDev", (value.baselineStdDev |> real)
-      "deviationInSigmas", (value.deviationInSigmas |> real)
-      "sustainedForSeconds", (value.sustainedForSeconds |> real)
-      "samplesSustained", (value.samplesSustained |> integer) ]))
+    "leasedCommands", (leasedCommands |> array (fun cmd -> object [
+      "runId", (cmd.RunId |> text)
+      "leaseId", (cmd.LeaseId |> text)
+      "processId", (cmd.ProcessId |> integer)
+      "outcome", (cmd.Outcome |> text)
+      "startedAtMs", (cmd.StartedAtMs |> signed)
+      "lastLivenessVerifiedAtMs", (cmd.LastLivenessVerifiedAtMs |> optional signed)
+      "leaseLive", (cmd.LeaseLive |> boolean)
+      "leaseExpiresAt", (cmd.LeaseExpiresAt |> optional timestamp) ]))
+    "anomalies", (anomalyValues |> array id)
     "available", (payload.available |> strings) ] |> render)
+
+let serialize
+  (mcpPort: int)
+  (health: Bozzetto.Features.HealthSnapshot option)
+  (telemetry: Bozzetto.Server.DaemonTelemetry.Snapshot option) : string =
+  serializeWithLiveness mcpPort health telemetry (Bozzetto.Server.DaemonTelemetry.currentLeasedCommandLiveness ())

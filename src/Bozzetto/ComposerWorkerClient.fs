@@ -54,7 +54,7 @@ module ComposerWorkerClient =
     mutable Abandonment: exn option
   }
 
-  type private Connection(worker: Process, socket: Socket, socketDirectory: string,
+  type private Connection(worker: Process, targetPgid: int option, rootStartTicks: int64 option, socket: Socket, socketDirectory: string,
                           wire: StreamWriter, outputFile: FileStream, errorFile: FileStream,
                           stdout: Task, stderr: Task, beforeCancellationAdmission: unit -> unit,
                           beforeEncode: RequestBody -> unit, beforeWrite: Operation -> string -> Task) =
@@ -77,9 +77,21 @@ module ComposerWorkerClient =
     let record direction id operation =
       lock evidenceGate (fun () -> wire.WriteLine("{0:O}\t{1}\t{2}\t{3}", DateTimeOffset.UtcNow, direction, id, operation))
 
+    // O(1) non-blocking kill while worker is unreaped: signal -targetPgid FIRST via kill(2)
+    // (no /proc walk on timer/cancellation callbacks) before worker.Kill(true); StopCore performs
+    // StartTimeTicks-fenced async sweep.
     let killOwned () =
-      try if not worker.HasExited then worker.Kill(true)
-      with :? InvalidOperationException -> ()
+      let stillAlive = try not worker.HasExited with :? InvalidOperationException -> false
+      if stillAlive then
+        if OperatingSystem.IsLinux() then
+          match Bozzetto.Server.LinuxProcessEdge.signalProcessGroupFast targetPgid Bozzetto.ProcessWatchdog.SigKill with
+          | Ok None -> ()
+          | Ok(Some err) ->
+            Bozzetto.Utils.Log.warn "[composer-worker] killOwned signal error for pid=%d pgid=%A: %s" processId targetPgid err
+          | Error scanErr ->
+            Bozzetto.Utils.Log.warn "[composer-worker] killOwned error for pid=%d pgid=%A: %s" processId targetPgid (Bozzetto.ProcessWatchdog.describeProcScanError scanErr)
+        try if not worker.HasExited then worker.Kill(true)
+        with :? InvalidOperationException -> ()
 
     let invalidate (error: exn) kill =
       let revoked = lock gate (fun () ->
@@ -331,6 +343,18 @@ module ComposerWorkerClient =
         // Failure to terminate is an explicit failed retirement. Keep the
         // remaining owned resources intact instead of disposing live drains.
         do! worker.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 2.)
+      // Sweep the isolated worker process group with StartTimeTicks root fencing so no
+      // detached Composer/solver descendant survives stop and recycled PIDs stay untouched.
+      if targetPgid.IsSome && OperatingSystem.IsLinux() then
+        let! groupOutcome =
+          Bozzetto.Server.LinuxProcessEdge.terminateProcessGroupWithFenceAsync processId targetPgid rootStartTicks 300
+          |> Async.StartAsTask
+        match groupOutcome with
+        | Bozzetto.ProcessWatchdog.TerminationOutcome.Cleared -> ()
+        | Bozzetto.ProcessWatchdog.TerminationOutcome.Survivors(pids, errs) ->
+          raise (IOException(sprintf "Composer worker process group %A left surviving descendants: pids=%A errors=%A" targetPgid pids errs))
+        | Bozzetto.ProcessWatchdog.TerminationOutcome.Unverified err ->
+          raise (IOException(sprintf "Composer worker process group %A cleanup could not be verified: %s" targetPgid (Bozzetto.ProcessWatchdog.describeProcScanError err)))
       let owned = lock gate (fun () -> children.Values |> Seq.toArray)
       try
         // Physical exit does not join an admitted callback or diagnostic IO.
@@ -386,11 +410,26 @@ module ComposerWorkerClient =
     use listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
     listener.Bind endpoint
     listener.Listen 1
+    let setsidPath =
+      if OperatingSystem.IsLinux() then
+        match Bozzetto.Server.LinuxProcessEdge.tryResolveSetsid () with
+        | Some path -> Some path
+        | None -> raise (IOException "setsid was not found on PATH; Linux Composer worker launch requires process-group isolation.")
+      else None
     let info = ProcessStartInfo()
-    if config.WorkerPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) then
-      info.FileName <- config.DotnetPath
-      info.ArgumentList.Add config.WorkerPath
-    else info.FileName <- config.WorkerPath
+    match setsidPath with
+    | Some setsid ->
+      info.FileName <- setsid
+      info.ArgumentList.Add "--wait"
+      if config.WorkerPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) then
+        info.ArgumentList.Add config.DotnetPath
+        info.ArgumentList.Add config.WorkerPath
+      else info.ArgumentList.Add config.WorkerPath
+    | None ->
+      if config.WorkerPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) then
+        info.FileName <- config.DotnetPath
+        info.ArgumentList.Add config.WorkerPath
+      else info.FileName <- config.WorkerPath
     for argument in arguments do info.ArgumentList.Add argument
     info.ArgumentList.Add "--socket"
     info.ArgumentList.Add(endpoint.ToString())
@@ -410,18 +449,24 @@ module ComposerWorkerClient =
     let worker = new Process(StartInfo = info)
     cleanup.Add worker.Dispose
     let mutable started = false
+    let mutable targetPgid: int option = None
+    let mutable rootStartTicks: int64 option = None
     let mutable connection: Connection option = None
     let mutable stdout = Task.CompletedTask
     let mutable stderr = Task.CompletedTask
     try
       if not (worker.Start()) then raise (IOException "Composer worker process did not start.")
       started <- true
+      targetPgid <- if setsidPath.IsSome then Some worker.Id else None
+      rootStartTicks <-
+        if OperatingSystem.IsLinux() then Bozzetto.Server.LinuxProcessEdge.readLinuxProc worker.Id |> Option.map _.StartTimeTicks
+        else None
       stdout <- worker.StandardOutput.BaseStream.CopyToAsync stdoutFile
       stderr <- worker.StandardError.BaseStream.CopyToAsync stderrFile
       use deadline = new CancellationTokenSource(TimeSpan.FromSeconds 15.)
       let! socket = listener.AcceptAsync(deadline.Token)
       cleanup.Add socket.Dispose
-      let client = new Connection(worker, socket, socketDirectory, wire, stdoutFile, stderrFile, stdout, stderr, beforeCancellationAdmission, beforeEncode, beforeWrite)
+      let client = new Connection(worker, targetPgid, rootStartTicks, socket, socketDirectory, wire, stdoutFile, stderrFile, stdout, stderr, beforeCancellationAdmission, beforeEncode, beforeWrite)
       connection <- Some client
       transferred <- true
       let! _ = client.RequestAsync(Hello BAREWireCodec.agreement, CancellationToken.None)
@@ -433,10 +478,25 @@ module ComposerWorkerClient =
         try do! client.StopAsync()
         with cleanup -> raise (AggregateException("Composer startup and cleanup failed.", error, cleanup))
       | None ->
-        if started && not worker.HasExited then
-          worker.Kill(true)
-          do! worker.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 2.)
+        let mutable rollbackCleanupError: exn option = None
+        if started then
+          if targetPgid.IsSome && OperatingSystem.IsLinux() then
+            let! groupOutcome =
+              Bozzetto.Server.LinuxProcessEdge.terminateProcessGroupWithFenceAsync worker.Id targetPgid rootStartTicks 200
+              |> Async.StartAsTask
+            match groupOutcome with
+            | Bozzetto.ProcessWatchdog.TerminationOutcome.Cleared -> ()
+            | Bozzetto.ProcessWatchdog.TerminationOutcome.Survivors(pids, errs) ->
+              rollbackCleanupError <- Some(IOException(sprintf "Composer startup rollback left surviving descendants in pgid %A: pids=%A errors=%A" targetPgid pids errs))
+            | Bozzetto.ProcessWatchdog.TerminationOutcome.Unverified err ->
+              rollbackCleanupError <- Some(IOException(sprintf "Composer startup rollback could not verify cleanup of pgid %A: %s" targetPgid (Bozzetto.ProcessWatchdog.describeProcScanError err)))
+          if not worker.HasExited then
+            worker.Kill(true)
+            do! worker.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 2.)
         do! Task.WhenAll(stdout, stderr).WaitAsync(TimeSpan.FromSeconds 2.)
+        match rollbackCleanupError with
+        | Some cleanupErr -> raise (AggregateException("Composer startup and process-group cleanup failed.", error, cleanupErr))
+        | None -> ()
       return raise error
   }
 

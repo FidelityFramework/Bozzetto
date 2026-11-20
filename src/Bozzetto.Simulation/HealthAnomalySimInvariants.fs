@@ -14,13 +14,15 @@ module HealthAnomalySimInvariants =
   let private fires =
     function
     | Verdict.Drifting _
-    | Verdict.Broken _ -> true
+    | Verdict.Broken _
+    | Verdict.OperationalFault _ -> true
     | Verdict.Normal
     | Verdict.InsufficientHistory -> false
 
   let private isBroken =
     function
-    | Verdict.Broken _ -> true
+    | Verdict.Broken _
+    | Verdict.OperationalFault _ -> true
     | _ -> false
 
   /// `states` is `List.scan (step behavior) initial events` — one more

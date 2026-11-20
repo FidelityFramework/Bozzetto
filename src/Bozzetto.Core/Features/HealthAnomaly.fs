@@ -194,6 +194,24 @@ module HealthAnomaly =
     SamplesSustained: int
   }
 
+  [<RequireQualifiedAccess>]
+  type OperationalFaultKind =
+    | UnleasedSubprocess
+    | ProcScanFailure
+
+  let operationalFaultName =
+    function
+    | OperationalFaultKind.UnleasedSubprocess -> "unleased_subprocess"
+    | OperationalFaultKind.ProcScanFailure -> "proc_scan_failure"
+
+  // Discrete non-statistical operational fault (never carries fabricated EWMA/CUSUM fields).
+  type OperationalFault = {
+    Kind: OperationalFaultKind
+    ObservedAt: DateTimeOffset
+    Count: int
+    Detail: string
+  }
+
   /// The verdict. Not a bool, not an `Option` standing in for "nothing
   /// wrong": every non-Normal case carries the evidence that justifies it.
   [<RequireQualifiedAccess>]
@@ -210,6 +228,8 @@ module HealthAnomaly =
     /// Sustained deviation at or above the break threshold: this is the
     /// "say so in your own status" case.
     | Broken of SignalEvidence
+    // Non-statistical operational fault observed directly by the daemon.
+    | OperationalFault of OperationalFault
 
   /// Tuning constants. Every one of them operates in standard-deviation
   /// units except `MinWarmupSamples`, `MinSustainSamples` (sample counts)
@@ -445,12 +465,27 @@ module HealthAnomaly =
     | Verdict.Normal -> "normal"
     | Verdict.Drifting _ -> "drifting"
     | Verdict.Broken _ -> "broken"
+    | Verdict.OperationalFault _ -> "broken"
 
   /// The evidence behind a verdict, when there is any.
   let evidenceOf (verdict: Verdict) : SignalEvidence option =
     match verdict with
     | Verdict.Drifting e
     | Verdict.Broken e -> Some e
+    | Verdict.InsufficientHistory
+    | Verdict.Normal
+    | Verdict.OperationalFault _ -> None
+
+  let operationalFaultOf (verdict: Verdict) : OperationalFault option =
+    match verdict with
+    | Verdict.OperationalFault fault -> Some fault
+    | _ -> None
+
+  let signalNameOfVerdict (verdict: Verdict) : string option =
+    match verdict with
+    | Verdict.Drifting e
+    | Verdict.Broken e -> Some(signalName e.Signal)
+    | Verdict.OperationalFault fault -> Some(operationalFaultName fault.Kind)
     | Verdict.InsufficientHistory
     | Verdict.Normal -> None
 
@@ -479,3 +514,9 @@ module HealthAnomaly =
     | Verdict.Normal -> None
     | Verdict.Drifting e -> Some(phraseFor "is drifting" e)
     | Verdict.Broken e -> Some(phraseFor "is broken" e)
+    | Verdict.OperationalFault fault ->
+      match fault.Kind with
+      | OperationalFaultKind.UnleasedSubprocess ->
+        Some(sprintf "unleased_subprocess is broken: %d unleased watched subprocess(es) [%s]" fault.Count fault.Detail)
+      | OperationalFaultKind.ProcScanFailure ->
+        Some(sprintf "proc_scan_failure is broken: %s" fault.Detail)

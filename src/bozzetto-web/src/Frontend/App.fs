@@ -816,35 +816,140 @@ let OutputPane (model: ModelView) =
   }
 
 let private runningOperation (node: NodeWorkView) (operation: NodeOperationView) =
-  operation.outcome = "running" || (operation.hasLease && (node.leases |> Array.exists (fun lease -> lease.id = operation.leaseId)))
+  operation.outcome = "running"
+  || operation.outcome.StartsWith("unknown:", System.StringComparison.Ordinal)
+  || (operation.hasLease && (node.leases |> Array.exists (fun lease -> lease.id = operation.leaseId)))
 
 let private operationKey (node: NodeWorkView) (operation: NodeOperationView) =
   node.id + ":" + node.journal + ":" + operation.sequence
 
+let private operationStateLabel (operation: NodeOperationView) =
+  if operation.code = "running" then "running"
+  elif operation.code = "abandoned" then "abandoned"
+  elif operation.code = "unknown" then "unknown"
+  elif operation.ok then "completed"
+  elif operation.code = "command_failed" || operation.code = "exception" then "failed"
+  else "refused"
+
+let private operationStateBadge (operation: NodeOperationView) =
+  if operation.code = "running" then "badge badge-xs badge-info font-mono mr-1.5 node-outcome-running"
+  elif operation.code = "abandoned" then "badge badge-xs badge-warning font-mono mr-1.5 node-outcome-abandoned"
+  elif operation.code = "unknown" then "badge badge-xs badge-warning badge-outline font-mono mr-1.5 node-outcome-unknown"
+  elif operation.ok then "badge badge-xs badge-success font-mono mr-1.5 node-outcome-completed"
+  elif operation.code = "command_failed" || operation.code = "exception" then "badge badge-xs badge-error font-mono mr-1.5 node-outcome-failed"
+  else "badge badge-xs badge-error badge-outline font-mono mr-1.5 node-outcome-refused"
+
+let private formatLivenessMessage (message: string) =
+  let prefix = "owner liveness verified "
+  if message.StartsWith(prefix, System.StringComparison.Ordinal) then
+    let parsed = parseIsoMs (message.Substring(prefix.Length).Trim())
+    if not (System.Double.IsNaN parsed) && parsed > 0. then
+      "Owner liveness verified " + clockTime parsed
+    else message
+  else message
+
+let private elapsedText (startMs: float) (endMs: float) =
+  if startMs > 0. && endMs >= startMs then " · elapsed " + duration (endMs - startMs)
+  else ""
+
 [<SolidComponent>]
 let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -> bool) (read: NodeWorkView -> NodeOperationView -> TranscriptStream -> unit) =
   let retired, setRetired = createSignal (Interop.getRetiredWork ())
-  let retire keys =
-    let next = Array.append keys (retired ()) |> Array.distinct |> Array.truncate 256
-    Interop.saveRetiredWork next
-    setRetired next
+  let olderOpenNodes, setOlderOpenNodes = createSignal Array.empty<string>
+  let olderWindowHours, setOlderWindowHours = createSignal (Interop.getOlderWindowHours ())
+  let olderWindowMs () = float (olderWindowHours ()) * 3600000.
+  let olderWindowLabel () =
+    match olderWindowHours () with
+    | 168 -> "7 days"
+    | hours -> string hours + " hours"
+  let setNodeOlderOpen (nodeId: string) (isOpen: bool) =
+    let current = olderOpenNodes ()
+    let next =
+      if isOpen then Array.append [| nodeId |] current |> Array.distinct
+      else current |> Array.filter (fun id -> id <> nodeId)
+    setOlderOpenNodes next
+  let nowOf (node: NodeWorkView) =
+    if uptime () < 0. then node.sampledAt else model.startedAt + uptime ()
   let recent (node: NodeWorkView) =
-    let now = if uptime () < 0. then node.sampledAt else model.startedAt + uptime ()
+    let now = nowOf node
+    let windowMs = olderWindowMs ()
     node.operations
     |> Array.filter (fun operation ->
-      not (runningOperation node operation) && now - operation.at <= 86400000.
+      not (runningOperation node operation) && now - operation.at <= windowMs
       && not (retired () |> Array.contains (operationKey node operation)))
     |> Array.sortByDescending (fun operation -> operation.at, int64 operation.sequence)
     |> Array.truncate 20
+  let older (node: NodeWorkView) =
+    let now = nowOf node
+    let windowMs = olderWindowMs ()
+    node.operations
+    |> Array.filter (fun operation ->
+      not (runningOperation node operation) && now - operation.at > windowMs
+      && not (retired () |> Array.contains (operationKey node operation)))
+    |> Array.sortByDescending (fun operation -> operation.at, int64 operation.sequence)
+  let retireFor (node: NodeWorkView) keys =
+    let next = Array.append keys (retired ()) |> Array.distinct |> Array.truncate 256
+    Interop.saveRetiredWork next
+    setRetired next
+    if (older node).Length = 0 then setNodeOlderOpen node.id false
   let active (node: NodeWorkView) = node.operations |> Array.filter (runningOperation node)
+  let renderHistoryRow (node: NodeWorkView) (operation: NodeOperationView) =
+    let startMs () = if operation.startedAt > 0. then operation.startedAt else operation.at
+    let elapsed () = if operation.hasLease then elapsedText (startMs ()) operation.at else ""
+    let callerSuffix () = if operation.caller <> "" then " · " + operation.caller else ""
+    details (class' = "node-operation py-2 border-t border-base-300") {
+      summary (class' = "cursor-pointer text-xs font-mono break-words") {
+        span (class' = operationStateBadge operation) { operationStateLabel operation }
+        operation.project + " · " + operation.operation + " · " + operation.outcome
+        + (if operation.hasRun then " · exit " + string operation.exitCode else "")
+        + callerSuffix () + " · " + clockTime operation.at + elapsed ()
+      }
+      div (class' = "flex flex-col gap-2 pt-2") {
+        Show (when' = (operation.caller <> "")) {
+          p (class' = "text-xs font-mono opacity-70 break-words") { "Caller " + operation.caller + " · node " + node.id }
+        }
+        Show (when' = operation.hasLease) {
+          p (class' = "text-xs font-mono break-words") { "PID " + string operation.pid + " · started " + clockTime (startMs ()) + elapsed () }
+          pre (class' = "text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto", title = "Executable, followed by one argument per line") { operation.executable + "\n" + String.concat "\n" operation.arguments }
+          p (class' = "text-xs font-mono opacity-60 break-words") { "Lease " + operation.leaseId + " · run " + operation.runId }
+        }
+        Show (when' = operation.dropped) { p (class' = "text-xs text-warning") { "Source transcript was not retained." } }
+        Show (when' = operation.hasRun) {
+          div (class' = "flex gap-2") {
+            button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stdout) { "Load stdout" }
+            button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stderr) { "Load stderr" }
+          }
+        }
+        button (class' = "btn btn-xs btn-ghost self-start", onClick = fun _ -> retireFor node [| operationKey node operation |]) { "Retire entry" }
+      }
+    }
   details (open' = true, class' = "work-nodes flex flex-col gap-3") {
     summary (class' = "cursor-pointer text-lg font-bold") { "Work across nodes" }
-    div (class' = "flex items-center gap-2 text-xs opacity-70") {
-      span () { "Completed entries retire after 24 hours; at most 20 per node are shown." }
+    div (class' = "flex flex-wrap items-center gap-2 text-xs opacity-70") {
+      span () { "Finished and abandoned entries older than " + olderWindowLabel () + " collapse behind Show older; at most 20 recent entries per node are shown." }
+      label (class' = "flex items-center gap-1") {
+        span () { "Window" }
+        (``select``(
+          class' = "select select-bordered select-xs",
+          value = string (olderWindowHours ()),
+          onChange = fun ev ->
+            match System.Int32.TryParse(Interop.inputValue ev) with
+            | true, hours when hours = 6 || hours = 24 || hours = 72 || hours = 168 ->
+              Interop.saveOlderWindowHours hours
+              setOlderWindowHours hours
+              setOlderOpenNodes [||]
+            | _ -> ()).attr("aria-label", "History window")) {
+          option'(value = "6") { "6h" }
+          option'(value = "24") { "24h" }
+          option'(value = "72") { "72h" }
+          option'(value = "168") { "7d" }
+        }
+      }
       Show (when' = ((retired ()).Length > 0)) {
         button (class' = "btn btn-xs btn-ghost", onClick = fun _ ->
           Interop.saveRetiredWork [||]
-          setRetired [||]) { "Restore retired entries" }
+          setRetired [||]
+          setOlderOpenNodes [||]) { "Restore retired entries" }
       }
       Information "Work history" (fun () -> [|
         "Running work, queued leases and open compiler projects never retire from this view."
@@ -893,15 +998,6 @@ let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -
                     }
                   }
                 }
-                Show (when' = ((recent node).Length > 0)) {
-                  div (class' = "node-recent-projects flex flex-col gap-1") {
-                    h4 (class' = "text-sm font-semibold") { "Recent project activity" }
-                    For (each = (recent node |> Array.distinctBy _.project |> Array.truncate 3)) {
-                      yield fun operation _ ->
-                        p (class' = "text-xs font-mono break-words") { operation.project + " · " + operation.outcome + " · " + clockTime operation.at }
-                    }
-                  }
-                }
                 For (each = node.leases) {
                   yield fun lease _ ->
                     div (class' = "text-xs font-mono break-words node-lease") {
@@ -922,16 +1018,50 @@ let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -
                 }
                 For (each = active node) {
                   yield fun operation _ ->
+                    let matchedLease () = node.leases |> Array.tryFind (fun lease -> lease.id = operation.leaseId)
+                    let startMs () = if operation.startedAt > 0. then operation.startedAt else operation.at
+                    let livenessText () =
+                      if operation.outcome = "running" then
+                        if operation.message <> "" then formatLivenessMessage operation.message
+                        else "Owner liveness not yet verified"
+                      else ""
+                    let leaseHeartbeatText () =
+                      match matchedLease () with
+                      | Some lease -> " · heartbeat until " + clockTime lease.expiresAt
+                      | None -> " · no live lease heartbeat"
                     div (class' = "node-operation node-active py-2 border-t border-base-300") {
-                      p (class' = "text-sm font-semibold break-words") { operation.project }
+                      p (class' = "text-sm font-semibold break-words") {
+                        span (class' = operationStateBadge operation) { operationStateLabel operation }
+                        operation.project
+                      }
                       p (class' = "text-xs font-mono break-words") { operation.operation + " · " + operation.outcome + " · PID " + string operation.pid }
+                      p (class' = "node-operation-meta text-xs font-mono opacity-70 break-words") {
+                        (if operation.caller <> "" then "Caller " + operation.caller + " · " else "")
+                        + "started " + clockTime (startMs ())
+                        + (if uptime () >= 0. then elapsedText (startMs ()) (model.startedAt + uptime ()) else "")
+                      }
+                      Show (when' = (livenessText () <> "")) {
+                        p (class' = "node-operation-liveness text-xs opacity-70 font-mono break-words") { livenessText () }
+                      }
                       p (class' = "text-xs font-mono break-words") { operation.executable + (operation.arguments |> Array.tryHead |> Option.map (fun argument -> " · " + argument) |> Option.defaultValue "") }
                       details () {
                         summary (class' = "cursor-pointer text-xs opacity-60") { "Command arguments" }
                         pre (class' = "text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto") { String.concat "\n" operation.arguments }
                       }
-                      p (class' = "text-xs opacity-60 break-words") { "Lease " + operation.leaseId + " · run " + operation.runId }
+                      p (class' = "node-operation-lease text-xs opacity-60 break-words") { "Lease " + operation.leaseId + " · run " + operation.runId + leaseHeartbeatText () }
                     }
+                }
+                Show (when' = ((recent node).Length > 0)) {
+                  div (class' = "node-recent-projects flex flex-col gap-1") {
+                    h4 (class' = "text-sm font-semibold") { "Recent project activity" }
+                    For (each = (recent node |> Array.distinctBy _.project |> Array.truncate 3)) {
+                      yield fun operation _ ->
+                        p (class' = "text-xs font-mono break-words") {
+                          span (class' = operationStateBadge operation) { operationStateLabel operation }
+                          operation.project + " · " + operation.outcome + " · " + clockTime operation.at
+                        }
+                    }
+                  }
                 }
                 details (class' = "node-operations") {
                   summary (class' = "cursor-pointer text-sm font-semibold") { "Recent operations (" + string (recent node).Length + ")" }
@@ -940,31 +1070,26 @@ let WorkNodesPanel (model: ModelView) (uptime: unit -> float) (connected: unit -
                     Show (when' = ((recent node).Length = 0)) { p (class' = "text-xs opacity-70") { "No recent completed operations in this view." } }
                     Show (when' = node.transcriptsOmitted) { p (class' = "text-xs opacity-70") { "Transcript bytes are loaded from the node on request." } }
                     Show (when' = ((recent node).Length > 0)) {
-                      button (class' = "btn btn-xs btn-ghost self-start", onClick = fun _ -> retire (recent node |> Array.map (operationKey node))) { "Retire shown entries" }
+                      button (class' = "btn btn-xs btn-ghost self-start", onClick = fun _ -> retireFor node (recent node |> Array.map (operationKey node))) { "Retire shown entries" }
                     }
                     For (each = recent node) {
-                      yield fun operation _ ->
-                        details (class' = "node-operation py-2 border-t border-base-300") {
-                          summary (class' = "cursor-pointer text-xs font-mono break-words") {
-                            operation.project + " · " + operation.operation + " · " + operation.outcome
-                            + (if operation.hasRun then " · exit " + string operation.exitCode else "") + " · " + clockTime operation.at
-                          }
-                          div (class' = "flex flex-col gap-2 pt-2") {
-                            Show (when' = operation.hasLease) {
-                              p (class' = "text-xs font-mono break-words") { "PID " + string operation.pid + " · started " + clockTime operation.startedAt }
-                              pre (class' = "text-xs font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto", title = "Executable, followed by one argument per line") { operation.executable + "\n" + String.concat "\n" operation.arguments }
-                              p (class' = "text-xs font-mono opacity-60 break-words") { "Lease " + operation.leaseId + " · run " + operation.runId }
-                            }
-                            Show (when' = operation.dropped) { p (class' = "text-xs text-warning") { "Source transcript was not retained." } }
-                            Show (when' = operation.hasRun) {
-                              div (class' = "flex gap-2") {
-                                button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stdout) { "Load stdout" }
-                                button (class' = "btn btn-xs btn-outline", disabled = not (connected ()), onClick = fun _ -> read node operation Stderr) { "Load stderr" }
-                              }
-                            }
-                            button (class' = "btn btn-xs btn-ghost self-start", onClick = fun _ -> retire [| operationKey node operation |]) { "Retire entry" }
-                          }
+                      yield fun operation _ -> renderHistoryRow node operation
+                    }
+                  }
+                }
+                Show (when' = ((older node).Length > 0)) {
+                  details (class' = "node-older-operations", open' = (olderOpenNodes () |> Array.contains node.id)) {
+                    summary (class' = "cursor-pointer text-xs opacity-70", onClick = fun ev ->
+                      Interop.preventDefault ev
+                      setNodeOlderOpen node.id (not (olderOpenNodes () |> Array.contains node.id))) {
+                      "Show older (" + string (older node).Length + ")"
+                    }
+                    Show (when' = (olderOpenNodes () |> Array.contains node.id)) {
+                      div (class' = "flex flex-col gap-2 pt-2") {
+                        For (each = older node) {
+                          yield fun operation _ -> renderHistoryRow node operation
                         }
+                      }
                     }
                   }
                 }

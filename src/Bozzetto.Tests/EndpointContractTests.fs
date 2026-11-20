@@ -284,7 +284,7 @@ let endpointContractTests = testList "EndpointContracts" [
 
 [<Tests>]
 let leasedCommandTests =
-  testSequenced
+  testSequencedGroup "lease-watch-global"
   <| testList "Leased command HTTP" [
     testCase "lease capability matches holder kind and unexpired grant only"
     <| fun () ->
@@ -509,5 +509,83 @@ let leasedCommandTests =
             let! response = post client "start" (commandBody leaseId)
             requireRefusal 409 "durable operations journal" response
           })
+    }
+    testTask "origin guard blocks cross-origin DELETE /mcp before disconnect wakeup while accepted same-origin MCP disconnect wakes cleanup" {
+      let builder = WebApplication.CreateBuilder()
+      builder.Logging.ClearProviders() |> ignore
+      builder.WebHost.UseUrls("http://127.0.0.1:0") |> ignore
+      let app = builder.Build()
+      let tracker = Server.McpServerTracker()
+      app.Use(Func<HttpContext, Func<Task>, Task>(fun context next -> Server.errorHandlingMiddleware context next :> Task)) |> ignore
+      Server.useOriginGuard (Bozzetto.Server.HttpOriginGuard.OwnOrigins.ofPorts [47749; 47750]) app
+      Server.useMcpDisconnectObservation tracker app
+      app.MapDelete("/mcp", RequestDelegate(fun ctx ->
+        task {
+          match ctx.Request.Headers.TryGetValue("mcp-session-id") with
+          | true, sid when sid.ToString() = "valid-session" -> ctx.Response.StatusCode <- 200
+          | _ -> ctx.Response.StatusCode <- 404
+        } :> Task)) |> ignore
+      let streamEntered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+      app.MapGet("/mcp", RequestDelegate(fun ctx ->
+        task {
+          streamEntered.TrySetResult() |> ignore
+          try do! Task.Delay(TimeSpan.FromSeconds 10., ctx.RequestAborted)
+          with :? OperationCanceledException -> ()
+        } :> Task)) |> ignore
+      let mutable wakeups = 0
+      let wakeupEvent = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+      Bozzetto.Server.DaemonTelemetry.installSessionDisconnectWakeup (fun () ->
+        if System.Threading.Interlocked.Increment(&wakeups) >= 2 then
+          wakeupEvent.TrySetResult() |> ignore)
+      let! outcome =
+        task {
+          try
+            do! app.StartAsync()
+            use client = new HttpClient(BaseAddress = Uri(Seq.exactlyOne app.Urls), Timeout = TimeSpan.FromSeconds 5.)
+
+            // Negative control 1: cross-origin DELETE /mcp MUST be blocked 403 by useOriginGuard
+            // BEFORE useMcpDisconnectObservation runs -> 0 wakeups.
+            use foreignDel = new HttpRequestMessage(HttpMethod.Delete, "/mcp")
+            foreignDel.Headers.Add("Origin", "http://foreign.example:9999")
+            foreignDel.Headers.Add("mcp-session-id", "valid-session")
+            let! foreignResp = client.SendAsync foreignDel
+            int foreignResp.StatusCode |> Expect.equal "cross-origin DELETE /mcp rejected with 403" 403
+            System.Threading.Volatile.Read(&wakeups)
+            |> Expect.equal "cross-origin 403 DELETE /mcp must not fire disconnect wakeup" 0
+
+            // Negative control 2: same-origin DELETE /mcp returning 404 MUST NOT fire disconnect wakeup.
+            use rejectedDel = new HttpRequestMessage(HttpMethod.Delete, "/mcp")
+            rejectedDel.Headers.Add("mcp-session-id", "nonexistent-session-id")
+            let! rejectedResp = client.SendAsync rejectedDel
+            int rejectedResp.StatusCode |> Expect.equal "unknown session DELETE returns 404" 404
+            System.Threading.Volatile.Read(&wakeups)
+            |> Expect.equal "non-2xx DELETE /mcp must not fire disconnect wakeup" 0
+
+            // Positive control 3: accepted same-origin DELETE /mcp (200) fires O(1) disconnect wakeup.
+            use validDel = new HttpRequestMessage(HttpMethod.Delete, "/mcp")
+            validDel.Headers.Add("mcp-session-id", "valid-session")
+            let! validDelResp = client.SendAsync validDel
+            int validDelResp.StatusCode |> Expect.equal "accepted same-origin DELETE /mcp returns 200" 200
+            System.Threading.Volatile.Read(&wakeups)
+            |> Expect.equal "accepted same-origin DELETE /mcp fired exactly 1 disconnect wakeup" 1
+
+            // Positive control 4: abrupt same-origin MCP request abort fires O(1) disconnect wakeup.
+            use abortCts = new System.Threading.CancellationTokenSource()
+            let getTask = client.GetAsync("/mcp", abortCts.Token)
+            do! streamEntered.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+            abortCts.Cancel()
+            try let! _ = getTask in () with :? OperationCanceledException | :? HttpRequestException -> ()
+            do! wakeupEvent.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+            (System.Threading.Volatile.Read(&wakeups) >= 2)
+            |> Expect.isTrue "abrupt MCP disconnect fired O(1) disconnect wakeup"
+            return Ok ()
+          with ex -> return Error ex
+        }
+      Bozzetto.Server.DaemonTelemetry.clearSessionDisconnectHandlers ()
+      do! app.StopAsync().WaitAsync(TimeSpan.FromSeconds 5.)
+      do! app.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds 5.)
+      match outcome with
+      | Ok () -> ()
+      | Error ex -> return raise ex
     }
   ]

@@ -413,7 +413,7 @@ let tests =
       let! refusedBuild = owner.ExecuteAsync(request Operation.Build worker "", "http", CancellationToken.None)
       refusedBuild |> refused RefusalCode.InvalidRequest
       let journal = owner.Journal
-      journal.Entries |> List.map (fun e -> e.Caller, (match e.Context with ComposerJournal.Context.Composer(operation, _) -> operation | _ -> failtest "expected compiler context"), (match e.Outcome with ComposerJournal.Outcome.Succeeded -> "ok" | ComposerJournal.Outcome.Refused _ -> "refused" | ComposerJournal.Outcome.Failed _ -> "failed" | ComposerJournal.Outcome.Running -> "running"))
+      journal.Entries |> List.map (fun e -> e.Caller, (match e.Context with ComposerJournal.Context.Composer(operation, _) -> operation | _ -> failtest "expected compiler context"), (match e.Outcome with ComposerJournal.Outcome.Succeeded -> "ok" | ComposerJournal.Outcome.Refused _ -> "refused" | ComposerJournal.Outcome.Failed _ -> "failed" | ComposerJournal.Outcome.Running -> "running" | ComposerJournal.Outcome.Abandoned _ -> "abandoned" | ComposerJournal.Outcome.Unknown _ -> "unknown"))
       |> Expect.equal "newest first, no status read, the refusal kept"
            [ "http", Operation.Build, "refused"; "browser", Operation.Run, "ok"; "mcp:t1", Operation.Open, "ok" ]
       journal.Entries |> List.map _.Sequence |> Expect.equal "stamped one on per entry" [ 3L; 2L; 1L ]

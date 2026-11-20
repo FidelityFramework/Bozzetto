@@ -359,4 +359,500 @@ PRAGMA user_version=1;"
         absent.BeginLeasedCommand("holder", "/project", command)
         |> Expect.equal "no transient substitute for the store" (Error "Leased command observation requires a durable operations journal.")
         for owner in [ supervisor; refusing; absent ] do owner.StopAsync().GetAwaiter().GetResult())
+
+    testCaseAsync "reconciling running leased commands distinguishes live, exited, PID-reused, and inaccessible/unknown owners, honors live-lease grace, and preserves late settlement" (async {
+      let directory = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../../nupkg/journal-controls", Guid.NewGuid().ToString("N")))
+      Directory.CreateDirectory directory |> ignore
+      let path = Path.Combine(directory, "operations.db")
+      let store = ComposerJournal.openStore path |> ok
+      let factory () = Task.FromException<IComposerWorker>(InvalidOperationException "no compiler process needed")
+      let supervisor = ComposerSupervisor(factory, false, (fun () -> Task.CompletedTask), journalStore = Ok store)
+      let! outcome = async {
+        try
+          let liveCmd: ComposerJournal.LeasedCommand =
+            { Kind = ComposerJournal.LeasedKind.Build; LeaseId = "lease-live"; LeaseDisplayId = "disp-live"; RunId = "run-live"
+              Executable = "/tool/dotnet"; Arguments = [ "build" ]; ProcessId = 5001; StartedAtMs = 1_000L }
+          let deadCmd: ComposerJournal.LeasedCommand =
+            { Kind = ComposerJournal.LeasedKind.Test; LeaseId = "lease-dead"; LeaseDisplayId = "disp-dead"; RunId = "run-dead"
+              Executable = "/tool/dotnet"; Arguments = [ "vstest" ]; ProcessId = 5002; StartedAtMs = 1_000L }
+          let reusedCmd: ComposerJournal.LeasedCommand =
+            { Kind = ComposerJournal.LeasedKind.Build; LeaseId = "lease-reused"; LeaseDisplayId = "disp-reused"; RunId = "run-reused"
+              Executable = "/tool/dotnet"; Arguments = [ "build" ]; ProcessId = 5003; StartedAtMs = 1_000L }
+          let unknownCmd: ComposerJournal.LeasedCommand =
+            { Kind = ComposerJournal.LeasedKind.Build; LeaseId = "lease-unknown"; LeaseDisplayId = "disp-unknown"; RunId = "run-unknown"
+              Executable = "/tool/dotnet"; Arguments = [ "build" ]; ProcessId = 5004; StartedAtMs = 1_000L }
+          let graceCmd: ComposerJournal.LeasedCommand =
+            { Kind = ComposerJournal.LeasedKind.Build; LeaseId = "lease-grace"; LeaseDisplayId = "disp-grace"; RunId = "run-grace"
+              Executable = "/tool/dotnet"; Arguments = [ "build" ]; ProcessId = 5005; StartedAtMs = 1_000L }
+          supervisor.BeginLeasedCommand("holder-live", "/project-a", liveCmd) |> ok |> ignore
+          supervisor.BeginLeasedCommand("holder-dead", "/project-b", deadCmd) |> ok |> ignore
+          supervisor.BeginLeasedCommand("holder-reused", "/project-c", reusedCmd) |> ok |> ignore
+          supervisor.BeginLeasedCommand("holder-unknown", "/project-d", unknownCmd) |> ok |> ignore
+          supervisor.BeginLeasedCommand("holder-grace", "/project-e", graceCmd) |> ok |> ignore
+          let mutable notifications = 0
+          use _sub = supervisor.JournalChanged.Subscribe(fun () -> notifications <- notifications + 1)
+          let released = ResizeArray<string>()
+          let mutable unknownNowAlive = false
+          let probe pid _startedAt =
+            match pid with
+            | 5001 -> Bozzetto.ProcessWatchdog.ProcessLiveness.Alive
+            | 5002 -> Bozzetto.ProcessWatchdog.ProcessLiveness.Exited
+            | 5003 -> Bozzetto.ProcessWatchdog.ProcessLiveness.PidReused 8_500L
+            | 5004 ->
+              if unknownNowAlive then Bozzetto.ProcessWatchdog.ProcessLiveness.Alive
+              else Bozzetto.ProcessWatchdog.ProcessLiveness.Unknown "stat inaccessible"
+            | 5005 -> Bozzetto.ProcessWatchdog.ProcessLiveness.Exited
+            | _ -> Bozzetto.ProcessWatchdog.ProcessLiveness.Exited
+          let hasLiveLease leaseId = leaseId = "lease-live" || leaseId = "lease-grace" || leaseId = "lease-unknown"
+          let abandoned, unknown, verifiedAlive =
+            match supervisor.ReconcileLeasedCommands(probe, hasLiveLease, 5_000L, 9_000L, fun leaseId -> released.Add leaseId) with
+            | ComposerJournal.ReconcileResult.Reconciled(_, items, unk, alive) -> items, unk, alive
+            | ComposerJournal.ReconcileResult.StorageFailure reason -> failtestf "Expected reconciliation success: %s" reason
+          abandoned |> List.map _.RunId |> Expect.equal "dead (no live lease) and PID-reused entries are reconciled; live-lease exited entry is deferred inside grace" [ "run-dead"; "run-reused" ]
+          unknown |> List.map (fst >> _.RunId) |> Expect.equal "inaccessible entry is reported unknown" [ "run-unknown" ]
+          verifiedAlive |> Expect.equal "live process is confirmed alive" [ "run-live" ]
+          supervisor.LastLivenessVerifiedAtMs "run-live" |> Expect.equal "owner liveness heartbeat tracked separately from entry AtMs" (Some 9_000L)
+          Seq.toList released |> Expect.equal "only proven abandoned leases are released" [ "lease-dead"; "lease-reused" ]
+          notifications |> Expect.equal "reconciliation publishes one journal change" 1
+          let board = Bozzetto.Server.UiBridge.Project.operations 7L supervisor.Journal
+          let entryFor runId =
+            board.Entries
+            |> Array.pick (fun e ->
+              match e.Lease with
+              | Some l when l.RunId = runId -> Some e
+              | _ -> None)
+          let liveEntry = entryFor "run-live"
+          (liveEntry.Code, liveEntry.Ok, liveEntry.AtMs) |> Expect.equal "live process stays running without fabricated AtMs" ("running", false, 1_000L)
+          let graceEntry = entryFor "run-grace"
+          graceEntry.Code |> Expect.equal "exited process with live lease stays running within settle grace window" "running"
+          let deadEntry = entryFor "run-dead"
+          deadEntry.Code |> Expect.equal "dead command projects as abandoned" "abandoned"
+          deadEntry.Ok |> Expect.isFalse "abandoned command is not ok"
+          deadEntry.Run |> Expect.equal "abandoned command does not invent an exit result" None
+          deadEntry.Message |> Expect.stringContains "abandoned message records dead pid" "Process 5002"
+          let reusedEntry = entryFor "run-reused"
+          reusedEntry.Code |> Expect.equal "PID-reused command projects as abandoned" "abandoned"
+          reusedEntry.Message |> Expect.stringContains "reused message records observed start" "8500"
+          let unknownEntry = entryFor "run-unknown"
+          unknownEntry.Code |> Expect.equal "inaccessible process projects as unknown" "unknown"
+          unknownEntry.Run |> Expect.equal "unknown command does not invent an exit result" None
+          unknownEntry.AtMs |> Expect.equal "unknown transition does not forge a heartbeat timestamp" 1_000L
+          // Second pass inside grace window is idempotent: no further releases or journal updates.
+          let secondAbandoned, secondUnknown, _ =
+            match supervisor.ReconcileLeasedCommands(probe, hasLiveLease, 5_000L, 10_000L, fun leaseId -> released.Add leaseId) with
+            | ComposerJournal.ReconcileResult.Reconciled(_, items, unk, alive) -> items, unk, alive
+            | ComposerJournal.ReconcileResult.StorageFailure reason -> failtestf "Expected idempotent reconciliation: %s" reason
+          secondAbandoned |> Expect.isEmpty "already abandoned rows and in-grace row are not re-abandoned"
+          secondUnknown |> List.map (fst >> _.RunId) |> Expect.equal "unknown row remains reported without churn" [ "run-unknown" ]
+          notifications |> Expect.equal "idempotent reconciliation does not re-publish" 1
+          // Once settle grace elapses (>= 5000ms past 9000L) AND unknown regains access (Unknown -> Alive -> Running):
+          unknownNowAlive <- true
+          let thirdAbandoned, _, thirdAlive =
+            match supervisor.ReconcileLeasedCommands(probe, hasLiveLease, 5_000L, 14_500L, fun leaseId -> released.Add leaseId) with
+            | ComposerJournal.ReconcileResult.Reconciled(_, items, unk, alive) -> items, unk, alive
+            | ComposerJournal.ReconcileResult.StorageFailure reason -> failtestf "Expected post-grace reconciliation: %s" reason
+          thirdAbandoned |> List.map _.RunId |> Expect.equal "exited command past live-lease grace is abandoned" [ "run-grace" ]
+          thirdAlive |> List.sort |> Expect.equal "both live and recovered unknown process verified alive" [ "run-live"; "run-unknown" ]
+          // Reopening durable SQLite proves reconciled states (including Unknown -> Running recovery) persisted durably.
+          let reopened = ComposerJournal.openStore path |> ok
+          let persisted = reopened.Read() |> ok
+          let persistedOutcome runId =
+            persisted.Entries
+            |> List.pick (fun e ->
+              match e.Context with
+              | ComposerJournal.Context.LeasedCommand c when c.RunId = runId -> Some e.Outcome
+              | _ -> None)
+          persistedOutcome "run-live" |> Expect.equal "live row persisted" ComposerJournal.Outcome.Running
+          persistedOutcome "run-unknown" |> Expect.equal "unknown row recovered to Running durably" ComposerJournal.Outcome.Running
+          (match persistedOutcome "run-dead" with ComposerJournal.Outcome.Abandoned _ -> true | _ -> false)
+          |> Expect.isTrue "dead row durably abandoned"
+          // Late authoritative CommandFinished after Abandoned settles truthfully without HTTP 409,
+          // while a subsequent conflicting real settlement is still refused.
+          let lateSettled =
+            supervisor.SettleLeasedCommand(
+              "holder-grace",
+              "/project-e",
+              graceCmd,
+              { FinishedAtMs = 15_000L; ExitCode = 0; StandardOutput = "passed\n"; StandardError = ""; OutputTruncated = false; ErrorTruncated = false })
+            |> ok
+          lateSettled.Outcome |> Expect.equal "late authoritative settlement supersedes Abandoned" ComposerJournal.Outcome.Succeeded
+          let conflicting =
+            supervisor.SettleLeasedCommand(
+              "holder-grace",
+              "/project-e",
+              graceCmd,
+              { FinishedAtMs = 15_500L; ExitCode = 1; StandardOutput = ""; StandardError = "conflict\n"; OutputTruncated = false; ErrorTruncated = false })
+          Result.isError conflicting |> Expect.isTrue "conflicting settlement after real terminal digest is still refused"
+          return Ok ()
+        with ex -> return Error ex
+      }
+      do! supervisor.StopAsync() |> Async.AwaitTask
+      if Directory.Exists directory then Directory.Delete(directory, true)
+      match outcome with
+      | Ok () -> ()
+      | Error ex -> return raise ex
+    })
+
+    testCaseAsync "workSummary retains freshly abandoned older rows ahead of older settled entries (#21)" (async {
+      let directory = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../../nupkg/journal-controls", Guid.NewGuid().ToString("N")))
+      Directory.CreateDirectory directory |> ignore
+      let path = Path.Combine(directory, "operations.db")
+      let store = ComposerJournal.openStore path |> ok
+      let factory () = Task.FromException<IComposerWorker>(InvalidOperationException "no compiler process needed")
+      let supervisor = ComposerSupervisor(factory, false, (fun () -> Task.CompletedTask), journalStore = Ok store)
+      let! outcome = async {
+        try
+          // 8 week-old running rows at seq 1..8, followed by 25 newer settled rows at seq 9..33.
+          for i in 1 .. 8 do
+            let cmd: ComposerJournal.LeasedCommand =
+              { Kind = ComposerJournal.LeasedKind.Build; LeaseId = sprintf "lease-old-%d" i; LeaseDisplayId = sprintf "disp-old-%d" i
+                RunId = sprintf "run-old-%d" i; Executable = "/tool/dotnet"; Arguments = [ "build" ]; ProcessId = 7000 + i; StartedAtMs = 1_000L + int64 i }
+            supervisor.BeginLeasedCommand("old-holder", sprintf "/old-%d" i, cmd) |> ok |> ignore
+          for i in 1 .. 25 do
+            let cmd: ComposerJournal.LeasedCommand =
+              { Kind = ComposerJournal.LeasedKind.Build; LeaseId = sprintf "lease-new-%d" i; LeaseDisplayId = sprintf "disp-new-%d" i
+                RunId = sprintf "run-new-%d" i; Executable = "/tool/dotnet"; Arguments = [ "build" ]; ProcessId = 8000 + i; StartedAtMs = 5_000L + int64 i }
+            supervisor.BeginLeasedCommand("new-holder", sprintf "/new-%d" i, cmd) |> ok |> ignore
+            supervisor.SettleLeasedCommand(
+              "new-holder", sprintf "/new-%d" i, cmd,
+              { FinishedAtMs = 6_000L + int64 i; ExitCode = 0; StandardOutput = ""; StandardError = ""; OutputTruncated = false; ErrorTruncated = false })
+            |> ok |> ignore
+          let observedNow = 100_000L
+          match supervisor.ReconcileLeasedCommands((fun _ _ -> Bozzetto.ProcessWatchdog.ProcessLiveness.Exited), observedNow, ignore) with
+          | ComposerJournal.ReconcileResult.Reconciled(_, abandoned, _, _) ->
+            abandoned.Length |> Expect.equal "all 8 stale running rows reconciled" 8
+          | ComposerJournal.ReconcileResult.StorageFailure reason -> failtestf "Expected reconciliation: %s" reason
+          let ops = Bozzetto.Server.UiBridge.Project.operations 1L supervisor.Journal
+          let snap: Bozzetto.Web.Shared.Protocol.WorkSnapshot = {
+            Sequence = 1L
+            SampledAtMs = 200_000L
+            Snapshot = { Revision = 0L; Worker = Bozzetto.Web.Shared.Protocol.WorkerState.Idle; Sessions = [||] }
+            Leases = { Revision = 0L; Active = [||]; Queued = [||] }
+            Operations = ops
+            TranscriptsOmitted = false
+          }
+          let summary = Bozzetto.Server.UiBridge.Project.workSummary snap
+          let abandonedIds =
+            summary.Operations.Entries
+            |> Array.choose (fun e ->
+              match e.Code, e.Lease with
+              | "abandoned", Some l -> Some l.RunId
+              | _ -> None)
+            |> Array.sort
+          abandonedIds |> Expect.equal "all 8 freshly abandoned older rows remain visible in WorkSnapshot" [| for i in 1 .. 8 -> sprintf "run-old-%d" i |]
+          return Ok ()
+        with ex -> return Error ex
+      }
+      do! supervisor.StopAsync() |> Async.AwaitTask
+      if Directory.Exists directory then Directory.Delete(directory, true)
+      match outcome with
+      | Ok () -> ()
+      | Error ex -> return raise ex
+    })
+
+    testSequencedGroup "lease-watch-global"
+    <| testCaseAsync "fault injection: real OS process live, PID-reuse (leaving live process untouched), and killed reconciliation release real LeaseWatch grants" (async {
+      if OperatingSystem.IsLinux() then
+        let directory = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../../nupkg/journal-controls", Guid.NewGuid().ToString("N")))
+        Directory.CreateDirectory directory |> ignore
+        let path = Path.Combine(directory, "operations.db")
+        let store = ComposerJournal.openStore path |> ok
+        let factory () = Task.FromException<IComposerWorker>(InvalidOperationException "no compiler process needed")
+        let supervisor = ComposerSupervisor(factory, false, (fun () -> Task.CompletedTask), journalStore = Ok store)
+        Bozzetto.Features.LeaseWatch.reset ()
+        let! outcome = async {
+          try
+            let psi = System.Diagnostics.ProcessStartInfo("/bin/sleep")
+            psi.ArgumentList.Add "60"
+            psi.UseShellExecute <- false
+            use proc = System.Diagnostics.Process.Start psi
+            try
+              let pid = proc.Id
+              let actualStartMs = DateTimeOffset(proc.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()
+              // 1. Real-OS PidReused control: record stale start time (60s earlier) against the live process.
+              let reusedLeaseId =
+                match Bozzetto.Features.LeaseWatch.request "journal-reused-holder" Bozzetto.ExpensiveWorkLease.Kind.FullBuild with
+                | Bozzetto.ExpensiveWorkLease.Decision.Granted(lid, _) -> Bozzetto.ExpensiveWorkLease.LeaseId.value lid
+                | other -> failtestf "Expected real LeaseWatch grant for reused test, got %A" other
+              let reusedCmd: ComposerJournal.LeasedCommand =
+                { Kind = ComposerJournal.LeasedKind.Build; LeaseId = reusedLeaseId; LeaseDisplayId = "disp-real-reused"; RunId = "run-real-reused"
+                  Executable = "/bin/sleep"; Arguments = [ "60" ]; ProcessId = pid; StartedAtMs = actualStartMs - 60_000L }
+              supervisor.BeginLeasedCommand("journal-reused-holder", "/project-reused", reusedCmd) |> ok |> ignore
+              let releaseFromWatch (id: string) =
+                Bozzetto.Features.LeaseWatch.release (Bozzetto.ExpensiveWorkLease.LeaseId.ofWire id) |> ignore
+              let hasLiveFromWatch (id: string) =
+                Bozzetto.Features.LeaseWatch.hasLiveLease (Bozzetto.ExpensiveWorkLease.LeaseId.ofWire id)
+              match supervisor.ReconcileLeasedCommands(Bozzetto.Server.LinuxProcessEdge.probeProcessLiveness, hasLiveFromWatch, 5_000L, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), releaseFromWatch) with
+              | ComposerJournal.ReconcileResult.Reconciled(_, items, _, _) ->
+                items |> List.map _.RunId |> Expect.equal "PID-reused OS process is abandoned" [ "run-real-reused" ]
+              | ComposerJournal.ReconcileResult.StorageFailure reason -> failtestf "Expected PidReused reconciliation: %s" reason
+              hasLiveFromWatch reusedLeaseId |> Expect.isFalse "PID-reused reconciliation released real LeaseWatch grant"
+              proc.HasExited |> Expect.isFalse "PID-reused reconciliation must never kill the unrelated live process"
+
+              // 2. Real-OS Live + Killed controls with real LeaseWatch grant.
+              let liveLeaseId =
+                match Bozzetto.Features.LeaseWatch.request "journal-real-holder" Bozzetto.ExpensiveWorkLease.Kind.FullBuild with
+                | Bozzetto.ExpensiveWorkLease.Decision.Granted(lid, _) -> Bozzetto.ExpensiveWorkLease.LeaseId.value lid
+                | other -> failtestf "Expected real LeaseWatch grant for live test, got %A" other
+              let cmd: ComposerJournal.LeasedCommand =
+                { Kind = ComposerJournal.LeasedKind.Build; LeaseId = liveLeaseId; LeaseDisplayId = "disp-real-dead"; RunId = "run-real-dead"
+                  Executable = "/bin/sleep"; Arguments = [ "60" ]; ProcessId = pid; StartedAtMs = actualStartMs }
+              supervisor.BeginLeasedCommand("journal-real-holder", "/project-real", cmd) |> ok |> ignore
+              let aliveAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+              match supervisor.ReconcileLeasedCommands(Bozzetto.Server.LinuxProcessEdge.probeProcessLiveness, hasLiveFromWatch, 0L, aliveAt, releaseFromWatch) with
+              | ComposerJournal.ReconcileResult.Reconciled(_, items, _, alive) ->
+                items |> Expect.isEmpty "live process is not abandoned"
+                alive |> Expect.equal "live process confirmed alive" [ "run-real-dead" ]
+              | ComposerJournal.ReconcileResult.StorageFailure reason -> failtestf "Expected live probe success: %s" reason
+              hasLiveFromWatch liveLeaseId |> Expect.isTrue "live process keeps its real LeaseWatch grant"
+              supervisor.LastLivenessVerifiedAtMs "run-real-dead" |> Expect.equal "live probe recorded verification time" (Some aliveAt)
+              // Negative control: kill process without settling its journal record.
+              proc.Kill(true)
+              do! proc.WaitForExitAsync() |> Async.AwaitTask
+              match supervisor.ReconcileLeasedCommands(Bozzetto.Server.LinuxProcessEdge.probeProcessLiveness, hasLiveFromWatch, 0L, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), releaseFromWatch) with
+              | ComposerJournal.ReconcileResult.Reconciled(_, items, _, _) ->
+                items |> List.map _.RunId |> Expect.equal "killed OS process is abandoned" [ "run-real-dead" ]
+              | ComposerJournal.ReconcileResult.StorageFailure reason -> failtestf "Expected real process reconciliation: %s" reason
+              hasLiveFromWatch liveLeaseId |> Expect.isFalse "killed OS process released its real LeaseWatch grant"
+            finally
+              try if not proc.HasExited then proc.Kill(true) with _ -> ()
+            return Ok ()
+          with ex -> return Error ex
+        }
+        Bozzetto.Features.LeaseWatch.reset ()
+        do! supervisor.StopAsync() |> Async.AwaitTask
+        if Directory.Exists directory then Directory.Delete(directory, true)
+        match outcome with
+        | Ok () -> ()
+        | Error ex -> return raise ex
+    })
+
+    testCaseAsync "concurrent reconciliation and Begin/Settle transactions never hit SQLITE_BUSY or latch StorageError, and Unknown clears settle grace" (async {
+      let directory = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../../nupkg/journal-controls", Guid.NewGuid().ToString("N")))
+      Directory.CreateDirectory directory |> ignore
+      let path = Path.Combine(directory, "operations.db")
+      let store = ComposerJournal.openStore path |> ok
+      let factory () = Task.FromException<IComposerWorker>(InvalidOperationException "no compiler process needed")
+      let supervisor = ComposerSupervisor(factory, false, (fun () -> Task.CompletedTask), journalStore = Ok store)
+      let! outcome = async {
+        try
+          // 1. Unknown clears firstAbsentObservedAtMs so Exited -> Unknown -> Exited honors full settle grace.
+        let flapCmd: ComposerJournal.LeasedCommand =
+          { Kind = ComposerJournal.LeasedKind.Build; LeaseId = "lease-flap"; LeaseDisplayId = "disp-flap"; RunId = "run-flap"
+            Executable = "/tool/dotnet"; Arguments = [ "build" ]; ProcessId = 7101; StartedAtMs = 1_000L }
+        supervisor.BeginLeasedCommand("flap-holder", "/proj-flap", flapCmd) |> ok |> ignore
+        let mutable phase = 0
+        let flapProbe _ _ =
+          match phase with
+          | 0 -> Bozzetto.ProcessWatchdog.ProcessLiveness.Exited
+          | 1 -> Bozzetto.ProcessWatchdog.ProcessLiveness.Unknown "transient /proc error"
+          | _ -> Bozzetto.ProcessWatchdog.ProcessLiveness.Exited
+        let liveLease _ = true
+        // t=2000: first Exited records firstAbsentObservedAtMs = 2000 (deferred).
+        match supervisor.ReconcileLeasedCommands(flapProbe, liveLease, 5_000L, 2_000L, ignore) with
+        | ComposerJournal.ReconcileResult.Reconciled(_, ab, _, _) -> ab |> Expect.isEmpty "first Exited deferred inside grace"
+        | ComposerJournal.ReconcileResult.StorageFailure err -> failtest err
+        // t=4000: Unknown clears firstAbsentObservedAtMs.
+        phase <- 1
+        match supervisor.ReconcileLeasedCommands(flapProbe, liveLease, 5_000L, 4_000L, ignore) with
+        | ComposerJournal.ReconcileResult.Reconciled(_, ab, unk, _) ->
+          ab |> Expect.isEmpty "Unknown never abandons"
+          unk |> List.length |> Expect.equal "Unknown reported" 1
+        | ComposerJournal.ReconcileResult.StorageFailure err -> failtest err
+        // t=8000 (6000ms after first Exited, 0ms after post-Unknown Exited): must restart grace window!
+        phase <- 2
+        match supervisor.ReconcileLeasedCommands(flapProbe, liveLease, 5_000L, 8_000L, ignore) with
+        | ComposerJournal.ReconcileResult.Reconciled(_, ab, _, _) ->
+          ab |> Expect.isEmpty "Exited after Unknown must restart grace instead of reusing stale firstAbsentObservedAtMs"
+        | ComposerJournal.ReconcileResult.StorageFailure err -> failtest err
+        // t=13500 (>= 5000ms after t=8000): now abandons truthfully.
+        match supervisor.ReconcileLeasedCommands(flapProbe, liveLease, 5_000L, 13_500L, ignore) with
+        | ComposerJournal.ReconcileResult.Reconciled(_, ab, _, _) ->
+          ab |> List.map _.RunId |> Expect.equal "abandons only once post-Unknown grace elapses" [ "run-flap" ]
+        | ComposerJournal.ReconcileResult.StorageFailure err -> failtest err
+
+        // 2. Concurrent Begin/Settle + ReconcileLeasedCommands across parallel tasks never hits SQLITE_BUSY.
+        let writerTask = Task.Run(fun () ->
+          for i in 1 .. 25 do
+            let cmd: ComposerJournal.LeasedCommand =
+              { Kind = ComposerJournal.LeasedKind.Build; LeaseId = sprintf "lease-c-%d" i; LeaseDisplayId = sprintf "disp-c-%d" i
+                RunId = sprintf "run-c-%d" i; Executable = "/tool/dotnet"; Arguments = [ "build" ]; ProcessId = 8000 + i; StartedAtMs = 20_000L + int64 i }
+            supervisor.BeginLeasedCommand("concurrent-holder", "/proj-c", cmd) |> ok |> ignore
+            let res: ComposerJournal.CommandResult =
+              { FinishedAtMs = 20_500L + int64 i; ExitCode = 0; StandardOutput = "ok"; StandardError = ""; OutputTruncated = false; ErrorTruncated = false }
+            supervisor.SettleLeasedCommand("concurrent-holder", "/proj-c", cmd, res) |> ok |> ignore)
+        let reconcilerTask = Task.Run(fun () ->
+          for i in 1 .. 25 do
+            match supervisor.ReconcileLeasedCommands((fun _ _ -> Bozzetto.ProcessWatchdog.ProcessLiveness.Alive), (fun _ -> true), 5_000L, 21_000L + int64 i, ignore) with
+            | ComposerJournal.ReconcileResult.Reconciled _ -> ()
+            | ComposerJournal.ReconcileResult.StorageFailure err -> failtestf "Concurrent reconciliation hit storage failure: %s" err)
+        do! Task.WhenAll(writerTask, reconcilerTask) |> Async.AwaitTask
+        supervisor.Journal.StorageError |> Expect.isNone "concurrent SQLite writes and reconciliation never latch StorageError"
+        return Ok ()
+        with ex -> return Error ex
+      }
+      do! supervisor.StopAsync() |> Async.AwaitTask
+      if Directory.Exists directory then Directory.Delete(directory, true)
+      match outcome with
+      | Ok () -> ()
+      | Error ex -> return raise ex
+    })
+
+    testCaseAsync "owner heartbeat vs transport snapshot age, reconnection/reconciliation over UiBridge.Facts.Graph, and workSummary min-(AtMs, Sequence) eviction" (async {
+      let directory = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../../nupkg/journal-controls", Guid.NewGuid().ToString("N")))
+      Directory.CreateDirectory directory |> ignore
+      let path = Path.Combine(directory, "operations.db")
+      let store = ComposerJournal.openStore path |> ok
+      let factory () = Task.FromException<IComposerWorker>(InvalidOperationException "no compiler process needed")
+      let supervisor = ComposerSupervisor(factory, false, (fun () -> Task.CompletedTask), journalStore = Ok store)
+      let! outcome = async {
+        try
+        let liveCmd: ComposerJournal.LeasedCommand =
+          { Kind = ComposerJournal.LeasedKind.Build; LeaseId = "lease-keep"; LeaseDisplayId = "disp-keep"; RunId = "run-keep"
+            Executable = "/tool/dotnet"; Arguments = [ "build" ]; ProcessId = 9001; StartedAtMs = 10_000L }
+        let vanishCmd: ComposerJournal.LeasedCommand =
+          { Kind = ComposerJournal.LeasedKind.Test; LeaseId = "lease-vanish"; LeaseDisplayId = "disp-vanish"; RunId = "run-vanish"
+            Executable = "/tool/dotnet"; Arguments = [ "test" ]; ProcessId = 9002; StartedAtMs = 10_000L }
+        supervisor.BeginLeasedCommand("holder-keep", "/proj-keep", liveCmd) |> ok |> ignore
+        supervisor.BeginLeasedCommand("holder-vanish", "/proj-vanish", vanishCmd) |> ok |> ignore
+        let verifiedAt = 15_000L
+        match supervisor.ReconcileLeasedCommands((fun _ _ -> Bozzetto.ProcessWatchdog.ProcessLiveness.Alive), (fun _ -> true), 5_000L, verifiedAt, ignore) with
+        | ComposerJournal.ReconcileResult.Reconciled(_, _, _, alive) ->
+          alive |> List.sort |> Expect.equal "both initially verified alive" [ "run-keep"; "run-vanish" ]
+        | ComposerJournal.ReconcileResult.StorageFailure err -> failtest err
+
+        // 1. DaemonStatusPayload exposes owner liveness verification separately from transport snapshot age.
+        let livenessRows =
+          supervisor.LeasedCommandLivenessSnapshot (fun lid ->
+            if lid = "lease-keep" then Some(DateTimeOffset.FromUnixTimeMilliseconds 90_000L) else None)
+        let statusJson = Bozzetto.DaemonStatusPayload.serializeWithLiveness 47749 None None livenessRows
+        statusJson |> Expect.stringContains "status exposes leasedCommands array" "\"leasedCommands\":"
+        statusJson |> Expect.stringContains "status exposes exact lastLivenessVerifiedAtMs" "\"lastLivenessVerifiedAtMs\":15000"
+        statusJson |> Expect.stringContains "status distinguishes live lease heartbeat" "\"leaseLive\":true"
+        statusJson |> Expect.stringContains "status distinguishes missing lease heartbeat" "\"leaseLive\":false"
+
+        // 2. UiBridge.Facts.Graph reactive liveness & reconnection/reconciliation:
+        //    liveness is a proper Fidelity.FSharp.Incremental InputId; confirming Alive pushes
+        //    updated Operations without a Journal write or PublishLocalWork; refreshing
+        //    WorkSnapshot.SampledAtMs never forges a newer owner liveness verification timestamp.
+        let producer: Bozzetto.Server.UiBridge.Facts.ObservationProducer =
+          { Source = { Node = "z13"; Incarnation = "inc-1" }; Correlation = Guid.NewGuid() }
+        let graphConstants : Bozzetto.Server.UiBridge.Facts.Constants =
+          { McpPort = 47749; Version = "test"; ProcessId = 1 }
+        let graph =
+          Bozzetto.Server.UiBridge.Facts.Graph(
+            graphConstants,
+            "",
+            supervisor.Journal.Incarnation,
+            observationOwners = [ producer ],
+            localNode = "z13")
+        let tickEvt = Event<Bozzetto.Server.HealthTick.Tick>()
+        let poolEvt = Event<Bozzetto.Features.LeaseWatch.Pool>()
+        let poolNow : Bozzetto.Features.LeaseWatch.Pool = { Serial = 1L; Active = []; Queue = [] }
+        use _subs =
+          graph.Start {
+            Tick = tickEvt.Publish, (fun () -> None)
+            Pool = poolEvt.Publish, (fun () -> poolNow)
+            Agents = None
+            Membership = None
+            Journal = supervisor.JournalChanged, (fun () -> supervisor.Journal)
+            Liveness = Some(supervisor.LivenessChanged, supervisor.CurrentLivenessSnapshot)
+          }
+        let pushedOps = ResizeArray<Bozzetto.Web.Shared.Protocol.OperationsBoard>()
+        let _, sinkReg =
+          graph.Register(fun _ ev ->
+            match ev with
+            | Bozzetto.Web.Shared.Protocol.Operations board -> lock pushedOps (fun () -> pushedOps.Add board)
+            | _ -> ())
+        use _sinkReg = sinkReg
+        let emptySnapshot: Bozzetto.Web.Shared.Protocol.ComposerSnapshot =
+          { Revision = 1L; Worker = Bozzetto.Web.Shared.Protocol.WorkerState.Idle; Sessions = [||] }
+        // Confirm Alive at 30_000L WITHOUT changing Journal or calling PublishLocalWork:
+        // LivenessChanged must push an updated Operations frame automatically through Facts.Graph!
+        let secondVerifiedAt = 30_000L
+        match supervisor.ReconcileLeasedCommands((fun _ _ -> Bozzetto.ProcessWatchdog.ProcessLiveness.Alive), (fun _ -> true), 5_000L, secondVerifiedAt, ignore) with
+        | ComposerJournal.ReconcileResult.Reconciled(_, _, _, alive) ->
+          alive |> List.sort |> Expect.equal "second Alive check confirmed both" [ "run-keep"; "run-vanish" ]
+        | ComposerJournal.ReconcileResult.StorageFailure err -> failtest err
+        let expectedSecondIso = DateTimeOffset.FromUnixTimeMilliseconds(secondVerifiedAt).ToString("O")
+        let autoPushed = lock pushedOps (fun () -> pushedOps |> Seq.toList)
+        (autoPushed.Length >= 1) |> Expect.isTrue "Alive-only reconciliation automatically pushed Operations via Facts.Graph livenessInput"
+        let autoKeep =
+          (List.last autoPushed).Entries
+          |> Array.find (fun e -> e.Lease |> Option.exists (fun l -> l.RunId = "run-keep"))
+        autoKeep.Message |> Expect.stringContains "pushed Operations reflects 30_000L owner liveness" expectedSecondIso
+
+        // First publish at SampledAtMs = 40_000L, then transport refresh at SampledAtMs = 80_000L (40s later).
+        graph.PublishLocalWork(producer, emptySnapshot, 40_000L) |> Expect.isOk "first local work publish succeeds"
+        graph.PublishLocalWork(producer, emptySnapshot, 80_000L) |> Expect.isOk "transport refresh publish succeeds"
+        let extractLocalWork () =
+          graph.Current()
+          |> List.pick (function Bozzetto.Web.Shared.Protocol.WorkNodes board -> board.Nodes |> Array.tryFind (fun n -> n.Source.Node = "z13") |> Option.bind _.Value | _ -> None)
+        let refreshedWork = extractLocalWork ()
+        refreshedWork.SampledAtMs |> Expect.equal "transport snapshot age moved to 80_000" 80_000L
+        let keepEntry =
+          refreshedWork.Operations.Entries
+          |> Array.find (fun e -> e.Lease |> Option.exists (fun l -> l.RunId = "run-keep"))
+        keepEntry.Message |> Expect.stringContains "owner liveness message retains 30_000 verification time, distinct from SampledAtMs 80_000" expectedSecondIso
+
+        // Now vanishCmd exits and reconciles to abandoned; transport reconnect at 95_000L must not revive it.
+        match supervisor.ReconcileLeasedCommands(
+                (fun pid _ -> if pid = 9001 then Bozzetto.ProcessWatchdog.ProcessLiveness.Alive else Bozzetto.ProcessWatchdog.ProcessLiveness.Exited),
+                (fun lid -> lid = "lease-keep"),
+                0L,
+                90_000L,
+                ignore) with
+        | ComposerJournal.ReconcileResult.Reconciled(_, ab, _, alive) ->
+          ab |> List.map _.RunId |> Expect.equal "vanishCmd abandoned" [ "run-vanish" ]
+          alive |> Expect.equal "unrelated active run-keep preserved" [ "run-keep" ]
+        | ComposerJournal.ReconcileResult.StorageFailure err -> failtest err
+        graph.PublishLocalWork(producer, emptySnapshot, 95_000L) |> Expect.isOk "post-reconciliation reconnect publish succeeds"
+        let afterReconnect = extractLocalWork ()
+        afterReconnect.SampledAtMs |> Expect.equal "reconnected snapshot stamped 95_000" 95_000L
+        let vanishedEntry = afterReconnect.Operations.Entries |> Array.find (fun e -> e.Lease |> Option.exists (fun l -> l.RunId = "run-vanish"))
+        vanishedEntry.Code |> Expect.equal "abandoned entry stays abandoned across transport reconnect" "abandoned"
+        let keptEntry = afterReconnect.Operations.Entries |> Array.find (fun e -> e.Lease |> Option.exists (fun l -> l.RunId = "run-keep"))
+        keptEntry.Code |> Expect.equal "unrelated live entry stays running" "running"
+        keptEntry.Message |> Expect.stringContains "kept entry updated owner liveness to 90_000" (DateTimeOffset.FromUnixTimeMilliseconds(90_000L).ToString("O"))
+
+        // Settling liveCmd prunes its liveness entry from LastLivenessVerifiedAtMs and CurrentLivenessSnapshot.
+        let finishPayload: ComposerJournal.CommandResult =
+          { FinishedAtMs = 96_000L; ExitCode = 0; StandardOutput = ""; StandardError = ""; OutputTruncated = false; ErrorTruncated = false }
+        supervisor.SettleLeasedCommand("holder-keep", "/proj-keep", liveCmd, finishPayload) |> ok |> ignore
+        supervisor.LastLivenessVerifiedAtMs "run-keep" |> Expect.isNone "settled runId pruned from LastLivenessVerifiedAtMs"
+        Map.containsKey "run-keep" (supervisor.CurrentLivenessSnapshot().VerifiedAtMs)
+        |> Expect.isFalse "settled runId pruned from CurrentLivenessSnapshot"
+        graph.Stop()
+
+        // 3. UiBridge.Project.workSummary fit eviction removes min (AtMs, Sequence), preserving
+        //    freshly abandoned low-Sequence rows over older high-Sequence rows.
+        let bigMsg = String('x', 24_000)
+        let mkEntry seq atMs code : Bozzetto.Web.Shared.Protocol.OperationEntry =
+          { Sequence = seq; AtMs = atMs; CallerLabel = "caller"; Operation = "full_build"; Session = ""; Project = "/p"
+            Lease = None; Ok = (code = ""); Code = code; Message = bigMsg; Run = None }
+        let oversized: Bozzetto.Web.Shared.Protocol.WorkSnapshot =
+          { Sequence = 1L; SampledAtMs = 100_000L; Snapshot = emptySnapshot
+            Leases = { Revision = 1L; Active = [||]; Queued = [||] }
+            Operations =
+              { Revision = 20L; Incarnation = "inc"; StorageError = None
+                Entries =
+                  [| // Sequence 20..12 are older completed entries (AtMs = 5_000 + seq)
+                     for seq in 20L .. -1L .. 12L do yield mkEntry seq (5_000L + seq) ""
+                     // Sequence 1 is a freshly abandoned low-Sequence entry (AtMs = 99_000L)
+                     yield mkEntry 1L 99_000L "abandoned" |] }
+            TranscriptsOmitted = false }
+        let fitted = Bozzetto.Server.UiBridge.Project.workSummary oversized
+        (fitted.Operations.Entries.Length < oversized.Operations.Entries.Length)
+        |> Expect.isTrue "oversized snapshot required fit eviction"
+        fitted.Operations.Entries |> Array.exists (fun e -> e.Sequence = 1L && e.Code = "abandoned")
+        |> Expect.isTrue "fit eviction preserved freshly abandoned low-Sequence row (AtMs=99_000) instead of evicting back of array"
+        return Ok ()
+        with ex -> return Error ex
+      }
+      do! supervisor.StopAsync() |> Async.AwaitTask
+      if Directory.Exists directory then Directory.Delete(directory, true)
+      match outcome with
+      | Ok () -> ()
+      | Error ex -> return raise ex
+    })
   ]

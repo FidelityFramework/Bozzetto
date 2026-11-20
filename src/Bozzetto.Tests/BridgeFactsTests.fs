@@ -139,7 +139,8 @@ let factsTests =
             Pool = poolChanged.Publish, (fun () -> Interlocked.Increment &reads.contents |> ignore; pool 1L [] [])
             Agents = None
             Membership = None
-            Journal = (Event<unit>()).Publish, (fun () -> ComposerIntegration.ComposerJournal.empty "") }
+            Journal = (Event<unit>()).Publish, (fun () -> ComposerIntegration.ComposerJournal.empty "")
+            Liveness = None }
       reads.Value |> Expect.equal "each owner is read once, at start" 2
       for _ in 1 .. 5 do graph.Current() |> ignore
       let _, registration = graph.Register(fun _ _ -> ())
@@ -160,7 +161,8 @@ let factsTests =
             Pool = poolChanged.Publish, (fun () -> pool 1L [] [])
             Agents = None
             Membership = None
-            Journal = (Event<unit>()).Publish, (fun () -> ComposerIntegration.ComposerJournal.empty "") }
+            Journal = (Event<unit>()).Publish, (fun () -> ComposerIntegration.ComposerJournal.empty "")
+            Liveness = None }
       let health = healthOf (graph.Current())
       (health.MemoryPressure, health.Revision) |> Expect.equal "the announced newer reading stands; the older current value was dropped" ("Tight", 1L)
 

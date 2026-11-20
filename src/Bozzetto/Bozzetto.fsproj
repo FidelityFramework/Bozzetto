@@ -49,6 +49,7 @@
         <Compile Include="UpdateCheckService.fs" />
         <Compile Include="../bozzetto-web/src/Shared/Protocol.fs" Link="UiBridge/Protocol.fs" />
         <Compile Include="../bozzetto-web/src/Shared/BinaryCodec.fs" Link="UiBridge/BinaryCodec.fs" />
+        <Compile Include="LinuxProcessEdge.fs" />
         <Compile Include="LinuxResources.fs" />
         <Compile Include="ResourceGraph.fs" />
         <Compile Include="ResourceMonitor.fs" />

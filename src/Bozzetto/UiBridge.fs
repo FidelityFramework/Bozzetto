@@ -159,7 +159,7 @@ module Project =
   /// Compiler operations and leased process observations as a page shows them,
   /// stamped by the publication that produced it. The caller travels as the
   /// adapter's label, which is all it is.
-  let operations (revision: int64) (journal: ComposerJournal.Journal) : OperationsBoard =
+  let operationsWithLiveness (lastLivenessVerifiedAtMs: string -> int64 option) (revision: int64) (journal: ComposerJournal.Journal) : OperationsBoard =
     { OperationsBoard.Revision = revision
       Incarnation = journal.Incarnation
       StorageError = journal.StorageError
@@ -168,10 +168,20 @@ module Project =
         |> List.map (fun entry ->
           let ok, code, message =
             match entry.Outcome with
-            | ComposerJournal.Outcome.Running -> false, "running", ""
+            | ComposerJournal.Outcome.Running ->
+              let livenessNote =
+                match entry.Context with
+                | ComposerJournal.Context.LeasedCommand cmd ->
+                  match lastLivenessVerifiedAtMs cmd.RunId with
+                  | Some ms -> sprintf "owner liveness verified %s" (DateTimeOffset.FromUnixTimeMilliseconds(ms).ToString("O"))
+                  | None -> ""
+                | _ -> ""
+              false, "running", livenessNote
             | ComposerJournal.Outcome.Succeeded -> true, "", ""
             | ComposerJournal.Outcome.Refused(code, message) -> false, ComposerClientJson.refusalCode code, message
             | ComposerJournal.Outcome.Failed message -> false, "exception", message
+            | ComposerJournal.Outcome.Abandoned message -> false, "abandoned", message
+            | ComposerJournal.Outcome.Unknown message -> false, "unknown", message
           let operation, session, lease =
             match entry.Context with
             | ComposerJournal.Context.Composer(operation, session) -> ComposerClientJson.operationName operation, session, None
@@ -189,6 +199,9 @@ module Project =
                   Compiler = run.Compiler |> Option.map (fun c -> { OperationCompiler.Generation = c.Generation; SourceVersion = c.SourceVersion })
                   StandardOutput = run.StandardOutput; StandardError = run.StandardError; Dropped = run.Dropped }) })
         |> List.toArray }
+
+  let operations (revision: int64) (journal: ComposerJournal.Journal) : OperationsBoard =
+    operationsWithLiveness (fun _ -> None) revision journal
 
   let transcript (read: ComposerJournal.TranscriptRequest -> Result<ComposerJournal.TranscriptPage, ComposerJournal.TranscriptRefusal>) (request: TranscriptReadRequest) =
     let stream =
@@ -215,9 +228,13 @@ module Project =
   let workSummary (value: WorkSnapshot) =
     let active entry =
       entry.Code = "running"
+      || entry.Code = "unknown"
       || (entry.Lease |> Option.exists (fun command -> value.Leases.Active |> Array.exists (fun lease -> lease.Id = command.LeaseId)))
     let recent =
-      value.Operations.Entries |> Array.filter (active >> not) |> Array.truncate 20
+      value.Operations.Entries
+      |> Array.filter (active >> not)
+      |> Array.sortByDescending (fun entry -> entry.AtMs, entry.Sequence)
+      |> Array.truncate 20
       |> Array.map _.Sequence |> Set.ofArray
     let entries =
       value.Operations.Entries |> Array.filter (fun entry -> active entry || Set.contains entry.Sequence recent)
@@ -231,7 +248,14 @@ module Project =
         with :? InvalidOperationException -> false
       if fits then summary
       else
-        match entries |> Array.tryFindIndexBack (active >> not) with
+        let oldestNonActive =
+          entries
+          |> Array.indexed
+          |> Array.filter (fun (_, entry) -> not (active entry))
+          |> Array.sortBy (fun (_, entry) -> entry.AtMs, entry.Sequence)
+          |> Array.tryHead
+          |> Option.map fst
+        match oldestNonActive with
         | Some oldest -> entries |> Array.indexed |> Array.choose (fun (index, entry) -> if index = oldest then None else Some entry) |> fit
         // Current work is never hidden to make a history projection fit.
         // PublishWork retains its loud refusal when this core alone is oversized.
@@ -392,9 +416,9 @@ module Project =
   let alarms (verdicts: Bozzetto.Features.HealthAnomaly.Verdict list) : HealthAlarm array =
     verdicts
     |> List.choose (fun verdict ->
-      Bozzetto.Features.HealthAnomaly.evidenceOf verdict
-      |> Option.map (fun evidence ->
-        { HealthAlarm.Signal = Bozzetto.Features.HealthAnomaly.signalName evidence.Signal
+      Bozzetto.Features.HealthAnomaly.signalNameOfVerdict verdict
+      |> Option.map (fun signal ->
+        { HealthAlarm.Signal = signal
           State = Bozzetto.Features.HealthAnomaly.verdictName verdict
           Message = Bozzetto.Features.HealthAnomaly.describe verdict |> Option.defaultValue "" }))
     |> List.toArray
@@ -897,6 +921,7 @@ module Facts =
     Agents: (IObservable<unit> * (unit -> Bozzetto.AgentWork.State)) option
     Membership: (IObservable<unit> * (unit -> Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTable.MemberId>)) option
     Journal: IObservable<unit> * (unit -> ComposerJournal.Journal)
+    Liveness: (IObservable<LeasedLivenessSnapshot> * (unit -> LeasedLivenessSnapshot)) option
   }
 
   /// Why a publication or subscription was not admitted.
@@ -919,6 +944,7 @@ module Facts =
     | Agents of Bozzetto.AgentWork.State
     | Membership of Membership
     | Journal of ComposerJournal.Journal
+    | Liveness of LeasedLivenessSnapshot
     | Observation of int64 * Result<HostResources, string>
     | PeerObservation of HostResources option * Result<HostResources, string>
     | NodeWork of NodeWork
@@ -930,7 +956,8 @@ module Facts =
     | Value of Event
     | Observation of int64 option * Result<HostResources, string>
 
-  let private tickInput, poolInput, agentsInput, membershipInput, journalInput = InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL, InputId 5UL
+  let private tickInput, poolInput, agentsInput, membershipInput, journalInput, livenessInput =
+    InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL, InputId 5UL, InputId 6UL
   let private healthWork, leasesWork, boardWork, operationsWork = WorkId 1UL, WorkId 2UL, WorkId 3UL, WorkId 4UL
   let private workBoard = WorkId 5UL
   let private scope = ScopeId 1UL
@@ -966,7 +993,7 @@ module Facts =
     // changes; no transport registry or duplicate fact store lives here.
     let mutable sourceSlots =
       owners @ (peers |> List.map (fun node -> { Source = { Node = node; Incarnation = "" }; Correlation = Guid.Empty }))
-      |> List.mapi (fun index owner -> owner.Source.Node, (owner, InputId(uint64 index * 2UL + 6UL), WorkId(uint64 index + 6UL)))
+      |> List.mapi (fun index owner -> owner.Source.Node, (owner, InputId(uint64 index * 2UL + 7UL), WorkId(uint64 index + 6UL)))
       |> Map.ofList
     let observationWorks = sourceSlots |> Map.toList |> List.map (fun (_, (_, input, work)) -> work, input) |> Map.ofList
     let nodeInputs = sourceSlots |> Map.toList |> List.map (fun (node, (_, InputId input, _)) -> node, InputId(input + 1UL)) |> Map.ofList
@@ -1016,8 +1043,9 @@ module Facts =
         | Some(Fact.Pool pool) -> Payload.Value(Leases(Project.leaseBoard stamp pool.Active pool.Queue))
         | other -> invalidOp (sprintf "Bridge facts: Leases read %A" other)
       elif work = operationsWork then
-        match fact 1UL with
-        | Some(Fact.Journal journal) -> Payload.Value(Operations(Project.operations stamp journal))
+        match fact 1UL, fact 2UL with
+        | Some(Fact.Journal journal), Some(Fact.Liveness liveness) ->
+          Payload.Value(Operations(Project.operationsWithLiveness (fun runId -> Map.tryFind runId liveness.VerifiedAtMs) stamp journal))
         | other -> invalidOp (sprintf "Bridge facts: Operations read %A" other)
       elif Map.containsKey work observationWorks then
         match fact 1UL with
@@ -1111,7 +1139,10 @@ module Facts =
           Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input agentsInput }
                     { Slot = ReadSlotId 2UL; Source = ReadSource.Input poolInput }
                     { Slot = ReadSlotId 3UL; Source = ReadSource.Input membershipInput } ] }
-        ScopeEntry.Define { Work = operationsWork; Stamp = DefinitionStamp 1UL; Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input journalInput } ] }
+        ScopeEntry.Define {
+          Work = operationsWork; Stamp = DefinitionStamp 1UL
+          Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input journalInput }
+                    { Slot = ReadSlotId 2UL; Source = ReadSource.Input livenessInput } ] }
         if localNode.IsSome then
           ScopeEntry.Define { Work = workBoard; Stamp = DefinitionStamp 1UL
                               Reads = nodeInputs |> Map.toList |> List.mapi (fun i (_, input) -> { Slot = ReadSlotId(uint64 i + 1UL); Source = ReadSource.Input input }) }
@@ -1411,6 +1442,8 @@ module Facts =
     member _.Membership(frame: Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTable.MemberId>) =
       let membership = membershipOf frame
       admit membershipInput membership.Version (Fact.Membership membership)
+    member _.Liveness(snapshot: LeasedLivenessSnapshot) =
+      admit livenessInput snapshot.Serial (Fact.Liveness snapshot)
     /// The operations journal names its owner's incarnation; the plane binds to
     /// the one it started with and refuses any other.
     member _.Journal(journal: ComposerJournal.Journal) =
@@ -1418,7 +1451,11 @@ module Facts =
         lock gate (fun () -> faults <- faults + 1)
         Log.warn "[ui-bridge] operations journal from incarnation %s refused; the plane is bound to %s" journal.Incarnation journalIncarnation
         Error Refusal.ForeignIncarnation
-      else admit journalInput journal.Sequence (Fact.Journal journal)
+      else
+        lock gate (fun () ->
+          if not stopped && not (Map.containsKey livenessInput inputs) then
+            admit livenessInput 0L (Fact.Liveness LeasedLivenessSnapshot.empty) |> ignore
+          admit journalInput journal.Sequence (Fact.Journal journal))
 
     /// Subscribe to every owner and take its current value in one critical
     /// section, so a publication between the two is applied after it, by serial.
@@ -1431,10 +1468,14 @@ module Facts =
           [ yield tickChanged.Subscribe(fun tick -> this.Tick tick |> ignore)
             yield poolChanged.Subscribe(fun pool -> this.Pool pool |> ignore)
             yield journalChanged.Subscribe(fun () -> this.Journal(journalNow ()) |> ignore)
+            yield! owners.Liveness |> Option.map (fun (changed, _) -> changed.Subscribe(fun snap -> this.Liveness snap |> ignore)) |> Option.toList
             yield! owners.Agents |> Option.map (fun (changed, read) -> changed.Subscribe(fun () -> this.Agents(read ()) |> ignore)) |> Option.toList
             yield! owners.Membership |> Option.map (fun (changed, read) -> changed.Subscribe(fun () -> this.Membership(read ()) |> ignore)) |> Option.toList ]
         tickNow () |> Option.iter (fun tick -> this.Tick tick |> ignore)
         this.Pool(poolNow ()) |> ignore
+        match owners.Liveness with
+        | Some(_, read) -> this.Liveness(read ()) |> ignore
+        | None -> this.Liveness LeasedLivenessSnapshot.empty |> ignore
         this.Journal(journalNow ()) |> ignore
         owners.Agents |> Option.iter (fun (_, read) -> this.Agents(read ()) |> ignore)
         owners.Membership |> Option.iter (fun (_, read) -> this.Membership(read ()) |> ignore)
@@ -1869,7 +1910,8 @@ let createObservedWithTranscripts (supervisor: ComposerSupervisor) (mcpPort: int
         Pool = Bozzetto.Features.LeaseWatch.changed, Bozzetto.Features.LeaseWatch.current
         Agents = owner |> Option.map (fun o -> o.WorkChanged, (fun () -> o.ReadWork()))
         Membership = owner |> Option.map (fun o -> (o.Events |> Observable.map ignore), (fun () -> o.ReadFrame()))
-        Journal = supervisor.JournalChanged, (fun () -> supervisor.Journal) }
+        Journal = supervisor.JournalChanged, (fun () -> supervisor.Journal)
+        Liveness = Some(supervisor.LivenessChanged, supervisor.CurrentLivenessSnapshot) }
   stopping.Register(fun () ->
     subscriptions.Dispose()
     graph.Stop()) |> ignore

@@ -176,9 +176,11 @@ async function check() {
   assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'earlier passes start collapsed');
   assert.equal(await evaluate(dashboard, `${agentPanel}.querySelectorAll('details[open]').length`), 0, 'per-pass details start collapsed too');
   assert.equal(await evaluate(dashboard, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); return cards.indexOf('Agent work') < cards.indexOf('Whole-machine resources'); })()`), true, 'agent work precedes resources');
-  // Each node groups its actual worker and leases ahead of collapsed history.
+  // Each node groups its actual worker, leases and active runs ahead of recent project summaries and collapsed history.
   assert.equal(await evaluate(work, `(() => { const card = ${initialNode('one')}; return !!(card.querySelector('.node-worker').compareDocumentPosition(card.querySelector('.node-lease')) & Node.DOCUMENT_POSITION_FOLLOWING); })()`), true, 'remote leases follow their own node worker');
-  assert.equal(await evaluate(work, `(() => { const card = ${initialNode('one')}; return !!(card.querySelector('.node-lease').compareDocumentPosition(card.querySelector('.node-operations')) & Node.DOCUMENT_POSITION_FOLLOWING) && !card.querySelector('.node-operations').open; })()`), true, 'remote active leases precede folded history');
+  assert.equal(await evaluate(work, `(() => { const card = ${initialNode('one')}; return !!(card.querySelector('.node-lease').compareDocumentPosition(card.querySelector('.node-active')) & Node.DOCUMENT_POSITION_FOLLOWING); })()`), true, 'active commands follow active leases');
+  assert.equal(await evaluate(work, `(() => { const card = ${initialNode('one')}; return !!(card.querySelector('.node-active').compareDocumentPosition(card.querySelector('.node-recent-projects')) & Node.DOCUMENT_POSITION_FOLLOWING); })()`), true, 'recent project activity follows live active work');
+  assert.equal(await evaluate(work, `(() => { const card = ${initialNode('one')}; return !!(card.querySelector('.node-recent-projects').compareDocumentPosition(card.querySelector('.node-operations')) & Node.DOCUMENT_POSITION_FOLLOWING) && !card.querySelector('.node-operations').open; })()`), true, 'remote active work and summaries precede folded history');
   // Native disclosures retain every supplied detail without dumping them into
   // the default view. Opening them must not fetch or issue bridge commands.
   await evaluate(dashboard, `${historyDetails}.querySelector(':scope > summary').click()`);
@@ -270,6 +272,44 @@ async function check() {
   assert.equal(await evaluate(work, `${initialNode('one')}.textContent.includes('/mock/expired-lease')`), false, 'released leases with no run do not pin aged history as active');
   assert.equal(await evaluate(work, `${initialNode('one')}.querySelector('.node-active pre').textContent.includes('/mock/clef/tests.dll')`), true, 'running command arguments remain available inside their disclosure');
   assert.equal(await evaluate(work, `${initialNode('one')}.querySelectorAll('.node-active').length`), 1, 'active command stays visible outside retired history');
+  // #21 Comment #5677 Work-view clarity checks: caller, start time, elapsed time, local liveness,
+  // visually distinct abandoned badge, local date on non-today timestamps, and Show older disclosure.
+  const activeMeta = await evaluate(work, `${initialNode('one')}.querySelector('.node-active .node-operation-meta')?.textContent ?? ''`);
+  assert.ok(activeMeta.includes('Caller fixture') && activeMeta.includes('started ') && activeMeta.includes('elapsed '), `active command shows caller, start, and elapsed: ${activeMeta}`);
+  const activeLiveness = await evaluate(work, `${initialNode('one')}.querySelector('.node-active .node-operation-liveness')?.textContent ?? ''`);
+  assert.ok(activeLiveness.includes('Owner liveness verified ') && !/\d{4}-\d{2}-\d{2}T/.test(activeLiveness), `liveness uses unified local time format instead of raw UTC ISO: ${activeLiveness}`);
+  const activeLeaseBeforePush = await evaluate(work, `${initialNode('one')}.querySelector('.node-active .node-operation-lease')?.textContent ?? ''`);
+  assert.ok(activeLeaseBeforePush.includes('heartbeat until '), `active command shows live lease heartbeat: ${activeLeaseBeforePush}`);
+  const twoHistoryText = await evaluate(work, `${initialNode('two')}.querySelector('.node-operations').textContent`);
+  assert.ok(twoHistoryText.includes('/mock/abandoned-build') && twoHistoryText.includes('codex-reconcile') && twoHistoryText.includes('elapsed 1m 05s'), `recent abandoned row renders caller and elapsed time: ${twoHistoryText}`);
+  assert.equal(await evaluate(work, `${initialNode('two')}.querySelector('.node-operations .node-outcome-abandoned')?.textContent`), 'abandoned', 'abandoned row renders a visually distinct badge');
+  const twoOlder = `${initialNode('two')}.querySelector('.node-older-operations')`;
+  assert.equal(await evaluate(work, `${twoOlder} !== null && !${twoOlder}.open`), true, 'older entries collapse behind a closed Show older disclosure');
+  assert.equal(await evaluate(work, `${twoOlder}.textContent.includes('/mock/older-abandoned')`), false, 'older entries stay unmounted while Show older is closed');
+  const olderTraffic = {fetches: pageRequests.length, commands: pageFrames.length};
+  await evaluate(work, `${twoOlder}.querySelector(':scope > summary').click()`);
+  const olderYear = String(new Date(Date.now() - 172800000).getFullYear());
+  await waitFor(work, `${twoOlder}.open && ${twoOlder}.textContent.includes('/mock/older-abandoned')`);
+  const olderText = await evaluate(work, `${twoOlder}.textContent`);
+  assert.ok(olderText.includes('pi-old-run') && olderText.includes(olderYear) && olderText.includes('elapsed 1m 00s'), `Show older reveals non-today entry with local date, caller, and elapsed time: ${olderText}`);
+  assert.equal(await evaluate(work, `${twoOlder}.querySelector('.node-outcome-abandoned')?.textContent`), 'abandoned', 'older abandoned entry retains distinct abandoned badge');
+  // Retiring the last older row unmounts Show older and resets its controlled open state on restore.
+  await evaluate(work, `${twoOlder}.querySelector('details.node-operation > summary').click()`);
+  await evaluate(work, `[...${twoOlder}.querySelectorAll('button')].find(b=>b.textContent === 'Retire entry').click()`);
+  await waitFor(work, `${twoOlder} === null`);
+  await evaluate(work, `[...document.querySelectorAll('button')].find(b=>b.textContent === 'Restore retired entries').click()`);
+  await waitFor(work, `${twoOlder} !== null`);
+  assert.equal(await evaluate(work, `!${twoOlder}.open && !${twoOlder}.textContent.includes('/mock/older-abandoned')`), true, 'restored Show older remounts closed with synchronized signal state');
+  // Configurable history collapse window moves 48h-old entries between Show older and recent history with zero backend traffic.
+  const windowPicker = "document.querySelector('select[aria-label=\"History window\"]')";
+  assert.equal(await evaluate(work, `${windowPicker}?.value`), '24', 'history window defaults to 24h');
+  await evaluate(work, `${windowPicker}.value = '168'; ${windowPicker}.dispatchEvent(new Event('change', {bubbles:true}))`);
+  await waitFor(work, `${twoOlder} === null && ${initialNode('two')}.querySelector('.node-operations').textContent.includes('/mock/older-abandoned')`);
+  assert.equal(await evaluate(work, "localStorage.getItem('bozzetto-work-window-hours')"), '168', 'history window persists locally');
+  await evaluate(work, `${windowPicker}.value = '24'; ${windowPicker}.dispatchEvent(new Event('change', {bubbles:true}))`);
+  await waitFor(work, `${twoOlder} !== null && !${twoOlder}.open && !${initialNode('two')}.querySelector('.node-operations').textContent.includes('/mock/older-abandoned')`);
+  assert.equal(await evaluate(work, "localStorage.getItem('bozzetto-work-window-hours')"), '24', 'restored 24h history window re-collapses older entry');
+  assert.deepEqual({fetches: pageRequests.length, commands: pageFrames.length}, olderTraffic, 'toggling Show older and changing history window issue no backend fetch or WebSocket command');
   const retirementTraffic = {fetches: pageRequests.length, commands: pageFrames.length};
   await evaluate(work, `${history}.querySelector(':scope > summary').click()`);
   await evaluate(work, `${history}.querySelector('details.node-operation > summary').click()`);
@@ -308,6 +348,17 @@ async function check() {
     });
     await openProject('SideBySide', 101);
     await waitFor(dashboard, "document.body.innerText.includes('mock read progressed')");
+    // Stage 1 pushes a newer owner-liveness timestamp and renewed lease expiry on the active command:
+    // verify SolidJS updates both rendered fields IN PLACE without remounting or freezing at initial mount.
+    await waitFor(work, `(() => {
+      const card = ${initialNode('one')};
+      const liv = card.querySelector('.node-active .node-operation-liveness')?.textContent ?? '';
+      const lease = card.querySelector('.node-active .node-operation-lease')?.textContent ?? '';
+      return liv.includes('Owner liveness verified ') && liv !== ${JSON.stringify(activeLiveness)}
+        && lease.includes('heartbeat until ') && lease !== ${JSON.stringify(activeLeaseBeforePush)};
+    })()`);
+    const activeLivenessUpdated = await evaluate(work, `${initialNode('one')}.querySelector('.node-active .node-operation-liveness')?.textContent ?? ''`);
+    assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(activeLivenessUpdated), `updated liveness keeps unified local time format: ${activeLivenessUpdated}`);
     assert.deepEqual(await currentNames(), ['Mock implementer', 'Mock uncertain'], 'a pushed update moves current work to the top');
     assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'progress does not expand history');
     // Preserve a chosen per-pass expansion even when new completed work enters
@@ -347,6 +398,11 @@ async function check() {
   }
   const settledRow = `[...${nodeCard('one')}.querySelectorAll('details.node-operation')].find(row=>row.textContent.includes('fixture-test-run'))`;
   await evaluate(work, `${nodeCard('one')}.querySelector('.node-operations').open = true; ${settledRow}.open = true`);
+  // Keyed reconciliation & reactive row closures: prepending settled fixture-test-run ahead of Project0
+  // must preserve exact per-row caller and elapsed metadata on BOTH the prepended row and shifted row.
+  const firstTwoSummaries = await evaluate(work, `[...${nodeCard('one')}.querySelectorAll('.node-operations details.node-operation > summary')].slice(0, 2).map(s => s.textContent)`);
+  assert.ok(firstTwoSummaries[0].includes('/mock/clef') && firstTwoSummaries[0].includes('fixture') && firstTwoSummaries[0].includes('elapsed 17s') && !firstTwoSummaries[0].includes('history-runner-0'), `prepended settled row keeps its own caller and elapsed: ${firstTwoSummaries[0]}`);
+  assert.ok(firstTwoSummaries[1].includes('/mock/history/Project0') && firstTwoSummaries[1].includes('history-runner-0') && !firstTwoSummaries[1].includes('fixture') && !firstTwoSummaries[1].includes('elapsed '), `shifted history row retains its own caller without cross-contamination: ${firstTwoSummaries[1]}`);
   const settledOne = await evaluate(work, `${nodeCard('one')}.innerText`);
   for (const text of ['/mock/clef', 'command_failed: dotnet exited 1', 'PID 6543', 'fixture-lease', 'fixture-test-run', 'exit 1']) assert.ok(settledOne.includes(text), `settled command remains after lease release: ${text}`);
   assert.ok(settledOne.includes('0 active leases · 0 queued'), 'released admission is distinct from retained history');
