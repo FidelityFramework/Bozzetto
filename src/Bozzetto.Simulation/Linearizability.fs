@@ -77,6 +77,9 @@ module Linearizability =
     | LandingNotAtFrontOfQueue
     | LandingNotInExpectedState
     | NotConductor
+    | ConductorNotPromotable
+    | NoExpiredOrphanedClaims
+    | LedgerAppendFailed
 
   let private kindOf (err: CohortError<'m>) : ErrorKind =
     match err with
@@ -97,6 +100,9 @@ module Linearizability =
     | CohortError.LandingNotAtFrontOfQueue _ -> ErrorKind.LandingNotAtFrontOfQueue
     | CohortError.LandingNotInExpectedState _ -> ErrorKind.LandingNotInExpectedState
     | CohortError.NotConductor _ -> ErrorKind.NotConductor
+    | CohortError.ConductorNotPromotable _ -> ErrorKind.ConductorNotPromotable
+    | CohortError.NoExpiredOrphanedClaims -> ErrorKind.NoExpiredOrphanedClaims
+    | CohortError.LedgerAppendFailed -> ErrorKind.LedgerAppendFailed
 
   /// `Ok () ↔ Ok ()`; `Error e1 ↔ Error e2` iff same `ErrorKind` (payload —
   /// e.g. WHICH member holds a conflicting claim — is allowed to differ

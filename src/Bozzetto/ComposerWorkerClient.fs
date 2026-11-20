@@ -25,6 +25,9 @@ type IComposerWorker =
   /// The worker is both physically alive and available for protocol requests.
   abstract IsAlive: bool
   abstract Exited: IEvent<string>
+  // Published once StopAsync verifies the owned process group is clear and
+  // has released every drain and resource; a faulted stop never publishes it.
+  abstract ProcessExited: IEvent<unit>
   abstract InputsRevoked: IEvent<Reply>
   abstract RequestAsync: body: RequestBody * cancellation: CancellationToken -> Task<Reply>
   abstract StopAsync: unit -> Task
@@ -57,7 +60,8 @@ module ComposerWorkerClient =
   type private Connection(worker: Process, targetPgid: int option, rootStartTicks: int64 option, socket: Socket, socketDirectory: string,
                           wire: StreamWriter, outputFile: FileStream, errorFile: FileStream,
                           stdout: Task, stderr: Task, beforeCancellationAdmission: unit -> unit,
-                          beforeEncode: RequestBody -> unit, beforeWrite: Operation -> string -> Task) =
+                          beforeEncode: RequestBody -> unit, beforeWrite: Operation -> string -> Task,
+                          terminateGroup: int -> int option -> int64 option -> int -> Async<Bozzetto.ProcessWatchdog.TerminationOutcome>) =
     let stream = new NetworkStream(socket, ownsSocket = true)
     let gate, evidenceGate, stopGate = obj (), obj (), obj ()
     let writes = new SemaphoreSlim(1, 1)
@@ -67,6 +71,11 @@ module ComposerWorkerClient =
     let cancellationSlots = HashSet<string>()
     let children = Dictionary<Guid, Task>()
     let exited = Event<string>()
+    let processExited = Event<unit>()
+    let mutable processExitSignaled = 0
+    let signalProcessExited () =
+      if Interlocked.Exchange(&processExitSignaled, 1) = 0 then
+        processExited.Trigger()
     let inputsRevoked = Event<Reply>()
     let mutable identity: WorkerAddress option = None
     let mutable handshake: Reply option = None
@@ -216,7 +225,8 @@ module ComposerWorkerClient =
     }
 
     do
-      worker.Exited.Add(fun _ -> invalidate (EndOfStreamException "Composer worker process exited.") false)
+      worker.Exited.Add(fun _ ->
+        invalidate (EndOfStreamException "Composer worker process exited.") false)
       worker.EnableRaisingEvents <- true
       for drain in [stdout; stderr] do
         drain.ContinueWith((fun (finished: Task) ->
@@ -340,17 +350,16 @@ module ComposerWorkerClient =
       with :? TimeoutException -> ()
       if not terminated then
         killOwned ()
-        // Failure to terminate is an explicit failed retirement. Keep the
-        // remaining owned resources intact instead of disposing live drains.
         do! worker.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 2.)
-      // Sweep the isolated worker process group with StartTimeTicks root fencing so no
-      // detached Composer/solver descendant survives stop and recycled PIDs stay untouched.
+      // Root exit alone cannot release deferred cache manifests. Sweep the isolated
+      // group with the original identity before authorizing any disk cleanup.
+      let mutable exitVerified = not (OperatingSystem.IsLinux())
       if targetPgid.IsSome && OperatingSystem.IsLinux() then
         let! groupOutcome =
-          Bozzetto.Server.LinuxProcessEdge.terminateProcessGroupWithFenceAsync processId targetPgid rootStartTicks 300
+          terminateGroup processId targetPgid rootStartTicks 300
           |> Async.StartAsTask
         match groupOutcome with
-        | Bozzetto.ProcessWatchdog.TerminationOutcome.Cleared -> ()
+        | Bozzetto.ProcessWatchdog.TerminationOutcome.Cleared -> exitVerified <- true
         | Bozzetto.ProcessWatchdog.TerminationOutcome.Survivors(pids, errs) ->
           raise (IOException(sprintf "Composer worker process group %A left surviving descendants: pids=%A errors=%A" targetPgid pids errs))
         | Bozzetto.ProcessWatchdog.TerminationOutcome.Unverified err ->
@@ -369,6 +378,9 @@ module ComposerWorkerClient =
         writes.Dispose()
         lifetime.Dispose()
         Directory.Delete(socketDirectory, true)
+      // Publish only after every drain and resource release succeeded; a faulted
+      // stop keeps the deferred manifests its consumers would otherwise prune.
+      if exitVerified then signalProcessExited ()
     }
 
     member this.StopAsync() = lock stopGate (fun () ->
@@ -382,11 +394,12 @@ module ComposerWorkerClient =
       member this.IsProcessAlive = this.IsProcessAlive
       member this.IsAlive = this.IsAlive
       member _.Exited = exited.Publish
+      member _.ProcessExited = processExited.Publish
       member _.InputsRevoked = inputsRevoked.Publish
       member this.RequestAsync(body, cancellation) = this.RequestAsync(body, cancellation)
       member this.StopAsync() = this.StopAsync()
 
-  let internal startWithEncodingBoundary beforeEncode beforeCancellationAdmission beforeWrite (arguments: string list) (config: WorkerLaunch): Task<IComposerWorker> = task {
+  let internal startWithAllBoundaries beforeEncode beforeCancellationAdmission beforeWrite terminateGroup (arguments: string list) (config: WorkerLaunch): Task<IComposerWorker> = task {
     if not Socket.OSSupportsUnixDomainSockets then raise (PlatformNotSupportedException "Composer requires local Unix-domain sockets.")
     if not (Path.IsPathFullyQualified config.WorkerPath && File.Exists config.WorkerPath) then invalidArg "config" "Composer worker must be an existing absolute file path."
     if not (Path.IsPathFullyQualified config.EvidenceDirectory) then invalidArg "config" "Composer evidence directory must be absolute."
@@ -466,7 +479,7 @@ module ComposerWorkerClient =
       use deadline = new CancellationTokenSource(TimeSpan.FromSeconds 15.)
       let! socket = listener.AcceptAsync(deadline.Token)
       cleanup.Add socket.Dispose
-      let client = new Connection(worker, targetPgid, rootStartTicks, socket, socketDirectory, wire, stdoutFile, stderrFile, stdout, stderr, beforeCancellationAdmission, beforeEncode, beforeWrite)
+      let client = new Connection(worker, targetPgid, rootStartTicks, socket, socketDirectory, wire, stdoutFile, stderrFile, stdout, stderr, beforeCancellationAdmission, beforeEncode, beforeWrite, terminateGroup)
       connection <- Some client
       transferred <- true
       let! _ = client.RequestAsync(Hello BAREWireCodec.agreement, CancellationToken.None)
@@ -500,6 +513,10 @@ module ComposerWorkerClient =
       return raise error
   }
 
+  let internal startWithEncodingBoundary beforeEncode beforeCancellationAdmission beforeWrite arguments config =
+    startWithAllBoundaries beforeEncode beforeCancellationAdmission beforeWrite Bozzetto.Server.LinuxProcessEdge.terminateProcessGroupWithFenceAsync arguments config
+  let internal startWithTerminationBoundary terminateGroup arguments config =
+    startWithAllBoundaries ignore ignore (fun _ _ -> Task.CompletedTask) terminateGroup arguments config
   let internal startWithBoundaries beforeCancellationAdmission beforeWrite arguments config =
     startWithEncodingBoundary ignore beforeCancellationAdmission beforeWrite arguments config
   let internal startWithCancellationBoundary beforeCancellationAdmission arguments config =

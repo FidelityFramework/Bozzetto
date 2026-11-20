@@ -51,7 +51,7 @@ let private stateWithLandingVerifying (integrationHead: string) (base': string) 
     let state = {
       CohortState.empty () with
         IntegrationHead = integrationHead
-        Members = Map.ofList [ requester, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; LastRenewal = epoch; Session = None } ]
+        Members = Map.ofList [ requester, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; JoinedAt = epoch; LastRenewal = epoch; Session = None; AgentName = None } ]
         Landings = Map.ofList [ landingId, req ]
         Queue = [ landingId ]
     }
@@ -128,8 +128,8 @@ let decideTests =
             IntegrationHead = "H0"
             Members =
               Map.ofList [
-                requester, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; LastRenewal = epoch; Session = None }
-                bob, { Role = JoinableRole.Verifier; Presence = MemberPresence.Present; LastRenewal = epoch; Session = None }
+                requester, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; JoinedAt = epoch; LastRenewal = epoch; Session = None; AgentName = None }
+                bob, { Role = JoinableRole.Verifier; Presence = MemberPresence.Present; JoinedAt = epoch; LastRenewal = epoch; Session = None; AgentName = None }
               ]
             Landings = Map.ofList [ landingId, aliceReq; bobLandingId, bobReq ]
             Queue = [ landingId; bobLandingId ]
@@ -202,7 +202,7 @@ let decideTests =
         let state = {
           CohortState.empty () with
             IntegrationHead = "H0"
-            Members = Map.ofList [ requester, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; LastRenewal = epoch; Session = None } ]
+            Members = Map.ofList [ requester, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; JoinedAt = epoch; LastRenewal = epoch; Session = None; AgentName = None } ]
             Landings = Map.ofList [ landingId, req ]
             Queue = [ landingId ]
         }

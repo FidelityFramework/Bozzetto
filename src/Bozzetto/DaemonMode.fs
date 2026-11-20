@@ -129,6 +129,48 @@ let cohortMembersToRenew
     | Bozzetto.Cohort.MemberPresence.Present when isActive m -> Some m
     | _ -> None)
 
+// Dead-but-open holder detection (#13): a present member stays active only while
+// it has recent tool activity or holds/queues a live work lease. An open idle MCP
+// connection with neither activity nor a live lease is NOT renewed and departs at leaseWindow.
+// Match both bare agent names and WorkLease.holder format ("<agent> · <project>").
+let leaseHolderMatchesAgent (agentName: string) (holder: string) : bool =
+  if String.IsNullOrWhiteSpace agentName || String.IsNullOrWhiteSpace holder then false
+  else
+    let trimmed = agentName.Trim()
+    String.Equals(holder, trimmed, StringComparison.Ordinal)
+    || holder.StartsWith(trimmed + " · ", StringComparison.Ordinal)
+
+let cohortMembersToRenewWithLeases
+  (freshActivityKeys: Set<string>)
+  (liveLeaseHolders: Set<string>)
+  (members: Map<MemberTable.MemberId, Bozzetto.Cohort.MemberRecord>)
+  : MemberTable.MemberId list =
+  // A lease holder that only names an agent (lease.fsx "<agent> · <project>")
+  // renews ONLY the most recently joined present connection carrying that name,
+  // ranked by (JoinedAt, id). LastRenewal is never the rank: an older zombie
+  // connection with a stale later tool call must not outrank the newly joined
+  // connection that holds the live lease (#13).
+  let newestByAgentName : Map<string, MemberTable.MemberId> =
+    members
+    |> Map.toList
+    |> List.choose (fun (m, r) ->
+      match r.Presence, r.AgentName with
+      | Bozzetto.Cohort.MemberPresence.Present, Some name -> Some(name, (r.JoinedAt, m))
+      | _ -> None)
+    |> List.groupBy fst
+    |> List.map (fun (name, group) -> name, group |> List.map snd |> List.max |> snd)
+    |> Map.ofList
+  let isActive (m: MemberTable.MemberId) =
+    let display = MemberTable.MemberId.display m
+    Set.contains display freshActivityKeys
+    || Set.contains display liveLeaseHolders
+    || (match Map.tryFind m members |> Option.bind (fun r -> r.AgentName) with
+        | Some name ->
+          Map.tryFind name newestByAgentName = Some m
+          && (liveLeaseHolders |> Set.exists (leaseHolderMatchesAgent name))
+        | None -> false)
+  cohortMembersToRenew isActive members
+
 /// Marker written into every daemon's own data dir recording the daemon's
 /// own pid — the ground truth `sweepOrphanedTempDirs` proves an isolated
 /// test data dir's owner is gone against. Harmless on a real `~/.bozzetto`
@@ -1527,6 +1569,23 @@ let run
   use manifestOwner = Features.ManifestOwner.start (Log.asILogger ()) DaemonState.BozzettoDir
 
   use cts = infra.Cts
+  // Primary-daemon startup sweep of stale closed provider-session manifests (#37); never run by
+  // isolated test daemons or unconfigured supervisors, and skipped while any composer-worker on
+  // this host is alive to own a closed-but-cleanupPending manifest.
+  let composerWorkerPath = Environment.GetEnvironmentVariable "BOZZETTO_COMPOSER_WORKER"
+  if not (String.IsNullOrWhiteSpace composerWorkerPath)
+     && not (DaemonState.BozzettoDir.Contains("bozzetto-test", StringComparison.OrdinalIgnoreCase)) then
+    let workerFileNames = Set.ofList [ System.IO.Path.GetFileName composerWorkerPath; "Bozzetto.Composer"; "Bozzetto.Composer.dll" ]
+    match Bozzetto.ComposerIntegration.ProviderSessionCache.startupSweep
+            (Bozzetto.ComposerIntegration.ProviderSessionCache.defaultRoot ()) workerFileNames
+            (Bozzetto.Server.LinuxProcessEdge.readLinuxProcessesStrict ()) with
+    | Bozzetto.ComposerIntegration.ProviderSessionCache.StartupSweep.Pruned count ->
+      if count > 0 then
+        infra.Log.LogInformation("Pruned {Count} stale closed Composer provider-session cache directories", count)
+    | Bozzetto.ComposerIntegration.ProviderSessionCache.StartupSweep.SkippedLiveWorkers pids ->
+      infra.Log.LogInformation("Skipped the provider-session cache sweep: composer-worker processes {Pids} are alive", String.Join(",", pids))
+    | Bozzetto.ComposerIntegration.ProviderSessionCache.StartupSweep.SkippedUnverified reason ->
+      infra.Log.LogWarning("Skipped the provider-session cache sweep: {Reason}", reason)
   let composer =
     Bozzetto.ComposerIntegration.ComposerSupervisor.fromEnvironmentWithJournal
       (LocalData.operationsPath DaemonState.BozzettoDir)
@@ -2615,8 +2674,12 @@ let run
           AgentActivityTracker.getActivePresences activityTracker None cohortReaperRenewWindow now
           |> List.map (fun p -> p.AgentName)
           |> Set.ofList
-        let isActive (m: MemberTable.MemberId) = Set.contains (MemberTable.MemberId.display m) freshKeys
-        for m in cohortMembersToRenew isActive state.Members do
+        let leaseSnapshot = Bozzetto.Features.LeaseWatch.snapshot ()
+        let liveLeaseHolders =
+          [ for grant in leaseSnapshot.Active -> grant.Holder
+            for wait in leaseSnapshot.Queue -> wait.Holder ]
+          |> Set.ofList
+        for m in cohortMembersToRenewWithLeases freshKeys liveLeaseHolders state.Members do
           cohortOwner.Post(Bozzetto.Cohort.CohortCommand.RenewLease m, ignore)
         cohortOwner.Post(Bozzetto.Cohort.CohortCommand.Tick, ignore)
     with ex ->

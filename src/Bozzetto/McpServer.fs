@@ -297,6 +297,14 @@ let structuredToolErrorResult (err: BozzettoError) : CallToolResult =
   result.StructuredContent <- Nullable(BozzettoError.toJsonValue err |> McpProtocolJson.toElement)
   result
 
+// Every tool call on a bound MCP connection is presence activity for that
+// connection (#13), recorded before the tool body runs so a tool's own richer
+// activity record (session, file, intent) still wins.
+let recordToolCallActivity (tracker: AgentActivityTracker.Tracker) (transportSessionId: string) (toolName: string option) (now: DateTime) =
+  if not (String.IsNullOrWhiteSpace transportSessionId) then
+    let intent = toolName |> Option.filter (String.IsNullOrWhiteSpace >> not)
+    AgentActivityTracker.recordMemberActivity tracker (MemberTable.MemberId.Mcp transportSessionId) "" None intent now
+
 /// CallToolFilter that captures the McpServer and appends accumulated events
 /// to tool responses. This ensures the LLM sees events even if the client
 /// doesn't surface MCP notifications directly.
@@ -312,6 +320,7 @@ let createServerCaptureFilter (mcpCtx: McpContext) (tracker: McpServerTracker) =
       // through the await chain below exactly like Activity.Current already
       // does in this codebase. See Bozzetto.McpTools.memberIdFor.
       Bozzetto.McpTools.currentTransportSessionId.Value <- Some ctx.Server.SessionId
+      recordToolCallActivity mcpCtx.ActivityTracker ctx.Server.SessionId (Option.ofObj ctx.Params |> Option.bind (fun p -> Option.ofObj p.Name)) DateTime.UtcNow
       match wasEmpty && System.Threading.Interlocked.CompareExchange(&logged, 1, 0) = 0 with
       | true ->
         let logger =

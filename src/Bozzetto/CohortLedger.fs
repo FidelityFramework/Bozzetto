@@ -32,25 +32,43 @@ CREATE TABLE IF NOT EXISTS cohort_ledger (
     pragma.CommandText <- sprintf "PRAGMA user_version = %d;" schemaVersion
     pragma.ExecuteNonQuery() |> ignore
 
-  /// Open (creating if needed) the cohort ledger at `dbPath` and return the
-  /// `LedgerPort` implementation over it. Each `Append`/`ReadAll` opens and
-  /// closes its own connection, matching `FrictionSqlite.fs`'s discipline.
+  // Open or create the ledger. Each batch or read owns one connection.
   let create (dbPath: string) : LedgerPort<MemberId> =
     use init = openConnection dbPath
     ensureSchema init
 
-    let append (entry: LedgerEntry<MemberId>) =
-      use connection = openConnection dbPath
-      use command = connection.CreateCommand()
-      command.CommandText <- "
+    let appendBatch (entries: LedgerEntry<MemberId> list) =
+      try
+        use connection = openConnection dbPath
+        use transaction = connection.BeginTransaction()
+        use command = connection.CreateCommand()
+        command.Transaction <- transaction
+        command.CommandText <- "
 INSERT INTO cohort_ledger (seq, clock_ticks, entropy, command_json, events_json)
 VALUES ($seq, $clock_ticks, $entropy, $command_json, $events_json);"
-      command.Parameters.AddWithValue("$seq", int64 entry.Seq) |> ignore
-      command.Parameters.AddWithValue("$clock_ticks", entry.Clock.Ticks) |> ignore
-      command.Parameters.AddWithValue("$entropy", entry.Entropy) |> ignore
-      command.Parameters.AddWithValue("$command_json", CohortJson.commandToJson entry.Command) |> ignore
-      command.Parameters.AddWithValue("$events_json", CohortJson.eventsToJson entry.Events) |> ignore
-      command.ExecuteNonQuery() |> ignore
+        let seq = command.Parameters.Add("$seq", SqliteType.Integer)
+        let clock = command.Parameters.Add("$clock_ticks", SqliteType.Integer)
+        let entropy = command.Parameters.Add("$entropy", SqliteType.Blob)
+        let cmd = command.Parameters.Add("$command_json", SqliteType.Text)
+        let events = command.Parameters.Add("$events_json", SqliteType.Text)
+        for entry in entries do
+          seq.Value <- int64 entry.Seq
+          clock.Value <- entry.Clock.Ticks
+          entropy.Value <- entry.Entropy
+          cmd.Value <- CohortJson.commandToJson entry.Command
+          events.Value <- CohortJson.eventsToJson entry.Events
+          command.ExecuteNonQuery() |> ignore
+        transaction.Commit()
+        Ok ()
+      with
+      | :? SqliteException as ex when ex.SqliteErrorCode = 19 ->
+        Error(LedgerWriteError.ConstraintViolation ex.Message)
+      | :? SqliteException as ex
+          when ex.SqliteErrorCode = 5 || ex.SqliteErrorCode = 6 || ex.SqliteErrorCode = 8
+               || ex.SqliteErrorCode = 10 || ex.SqliteErrorCode = 13 || ex.SqliteErrorCode = 14
+               || ex.SqliteErrorCode = 26 ->
+        Error(LedgerWriteError.StorageUnavailable ex.Message)
+      | ex -> Error(LedgerWriteError.WriteFailed ex.Message)
 
     let readAll () : LedgerEntry<MemberId> list =
       use connection = openConnection dbPath
@@ -68,7 +86,7 @@ VALUES ($seq, $clock_ticks, $entropy, $command_json, $events_json);"
         entries.Add { Seq = seq; Clock = clock; Entropy = entropy; Command = cmd; Events = events }
       List.ofSeq entries
 
-    { Append = append; ReadAll = readAll }
+    { AppendBatch = appendBatch; ReadAll = readAll }
 
   /// The ledger's footprint for the "what's stored" view.
   type LedgerUsage = {

@@ -79,6 +79,9 @@ let private genCommand : Gen<CohortCommand<MemberId>> =
     Gen.map3 (fun by c t -> CohortCommand.ReassignClaim(by, c, t)) genMember genClaimId genMember
     Gen.map3 (fun m c f -> CohortCommand.ReclaimClaim(m, c, f)) genMember genClaimId genFence
     Gen.map2 (fun by t -> CohortCommand.DelegateConductor(by, t)) genMember genMember
+    Gen.constant CohortCommand.PromoteConductor
+    Gen.constant CohortCommand.ExpireOrphanedClaims
+    Gen.map3 (fun m r s -> CohortCommand.JoinNamed(m, r, s, "agent-a")) genMember genRole genSessionOpt
     Gen.map2 (fun m p -> CohortCommand.ObserveSave(m, p)) genMember (Gen.elements [ "P.fs"; "Q.fs" ])
     (gen {
       let! r = genMember
@@ -137,6 +140,7 @@ let private genEvent : Gen<CohortEvent<MemberId>> =
     Gen.map CohortEvent.LeaseRenewed genMember
     Gen.map CohortEvent.ConductorBound genMember
     Gen.map2 (fun f t -> CohortEvent.ConductorDelegated(f, t)) genMember genMember
+    Gen.map2 (fun p n -> CohortEvent.ConductorPromoted(p, n)) genMember genMember
     (gen {
       let! cid = genClaimId
       let! scope = genScope
@@ -236,13 +240,87 @@ let cohortLedgerSqliteTests =
         cleanup path
     }
 
+    testTask "a fault in the last insert rolls back the trigger, promotion, and expiry together" {
+      let path = tempDbPath ()
+      try
+        let ledger = Sqlite.create path
+        let clock = ref (DateTime(2026, 11, 10, 12, 0, 0, DateTimeKind.Utc))
+        let logger =
+          { new Bozzetto.Utils.ILogger with
+              member _.LogInfo _ = ()
+              member _.LogDebug _ = ()
+              member _.LogWarning _ = ()
+              member _.LogError _ = () }
+        use owner = Bozzetto.Features.CohortOwner.start logger ledger (fun () -> clock.Value) (fun () -> [| 1uy |]) (fun _ -> ([], [], [], 0L))
+        let lead, successor, holder = MemberId.Minted "lead", MemberId.Minted "successor", MemberId.Minted "holder"
+        for cmd in [ CohortCommand.Join(lead, JoinableRole.Implementer, None)
+                     CohortCommand.Join(successor, JoinableRole.Observer, None)
+                     CohortCommand.Join(holder, JoinableRole.Implementer, None)
+                     CohortCommand.AcquireClaim(holder, ClaimScope.File "src/Stale.fs", "stale")
+                     CohortCommand.Depart holder ] do
+          let! accepted = owner.Commit cmd
+          accepted |> Result.isOk |> Expect.isTrue "setup command commits"
+        let before = ledger.ReadAll ()
+        let frame = owner.ReadFrame()
+        let state = owner.ReadCohortState()
+        clock.Value <- clock.Value + orphanClaimTtl
+        use connection = new SqliteConnection(sprintf "Data Source=%s" path)
+        connection.Open()
+        use fault = connection.CreateCommand()
+        fault.CommandText <- "CREATE TRIGGER fail_expiry BEFORE INSERT ON cohort_ledger WHEN NEW.seq = 7 BEGIN SELECT RAISE(ABORT, 'expiry insert fault'); END;"
+        fault.ExecuteNonQuery() |> ignore
+        let! failed = owner.Commit(CohortCommand.Depart lead)
+        failed |> Expect.equal "the owner returns a durable write failure" (Error CohortError.LedgerAppendFailed)
+        ledger.ReadAll () |> Expect.equal "all three rows roll back" before
+        owner.ReadFrame() |> Expect.equal "no failed batch is published" frame
+        owner.ReadCohortState() |> Expect.equal "the actor keeps its previous state" state
+
+        fault.CommandText <- "DROP TRIGGER fail_expiry;"
+        fault.ExecuteNonQuery() |> ignore
+        let! retry = owner.Commit(CohortCommand.Depart lead)
+        retry |> Result.isOk |> Expect.isTrue "the same command succeeds once the fault is removed"
+        let after = ledger.ReadAll ()
+        after |> List.skip before.Length |> List.map (fun e -> int64 e.Seq, e.Command)
+        |> Expect.equal "retry reuses the sequence without gaps"
+            [ 5L, CohortCommand.Depart lead; 6L, CohortCommand.PromoteConductor; 7L, CohortCommand.ExpireOrphanedClaims ]
+        owner.ReadCohortState() |> Expect.equal "live state matches the committed replay" (Cohort.replay after)
+      finally
+        cleanup path
+    }
+
     testPropertyWithConfig config "append then readAll is the identity on the appended entries, including entropy bytes and every DU command/event shape" <|
       Prop.forAll (Arb.fromGen genEntries) (fun entries ->
         let path = tempDbPath ()
         try
           let port = Sqlite.create path
-          entries |> List.iter port.Append
+          port.AppendBatch entries |> Expect.equal "the batch commits" (Ok ())
           port.ReadAll () = entries
         finally
           cleanup path)
+
+    test "SQLite adapter maps constraint and storage failures to typed LedgerWriteError cases" {
+      let path = tempDbPath ()
+      try
+        let port = Sqlite.create path
+        let entry: LedgerEntry<MemberId> =
+          { Seq = 0L<ledgerSeq>; Clock = DateTime(2026, 11, 10, 12, 0, 0, DateTimeKind.Utc)
+            Entropy = [| 1uy |]; Command = CohortCommand.Tick; Events = [] }
+        port.AppendBatch [ entry ] |> Expect.equal "first insert succeeds" (Ok ())
+        match port.AppendBatch [ entry ] with
+        | Error(LedgerWriteError.ConstraintViolation detail) ->
+          detail |> Expect.stringContains "duplicate primary key surfaces exact SQLite constraint detail" "UNIQUE constraint failed"
+        | other -> failtestf "expected ConstraintViolation, got %A" other
+        if OperatingSystem.IsLinux() then
+          SqliteConnection.ClearAllPools()
+          File.SetUnixFileMode(path, UnixFileMode.UserRead)
+          try
+            match port.AppendBatch [ { entry with Seq = 1L<ledgerSeq> } ] with
+            | Error(LedgerWriteError.StorageUnavailable _) -> ()
+            | other -> failtestf "expected StorageUnavailable on read-only ledger file, got %A" other
+          finally
+            File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+      finally
+        SqliteConnection.ClearAllPools()
+        cleanup path
+    }
   ]

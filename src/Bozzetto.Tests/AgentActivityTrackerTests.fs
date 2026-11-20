@@ -387,7 +387,7 @@ let renewalKeyTests = testList "AgentActivityTracker — cohort renewal key" [
       |> List.map (fun p -> p.AgentName) |> Set.ofList
     fresh |> Expect.contains "the presence is keyed by the member's display identity" (MemberTable.MemberId.display who)
     let present () : Bozzetto.Cohort.MemberRecord =
-      { Role = Bozzetto.Cohort.JoinableRole.Observer; Presence = Bozzetto.Cohort.MemberPresence.Present; LastRenewal = now; Session = None }
+      { Role = Bozzetto.Cohort.JoinableRole.Observer; Presence = Bozzetto.Cohort.MemberPresence.Present; JoinedAt = now; LastRenewal = now; Session = None; AgentName = None }
     let members = Map.ofList [ who, present (); MemberTable.MemberId.Mcp "silent", present () ]
     Bozzetto.Server.DaemonMode.cohortMembersToRenew (fun m -> fresh.Contains(MemberTable.MemberId.display m)) members
     |> Expect.equal "only the member seen is renewed; the silent one is left to the lease window" [ who ]

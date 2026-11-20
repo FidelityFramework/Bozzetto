@@ -338,10 +338,53 @@ module CohortOwner =
       | Command.Apply(cmd, reply) ->
         let now = clock ()
         let bytes = entropy ()
-        match decide now bytes owner.Cohort cmd with
-        | Ok(newState, events, effects) ->
-          let seq = owner.NextSeq
-          ledger.Append { Seq = seq; Clock = now; Entropy = bytes; Command = cmd; Events = events }
+        let commit =
+          decide now bytes owner.Cohort cmd
+          |> Result.bind (fun (state, events, effects) ->
+            let first: LedgerEntry<MemberId> = { Seq = owner.NextSeq; Clock = now; Entropy = bytes; Command = cmd; Events = events }
+            // Only the live owner appends these decisions. Replay consumes recorded rows.
+            let appendFollowUp (state, entries, lastSeq) (followUp, followUpName) =
+              let unexpected (refusal: string) =
+                logger.LogWarning(sprintf "[cohort-owner] unexpected follow-up %s refusal: %s" followUpName refusal)
+                state, entries, lastSeq
+              match decide now bytes state followUp with
+              | Ok(updated, followUpEvents, _) ->
+                let seq = lastSeq + 1L<ledgerSeq>
+                let entry = { Seq = seq; Clock = now; Entropy = bytes; Command = followUp; Events = followUpEvents }
+                updated, entry :: entries, seq
+              | Error(CohortError.ConductorNotPromotable _)
+              | Error CohortError.NoExpiredOrphanedClaims ->
+                state, entries, lastSeq
+              | Error(CohortError.DuplicateJoin _) -> unexpected "DuplicateJoin"
+              | Error(CohortError.MemberNotPresent _) -> unexpected "MemberNotPresent"
+              | Error(CohortError.ClaimConflict _) -> unexpected "ClaimConflict"
+              | Error(CohortError.OrphanedClaimConflict _) -> unexpected "OrphanedClaimConflict"
+              | Error(CohortError.NotClaimHolder _) -> unexpected "NotClaimHolder"
+              | Error(CohortError.UnknownClaim _) -> unexpected "UnknownClaim"
+              | Error(CohortError.ClaimNotOrphaned _) -> unexpected "ClaimNotOrphaned"
+              | Error(CohortError.DuplicateClaimId _) -> unexpected "DuplicateClaimId"
+              | Error(CohortError.StaleClaimFence _) -> unexpected "StaleClaimFence"
+              | Error(CohortError.InvalidPurpose _) -> unexpected "InvalidPurpose"
+              | Error(CohortError.InvalidStatement _) -> unexpected "InvalidStatement"
+              | Error(CohortError.UnknownLanding _) -> unexpected "UnknownLanding"
+              | Error(CohortError.DuplicateLandingId _) -> unexpected "DuplicateLandingId"
+              | Error(CohortError.NotLandingRequester _) -> unexpected "NotLandingRequester"
+              | Error(CohortError.LandingNotAtFrontOfQueue _) -> unexpected "LandingNotAtFrontOfQueue"
+              | Error(CohortError.LandingNotInExpectedState _) -> unexpected "LandingNotInExpectedState"
+              | Error(CohortError.NotConductor _) -> unexpected "NotConductor"
+              | Error CohortError.LedgerAppendFailed -> unexpected "LedgerAppendFailed"
+            let state, reversed, seq =
+              List.fold appendFollowUp (state, [first], first.Seq)
+                [ CohortCommand.PromoteConductor, "PromoteConductor"
+                  CohortCommand.ExpireOrphanedClaims, "ExpireOrphanedClaims" ]
+            let batch = List.rev reversed
+            match ledger.AppendBatch batch with
+            | Ok () -> Ok(state, seq, batch |> List.collect (fun entry -> entry.Events), effects)
+            | Error error ->
+              logger.LogError(sprintf "[cohort-owner] ledger batch at %d failed: %s" (int64 first.Seq) (LedgerWriteError.describe error))
+              Error CohortError.LedgerAppendFailed)
+        match commit with
+        | Ok(newState, seq, events, effects) ->
           publish (frameOf getSessionTestOutcomes { Seq = seq; State = newState })
           // `CohortFrame` (Cohort.fs's `project`) does not carry
           // `Landings`/`Queue`/`IntegrationHead` — it projects only

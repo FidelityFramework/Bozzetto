@@ -45,14 +45,17 @@ let runFixture socketPath =
   use stream = new NetworkStream(socket, ownsSocket = false)
   let held = ResizeArray<Request>()
   let withdrawn = Collections.Generic.HashSet<string>()
-  let replyOutcome (request: Request) outcome =
+  let openedSessions = Collections.Generic.Dictionary<string, string * string * bool>()
+  let mutable nextSession = 0
+  let replyOutcomeForSession (session: string) (request: Request) outcome =
     let response: Reply =
       { ProtocolVersion = BAREWireCodec.ProtocolVersion; RequestId = request.RequestId
         Authority = { Host = workerAddress.Host; Epoch = workerAddress.Epoch; Provider = workerAddress.Provider
-                      Generation = 0L; Session = ComposerWire.session request.Body }
+                      Generation = 0L; Session = session }
         Outcome = outcome }
     StreamFrames.writeReplyAsync stream CancellationToken.None response |> fun work -> work.GetAwaiter().GetResult()
     |> Result.defaultWith (fun error -> failwithf "Fixture encoding: %A" error)
+  let replyOutcome request outcome = replyOutcomeForSession (ComposerWire.session request.Body) request outcome
   let reply request result = replyOutcome request (Result.Ok result)
   let complete (request: Request) =
     match request.Body with
@@ -84,8 +87,31 @@ let runFixture socketPath =
           Agreement = agreement; Compiler = { AssemblyPath = "fixture"; Sha256 = "fixture"; Version = "fixture" }
           Psg = { Schema = Fidelity.PSG.Revision.Schema; AssemblySha256 = "fixture"
                   FormatVersion = Fidelity.PSG.Binary.FormatVersion; ContractFingerprint = Fidelity.PSG.Binary.ContractFingerprint }
-          Operations = [|Operation.Hello; Operation.Status; Operation.Build; Operation.Run; Operation.Format; Operation.CancelRequest|]
+          Operations = [|Operation.Hello; Operation.Open; Operation.Close; Operation.Status; Operation.Build; Operation.Run; Operation.Format; Operation.CancelRequest|]
           InMemoryPatchAllowed = false })
+      | Open(_, project) ->
+        nextSession <- nextSession + 1
+        let sid = sprintf "fixture-session-%d" nextSession
+        let manifest =
+          if project.EndsWith(".cache-probe.fidproj", StringComparison.Ordinal) then
+            let dir = Path.Combine(Path.GetDirectoryName project, "provider-sessions", workerAddress.Host, sid, workerAddress.Epoch)
+            Directory.CreateDirectory dir |> ignore
+            let path = Path.Combine(dir, "current.json")
+            File.WriteAllText(path, """{"status":"open"}""")
+            path
+          else "fixture.manifest"
+        openedSessions[sid] <- (project, manifest, false)
+        replyOutcomeForSession sid request (Result.Ok(Opened { Observation = 1UL; Project = project; ManifestPath = manifest }))
+      | Close target when openedSessions.ContainsKey target.Session ->
+        let project, manifest, _ = openedSessions[target.Session]
+        openedSessions[target.Session] <- (project, manifest, true)
+        if project.EndsWith(".cache-probe.fidproj", StringComparison.Ordinal) then
+          File.WriteAllText(manifest, """{"status":"closed"}""")
+        reply request (Closed { Observation = 2UL; Closed = true; CleanupPending = true; CleanupError = None })
+      | Status target when openedSessions.ContainsKey target.Session ->
+        let project, manifest, isClosed = openedSessions[target.Session]
+        let snap = { status target.Session 1 with Project = project; ManifestPath = manifest; Closed = isClosed; CleanupPending = isClosed }
+        reply request (Observed snap)
       | Status target when target.Session = "barrier" -> reply request (Observed(status target.Session held.Count))
       | Status target when target.Session = "hold-after-close" ->
         holdAfterClose <- true
@@ -140,6 +166,23 @@ let private config () =
     EvidenceDirectory = Path.Combine(Path.GetTempPath(), "bozzetto-transport-tests", Guid.NewGuid().ToString("N")) }
 let private start beforeCancellation beforeWrite =
   ComposerWorkerClient.startWithBoundaries beforeCancellation beforeWrite ["--composer-worker-client-fixture"] (config ())
+
+// Fault injection after a real Cleared sweep: the connection's socket directory
+// vanishes, so StopAsync's final resource release throws once the group is clear.
+let private cleanupFaultAfterCleared () =
+  let socketDirectory = ref None
+  let terminate pid pgid startTicks graceMs = async {
+    let! outcome = Bozzetto.Server.LinuxProcessEdge.terminateProcessGroupWithFenceAsync pid pgid startTicks graceMs
+    match outcome, socketDirectory.Value with
+    | Bozzetto.ProcessWatchdog.TerminationOutcome.Cleared, Some directory -> Directory.Delete(directory, true)
+    | _ -> ()
+    return outcome
+  }
+  let register (client: IComposerWorker) =
+    let arguments = File.ReadAllText(sprintf "/proc/%d/cmdline" client.ProcessId).Split('\000')
+    socketDirectory.Value <- Some(Path.GetDirectoryName arguments[Array.IndexOf(arguments, "--socket") + 1])
+    client
+  terminate, register
 
 let private evidenceWhileAlive () = task {
   let readEvidence path =
@@ -435,4 +478,282 @@ let tests = testList "Composer worker socket client" [
   }
   testTask "close retains ownership of a held cancellation callback after physical child exit" { do! closeRetainsCallback Operation.Build }
   testTask "close retains ownership of a held format cancellation callback after physical child exit" { do! closeRetainsCallback Operation.Format }
+  testTask "unexpected real child exit fires ProcessExited only after StopAsync verifies Cleared, and never on Survivors or Unverified" {
+    do! task {
+      // Positive control: real child killed externally fires Exited, holds ProcessExited until StopAsync clears it.
+      let launch = config ()
+      let! (client: IComposerWorker) =
+        ComposerWorkerClient.startWithBoundaries ignore (fun _ _ -> Task.CompletedTask) ["--composer-worker-client-fixture"] launch
+      let exitedTcs = TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
+      let mutable processExitedCount = 0
+      use _exitedSub = client.Exited.Subscribe(fun msg -> exitedTcs.TrySetResult msg |> ignore)
+      use _procSub = client.ProcessExited.Subscribe(fun () -> Interlocked.Increment &processExitedCount |> ignore)
+      use child = System.Diagnostics.Process.GetProcessById client.ProcessId
+      try
+        child.Kill true
+        do! child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+        let! _ = exitedTcs.Task.WaitAsync(TimeSpan.FromSeconds 10.)
+        Volatile.Read &processExitedCount |> Expect.equal "ProcessExited must not fire before StopAsync verifies group cleanup" 0
+        do! client.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+        Volatile.Read &processExitedCount |> Expect.equal "StopAsync fires ProcessExited once Cleared" 1
+        client.IsAlive |> Expect.isFalse "stopped client has no live authority"
+        client.IsProcessAlive |> Expect.isFalse "stopped client has no live child"
+      finally
+        try if not child.HasExited then child.Kill true with _ -> ()
+        if Directory.Exists launch.EvidenceDirectory then Directory.Delete(launch.EvidenceDirectory, true)
+
+      // Fault-injection negative controls: real child exits, but termination reports Survivors or Unverified.
+      // Only Linux consults the group terminator; elsewhere StopAsync verifies the root exit alone.
+      let faultCases = [
+        Bozzetto.ProcessWatchdog.TerminationOutcome.Survivors([ 99999 ], [ "injected survivor" ]), "surviving descendants"
+        Bozzetto.ProcessWatchdog.TerminationOutcome.Unverified(Bozzetto.ProcessWatchdog.ProcScanError.ProcDirectoryInaccessible "injected /proc fault"), "could not be verified"
+      ]
+      for outcome, expectedText in (if OperatingSystem.IsLinux() then faultCases else []) do
+        let faultLaunch = config ()
+        let! (faultClient: IComposerWorker) =
+          ComposerWorkerClient.startWithTerminationBoundary
+            (fun _ _ _ _ -> async.Return outcome)
+            ["--composer-worker-client-fixture"]
+            faultLaunch
+        let mutable faultProcessExited = 0
+        use _faultSub = faultClient.ProcessExited.Subscribe(fun () -> Interlocked.Increment &faultProcessExited |> ignore)
+        use faultChild = System.Diagnostics.Process.GetProcessById faultClient.ProcessId
+        try
+          faultChild.Kill true
+          do! faultChild.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+          let! errMsg = task {
+            try
+              do! faultClient.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+              return ""
+            with :? IOException as ex -> return ex.Message
+          }
+          errMsg |> Expect.stringContains "faulted group termination raises exact IOException" expectedText
+          Volatile.Read &faultProcessExited |> Expect.equal "ProcessExited must NEVER fire when termination is Survivors or Unverified" 0
+        finally
+          try if not faultChild.HasExited then faultChild.Kill true with _ -> ()
+          if Directory.Exists faultLaunch.EvidenceDirectory then Directory.Delete(faultLaunch.EvidenceDirectory, true)
+    }
+  }
+  testTask "unprompted real worker crash triggers supervised StopAsync, fires ProcessExited, and prunes closed manifests without Open" {
+    do! task {
+      let tempRoot = Path.Combine(Path.GetTempPath(), "boz-real-crash-prune-" + Guid.NewGuid().ToString("N"))
+      let cacheRoot = Path.Combine(tempRoot, "provider-sessions")
+      let projPath = Path.Combine(tempRoot, "CrashProbe.cache-probe.fidproj")
+      Directory.CreateDirectory cacheRoot |> ignore
+      File.WriteAllText(projPath, """{"name":"CrashProbe"}""")
+      let mutable creations = 0
+      let evidenceDirs = ResizeArray<string>()
+      let startWorker () =
+        Interlocked.Increment &creations |> ignore
+        let launch = config ()
+        evidenceDirs.Add launch.EvidenceDirectory
+        ComposerWorkerClient.startWithBoundaries ignore (fun _ _ -> Task.CompletedTask) ["--composer-worker-client-fixture"] launch
+      let owner =
+        ComposerSupervisor(
+          startWorker,
+          true,
+          (fun () -> Task.CompletedTask),
+          providerCacheRoot = cacheRoot)
+      try
+        let! opened = owner.ExecuteAsync(Open(workerAddress, projPath), CancellationToken.None)
+        Result.isOk opened.Reply.Outcome |> Expect.isTrue "session opened on real fixture worker"
+        let sid = opened.Reply.Authority.Session
+        let manifest =
+          match opened.Reply.Outcome with
+          | Result.Ok(Opened info) -> info.ManifestPath
+          | other -> failtestf "expected Opened reply, got %A" other
+        File.Exists manifest |> Expect.isTrue "fixture created manifest on disk"
+        let! closed = owner.ExecuteAsync(Close(address sid), CancellationToken.None)
+        Result.isOk closed.Reply.Outcome |> Expect.isTrue "session closed leaving cleanupPending=true"
+        File.Exists manifest |> Expect.isTrue "closed manifest stays on disk while worker lives"
+        let pid = owner.WorkerPid |> Option.defaultWith (fun () -> failtest "expected live worker PID")
+        let evictedAndPruned = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        use _sub =
+          owner.Changed.Subscribe(fun () ->
+            let dir = owner.CachedDirectory()
+            if dir.Worker.IsNone && dir.Sessions.Length = 0 && not (File.Exists manifest) then
+              evictedAndPruned.TrySetResult() |> ignore)
+        use child = System.Diagnostics.Process.GetProcessById pid
+        child.Kill true
+        do! child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+        // Wait for autonomous background teardown with ZERO Open or SessionsAsync calls.
+        do! evictedAndPruned.Task.WaitAsync(TimeSpan.FromSeconds 10.)
+        File.Exists manifest |> Expect.isFalse "unprompted crash teardown pruned closed manifest without Open or SessionsAsync"
+        creations |> Expect.equal "only the initial worker was created" 1
+        // A subsequent Open cleanly spawns a replacement worker (retiring fence was released).
+        let! replacement = owner.ExecuteAsync(Open(workerAddress, projPath), CancellationToken.None)
+        Result.isOk replacement.Reply.Outcome |> Expect.isTrue "replacement worker opens cleanly after unprompted crash teardown"
+        creations |> Expect.equal "replacement worker launched after teardown cleared worker" 2
+        do! owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+      finally
+        for dir in evidenceDirs do
+          if Directory.Exists dir then Directory.Delete(dir, true)
+        if Directory.Exists tempRoot then Directory.Delete(tempRoot, true)
+    }
+  }
+  testTask "unprompted real worker crash with StopAsync Survivors keeps worker fenced and preserves deferred manifest" {
+    if not (OperatingSystem.IsLinux()) then skiptest "Only Linux StopAsync consults the injected process-group terminator."
+    do! task {
+      let tempRoot = Path.Combine(Path.GetTempPath(), "boz-real-crash-fault-" + Guid.NewGuid().ToString("N"))
+      let cacheRoot = Path.Combine(tempRoot, "provider-sessions")
+      let projClosed = Path.Combine(tempRoot, "ClosedProbe.cache-probe.fidproj")
+      let projOpen = Path.Combine(tempRoot, "OpenProbe.cache-probe.fidproj")
+      Directory.CreateDirectory cacheRoot |> ignore
+      File.WriteAllText(projClosed, """{"name":"ClosedProbe"}""")
+      File.WriteAllText(projOpen, """{"name":"OpenProbe"}""")
+      let mutable creations = 0
+      let evidenceDirs = ResizeArray<string>()
+      let startFaultedWorker () =
+        Interlocked.Increment &creations |> ignore
+        let launch = config ()
+        evidenceDirs.Add launch.EvidenceDirectory
+        ComposerWorkerClient.startWithTerminationBoundary
+          (fun pid _ _ _ -> async.Return(Bozzetto.ProcessWatchdog.TerminationOutcome.Survivors([ pid ], [ "injected survivor" ])))
+          ["--composer-worker-client-fixture"]
+          launch
+      let owner =
+        ComposerSupervisor(
+          startFaultedWorker,
+          true,
+          (fun () -> Task.CompletedTask),
+          providerCacheRoot = cacheRoot)
+      try
+        let! openedClosed = owner.ExecuteAsync(Open(workerAddress, projClosed), CancellationToken.None)
+        Result.isOk openedClosed.Reply.Outcome |> Expect.isTrue "first session opened"
+        let closedSid = openedClosed.Reply.Authority.Session
+        let closedManifest =
+          match openedClosed.Reply.Outcome with
+          | Result.Ok(Opened info) -> info.ManifestPath
+          | other -> failtestf "expected Opened reply, got %A" other
+        let! openedOpen = owner.ExecuteAsync(Open(workerAddress, projOpen), CancellationToken.None)
+        Result.isOk openedOpen.Reply.Outcome |> Expect.isTrue "second session opened"
+        let openSid = openedOpen.Reply.Authority.Session
+        let! _ = owner.ExecuteAsync(Close(address closedSid), CancellationToken.None)
+        let pid = owner.WorkerPid |> Option.defaultWith (fun () -> failtest "expected live worker PID")
+        let teardownFailed = TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
+        use _sub =
+          owner.Changed.Subscribe(fun () ->
+            let dir = owner.CachedDirectory()
+            dir.Sessions
+            |> Array.tryFind (fun s -> s.Reply.Authority.Session = openSid)
+            |> Option.iter (fun s ->
+              match s.WorkerError with
+              | Some err when err.Contains("Worker teardown failed:", StringComparison.Ordinal) ->
+                teardownFailed.TrySetResult err |> ignore
+              | _ -> ()))
+        use child = System.Diagnostics.Process.GetProcessById pid
+        child.Kill true
+        do! child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+        let! recordedError = teardownFailed.Task.WaitAsync(TimeSpan.FromSeconds 10.)
+        recordedError |> Expect.stringContains "teardown failure is surfaced on the remaining session" "surviving descendants"
+        File.Exists closedManifest |> Expect.isTrue "unverified teardown must NEVER prune deferred manifest"
+        let! refusedOpen = owner.ExecuteAsync(Open(workerAddress, projOpen), CancellationToken.None)
+        match refusedOpen.Reply.Outcome with
+        | Result.Error refusal -> refusal.Code |> Expect.equal "unverified teardown keeps worker fenced against replacement" RefusalCode.ProviderUnavailable
+        | Result.Ok value -> failtestf "expected replacement Open refusal, got %A" value
+        creations |> Expect.equal "no replacement worker started while previous worker teardown failed" 1
+        let! shutdownErr = task {
+          try
+            do! owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+            return ""
+          with :? IOException as ex -> return ex.Message
+        }
+        shutdownErr |> Expect.stringContains "owner StopAsync still surfaces memoized teardown failure" "surviving descendants"
+        File.Exists closedManifest |> Expect.isTrue "manifest remains unpruned after unverified shutdown"
+      finally
+        for dir in evidenceDirs do
+          if Directory.Exists dir then Directory.Delete(dir, true)
+        if Directory.Exists tempRoot then Directory.Delete(tempRoot, true)
+    }
+  }
+  testTask "a resource-cleanup fault after Cleared fails StopAsync, never fires ProcessExited, and keeps the closed manifest" {
+    if not (OperatingSystem.IsLinux()) then skiptest "Only Linux StopAsync consults the injected process-group terminator."
+    do! task {
+      // Direct client: the real sweep clears, then StopAsync's final release faults.
+      let launch = config ()
+      let terminate, register = cleanupFaultAfterCleared ()
+      let! (started: IComposerWorker) =
+        ComposerWorkerClient.startWithTerminationBoundary terminate ["--composer-worker-client-fixture"] launch
+      let client = register started
+      let mutable processExitedCount = 0
+      use _procSub = client.ProcessExited.Subscribe(fun () -> Interlocked.Increment &processExitedCount |> ignore)
+      try
+        let! failure = task {
+          try
+            do! client.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+            return None
+          with :? DirectoryNotFoundException as error -> return Some error.Message
+        }
+        failure.IsSome |> Expect.isTrue "the post-Cleared socket-directory release fault fails StopAsync with its exact reason"
+        client.IsProcessAlive |> Expect.isFalse "the fault follows a verified, real process exit"
+        Volatile.Read &processExitedCount |> Expect.equal "ProcessExited never fires when StopAsync faults after Cleared" 0
+      finally
+        if Directory.Exists launch.EvidenceDirectory then Directory.Delete(launch.EvidenceDirectory, true)
+
+      // Supervisor: an unprompted crash whose teardown faults after Cleared prunes nothing.
+      let tempRoot = Path.Combine(Path.GetTempPath(), "boz-real-crash-cleanup-fault-" + Guid.NewGuid().ToString("N"))
+      let cacheRoot = Path.Combine(tempRoot, "provider-sessions")
+      let projClosed = Path.Combine(tempRoot, "ClosedProbe.cache-probe.fidproj")
+      let projOpen = Path.Combine(tempRoot, "OpenProbe.cache-probe.fidproj")
+      Directory.CreateDirectory cacheRoot |> ignore
+      File.WriteAllText(projClosed, """{"name":"ClosedProbe"}""")
+      File.WriteAllText(projOpen, """{"name":"OpenProbe"}""")
+      let mutable creations = 0
+      let evidenceDirs = ResizeArray<string>()
+      let startFaultedWorker () = task {
+        Interlocked.Increment &creations |> ignore
+        let launch = config ()
+        evidenceDirs.Add launch.EvidenceDirectory
+        let terminate, register = cleanupFaultAfterCleared ()
+        let! started = ComposerWorkerClient.startWithTerminationBoundary terminate ["--composer-worker-client-fixture"] launch
+        return register started
+      }
+      let owner = ComposerSupervisor(startFaultedWorker, true, (fun () -> Task.CompletedTask), providerCacheRoot = cacheRoot)
+      try
+        let! openedClosed = owner.ExecuteAsync(Open(workerAddress, projClosed), CancellationToken.None)
+        let closedSid = openedClosed.Reply.Authority.Session
+        let closedManifest =
+          match openedClosed.Reply.Outcome with
+          | Result.Ok(Opened info) -> info.ManifestPath
+          | other -> failtestf "expected Opened reply, got %A" other
+        let! openedOpen = owner.ExecuteAsync(Open(workerAddress, projOpen), CancellationToken.None)
+        Result.isOk openedOpen.Reply.Outcome |> Expect.isTrue "sibling session opened"
+        let openSid = openedOpen.Reply.Authority.Session
+        let! closed = owner.ExecuteAsync(Close(address closedSid), CancellationToken.None)
+        Result.isOk closed.Reply.Outcome |> Expect.isTrue "closed session leaves its manifest deferred"
+        let pid = owner.WorkerPid |> Option.defaultWith (fun () -> failtest "expected live worker PID")
+        let teardownFailed = TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
+        use _sub =
+          owner.Changed.Subscribe(fun () ->
+            owner.CachedDirectory().Sessions
+            |> Array.tryFind (fun s -> s.Reply.Authority.Session = openSid)
+            |> Option.iter (fun s ->
+              match s.WorkerError with
+              | Some err when err.Contains("Worker teardown failed:", StringComparison.Ordinal) -> teardownFailed.TrySetResult err |> ignore
+              | _ -> ()))
+        use child = System.Diagnostics.Process.GetProcessById pid
+        child.Kill true
+        do! child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+        let! recordedError = teardownFailed.Task.WaitAsync(TimeSpan.FromSeconds 10.)
+        recordedError |> Expect.stringContains "the cleanup fault is surfaced on the remaining session" "Could not find a part of the path"
+        File.Exists closedManifest |> Expect.isTrue "a faulted StopAsync after Cleared must never prune the deferred manifest"
+        let! refusedOpen = owner.ExecuteAsync(Open(workerAddress, projOpen), CancellationToken.None)
+        match refusedOpen.Reply.Outcome with
+        | Result.Error refusal -> refusal.Code |> Expect.equal "the faulted teardown keeps the worker fenced" RefusalCode.ProviderUnavailable
+        | Result.Ok value -> failtestf "expected replacement Open refusal, got %A" value
+        creations |> Expect.equal "no replacement worker starts after the faulted teardown" 1
+        let! shutdownFailed = task {
+          try
+            do! owner.StopAsync().WaitAsync(TimeSpan.FromSeconds 10.)
+            return false
+          with :? DirectoryNotFoundException -> return true
+        }
+        shutdownFailed |> Expect.isTrue "owner StopAsync surfaces the memoized cleanup fault"
+        File.Exists closedManifest |> Expect.isTrue "the manifest stays unpruned after the faulted shutdown"
+      finally
+        for dir in evidenceDirs do
+          if Directory.Exists dir then Directory.Delete(dir, true)
+        if Directory.Exists tempRoot then Directory.Delete(tempRoot, true)
+    }
+  }
 ]

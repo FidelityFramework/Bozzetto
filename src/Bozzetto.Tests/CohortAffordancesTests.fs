@@ -33,9 +33,11 @@ let private frameOf
     MemberRole = members |> List.map (fun (_, r, _) -> r) |> List.toArray
     MemberSeat = members |> List.map (fun (_, _, s) -> s) |> List.toArray
     MemberRenewal = members |> List.map (fun _ -> System.DateTime.MinValue) |> List.toArray
+    MemberAgentName = members |> List.map (fun _ -> None) |> List.toArray
     ClaimIds = [||]
     ClaimScope = [||]
     ClaimHolderIndex = [||]
+    ClaimHolderName = [||]
     ClaimFence = [||]
     ClaimState = [||]
     TestIds = [||]

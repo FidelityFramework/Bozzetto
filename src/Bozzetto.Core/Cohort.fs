@@ -195,6 +195,7 @@ module Cohort =
   type MemberRecord = {
     Role: JoinableRole
     Presence: MemberPresence
+    JoinedAt: DateTime
     LastRenewal: DateTime
     /// Which SESSION (checkout) this member works in, if any (item 13c,
     /// bozzetto-multiagent-vision.md). `None` means the member joined without a
@@ -203,6 +204,7 @@ module Cohort =
     /// `Some sid`). Set once at `Join` time; there is no v1 command to rebind
     /// it after joining (a member who switches checkouts departs and rejoins).
     Session: string option
+    AgentName: string option
   }
 
   // ── Claims (§5.1, §4.3) ─────────────────────────────────────────────────
@@ -223,6 +225,7 @@ module Cohort =
     Purpose: Purpose
     Since: DateTime
     State: ClaimState<'m>
+    HolderName: string option
   }
 
   /// WHY `Retention.sweep` removed a claim from `CohortState` — carried on
@@ -230,8 +233,8 @@ module Cohort =
   /// fact. `SupersededBy` names the claim that now covers the same scope.
   [<RequireQualifiedAccess>]
   type ClaimPruneReason =
-    /// Recorded by ledgers written before Bozzetto #24; no longer produced,
-    /// because an orphan blocks until it is reassigned or reclaimed.
+    // Produced when an orphaned claim's holder remains departed past orphanClaimTtl
+    // (#34), and in pre-#24 ledgers.
     | OrphanedPastRetention of since: DateTime
     | ReleasedPastRetention of at: DateTime
     | SupersededBy of ClaimId
@@ -338,10 +341,10 @@ module Cohort =
     /// what makes v1 landing "strictly serial" (§5.4) structural rather than a
     /// convention `decide`'s callers have to honor.
     Queue: LandingId list
-    /// The conductor binding (§4.2). `None` until the first member joins an
-    /// empty-membership cohort — v1 has no separate `create_cohort` command, so
-    /// the first `Join` IS create_cohort's conductor binding. Moved only by
-    /// `DelegateConductor`; never a value a member can assert about itself.
+    // The conductor binding (§4.2). None until the first member joins an
+    // empty-membership cohort — v1 has no separate create_cohort command, so
+    // the first Join/JoinNamed binds the conductor. Moves via DelegateConductor
+    // or automatic promotion when the bound conductor departs (#34, #13).
     Conductor: 'm option
   }
 
@@ -366,6 +369,11 @@ module Cohort =
   /// name it age out together. Like `leaseWindow`, `Clock` is a parameter, so
   /// tests exert it via generated `DateTime` deltas, never a shortened value.
   let settledRetention = TimeSpan.FromMinutes 30.0
+
+  // Orphaned claims survive brief disconnects (#24, > 2 * settledRetention) so
+  // returning holders can reclaim them, then expire after 24h if their holder
+  // has remained departed (#34).
+  let orphanClaimTtl = TimeSpan.FromHours 24.0
 
   module CohortState =
     let empty () : CohortState<'m> = {
@@ -407,6 +415,9 @@ module Cohort =
     /// any — the shell resolves this (Mcp.fs's `join_cohort`), `decide` only
     /// stores it verbatim in the new `MemberRecord`.
     | Join of who: 'm * role: JoinableRole * session: string option
+    // Named join binds the member's joined agent name alongside connection identity (#12),
+    // preserving legacy Join arity for recorded ledgers.
+    | JoinNamed of who: 'm * role: JoinableRole * session: string option * agentName: string
     | Depart of who: 'm
     | RenewLease of who: 'm
     /// The shell posts this periodically; `decide` derives who has gone silent
@@ -427,6 +438,13 @@ module Cohort =
     /// "delegate conductor to member X rebinds it"). Gated the same way as
     /// `ReassignClaim`.
     | DelegateConductor of by: 'm * toMember: 'm
+    // Owner action (#34, #13): move a bound-but-departed conductor seat to the
+    // deterministic candidate (`conductorPromotion`). Recorded as its own ledger
+    // entry by CohortOwner, so legacy Join/Depart/RenewLease/Tick entries replay
+    // exactly as they were decided before promotion existed.
+    | PromoteConductor
+    // Expiry is separate from legacy Tick so existing entries replay unchanged.
+    | ExpireOrphanedClaims
     /// The member's own watcher observed a save; warn (never block — a claim
     /// cannot stop an edit, §5.1) if it landed inside someone else's claim.
     | ObserveSave of who: 'm * path: string
@@ -490,6 +508,9 @@ module Cohort =
     | ConductorBound of 'm
     /// The `Conductor` binding moved from one Present member to another.
     | ConductorDelegated of from: 'm * to': 'm
+    // PromoteConductor moved the seat from a departed conductor (#34, #13).
+    // `ConductorBound` alone covers the unbound -> bound transition.
+    | ConductorPromoted of previous: 'm * promoted: 'm
     | ClaimAcquired of ClaimId * ClaimScope * holder: 'm * fence: int64<fence>
     | ClaimReleased of ClaimId * by: 'm * fence: int64<fence>
     | ClaimOrphaned of ClaimId * previousHolder: 'm * fence: int64<fence>
@@ -552,6 +573,11 @@ module Cohort =
     /// A conductor-only command (`ReassignClaim`, `DelegateConductor`) was issued
     /// by a member whose `Authority.present` is not `Conductor _` (§4.2).
     | NotConductor of 'm
+    // PromoteConductor found the seat unbound, held by a Present member, or with
+    // no Present candidate to take it.
+    | ConductorNotPromotable of conductor: 'm option
+    | NoExpiredOrphanedClaims
+    | LedgerAppendFailed
 
   // ── Id minting from entropy (never Guid.NewGuid, §7.1) ────────────────────
 
@@ -572,6 +598,46 @@ module Cohort =
     | Some { Presence = MemberPresence.Present } -> true
     | Some { Presence = MemberPresence.Departed _ } -> false
     | None -> false
+
+  let private normalizeAgentName (raw: string) : string option =
+    if isNull raw then None
+    else
+      let trimmed = raw.Trim()
+      if trimmed.Length = 0 then None else Some trimmed
+
+  let private memberAgentName (state: CohortState<'m>) (who: 'm) : string option =
+    Map.tryFind who state.Members |> Option.bind (fun r -> r.AgentName)
+
+  // Trust model (#12): the daemon is local and a member's joined agent name is
+  // what join_cohort recorded for that MCP connection. A Present member whose
+  // joined name equals the claim's HolderName may release (ReleaseClaim) or
+  // reclaim (ReclaimClaim) it with the claim's current fence, and its saves
+  // inside the claim are not violations (ObserveSave). Nothing else widens:
+  // AcquireClaim conflicts, landing validation and FastForwardCompleted still
+  // require the holding connection itself.
+  let private matchesClaimAgent (state: CohortState<'m>) (who: 'm) (claim: Claim<'m>) : bool =
+    match claim.HolderName, Map.tryFind who state.Members with
+    | Some holderName, Some { Presence = MemberPresence.Present; AgentName = Some memberName } -> holderName = memberName
+    | Some _, Some { Presence = MemberPresence.Present; AgentName = None }
+    | Some _, Some { Presence = MemberPresence.Departed _; AgentName = _ }
+    | Some _, None
+    | None, _ -> false
+
+  // The oldest Present seat wins by join time, then member ID (#34).
+  let conductorPromotion (state: CohortState<'m>) : ('m * 'm) option =
+    match state.Conductor with
+    | Some previous when not (isPresent state previous) ->
+      state.Members
+      |> Map.toList
+      |> List.choose (fun (m, r) ->
+        match r.Presence with
+        | MemberPresence.Present -> Some(r.JoinedAt, m)
+        | MemberPresence.Departed _ -> None)
+      |> List.sort
+      |> List.tryHead
+      |> Option.map (fun (_, next) -> previous, next)
+    | Some _
+    | None -> None
 
   /// Every `Held` claim of `who` becomes `Orphaned`, each with its own fence bump
   /// (property 3: fence is strictly increasing per claim id, not shared).
@@ -701,12 +767,8 @@ module Cohort =
         | ClaimState.Released _ -> 0
       liveness, c.Fence, c.Id
 
-    /// Claims to remove, with why. An orphan is dead weight the moment ANOTHER
-    /// claim covers the same scope (a live `Held` one, or a newer orphan) — the
-    /// conductor has nothing left to reassign. Otherwise an orphan is NOT
-    /// history: it still blocks its scope (Bozzetto #24) until the conductor
-    /// reassigns it or its holder reclaims it, so age never removes it. A
-    /// released claim is history and lives out the window.
+    // An orphan blocks until reclaimed, reassigned, or covered by a newer claim.
+    // Age only prunes released claims in a legacy Tick.
     let claimsToPrune (now: DateTime) (claims: Map<ClaimId, Claim<'m>>) : (ClaimId * ClaimPruneReason) list =
       let winners : Map<ClaimScope, Claim<'m>> =
         claims
@@ -729,6 +791,26 @@ module Cohort =
           | ClaimState.Orphaned _ ->
             let winner = Map.find c.Scope winners
             if winner.Id <> id then yield id, ClaimPruneReason.SupersededBy winner.Id ]
+
+    let expiredOrphans (now: DateTime) (state: CohortState<'m>) =
+      let presentNames =
+        state.Members |> Map.toSeq |> Seq.choose (fun (_, memberRecord) ->
+          match memberRecord.Presence with
+          | MemberPresence.Present -> memberRecord.AgentName
+          | MemberPresence.Departed _ -> None)
+        |> Set.ofSeq
+      [ for KeyValue(id, claim) in state.Claims do
+          match claim.State with
+          | ClaimState.Orphaned(previous, since) when now - since >= orphanClaimTtl ->
+            match Map.tryFind previous state.Members with
+            | Some { Presence = MemberPresence.Departed departedAt }
+                when now - departedAt >= orphanClaimTtl
+                     && not (claim.HolderName |> Option.exists (fun name -> Set.contains name presentNames)) ->
+              yield id, since
+            | Some { Presence = MemberPresence.Present }
+            | Some { Presence = MemberPresence.Departed _ }
+            | None -> ()
+          | ClaimState.Orphaned _ | ClaimState.Held _ | ClaimState.Released _ -> () ]
 
     /// Settled landings to remove. A landing vetoed and awaiting the conductor
     /// is an outstanding DECISION, not history, so it stays until resolved.
@@ -800,6 +882,26 @@ module Cohort =
       | (LandingState.Queued | LandingState.Rebasing _ | LandingState.Verifying _), LandingSettlement.Unsettled -> l
     { state with Landings = state.Landings |> Map.map (fun _ l -> restamp l) }
 
+  let private joinMember (clock: Clock) (state: CohortState<'m>) (who: 'm) (role: JoinableRole) (session: string option) (agentName: string option)
+      : Result<CohortState<'m> * CohortEvent<'m> list * CohortEffect<'m> list, CohortError<'m>> =
+    match Map.tryFind who state.Members with
+    | Some { Presence = MemberPresence.Present } -> Error(CohortError.DuplicateJoin who)
+    // a Departed member may rejoin exactly like a brand-new member — both
+    // fall through to the same binding below.
+    | Some { Presence = MemberPresence.Departed _ }
+    | None ->
+      let record = { Role = role; Presence = MemberPresence.Present; JoinedAt = clock; LastRenewal = clock; Session = session; AgentName = agentName }
+      let newState = { state with Members = Map.add who record state.Members }
+      match state.Conductor with
+      | None ->
+        // v1 create_cohort semantics (§4.2): the first member to join an
+        // empty-membership cohort becomes the conductor. There is no separate
+        // CreateCohort command in v1 — this IS that binding.
+        let bound = { newState with Conductor = Some who }
+        Ok(bound, [ CohortEvent.MemberJoined(who, role, session); CohortEvent.ConductorBound who ], [])
+      | Some _ ->
+        Ok(newState, [ CohortEvent.MemberJoined(who, role, session) ], [])
+
   // ── decide (§7.1) ───────────────────────────────────────────────────────
 
   /// The one pure decision function. No IO, no `DateTime.UtcNow`, no
@@ -810,24 +912,10 @@ module Cohort =
       : Result<CohortState<'m> * CohortEvent<'m> list * CohortEffect<'m> list, CohortError<'m>> =
     match command with
 
-    | CohortCommand.Join(who, role, session) ->
-      match Map.tryFind who state.Members with
-      | Some { Presence = MemberPresence.Present } -> Error(CohortError.DuplicateJoin who)
-      // a Departed member may rejoin exactly like a brand-new member — both
-      // fall through to the same binding below.
-      | Some { Presence = MemberPresence.Departed _ }
-      | None ->
-        let record = { Role = role; Presence = MemberPresence.Present; LastRenewal = clock; Session = session }
-        let newState = { state with Members = Map.add who record state.Members }
-        match state.Conductor with
-        | None ->
-          // v1 create_cohort semantics (§4.2): the first member to join an
-          // empty-membership cohort becomes the conductor. There is no separate
-          // CreateCohort command in v1 — this IS that binding.
-          let bound = { newState with Conductor = Some who }
-          Ok(bound, [ CohortEvent.MemberJoined(who, role, session); CohortEvent.ConductorBound who ], [])
-        | Some _ ->
-          Ok(newState, [ CohortEvent.MemberJoined(who, role, session) ], [])
+    | CohortCommand.Join(who, role, session) -> joinMember clock state who role session None
+
+    // Named join (#12): the same transition as Join, also recording the joined name.
+    | CohortCommand.JoinNamed(who, role, session, rawName) -> joinMember clock state who role session (normalizeAgentName rawName)
 
     | CohortCommand.Depart who ->
       if not (isPresent state who) then Error(CohortError.MemberNotPresent who)
@@ -861,6 +949,24 @@ module Cohort =
       let sweptState, pruneEvents = Retention.sweep clock departedState
       Ok(sweptState, departEvents @ pruneEvents, [])
 
+    | CohortCommand.ExpireOrphanedClaims ->
+      match Retention.expiredOrphans clock state with
+      | [] -> Error CohortError.NoExpiredOrphanedClaims
+      | expired ->
+        let survivors = { state with Claims = expired |> List.fold (fun claims (id, _) -> Map.remove id claims) state.Claims }
+        let purges = Retention.membersToPurge clock survivors
+        let updated = { survivors with Members = purges |> List.fold (fun members (who, _) -> Map.remove who members) state.Members }
+        Ok(updated,
+           [ for id, since in expired -> CohortEvent.ClaimPruned(id, ClaimPruneReason.OrphanedPastRetention since)
+             for who, since in purges -> CohortEvent.MemberPurged(who, since) ],
+           [])
+
+    | CohortCommand.PromoteConductor ->
+      match conductorPromotion state with
+      | Some(previous, next) ->
+        Ok({ state with Conductor = Some next }, [ CohortEvent.ConductorPromoted(previous, next) ], [])
+      | None -> Error(CohortError.ConductorNotPromotable state.Conductor)
+
     | CohortCommand.AcquireClaim(who, scope, purposeRaw) ->
       if not (isPresent state who) then Error(CohortError.MemberNotPresent who)
       else
@@ -893,7 +999,7 @@ module Cohort =
               Error(CohortError.DuplicateClaimId claimId)
             else
               let fence = state.NextFence + 1L<fence>
-              let claim = { Id = claimId; Fence = fence; Scope = scope; Purpose = purpose; Since = clock; State = ClaimState.Held who }
+              let claim = { Id = claimId; Fence = fence; Scope = scope; Purpose = purpose; Since = clock; State = ClaimState.Held who; HolderName = memberAgentName state who }
               let newState = { state with NextFence = fence; Claims = Map.add claimId claim state.Claims }
               Ok(newState, [ CohortEvent.ClaimAcquired(claimId, scope, who, fence) ], [])
 
@@ -906,7 +1012,7 @@ module Cohort =
         Error(CohortError.StaleClaimFence(claimId, presentedFence, claim.Fence))
       | Some claim ->
         match claim.State with
-        | ClaimState.Held holder when holder = who ->
+        | ClaimState.Held holder when holder = who || matchesClaimAgent state who claim ->
           let fence = state.NextFence + 1L<fence>
           let updated = { claim with Fence = fence; State = ClaimState.Released(who, clock) }
           let newState = { state with NextFence = fence; Claims = Map.add claimId updated state.Claims }
@@ -941,7 +1047,7 @@ module Cohort =
               | Some holder -> Error(CohortError.ClaimConflict(claim.Scope, holder))
               | None ->
                 let fence = state.NextFence + 1L<fence>
-                let updated = { claim with Fence = fence; State = ClaimState.Held toMember }
+                let updated = { claim with Fence = fence; State = ClaimState.Held toMember; HolderName = memberAgentName state toMember }
                 let newState = { state with NextFence = fence; Claims = Map.add claimId updated state.Claims }
                 Ok(newState, [ CohortEvent.ClaimReassigned(claimId, toMember, fence) ], [])
           | ClaimState.Held _
@@ -957,7 +1063,11 @@ module Cohort =
         | None -> Error(CohortError.UnknownClaim claimId)
         | Some claim ->
           match claim.State with
-          | ClaimState.Orphaned(previous, _) when previous <> who -> Error(CohortError.NotClaimHolder(claimId, who))
+          | ClaimState.Orphaned(previous, _)
+              when not (match claim.HolderName with
+                        | Some _ -> matchesClaimAgent state who claim
+                        | None -> previous = who) ->
+            Error(CohortError.NotClaimHolder(claimId, who))
           | ClaimState.Orphaned _ when presentedFence <> claim.Fence ->
             Error(CohortError.StaleClaimFence(claimId, presentedFence, claim.Fence))
           | ClaimState.Orphaned _ ->
@@ -976,7 +1086,7 @@ module Cohort =
             | Some holder -> Error(CohortError.ClaimConflict(claim.Scope, holder))
             | None ->
               let fence = state.NextFence + 1L<fence>
-              let updated = { claim with Fence = fence; State = ClaimState.Held who }
+              let updated = { claim with Fence = fence; State = ClaimState.Held who; HolderName = memberAgentName state who |> Option.orElse claim.HolderName }
               let newState = { state with NextFence = fence; Claims = Map.add claimId updated state.Claims }
               // The ledger entry's command says it was a reclaim; the event is
               // the same "claim is Held by this member at this fence" fact a
@@ -1002,7 +1112,7 @@ module Cohort =
         |> Map.toList
         |> List.tryPick (fun (cid, c) ->
           match c.State with
-          | ClaimState.Held holder when holder <> who && ClaimScope.overlaps c.Scope (ClaimScope.File path) -> Some(cid, holder)
+          | ClaimState.Held holder when holder <> who && not (matchesClaimAgent state who c) && ClaimScope.overlaps c.Scope (ClaimScope.File path) -> Some(cid, holder)
           | ClaimState.Held _
           | ClaimState.Orphaned _
           | ClaimState.Released _ -> None)
@@ -1511,11 +1621,13 @@ module Cohort =
     /// When each member last renewed: the one liveness fact the daemon retains
     /// about a member, so a presence row can say when it was last heard from.
     MemberRenewal: DateTime[]
+    MemberAgentName: string option[]
     ClaimIds: ClaimId[]
     ClaimScope: ClaimScope[]
     /// Index into `MemberIds`; -1 when the claim is not currently `Held`
     /// (Orphaned/Released) — never a nullable holder field.
     ClaimHolderIndex: int[]
+    ClaimHolderName: string option[]
     ClaimFence: int64<fence>[]
     ClaimState: ClaimState<'m>[]
     TestIds: TestId[]
@@ -1682,6 +1794,7 @@ module Cohort =
           | MemberPresence.Present -> SeatState.Present
           | MemberPresence.Departed since -> SeatState.Departed since)
       MemberRenewal = members |> Array.map (fun (_, r) -> r.LastRenewal)
+      MemberAgentName = members |> Array.map (fun (_, r) -> r.AgentName)
       ClaimIds = claims |> Array.map fst
       ClaimScope = claims |> Array.map (fun (_, c) -> c.Scope)
       ClaimHolderIndex =
@@ -1691,6 +1804,7 @@ module Cohort =
           | ClaimState.Held holder -> memberIndexOf holder
           | ClaimState.Orphaned _
           | ClaimState.Released _ -> -1)
+      ClaimHolderName = claims |> Array.map (fun (_, c) -> c.HolderName)
       ClaimFence = claims |> Array.map (fun (_, c) -> c.Fence)
       ClaimState = claims |> Array.map (fun (_, c) -> c.State)
       TestIds = testIds

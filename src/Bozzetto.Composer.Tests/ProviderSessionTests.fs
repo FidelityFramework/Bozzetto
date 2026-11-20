@@ -937,4 +937,96 @@ let tests =
       let! cleaned = bounded pending
       cleaned |> success |> ignore
     }
+
+    taskCase "closed session stuck in cleanupPending past 30s sets WorkerRetirementRequired even after formatter cleanup completes (#33)" <| fun () -> task {
+      let backend = new Backend()
+      let mutable ticks = 0L
+      let tickFreq = Diagnostics.Stopwatch.Frequency
+      use owner =
+        new ProviderSession<Ticket>(
+          "test-host", "stuck-cleanup", "epoch-a", "/project/program.fidproj", backend,
+          formatterCleanupTimestamp = fun () -> Volatile.Read &ticks)
+      use cleanupBarrier = new PrefixBarrier()
+      backend.BeforeDispose <- cleanupBarrier.Block
+      let pending = owner.CloseAsync()
+      do! bounded cleanupBarrier.Entered
+      use _ =
+        { new IAsyncDisposable with
+            member _.DisposeAsync() =
+              ValueTask(task {
+                cleanupBarrier.Release()
+                let! _ = bounded pending
+                ()
+              }) }
+      // Wait until formatter cleanup finishes (FormatterCleanupPending = false) while CleanupPending stays true.
+      let deadline = Diagnostics.Stopwatch.StartNew()
+      let mutable snap = owner.Status() |> success
+      while snap.FormatterCleanupPending && deadline.Elapsed < TimeSpan.FromSeconds 5. do
+        do! Task.Delay 10
+        snap <- owner.Status() |> success
+      snap.Closed |> Expect.isTrue "session is closed"
+      snap.CleanupPending |> Expect.isTrue "session cleanup is still pending while dispose blocks"
+      snap.FormatterCleanupPending |> Expect.isFalse "formatter cleanup already completed"
+      // Negative control: at 29 seconds, worker retirement is not yet required.
+      Interlocked.Exchange(&ticks, 29L * tickFreq) |> ignore
+      let before = owner.Status() |> success
+      before.WorkerRetirementRequired |> Expect.isNone "29s cleanupPending does not prematurely require retirement"
+      // Positive control: at 30 seconds, WorkerRetirementRequired fires even with FormatterCleanupPending = false.
+      Interlocked.Exchange(&ticks, 30L * tickFreq) |> ignore
+      let expired = owner.Status() |> success
+      expired.WorkerRetirementRequired |> Expect.isSome "30s cleanupPending sets WorkerRetirementRequired"
+      expired.WorkerRetirementRequired.Value |> Expect.stringContains "reason names session cleanup deadline" "Session cleanup exceeded 30 seconds"
+      owner.WorkerRetirementRequired |> Expect.equal "WorkerRetirementRequired property agrees with Status" expired.WorkerRetirementRequired
+    }
+
+    taskCase "session cleanup deadline counts disposal only: closing during a long build never requires retirement until disposal itself hangs" <| fun () -> task {
+      let backend = new Backend()
+      backend.HoldBuild <- true
+      let ticks = ref 0L
+      let second = Diagnostics.Stopwatch.Frequency
+      use owner =
+        new ProviderSession<Ticket>(
+          "test-host", "drain-close", "epoch-a", "/project/program.fidproj", backend,
+          formatterCleanupTimestamp = fun () -> Volatile.Read &ticks.contents)
+      let building = build owner "long build"
+      do! bounded backend.BuildEntered
+      use cleanupBarrier = new PrefixBarrier()
+      backend.BeforeDispose <- cleanupBarrier.Block
+      let pending = owner.CloseAsync()
+      use _ =
+        { new IAsyncDisposable with
+            member _.DisposeAsync() =
+              ValueTask(task {
+                backend.ReleaseBuild()
+                cleanupBarrier.Release()
+                let! _ = bounded pending
+                ()
+              }) }
+      let deadline = Diagnostics.Stopwatch.StartNew()
+      let mutable snap = owner.Status() |> success
+      while snap.FormatterCleanupPending && deadline.Elapsed < TimeSpan.FromSeconds 5. do
+        do! Task.Delay 10
+        snap <- owner.Status() |> success
+      snap.FormatterCleanupPending |> Expect.isFalse "formatter cleanup already completed"
+      // Negative control: an eight-minute compile still drains after the close. Drain is never
+      // counted against the cleanup deadline, so no retirement is required.
+      Interlocked.Exchange(&ticks.contents, 480L * second) |> ignore
+      let draining = owner.Status() |> success
+      draining.Closed |> Expect.isTrue "session is closed while its build drains"
+      draining.CleanupPending |> Expect.isTrue "cleanup is pending while the build drains"
+      draining.WorkerRetirementRequired |> Expect.isNone "compiler drain never trips the cleanup deadline"
+      backend.DisposeCount |> Expect.equal "disposal has not begun during drain" 0
+      // Drain completes at 480s; disposal begins there and blocks.
+      backend.ReleaseBuild()
+      let! _ = bounded building
+      do! bounded cleanupBarrier.Entered
+      Interlocked.Exchange(&ticks.contents, 509L * second) |> ignore
+      (owner.Status() |> success).WorkerRetirementRequired
+      |> Expect.isNone "29s of disposal does not yet require retirement"
+      // Positive control: 30s of hung disposal requires retirement.
+      Interlocked.Exchange(&ticks.contents, 510L * second) |> ignore
+      let expired = owner.Status() |> success
+      expired.WorkerRetirementRequired |> Expect.isSome "30s of hung disposal requires retirement"
+      expired.WorkerRetirementRequired.Value |> Expect.stringContains "reason names the session cleanup deadline" "Session cleanup exceeded 30 seconds"
+    }
   ]

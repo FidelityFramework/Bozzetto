@@ -69,6 +69,7 @@ let private pathOf (i: int) = pathPool.[abs i % pathPool.Length]
 /// needing a hand-written well-formedness filter.
 type Intent =
   | IJoin of agent: int * role: JoinableRole
+  | IJoinNamed of agent: int * role: JoinableRole * nameIdx: int
   | IDepart of agent: int
   | IRenewLease of agent: int
   | ITick of minutesLater: int
@@ -88,7 +89,8 @@ type Intent =
 
 let private genIntent =
   Gen.frequency [
-    3, Gen.map2 (fun a r -> IJoin(a, r)) (Gen.choose (1, 4)) genRole
+    2, Gen.map2 (fun a r -> IJoin(a, r)) (Gen.choose (1, 4)) genRole
+    2, Gen.map3 (fun a r n -> IJoinNamed(a, r, n)) (Gen.choose (1, 4)) genRole (Gen.choose (1, 2))
     2, Gen.map IDepart (Gen.choose (1, 4))
     2, Gen.map IRenewLease (Gen.choose (1, 4))
     2, Gen.map ITick (Gen.choose (0, 60))
@@ -173,6 +175,8 @@ let private testIdsOf (n: int) (prefix: string) = [ for i in 1 .. (abs n % 5) ->
 let private applyIntent (h: Harness) (intent: Intent) : Harness =
   match intent with
   | IJoin(a, role) -> applyCommand h (CohortCommand.Join(agentOf a, role, None))
+  | IJoinNamed(a, role, nameIdx) ->
+    applyCommand h (CohortCommand.JoinNamed(agentOf a, role, None, sprintf "persona-%d" (1 + abs nameIdx % 2)))
   | IDepart a -> applyCommand h (CohortCommand.Depart(agentOf a))
   | IRenewLease a -> applyCommand h (CohortCommand.RenewLease(agentOf a))
   | ITick minutes -> applyCommand { h with Clock = h.Clock.AddMinutes(float (abs minutes % 90)) } CohortCommand.Tick
@@ -252,6 +256,7 @@ let private toLedger (intents: Intent list) : LedgerEntry<Agent> list =
     let cmdOpt =
       match intent with
       | IJoin(a, role) -> Some(CohortCommand.Join(agentOf a, role, None))
+      | IJoinNamed(a, role, nameIdx) -> Some(CohortCommand.JoinNamed(agentOf a, role, None, sprintf "persona-%d" (1 + abs nameIdx % 2)))
       | IDepart a -> Some(CohortCommand.Depart(agentOf a))
       | IRenewLease a -> Some(CohortCommand.RenewLease(agentOf a))
       | ITick minutes ->
@@ -515,7 +520,7 @@ let cohortPropertyTests =
         let h2' = "H2-" + h2
         match Purpose.tryCreate "purpose", Statement.tryCreate "statement" with
         | Ok purpose, Ok statement ->
-          let claim = { Id = ClaimId "c-0"; Fence = 1L<Measures.fence>; Scope = ClaimScope.File "X.fs"; Purpose = purpose; Since = epoch; State = ClaimState.Held requester }
+          let claim = { Id = ClaimId "c-0"; Fence = 1L<Measures.fence>; Scope = ClaimScope.File "X.fs"; Purpose = purpose; Since = epoch; State = ClaimState.Held requester; HolderName = None }
           let req =
             { Id = LandingId "l-0"; Requester = requester; Claims = [ (claim.Id, claim.Fence) ]; Commits = [ "c1" ]
               BaseAtQueue = h1'; Statement = statement; State = LandingState.Verifying(h1', "rebased-" + h1', 1, 0)
@@ -523,7 +528,7 @@ let cohortPropertyTests =
           let state =
             { CohortState.empty () with
                 IntegrationHead = h2'
-                Members = Map.ofList [ requester, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; LastRenewal = epoch; Session = None } ]
+                Members = Map.ofList [ requester, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; JoinedAt = epoch; LastRenewal = epoch; Session = None; AgentName = None } ]
                 Claims = Map.ofList [ claim.Id, claim ]
                 Landings = Map.ofList [ req.Id, req ]
                 Queue = [ req.Id ] }
@@ -697,6 +702,34 @@ let cohortPropertyTests =
         | [] -> h.State.Conductor = None
         | [ only ] -> h.State.Conductor = Some only
         | _ -> false
+
+      // #34/#13: CohortOwner follows every accepted entry that leaves the seat bound
+      // to a non-Present member with its own PromoteConductor entry. Under that
+      // discipline a cohort with any Present member always has a Present
+      // conductor, a Present conductor is never displaced, and each promotion
+      // names the departed seat it replaced and the conductorPromotion candidate.
+      testPropertyWithConfig cohortConfig "21b: owner-driven PromoteConductor keeps a Present conductor whenever a member is Present and never displaces a Present one" <| fun (intents: Intent list) ->
+        let promoteIfVacant (h: Harness) =
+          match conductorPromotion h.State with
+          | Some _ -> applyCommand h CohortCommand.PromoteConductor
+          | None -> h
+        let h = intents |> List.fold (fun h intent -> applyIntent h intent |> promoteIfVacant) (initHarness ())
+        let presentConductorOk (state: CohortState<Agent>) =
+          let anyPresent = state.Members |> Map.exists (fun _ r -> r.Presence = MemberPresence.Present)
+          not anyPresent
+          || (match state.Conductor with
+              | Some c -> state.Members |> Map.tryFind c |> Option.exists (fun r -> r.Presence = MemberPresence.Present)
+              | None -> false)
+        let promotionsOk =
+          h.Steps |> List.forall (fun step ->
+            match step.Command, step.Events with
+            | CohortCommand.PromoteConductor, [ CohortEvent.ConductorPromoted(previous, next) ] ->
+              step.Before.Conductor = Some previous
+              && conductorPromotion step.Before = Some(previous, next)
+              && step.Before.Members |> Map.tryFind previous |> Option.forall (fun r -> r.Presence <> MemberPresence.Present)
+            | CohortCommand.PromoteConductor, _ -> false
+            | _, events -> events |> List.forall (function CohortEvent.ConductorPromoted _ -> false | _ -> true))
+        presentConductorOk h.State && promotionsOk
     ]
 
     testList "read model (10)" [

@@ -4188,6 +4188,10 @@ module McpTools =
       failed
         (sprintf "This is a conductor-only action, and %s is not the cohort conductor." (mid who))
         "Ask the cohort conductor to perform it, or have the conductor delegate the role to you."
+    | Cohort.CohortError.ConductorNotPromotable conductor ->
+      failed (sprintf "The conductor seat (%s) is not vacant or has no present member to take it." (conductor |> Option.map mid |> Option.defaultValue "unbound")) "Run get_cohort_status; the daemon promotes a present member when the conductor departs."
+    | Cohort.CohortError.NoExpiredOrphanedClaims -> failed "No orphaned claims are eligible for expiry." "Run get_cohort_status to inspect the current claims."
+    | Cohort.CohortError.LedgerAppendFailed -> failed "The cohort ledger could not commit the command." "Check the daemon log before retrying."
 
   /// `ctx.CohortOwner` is `None` only when nothing wired a cohort owner
   /// (tests that predate Slice 2) — every production McpContext (DaemonMode.fs)
@@ -4301,14 +4305,6 @@ module McpTools =
         | Gone _ -> None
     }
 
-  /// Join the implicit per-daemon cohort as `role` (Implementer/Verifier/
-  /// Observer). v1 has no separate `create_cohort` command — the first
-  /// member to join an empty cohort becomes its conductor automatically
-  /// (`Cohort.decide`'s own semantics for `Join`), so this tool doubles as
-  /// create_cohort for the first caller. `workingDirectory` (item 13c) is
-  /// resolved to a session id via `resolveJoinSession` and stored on the
-  /// member (`MemberRecord.Session`) so the cohort frame can later attribute
-  /// this member's checkout's test outcomes to it (`CohortOwner.frameOf`).
   let joinCohort (ctx: McpContext) (agentName: string) (role: string) (workingDirectory: string option) : Task<Result<string, BozzettoError>> =
     task {
       match parseJoinableRole role with
@@ -4316,16 +4312,20 @@ module McpTools =
       | Ok r ->
         let who = memberIdFor agentName
         let! sessionOpt = resolveJoinSession ctx agentName workingDirectory
-        let! result = commitCohort ctx (Cohort.CohortCommand.Join(who, r, sessionOpt))
+        let! result = commitCohort ctx (if String.IsNullOrWhiteSpace agentName then Cohort.CohortCommand.Join(who, r, sessionOpt) else Cohort.CohortCommand.JoinNamed(who, r, sessionOpt, agentName.Trim()))
         return
           result
           |> Result.map (fun (events, _) ->
-            let becameConductor = events |> List.exists (function Cohort.CohortEvent.ConductorBound _ -> true | _ -> false)
+            let conductorNote =
+              if events |> List.exists (function Cohort.CohortEvent.ConductorBound _ -> true | _ -> false) then " You are the conductor (first to join)."
+              elif events |> List.exists (function Cohort.CohortEvent.ConductorPromoted(_, p) when p = who -> true | _ -> false) then " You are the conductor (promoted)."
+              elif ctx.CohortOwner |> Option.exists (fun o -> o.ReadCohortState().Conductor = Some who) then " You are the conductor."
+              else ""
             let sessionNote =
               match sessionOpt with
               | Some sid -> sprintf " Bound to session %s." sid
               | None -> " No session was resolved — you won't appear in the per-session test matrix until you join again from a working directory that matches a session."
-            sprintf "Joined cohort as %s (%s).%s%s" (MemberTable.MemberId.display who) (string r) (if becameConductor then " You are the conductor (first to join)." else "") sessionNote)
+            sprintf "Joined cohort as %s (%s).%s%s" (MemberTable.MemberId.display who) (string r) conductorNote sessionNote)
     }
 
   let leaveCohort (ctx: McpContext) (agentName: string) : Task<Result<string, BozzettoError>> =

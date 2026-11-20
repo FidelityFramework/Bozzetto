@@ -513,4 +513,46 @@ let cohortMcpToolsTests =
         reassigned |> Expect.stringContains "the conductor reassigns an orphan" (sprintf "Reassigned claim %s to %s" claimId otherMember)
       })
     }
+
+    testTask "resumed agent releases earlier claim from a new MCP connection and auto-promotes to conductor on original departure (Bozzetto #12 #34)" {
+      do! withDaemon (fun port -> task {
+        use! conn1 = connect port
+        use! conn2 = connect port
+        use! bystander = connect port
+        let! _ = joinCohort conn1 "antigravity" "Implementer"
+        let! acquired1 = acquireClaim conn1 "antigravity" "file:src/Clef/RangeAnalysis.fs" "tranche 1"
+        let claim1 = claimIdFromAcquireResult acquired1
+        let! acquired2 = acquireClaim conn1 "antigravity" "file:src/Clef/BakerSaturation.fs" "tranche 2"
+        let claim2 = claimIdFromAcquireResult acquired2
+        let! statusBefore = getCohortStatus conn1
+        let fence1, _ = claimRow statusBefore claim1
+        statusBefore |> Expect.stringContains "status includes joined agent name" "(antigravity)"
+        // Resume on conn2 while conn1 stays open; bystander joins with a different agent name.
+        let! join2 = joinCohort conn2 "antigravity" "Implementer"
+        let member2 = memberFromJoinResult join2
+        let! joinBystander = joinCohort bystander "other-agent" "Implementer"
+        let bystanderMember = memberFromJoinResult joinBystander
+        // Negative controls over live MCP: wrong agent name & wrong fence refused.
+        let! wrongAgent = releaseClaim bystander "other-agent" claim1 fence1
+        wrongAgent |> Expect.stringContains "different agent cannot release antigravity's claim" "does not hold claim"
+        let! wrongFence = releaseClaim conn2 "antigravity" claim1 (fence1 - 1L)
+        wrongFence |> Expect.stringContains "stale fence refused on resumed connection" "stale"
+        // Positive control (#12): conn2 releases conn1's live claim with exact fence while conn1 is still open.
+        let! released = releaseClaim conn2 "antigravity" claim1 fence1
+        released |> Expect.stringContains "resumed connection releases earlier claim" (sprintf "Released claim %s" claim1)
+        // Conductor departure (#34): conn1 leaves -> conn2 (oldest remaining Implementer) auto-promotes and can reassign claim2!
+        let! _ = leaveCohort conn1 "antigravity"
+        let! afterDepart = getCohortStatus conn2
+        afterDepart |> Expect.stringContains "conn2 promoted to Conductor" (sprintf "Conductor: %s" member2)
+        let! reassigned = reassignClaim conn2 "antigravity" claim2 member2
+        reassigned |> Expect.stringContains "promoted conductor reassigns orphaned claim" (sprintf "Reassigned claim %s to %s" claim2 member2)
+        // Depart remaining members so cohort has zero present members, then rejoin on conn2
+        // and verify join_cohort reports conductor ownership even on sole-conductor rejoin.
+        let! _ = leaveCohort bystander "other-agent"
+        let! _ = leaveCohort conn2 "antigravity"
+        let! rejoinedSolo = joinCohort conn2 "antigravity" "Implementer"
+        rejoinedSolo |> Expect.stringContains "rejoining sole conductor reports conductor status" "You are the conductor."
+        ignore bystanderMember
+      })
+    }
   ]

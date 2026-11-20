@@ -34,15 +34,34 @@ module CohortStatusText =
         // tranche (Bozzetto #24).
         | Cohort.SeatState.Present -> sprintf "present renewed %s" (frame.MemberRenewal.[i].ToString "u")
         | Cohort.SeatState.Departed since -> sprintf "departed %s" (since.ToString "u")
-      sb.AppendLine(sprintf "  - %s [%A] %s" (MemberTable.MemberId.display frame.MemberIds.[i]) frame.MemberRole.[i] seat) |> ignore
+      let memberDisplay = MemberTable.MemberId.display frame.MemberIds.[i]
+      let nameLabel =
+        match frame.MemberAgentName.[i] with
+        | Some name when name <> memberDisplay -> sprintf " (%s)" name
+        | Some _
+        | None -> ""
+      let role =
+        match frame.MemberRole.[i] with
+        | Cohort.JoinableRole.Implementer -> "Implementer"
+        | Cohort.JoinableRole.Verifier -> "Verifier"
+        | Cohort.JoinableRole.Observer -> "Observer"
+      sb.AppendLine(sprintf "  - %s%s [%s] %s" memberDisplay nameLabel role seat) |> ignore
     if memberView.HiddenTotal > 0 then
       sb.AppendLine(sprintf "  %s" (CohortBoundedView.memberOverflowLabel memberView)) |> ignore
     sb.AppendLine(sprintf "Claims (%d):" frame.ClaimIds.Length) |> ignore
     for i in claimView.Shown do
       let (Cohort.ClaimId cid) = frame.ClaimIds.[i]
       let holder =
-        if frame.ClaimHolderIndex.[i] >= 0 then MemberTable.MemberId.display frame.MemberIds.[frame.ClaimHolderIndex.[i]]
-        else "(none)"
+        if frame.ClaimHolderIndex.[i] >= 0 then
+          let display = MemberTable.MemberId.display frame.MemberIds.[frame.ClaimHolderIndex.[i]]
+          match frame.ClaimHolderName.[i] with
+          | Some name when name <> display -> sprintf "%s (%s)" display name
+          | Some _
+          | None -> display
+        else
+          match frame.ClaimHolderName.[i] with
+          | Some name -> sprintf "(none, agent=%s)" name
+          | None -> "(none)"
       sb.AppendLine(sprintf "  - %s %A held-by=%s fence=%d state=%A" cid frame.ClaimScope.[i] holder (int64 frame.ClaimFence.[i]) frame.ClaimState.[i]) |> ignore
     if claimView.HiddenTotal > 0 then
       sb.AppendLine(sprintf "  %s" (CohortBoundedView.claimOverflowLabel claimView)) |> ignore

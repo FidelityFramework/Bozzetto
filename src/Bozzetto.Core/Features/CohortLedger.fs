@@ -10,12 +10,22 @@ open Bozzetto.Cohort
 /// construction.
 module CohortLedger =
 
-  /// `Append`/`ReadAll` are the only two operations the owner needs: it never
-  /// deletes or mutates a recorded entry (`Cohort.fs`'s ledger is append-only
-  /// by design, §5.2). An implementation must make `Append` durable before it
-  /// returns — the owner replies to its caller only after `Append` returns.
+  [<RequireQualifiedAccess>]
+  type LedgerWriteError =
+    | StorageUnavailable of detail: string
+    | ConstraintViolation of detail: string
+    | WriteFailed of detail: string
+
+  module LedgerWriteError =
+    let describe =
+      function
+      | LedgerWriteError.StorageUnavailable detail -> detail
+      | LedgerWriteError.ConstraintViolation detail -> detail
+      | LedgerWriteError.WriteFailed detail -> detail
+
+  // A batch is durable as a unit before the owner publishes its new state.
   type LedgerPort<'m> = {
-    Append: LedgerEntry<'m> -> unit
+    AppendBatch: LedgerEntry<'m> list -> Result<unit, LedgerWriteError>
     /// Every entry recorded so far, in `Seq` order.
     ReadAll: unit -> LedgerEntry<'m> list
   }
@@ -28,6 +38,6 @@ module CohortLedger =
       let store = ResizeArray<LedgerEntry<'m>>()
       let sync = obj ()
       {
-        Append = fun entry -> lock sync (fun () -> store.Add entry)
+        AppendBatch = fun entries -> lock sync (fun () -> store.AddRange entries; Ok ())
         ReadAll = fun () -> lock sync (fun () -> List.ofSeq store)
       }

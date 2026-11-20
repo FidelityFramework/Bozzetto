@@ -89,7 +89,7 @@ module AgentActivityTracker =
           | None -> existing.Intent
         {
           existing with
-            SessionId = sessionId
+            SessionId = if sessionId = "" then existing.SessionId else sessionId
             LastToolCall = now
             Intent = newIntent
             RecentFiles = newFiles

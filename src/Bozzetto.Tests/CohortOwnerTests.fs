@@ -177,6 +177,36 @@ let cohortOwnerTests =
       ownerB.ReadFrame().TestIds
       |> Expect.equal "replay reconstructed alice's session binding, so her outcomes populate the frame" [| t1 |]
     }
+
+    testTask "typed LedgerWriteError refusals preserve CohortOwner state and sequence across every failure variant" {
+      for err in [
+        LedgerWriteError.StorageUnavailable "disk offline"
+        LedgerWriteError.ConstraintViolation "duplicate seq"
+        LedgerWriteError.WriteFailed "io error"
+      ] do
+        let backing = InMemory.create<MemberId> ()
+        let mutable failWrites = false
+        let port: LedgerPort<MemberId> = {
+          AppendBatch = fun entries -> if failWrites then Error err else backing.AppendBatch entries
+          ReadAll = backing.ReadAll
+        }
+        use owner = CohortOwner.start silentLogger port (fixedClock epoch) (counterEntropy ()) (fun _ -> ([], [], [], 0L))
+        let! joined = owner.Commit(CohortCommand.Join(alice, JoinableRole.Implementer, None))
+        joined |> Result.isOk |> Expect.isTrue "positive: initial join commits"
+        let frameBefore = owner.ReadFrame()
+        let stateBefore = owner.ReadCohortState()
+        let ledgerBefore = port.ReadAll ()
+        failWrites <- true
+        let! refused = owner.Commit(CohortCommand.Join(bob, JoinableRole.Verifier, None))
+        refused |> Expect.equal "typed LedgerWriteError maps to LedgerAppendFailed" (Error CohortError.LedgerAppendFailed)
+        owner.ReadFrame() |> Expect.equal "frame untouched on write failure" frameBefore
+        owner.ReadCohortState() |> Expect.equal "state untouched on write failure" stateBefore
+        port.ReadAll () |> Expect.equal "ledger untouched on write failure" ledgerBefore
+        failWrites <- false
+        let! retried = owner.Commit(CohortCommand.Join(bob, JoinableRole.Verifier, None))
+        retried |> Result.isOk |> Expect.isTrue "retry after failure commits cleanly"
+        port.ReadAll () |> List.map (fun e -> int64 e.Seq) |> Expect.equal "sequence remains dense after failed batch" [ 0L; 1L ]
+    }
   ]
 
 let private report : AgentWork.Report = {
@@ -357,7 +387,10 @@ let agentWorkTests =
         owner.ReadCohortState().Members.[alice].Presence |> Expect.equal "committed member state is retained" (MemberPresence.Departed epoch)
         let! subsequent = owner.Commit(CohortCommand.Join(bob, JoinableRole.Observer, None))
         subsequent |> Expect.isOk "next command still settles"
-        ledger.ReadAll() |> List.map (fun entry -> int64 entry.Seq) |> Expect.equal "no reuse of committed ledger sequence" [0L; 1L; 2L]
+        // bob joins after the sole conductor departed, so the owner follows the join
+        // with its own PromoteConductor entry (#34): four dense entries, none reused.
+        ledger.ReadAll() |> List.map (fun entry -> int64 entry.Seq) |> Expect.equal "no reuse of committed ledger sequence" [0L; 1L; 2L; 3L]
+        ledger.ReadAll() |> List.last |> fun entry -> entry.Command |> Expect.equal "the last entry is the owner's promotion" CohortCommand.PromoteConductor
         let! pending = owner.ReconcileWork() |> Async.StartAsTask
         pending |> Expect.equal "specific loud reconciliation failure" (Error AgentWork.PublicationFailed)
         let beforeRetry = attempts

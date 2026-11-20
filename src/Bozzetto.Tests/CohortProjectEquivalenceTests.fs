@@ -96,6 +96,7 @@ module private Reference =
           | MemberPresence.Present -> SeatState.Present
           | MemberPresence.Departed since -> SeatState.Departed since)
       MemberRenewal = members |> Array.map (fun (_, r) -> r.LastRenewal)
+      MemberAgentName = members |> Array.map (fun (_, r) -> r.AgentName)
       ClaimIds = claims |> Array.map fst
       ClaimScope = claims |> Array.map (fun (_, c) -> c.Scope)
       ClaimHolderIndex =
@@ -104,6 +105,7 @@ module private Reference =
           match c.State with
           | ClaimState.Held holder -> memberIndexOf holder
           | _ -> -1)
+      ClaimHolderName = claims |> Array.map (fun (_, c) -> c.HolderName)
       ClaimFence = claims |> Array.map (fun (_, c) -> c.Fence)
       ClaimState = claims |> Array.map (fun (_, c) -> c.State)
       TestIds = testIds
@@ -134,7 +136,8 @@ let private genMemberRecord =
     let! role = genRole
     let! presence = genPresence
     let! session = Gen.oneof [ Gen.constant None; Gen.constant (Some "sess-1") ]
-    return { Role = role; Presence = presence; LastRenewal = epoch; Session = session }
+    let! agentName = Gen.oneof [ Gen.constant None; Gen.constant (Some "agent-a") ]
+    return { Role = role; Presence = presence; JoinedAt = epoch; LastRenewal = epoch; Session = session; AgentName = agentName }
   }
 
 let private genMembers =
@@ -177,7 +180,8 @@ let private genClaim =
         Scope = scope
         Purpose = purpose
         Since = epoch
-        State = state }
+        State = state
+        HolderName = None }
   }
 
 let private genClaims =
@@ -377,7 +381,7 @@ let cohortProjectEquivalenceTests =
         Cohort.project head snapshots = Reference.project head snapshots
 
     testCase "WHY — a test appearing in more than one category for one session sets the bit in every matching bitplane, matching the oracle" <| fun _ ->
-      let state = { CohortState.empty () with Members = Map.ofList [ 1, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; LastRenewal = epoch; Session = None } ] }
+      let state = { CohortState.empty () with Members = Map.ofList [ 1, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; JoinedAt = epoch; LastRenewal = epoch; Session = None; AgentName = None } ] }
       let head = { Seq = 3L<ledgerSeq>; State = state }
       let snapshots =
         [| { Member = Some 1; SessionId = "s1"; Generation = 0L
@@ -406,7 +410,7 @@ let cohortProjectEquivalenceTests =
         && withLandings.Stale = withoutLandings.Stale
 
     testCase "empty landings/queue project to empty landing columns, stably" <| fun _ ->
-      let state = { CohortState.empty () with Members = Map.ofList [ 1, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; LastRenewal = epoch; Session = None } ] }
+      let state = { CohortState.empty () with Members = Map.ofList [ 1, { Role = JoinableRole.Implementer; Presence = MemberPresence.Present; JoinedAt = epoch; LastRenewal = epoch; Session = None; AgentName = None } ] }
       let head = { Seq = 0L<ledgerSeq>; State = state }
       let frame = Cohort.project head [||]
       frame.LandingIds |> Expect.isEmpty "no landings means an empty LandingIds column"

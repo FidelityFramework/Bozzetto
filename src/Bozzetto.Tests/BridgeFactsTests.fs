@@ -39,7 +39,8 @@ let private frame (version: int64) (members: (MemberTable.MemberId * Cohort.Join
     MemberRole = members |> List.map (fun (_, r, _, _) -> r) |> List.toArray
     MemberSeat = members |> List.map (fun (_, _, s, _) -> s) |> List.toArray
     MemberRenewal = members |> List.map (fun (_, _, _, t) -> t) |> List.toArray
-    ClaimIds = [||]; ClaimScope = [||]; ClaimHolderIndex = [||]; ClaimFence = [||]; ClaimState = [||]
+    MemberAgentName = members |> List.map (fun _ -> None) |> List.toArray
+    ClaimIds = [||]; ClaimScope = [||]; ClaimHolderIndex = [||]; ClaimHolderName = [||]; ClaimFence = [||]; ClaimState = [||]
     TestIds = [||]; Pass = [||]; Fail = [||]; Stale = [||]
     IntegrationHead = ""
     LandingIds = [||]; LandingRequesterIndex = [||]; LandingStatement = [||]; LandingCommits = [||]; LandingState = [||]

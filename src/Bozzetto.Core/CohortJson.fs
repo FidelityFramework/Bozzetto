@@ -211,6 +211,7 @@ module CohortJson =
   let commandValue (value: CohortCommand<MemberId>) =
     match value with
     | CohortCommand.Join (a, b, c) -> variant "Join" [memberValue a; roleValue b; session c]
+    | CohortCommand.JoinNamed (a, b, c, d) -> variant "JoinNamed" [memberValue a; roleValue b; session c; text d]
     | CohortCommand.Depart a -> variant "Depart" [memberValue a]
     | CohortCommand.RenewLease a -> variant "RenewLease" [memberValue a]
     | CohortCommand.Tick -> variant "Tick" []
@@ -219,6 +220,8 @@ module CohortJson =
     | CohortCommand.ReassignClaim (a, b, c) -> variant "ReassignClaim" [memberValue a; claimIdValue b; memberValue c]
     | CohortCommand.ReclaimClaim (a, b, c) -> variant "ReclaimClaim" [memberValue a; claimIdValue b; fence c]
     | CohortCommand.DelegateConductor (a, b) -> variant "DelegateConductor" [memberValue a; memberValue b]
+    | CohortCommand.PromoteConductor -> variant "PromoteConductor" []
+    | CohortCommand.ExpireOrphanedClaims -> variant "ExpireOrphanedClaims" []
     | CohortCommand.ObserveSave (a, b) -> variant "ObserveSave" [memberValue a; text b]
     | CohortCommand.RequestLanding (a, b, c, d) -> variant "RequestLanding" [memberValue a; claims b; (array text) c; text d]
     | CohortCommand.RebaseCompleted (a, b) -> variant "RebaseCompleted" [landingIdValue a; rebaseResult b]
@@ -235,6 +238,7 @@ module CohortJson =
   let readCommand value : Result<CohortCommand<MemberId>, string> =
     tagged value |> Result.bind (function
       | "Join", [a; b; c] -> map3 (fun a b c -> CohortCommand.Join(a, b, c)) (readMember a) (readRole b) (readSession c)
+      | "JoinNamed", [a; b; c; d] -> map4 (fun a b c d -> CohortCommand.JoinNamed(a, b, c, d)) (readMember a) (readRole b) (readSession c) (readText d)
       | "Depart", [a] -> readMember a |> Result.map CohortCommand.Depart
       | "RenewLease", [a] -> readMember a |> Result.map CohortCommand.RenewLease
       | "Tick", [] -> Ok CohortCommand.Tick
@@ -243,6 +247,8 @@ module CohortJson =
       | "ReassignClaim", [a; b; c] -> map3 (fun a b c -> CohortCommand.ReassignClaim(a, b, c)) (readMember a) (readClaimId b) (readMember c)
       | "ReclaimClaim", [a; b; c] -> map3 (fun a b c -> CohortCommand.ReclaimClaim(a, b, c)) (readMember a) (readClaimId b) (readFence c)
       | "DelegateConductor", [a; b] -> map2 (fun a b -> CohortCommand.DelegateConductor(a, b)) (readMember a) (readMember b)
+      | "PromoteConductor", [] -> Ok CohortCommand.PromoteConductor
+      | "ExpireOrphanedClaims", [] -> Ok CohortCommand.ExpireOrphanedClaims
       | "ObserveSave", [a; b] -> map2 (fun a b -> CohortCommand.ObserveSave(a, b)) (readMember a) (readText b)
       | "RequestLanding", [a; b; c; d] -> map4 (fun a b c d -> CohortCommand.RequestLanding(a, b, c, d)) (readMember a) (readClaims b) ((readArray readText) c) (readText d)
       | "RebaseCompleted", [a; b] -> map2 (fun a b -> CohortCommand.RebaseCompleted(a, b)) (readLandingId a) (readRebaseResult b)
@@ -264,6 +270,7 @@ module CohortJson =
     | CohortEvent.LeaseRenewed a -> variant "LeaseRenewed" [memberValue a]
     | CohortEvent.ConductorBound a -> variant "ConductorBound" [memberValue a]
     | CohortEvent.ConductorDelegated (a, b) -> variant "ConductorDelegated" [memberValue a; memberValue b]
+    | CohortEvent.ConductorPromoted (a, b) -> variant "ConductorPromoted" [memberValue a; memberValue b]
     | CohortEvent.ClaimAcquired (a, b, c, d) -> variant "ClaimAcquired" [claimIdValue a; scopeValue b; memberValue c; fence d]
     | CohortEvent.ClaimReleased (a, b, c) -> variant "ClaimReleased" [claimIdValue a; memberValue b; fence c]
     | CohortEvent.ClaimOrphaned (a, b, c) -> variant "ClaimOrphaned" [claimIdValue a; memberValue b; fence c]
@@ -287,6 +294,7 @@ module CohortJson =
       | "LeaseRenewed", [a] -> readMember a |> Result.map CohortEvent.LeaseRenewed
       | "ConductorBound", [a] -> readMember a |> Result.map CohortEvent.ConductorBound
       | "ConductorDelegated", [a; b] -> map2 (fun a b -> CohortEvent.ConductorDelegated(a, b)) (readMember a) (readMember b)
+      | "ConductorPromoted", [a; b] -> map2 (fun a b -> CohortEvent.ConductorPromoted(a, b)) (readMember a) (readMember b)
       | "ClaimAcquired", [a; b; c; d] -> map4 (fun a b c d -> CohortEvent.ClaimAcquired(a, b, c, d)) (readClaimId a) (readScope b) (readMember c) (readFence d)
       | "ClaimReleased", [a; b; c] -> map3 (fun a b c -> CohortEvent.ClaimReleased(a, b, c)) (readClaimId a) (readMember b) (readFence c)
       | "ClaimOrphaned", [a; b; c] -> map3 (fun a b c -> CohortEvent.ClaimOrphaned(a, b, c)) (readClaimId a) (readMember b) (readFence c)

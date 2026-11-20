@@ -53,15 +53,29 @@ module ComposerState =
     match snapshot.Reply.Outcome with
     | Result.Ok(Closed item) -> item.Closed && not item.CleanupPending && item.CleanupError.IsNone
     | Result.Ok(Observed status) ->
-      status.Closed && not status.CleanupPending && not status.FormatterCleanupPending && status.CleanupError.IsNone
+      status.Closed && not status.Busy && not status.CleanupPending && not status.FormatterCleanupPending && status.CleanupError.IsNone
       && status.WorkerRetirementRequired.IsNone && snapshot.WorkerError.IsNone
     | _ -> false
   let needsReconciliation snapshot =
     match snapshot.Reply.Outcome with
     | Result.Ok(Observed status) ->
       not snapshot.StatusFresh || status.Busy || status.RevocationPending || status.FormatterCleanupPending
-      || status.WorkerRetirementRequired.IsSome || (status.CleanupPending && status.CleanupError.IsNone)
+      || status.WorkerRetirementRequired.IsSome || status.CleanupPending
     | _ -> false
+  let wasClosed snapshot =
+    match snapshot.Reply.Outcome with
+    | Result.Ok(Closed _) -> true
+    | Result.Ok(Observed status) -> status.Closed
+    | _ -> false
+  let projectAndManifest snapshot =
+    match snapshot.Reply.Outcome with
+    | Result.Ok(Observed status) -> Some(status.Project, status.ManifestPath)
+    | _ -> None
+  let markWorkerRetirement reason snapshot =
+    match snapshot.Reply.Outcome with
+    | Result.Ok(Observed status) when status.WorkerRetirementRequired.IsNone ->
+      { snapshot with Reply = { snapshot.Reply with Outcome = Result.Ok(Observed { status with WorkerRetirementRequired = Some reason }) } }
+    | _ -> snapshot
   let sameState left right =
     let normalize value =
       match value.Reply.Outcome with
@@ -79,14 +93,31 @@ module LeasedLivenessSnapshot =
   let empty : LeasedLivenessSnapshot = { Serial = 0L; VerifiedAtMs = Map.empty }
 
 /// Shared typed compiler owner. JSON exists only at external client adapters.
-type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, configured: bool, beforeMonitorExit: unit -> Task, ?monitorWindow: TimeSpan, ?journalStore: Result<ComposerJournal.Store, string>) =
+type ComposerSupervisor internal (
+    factory: unit -> Task<IComposerWorker>,
+    configured: bool,
+    beforeMonitorExit: unit -> Task,
+    ?monitorWindow: TimeSpan,
+    ?journalStore: Result<ComposerJournal.Store, string>,
+    ?cleanupRetirementThreshold: TimeSpan,
+    ?utcNow: (unit -> DateTimeOffset),
+    ?providerCacheRoot: string) =
   let gate = obj ()
+  let pruneGate = obj ()
   let lifecycle = new SemaphoreSlim(1, 1)
   let lifetime = new CancellationTokenSource()
   let monitorWindow = defaultArg monitorWindow (TimeSpan.FromMinutes 8.)
+  let cleanupRetirementThreshold = defaultArg cleanupRetirementThreshold (TimeSpan.FromSeconds 30.)
+  let utcNow = defaultArg utcNow (fun () -> DateTimeOffset.UtcNow)
   let changedEvent = Event<unit>()
   let snapshots = Dictionary<string, ComposerResponse>()
   let observations = Dictionary<string, StatusObservation>()
+  let cleanupPendingSince = Dictionary<string, DateTimeOffset>()
+  let mutable inFlightOpens = 0
+  let preClosedSessions = HashSet<string>()
+  let diskBackedProjects = HashSet<string>()
+  let verifiedEpochsWithSessions = HashSet<WorkerAddress>()
+  let pendingManifestPrunes = Dictionary<WorkerAddress, ResizeArray<WorkerAddress * string * string>>()
   /// Sessions forgotten as finished, with the generation they were last seen
   /// at: a reply delayed past the close cannot bring one back. Cleared when the
   /// worker retires, since its session identities never recur.
@@ -132,31 +163,194 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
     let authority = cached (ComposerWire.session request) |> Option.map _.Reply.Authority |> Option.defaultValue (unknownAuthority request)
     ComposerState.failure authority code message
 
-  let withdrawOwned (connection: IComposerWorker) reason =
+  // Every prune names its owner: the snapshot's worker host and epoch, and its session (#37).
+  let manifestTarget (snap: ComposerResponse) : (WorkerAddress * string * string) option =
+    match ComposerState.projectAndManifest snap with
+    | Some(_, manifest) when not (String.IsNullOrWhiteSpace manifest) ->
+      Some(ComposerWire.workerAddress snap.Reply.Authority, snap.Reply.Authority.Session, manifest)
+    | _ -> None
+
+  let pruneManifests (targets: (WorkerAddress * string * string) list) =
+    // Serialize filesystem pruning (even for empty target lists in reconcileExitedEpoch) so a
+    // concurrent ProcessExited/teardown call cannot return while another thread is mid-unlink.
+    lock pruneGate (fun () ->
+      for owner, session, manifest in targets do
+        match ProviderSessionCache.tryPruneManifestPath providerCacheRoot owner session manifest with
+        | ProviderSessionCache.PruneOutcome.Pruned
+        | ProviderSessionCache.PruneOutcome.Missing
+        | ProviderSessionCache.PruneOutcome.NoCacheRoot -> ()
+        | refused -> Bozzetto.Utils.Log.warn "[provider-cache] kept %s for %s: %A" manifest session refused)
+
+  // Probe disk existence of tracked project files strictly outside lock gate.
+  let probeDeletedDiskProjects () : Set<string> =
+    let candidates =
+      lock gate (fun () ->
+        [ for session in diskBackedProjects do
+            match snapshots.TryGetValue session with
+            | true, snap ->
+              match ComposerState.projectAndManifest snap with
+              | Some(proj, _) when not (String.IsNullOrWhiteSpace proj) -> yield session, proj
+              | _ -> ()
+            | _ -> () ])
+    candidates
+    |> List.choose (fun (session, proj) -> if not (File.Exists proj) then Some session else None)
+    |> Set.ofList
+
+  let projectExistsOnDisk (snapshot: ComposerResponse) : bool =
+    match snapshot.Reply.Outcome with
+    | Result.Ok(Observed status) when not status.Closed && not (String.IsNullOrWhiteSpace status.Project) ->
+      File.Exists status.Project
+    | _ -> false
+
+  let evictSessionLocked (session: string) =
+    snapshots.Remove session |> ignore
+    observations.Remove session |> ignore
+    cleanupPendingSince.Remove session |> ignore
+    preClosedSessions.Remove session |> ignore
+    diskBackedProjects.Remove session |> ignore
+
+  let queueDeferredManifestLocked (owner: WorkerAddress) (target: WorkerAddress * string * string) =
+    match pendingManifestPrunes.TryGetValue owner with
+    | true, list -> list.Add target
+    | _ ->
+      let list = ResizeArray<WorkerAddress * string * string>()
+      list.Add target
+      pendingManifestPrunes[owner] <- list
+
+  let drainDeferredManifestsLocked (owner: WorkerAddress) (target: ResizeArray<WorkerAddress * string * string>) =
+    match pendingManifestPrunes.TryGetValue owner with
+    | true, list ->
+      target.AddRange list
+      pendingManifestPrunes.Remove owner |> ignore
+    | _ -> ()
+
+  let isAlreadyClosedLocked (session: string) (snap: ComposerResponse) =
+    preClosedSessions.Contains session || (snap.WorkerError.IsNone && ComposerState.wasClosed snap)
+
+  let ownedSessionsLocked (owner: WorkerAddress) =
+    [ for KeyValue(session, snap) in snapshots do
+        if ComposerWire.workerAddress snap.Reply.Authority = owner then yield session, snap ]
+
+  let withdrawOwnedWith (overwriteExistingError: bool) (connection: IComposerWorker) reason : bool =
     let owner = ComposerWire.workerAddress connection.Handshake.Authority
-    lock gate (fun () ->
-      for session in snapshots.Keys |> Seq.toArray do
-        if ComposerWire.workerAddress snapshots[session].Reply.Authority = owner then
-          snapshots[session] <- ComposerState.terminal reason snapshots[session]
-      forgotten.Clear())
-    changed ()
-  let remember (connection: IComposerWorker) snapshot =
+    let deletedProjects = probeDeletedDiskProjects ()
+    let unavailable = not connection.IsAlive
+    let manifestsToPrune = ResizeArray<WorkerAddress * string * string>()
+    let mutated =
+      lock gate (fun () ->
+        let verified = verifiedEpochsWithSessions.Contains owner
+        let mutable changedAny = false
+        for session, snap in ownedSessionsLocked owner do
+          let alreadyClosed = isAlreadyClosedLocked session snap
+          if unavailable && (alreadyClosed || Set.contains session deletedProjects) then
+            manifestTarget snap
+            |> Option.iter (fun target ->
+              if verified then manifestsToPrune.Add target
+              else queueDeferredManifestLocked owner target)
+            evictSessionLocked session
+            changedAny <- true
+          else
+            if alreadyClosed && preClosedSessions.Add session then changedAny <- true
+            cleanupPendingSince.Remove session |> ignore
+            let effectiveReason =
+              if overwriteExistingError then reason
+              else snap.WorkerError |> Option.defaultValue reason
+            let nextSnap = ComposerState.terminal effectiveReason snap
+            if nextSnap <> snap then
+              snapshots[session] <- nextSnap
+              changedAny <- true
+        if (ownedSessionsLocked owner).IsEmpty then verifiedEpochsWithSessions.Remove owner |> ignore
+        if isOwner connection then forgotten.Clear()
+        changedAny)
+    pruneManifests (Seq.toList manifestsToPrune)
+    if mutated then changed ()
+    mutated
+
+  let withdrawOwned connection reason =
+    withdrawOwnedWith false connection reason
+
+  let reconcileExitedEpoch (connection: IComposerWorker) =
+    let owner = ComposerWire.workerAddress connection.Handshake.Authority
+    let deletedProjects = probeDeletedDiskProjects ()
+    let manifestsToPrune = ResizeArray<WorkerAddress * string * string>()
+    let removedAny =
+      lock gate (fun () ->
+        drainDeferredManifestsLocked owner manifestsToPrune
+        let owned = ownedSessionsLocked owner
+        let evicted =
+          [ for session, snap in owned do
+              if isAlreadyClosedLocked session snap || Set.contains session deletedProjects then
+                manifestTarget snap |> Option.iter manifestsToPrune.Add
+                yield session ]
+        for session in evicted do evictSessionLocked session
+        if owned.Length > evicted.Length then verifiedEpochsWithSessions.Add owner |> ignore
+        not evicted.IsEmpty)
+    pruneManifests (Seq.toList manifestsToPrune)
+    if removedAny || manifestsToPrune.Count > 0 then changed ()
+
+  // Must be called while holding lock gate; returns (accepted, manifestToPrune) so
+  // callers perform all filesystem pruning strictly outside lock gate.
+  let rememberLocked (connection: IComposerWorker) (snapshot: ComposerResponse) (projectOnDisk: bool) : bool * (WorkerAddress * string * string) option =
     let identity = snapshot.Reply.Authority
-    lock gate (fun () ->
-      let currentEnough = cached identity.Session |> Option.forall (fun previous -> identity.Generation >= previous.Reply.Authority.Generation)
-      let notForgotten =
-        match forgotten.TryGetValue identity.Session with
-        | true, generation -> identity.Generation > generation
-        | _ -> true
-      if Result.isOk snapshot.Reply.Outcome && active connection && identity.Session <> "" && currentEnough && notForgotten
-         && ComposerWire.workerAddress identity = ComposerWire.workerAddress connection.Handshake.Authority then
-        if ComposerState.finished snapshot then
-          snapshots.Remove identity.Session |> ignore
-          observations.Remove identity.Session |> ignore
-          forgotten[identity.Session] <- identity.Generation
-        else snapshots[identity.Session] <- snapshot
-        true
-      else false)
+    let currentEnough = cached identity.Session |> Option.forall (fun previous -> identity.Generation >= previous.Reply.Authority.Generation)
+    let notForgotten =
+      match forgotten.TryGetValue identity.Session with
+      | true, generation -> identity.Generation > generation
+      | _ -> true
+    if Result.isOk snapshot.Reply.Outcome && active connection && identity.Session <> "" && currentEnough && notForgotten
+       && ComposerWire.workerAddress identity = ComposerWire.workerAddress connection.Handshake.Authority then
+      if ComposerState.finished snapshot then
+        let manifest = manifestTarget snapshot
+        evictSessionLocked identity.Session
+        forgotten[identity.Session] <- identity.Generation
+        true, manifest
+      else
+        match snapshot.Reply.Outcome with
+        | Result.Ok(Observed status) ->
+          if projectOnDisk then
+            diskBackedProjects.Add identity.Session |> ignore
+          if status.Closed then
+            preClosedSessions.Add identity.Session |> ignore
+        | _ -> ()
+        snapshots[identity.Session] <- snapshot
+        true, None
+    else false, None
+
+  let remember (connection: IComposerWorker) snapshot =
+    let projectOnDisk = projectExistsOnDisk snapshot
+    let accepted, manifestToPrune = lock gate (fun () -> rememberLocked connection snapshot projectOnDisk)
+    manifestToPrune |> Option.iter (fun m -> pruneManifests [ m ])
+    accepted
+
+  // A worker's Close acknowledgement is recorded before the caller checks that the worker is
+  // still active, so an exit racing the reply still finds the session closed (#37).
+  let recordCloseAcknowledgement (connection: IComposerWorker) (response: ComposerResponse) (closed: CloseResult) =
+    let session = response.Reply.Authority.Session
+    let owner = ComposerWire.workerAddress connection.Handshake.Authority
+    let merged =
+      lock gate (fun () ->
+        match snapshots.TryGetValue session with
+        | true, previous when ComposerWire.workerAddress previous.Reply.Authority = owner
+                              && ComposerWire.workerAddress response.Reply.Authority = owner
+                              && response.Reply.Authority.Generation >= previous.Reply.Authority.Generation ->
+          match previous.Reply.Outcome with
+          | Result.Ok(Observed status) ->
+            let updated =
+              { status with
+                  Observation = max status.Observation closed.Observation
+                  Closed = closed.Closed
+                  Current = None
+                  CleanupPending = closed.CleanupPending
+                  CleanupError = closed.CleanupError }
+            let snapshot =
+              { previous with Reply = { response.Reply with Outcome = Result.Ok(Observed updated) } }
+              |> ComposerState.projection false "Close acknowledged; status still needs observation."
+            if closed.Closed then preClosedSessions.Add session |> ignore
+            if not (active connection) then snapshots[session] <- snapshot
+            Some snapshot
+          | _ -> None
+        | _ -> None)
+    merged |> Option.iter (remember connection >> ignore)
   let uncertain connection session reason =
     lock gate (fun () ->
       match cached session with
@@ -173,6 +367,49 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
     | Some previous when identity.Generation < previous.Reply.Authority.Generation ->
       ComposerState.failure previous.Reply.Authority RefusalCode.Superseded "A newer session generation has already been observed."
     | _ -> response
+
+  // Fence unprompted worker exits under lock gate while executing StopAsync/teardown
+  // strictly outside the lock and joined by StopAsync via retirement.
+  let fenceUnpromptedExitLocked (connection: IComposerWorker) =
+    if isOwner connection && not stopped && not retiring then
+      retiring <- true
+      let tcs = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+      retirement <- Some(tcs.Task :> Task)
+      Some tcs
+    else None
+
+  let launchExitedTeardown (connection: IComposerWorker) (reason: string) (tcs: TaskCompletionSource<unit>) =
+    let _ = Task.Run<unit>(fun () -> task {
+      let mutable exited = false
+      let mutable clearedWorker = false
+      try
+        try
+          do! lifecycle.WaitAsync()
+          try
+            let shouldStop = lock gate (fun () -> isOwner connection && not stopped)
+            if shouldStop then
+              do! connection.StopAsync()
+              if connection.IsProcessAlive then invalidOp "The exited Composer process did not exit."
+              exited <- true
+              withdrawOwned connection reason |> ignore
+              // Publish the worker's removal once, even with nothing to withdraw or prune.
+              lock gate (fun () ->
+                if isOwner connection then
+                  worker <- None
+                  clearedWorker <- true)
+            else
+              exited <- true
+          finally
+            if exited then lock gate (fun () -> if not stopped then retiring <- false)
+            lifecycle.Release() |> ignore
+          if clearedWorker then changed ()
+        with error ->
+          if not (lock gate (fun () -> stopped)) then
+            withdrawOwnedWith true connection (reason + " Worker teardown failed: " + error.Message) |> ignore
+      finally
+        tcs.TrySetResult() |> ignore
+    })
+    ()
 
   let ensureWorker cancellation = task {
     do! lifecycle.WaitAsync(cancellation: CancellationToken)
@@ -200,9 +437,22 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
             return Result.Error "The Composer owner retired while its worker was opening."
           else
             connection.Exited.Add(fun reason ->
-              if lock gate (fun () -> isOwner connection && not retiring) then withdrawOwned connection reason)
+              let tcsOpt, isCurrentOwner = lock gate (fun () ->
+                let ownerMatch = isOwner connection
+                let tcs = if ownerMatch then fenceUnpromptedExitLocked connection else None
+                tcs, ownerMatch)
+              if isCurrentOwner then
+                withdrawOwned connection reason |> ignore
+              tcsOpt |> Option.iter (launchExitedTeardown connection reason))
+            connection.ProcessExited.Add(fun () ->
+              reconcileExitedEpoch connection)
             connection.InputsRevoked.Add(fun notification ->
-              let accepted = lock gate (fun () ->
+              let projectOnDisk =
+                match notification.Outcome with
+                | Result.Ok(InputsRevoked status) when not status.Closed && not (String.IsNullOrWhiteSpace status.Project) ->
+                  File.Exists status.Project
+                | _ -> false
+              let accepted, manifestToPrune = lock gate (fun () ->
                 match notification.Outcome, cached notification.Authority.Session with
                 | Result.Ok(InputsRevoked status), Some _
                     when notification.RequestId = "" && status.Current.IsNone
@@ -210,17 +460,48 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
                          && ComposerWire.workerAddress notification.Authority = ComposerWire.workerAddress connection.Handshake.Authority
                          && ((observation notification.Authority.Session).Last |> Option.forall (fun previous -> status.Observation > previous)) ->
                   let projected = { notification with Outcome = Result.Ok(Observed status) } |> ComposerState.response
-                  if remember connection projected then
+                  let ok, manifest = rememberLocked connection projected projectOnDisk
+                  if ok then
                     let prior = observation notification.Authority.Session
                     observations[notification.Authority.Session] <- { prior with Last = Some status.Observation }
-                    true
-                  else false
-                | _ -> false)
+                    true, manifest
+                  else false, None
+                | _ -> false, None)
+              manifestToPrune |> Option.iter (fun m -> pruneManifests [ m ])
               if accepted then changed ())
-            if not connection.IsAlive then withdrawOwned connection "Worker exited during startup."
+            if not connection.IsAlive then
+              let tcsOpt = lock gate (fun () -> fenceUnpromptedExitLocked connection)
+              withdrawOwned connection "Worker exited during startup." |> ignore
+              tcsOpt |> Option.iter (launchExitedTeardown connection "Worker exited during startup.")
             changed ()
             return Result.Ok connection
     finally lifecycle.Release() |> ignore
+  }
+
+  let retireOwnedAdmitted request (connection: IComposerWorker) reason prepare = task {
+    withdrawOwned connection reason |> ignore
+    do! lifecycle.WaitAsync()
+    let mutable exited = false
+    try
+      let! result = task {
+        if prepare then
+          try
+            let! reply = connection.RequestAsync(PrepareCompilerChange(ComposerWire.workerAddress connection.Handshake.Authority), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds 10.)
+            return ComposerState.response reply
+          with error -> return refusal request RefusalCode.RetirementFailed error.Message
+        else
+          return refusal request RefusalCode.ProviderRetiring reason
+      }
+      do! connection.StopAsync()
+      if connection.IsProcessAlive then invalidOp "The retired Composer process did not exit."
+      exited <- true
+      withdrawOwned connection reason |> ignore
+      lock gate (fun () -> if isOwner connection then worker <- None)
+      return result
+    finally
+      if exited then lock gate (fun () -> if not stopped then retiring <- false)
+      lifecycle.Release() |> ignore
+      changed ()
   }
 
   let retireOwned request (connection: IComposerWorker) reason prepare = task {
@@ -230,47 +511,81 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
         retiring <- true
         true)
     if not admitted then return refusal request RefusalCode.ProviderRetiring "The Composer worker is already retiring."
-    else
-      withdrawOwned connection reason
-      do! lifecycle.WaitAsync()
-      let mutable exited = false
-      try
-        let! result = task {
-          if prepare then
-            try
-              let! reply = connection.RequestAsync(PrepareCompilerChange(ComposerWire.workerAddress connection.Handshake.Authority), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds 10.)
-              return ComposerState.response reply
-            with error -> return refusal request RefusalCode.RetirementFailed error.Message
-          else
-            return refusal request RefusalCode.ProviderRetiring reason
-        }
-        do! connection.StopAsync()
-        if connection.IsProcessAlive then invalidOp "The retired Composer process did not exit."
-        exited <- true
-        lock gate (fun () -> if isOwner connection then worker <- None)
-        return result
-      finally
-        if exited then lock gate (fun () -> retiring <- false)
-        lifecycle.Release() |> ignore
-        changed ()
+    else return! retireOwnedAdmitted request connection reason prepare
   }
 
   let retire request connection = retireOwned request connection "Compiler retirement requested." true
 
+  // Fencing (retiring <- true + retirement Task slot) happens synchronously under lock gate;
+  // callers hold the gate. Withdrawal, manifest pruning and Changed notifications run in
+  // launchRetirement, strictly after the gate is released, to prevent lock inversion.
+  let fenceRetirementLocked (connection: IComposerWorker) =
+    if active connection then
+      retiring <- true
+      let tcs = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+      retirement <- Some(tcs.Task :> Task)
+      Some tcs
+    else None
+
+  let launchRetirement (connection: IComposerWorker) reason (tcs: TaskCompletionSource<unit>) =
+    let request = PrepareCompilerChange(ComposerWire.workerAddress connection.Handshake.Authority)
+    let _ = task {
+      try
+        try
+          let! _ = retireOwnedAdmitted request connection reason false
+          ()
+        with error ->
+          withdrawOwnedWith true connection (reason + " Worker retirement failed: " + error.Message) |> ignore
+      finally
+        tcs.TrySetResult() |> ignore
+    }
+    ()
+
   let escalateRetirement (connection: IComposerWorker) reason =
-    lock gate (fun () ->
-      if active connection then
-        // This hot task is owned by the supervisor, alongside its status
-        // monitors. Fencing happens synchronously before the first await.
-        let request = PrepareCompilerChange(ComposerWire.workerAddress connection.Handshake.Authority)
-        let stopping = task {
-          try
-            let! _ = retireOwned request connection reason false
-            ()
-          with error ->
-            withdrawOwned connection (reason + " Worker retirement failed: " + error.Message)
-        }
-        retirement <- Some(stopping :> Task))
+    lock gate (fun () -> fenceRetirementLocked connection)
+    |> Option.iter (launchRetirement connection reason)
+
+  // Autonomous worker retirement for closed sessions left in cleanupPending (#33). The
+  // supervisor's own threshold retires a worker only when every session it owns is closed, so
+  // closing one session never withdraws a sibling's open or building session. A session whose
+  // post-drain disposal hangs is retired through the worker's sticky WorkerRetirementRequired
+  // (ProviderSession), which refresh honors whatever the siblings are doing.
+  let checkCleanupRetirement (connection: IComposerWorker) =
+    let closedIdle snapshot =
+      match snapshot.Reply.Outcome with
+      | Result.Ok(Observed status) -> snapshot.StatusFresh && status.Closed && not status.Busy
+      | _ -> false
+    let closedPending snapshot =
+      match snapshot.Reply.Outcome with
+      | Result.Ok(Observed status) -> closedIdle snapshot && status.CleanupPending
+      | _ -> false
+    let fenced =
+      lock gate (fun () ->
+        if not (active connection) then None
+        else
+          let now = utcNow ()
+          let owned = ownedSessionsLocked (ComposerWire.workerAddress connection.Handshake.Authority)
+          // One explicit pass owns this worker's cleanup clocks: start new ones, drop settled ones.
+          for session, snapshot in owned do
+            if not (closedPending snapshot) then cleanupPendingSince.Remove session |> ignore
+            elif not (cleanupPendingSince.ContainsKey session) then cleanupPendingSince[session] <- now
+          let expired =
+            owned |> List.exists (fun (session, snapshot) ->
+              closedPending snapshot && now - cleanupPendingSince[session] >= cleanupRetirementThreshold)
+          let allClosedIdle = not owned.IsEmpty && owned |> List.forall (snd >> closedIdle)
+          if inFlightOpens <> 0 || not (expired && allClosedIdle) then None
+          else
+            let reason = "All Composer sessions are closed and cleanupPending exceeded threshold; retiring compiler worker to reclaim resident memory."
+            fenceRetirementLocked connection
+            |> Option.map (fun tcs ->
+              for session, snapshot in owned do
+                if closedPending snapshot then snapshots[session] <- ComposerState.markWorkerRetirement reason snapshot
+              reason, tcs))
+    match fenced with
+    | Some(reason, tcs) ->
+      changed ()
+      launchRetirement connection reason tcs
+    | None -> ()
 
   let refresh (connection: IComposerWorker) session cancellation = task {
     let started = lock gate (fun () -> observation session)
@@ -284,20 +599,25 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
       let! reply = connection.RequestAsync(Status(address connection session), cancellation)
       match reply.Outcome with
       | Result.Ok(Observed status) ->
-        let observed = lock gate (fun () ->
+        let projectOnDisk = not status.Closed && not (String.IsNullOrWhiteSpace status.Project) && File.Exists status.Project
+        let observed, manifestToPrune = lock gate (fun () ->
           let current = observation session
           if applicable () && (current.Last |> Option.forall (fun previous -> status.Observation > previous)) && reply.Authority.Session = session then
             let projected = ComposerState.response reply |> ComposerState.projection (current.Active = 0) "Session activity is still in progress."
-            if remember connection projected then
+            let ok, manifest = rememberLocked connection projected projectOnDisk
+            if ok then
               observations[session] <- { current with Last = Some status.Observation }
-              Some projected
-            else None
-          else None)
+              Some projected, manifest
+            else None, None
+          else None, None)
+        manifestToPrune |> Option.iter (fun m -> pruneManifests [ m ])
         // Retirement is a sticky worker-owned fact. An overlapping operation
         // may make this projection stale, but cannot revoke that safety signal.
         if reply.Authority.Session = session
            && ComposerWire.workerAddress reply.Authority = ComposerWire.workerAddress connection.Handshake.Authority then
-          status.WorkerRetirementRequired |> Option.iter (escalateRetirement connection)
+          match status.WorkerRetirementRequired with
+          | Some reason -> escalateRetirement connection reason
+          | None -> checkCleanupRetirement connection
         return observed |> Option.defaultWith (fun () -> ComposerState.failure reply.Authority RefusalCode.Superseded "Session activity or a newer observation superseded this read.")
       | Result.Ok _ -> return raise (InvalidDataException "Worker returned a non-status reply to a status request.")
       | Result.Error _ ->
@@ -331,6 +651,7 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
               let previous = cached session
               if lock gate (fun () -> active connection) then
                 try let! _ = refresh connection session deadline.Token in () with _ -> ()
+                checkCleanupRetirement connection
               match previous, cached session with
               | Some before, Some after when not (ComposerState.sameState before after) -> changed ()
               | _ -> ()
@@ -348,7 +669,7 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
             let ownedCleanup =
               cached session |> Option.exists (fun snapshot ->
                 match snapshot.Reply.Outcome with
-                | Result.Ok(Observed status) -> status.FormatterCleanupPending
+                | Result.Ok(Observed status) -> status.FormatterCleanupPending || status.CleanupPending
                 | _ -> false)
             let renew = deadline.IsCancellationRequested && (ownedCleanup || (observation session).Active > 0)
             not lifetime.IsCancellationRequested && active connection && needed ()
@@ -600,75 +921,96 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
         return refusal request code message
       }
       try
-        let! selected =
-          if operation = Operation.Open then ensureWorker cancellation
-          else Task.FromResult(lock gate (fun () -> match worker with Some connection when active connection -> Result.Ok connection | _ -> Result.Error "No active Composer worker owns this operation."))
-        match selected with
-        | Result.Error message -> return refusal request RefusalCode.ProviderUnavailable message
-        | Result.Ok connection ->
-          selectedOwner <- Some connection
-          let workerAddress = ComposerWire.workerAddress connection.Handshake.Authority
-          if operation <> Operation.Open && target <> Some workerAddress then
-            return refusal request RefusalCode.WrongAuthority "Use the owning host and epoch from the Composer session response."
-          elif operation = Operation.PrepareCompilerChange then return! retire request connection
-          elif operation <> Operation.Open && String.IsNullOrWhiteSpace resolvedSession then
-            return refusal request RefusalCode.InvalidRequest "An explicit Composer session is required."
-          else
-            cancellation.ThrowIfCancellationRequested()
-            let body = match request with Open(_, project) -> Open(workerAddress, project) | _ -> request
-            let operationCancellation = if operation = Operation.Open then CancellationToken.None else cancellation
-            openDispatched <- operation = Operation.Open
-            let! response = task {
-              if operation = Operation.Status then return! refresh connection resolvedSession operationCancellation
-              else
-                activity connection resolvedSession 1
-                // A held mutation can initiate formatter retirement. Observe
-                // that owned cleanup while its original reply is still pending.
-                if resolvedSession <> "" then reconcile connection resolvedSession
-                try
-                  let! reply = connection.RequestAsync(body, operationCancellation)
-                  return ComposerState.response reply
-                finally activity connection resolvedSession -1
-            }
-            let session = response.Reply.Authority.Session
-            resolvedSession <- session
-            if not (lock gate (fun () -> active connection)) then
-              return ComposerState.failure response.Reply.Authority RefusalCode.Closed "The response belongs to a retired worker."
+        try
+          let! selected =
+            if operation = Operation.Open then ensureWorker cancellation
+            else Task.FromResult(lock gate (fun () -> match worker with Some connection when active connection -> Result.Ok connection | _ -> Result.Error "No active Composer worker owns this operation."))
+          match selected with
+          | Result.Error message -> return refusal request RefusalCode.ProviderUnavailable message
+          | Result.Ok connection ->
+            selectedOwner <- Some connection
+            let workerAddress = ComposerWire.workerAddress connection.Handshake.Authority
+            if operation <> Operation.Open && target <> Some workerAddress then
+              return refusal request RefusalCode.WrongAuthority "Use the owning host and epoch from the Composer session response."
+            elif operation = Operation.PrepareCompilerChange then return! retire request connection
+            elif operation <> Operation.Open && String.IsNullOrWhiteSpace resolvedSession then
+              return refusal request RefusalCode.InvalidRequest "An explicit Composer session is required."
             else
-              if session <> "" then
-                if operation <> Operation.Status then
-                  match response.Reply.Outcome with
-                  | Result.Ok(Opened opened) ->
-                    let status: SessionSnapshot =
-                      { Observation = opened.Observation; Project = opened.Project; ManifestPath = opened.ManifestPath
-                        Closed = false; Busy = false; Current = None; RevocationPending = false; BackendError = None; FormatterError = None; FormatterCleanupPending = false; WorkerRetirementRequired = None; CleanupPending = false; CleanupError = None }
-                    { response with Reply = { response.Reply with Outcome = Result.Ok(Observed status) } }
-                    |> ComposerState.projection false "Initial status has not yet been read." |> remember connection |> ignore
-                  | Result.Ok _ ->
-                    cached session |> Option.iter (fun previous ->
-                      { previous with Reply = { previous.Reply with Authority = response.Reply.Authority } }
-                      |> ComposerState.projection false "Session status requires refresh." |> remember connection |> ignore)
-                  | _ -> ()
-                  try let! _ = refresh connection session CancellationToken.None in () with _ -> ()
-                reconcile connection session
-              if not (lock gate (fun () -> active connection)) then
-                return ComposerState.failure response.Reply.Authority RefusalCode.Closed "The response belongs to a retired worker."
+              cancellation.ThrowIfCancellationRequested()
+              let body = match request with Open(_, project) -> Open(workerAddress, project) | _ -> request
+              let operationCancellation = if operation = Operation.Open then CancellationToken.None else cancellation
+              let admitted =
+                lock gate (fun () ->
+                  if operation <> Operation.Open then true
+                  elif not (active connection) then false
+                  else
+                    inFlightOpens <- inFlightOpens + 1
+                    openDispatched <- true
+                    true)
+              if not admitted then
+                return refusal request RefusalCode.ProviderRetiring "The Composer worker is retiring."
               else
-                if operation <> Operation.Status then changed ()
-                return stale response
-      with
-      | :? OperationCanceledException -> return! interrupted RefusalCode.Canceled "The caller canceled this operation."
-      | :? TimeoutException as error ->
-        match selectedOwner with
-        | Some connection when openDispatched && resolvedSession = "" ->
-          try
-            let! _ = retire request connection
-            return refusal request RefusalCode.Timeout (error.Message + " Worker retired because the open outcome was unknown.")
-          with cleanup -> return refusal request RefusalCode.RetirementFailed (error.Message + " Worker retirement failed: " + cleanup.Message)
-        | _ -> return! interrupted RefusalCode.Timeout error.Message
-      | error ->
-        changed ()
-        return refusal request RefusalCode.ProviderUnavailable error.Message
+                let! response = task {
+                  if operation = Operation.Status then return! refresh connection resolvedSession operationCancellation
+                  else
+                    activity connection resolvedSession 1
+                    // A held mutation can initiate formatter retirement. Observe
+                    // that owned cleanup while its original reply is still pending.
+                    if resolvedSession <> "" then reconcile connection resolvedSession
+                    try
+                      let! reply = connection.RequestAsync(body, operationCancellation)
+                      return ComposerState.response reply
+                    finally activity connection resolvedSession -1
+                }
+                let session = response.Reply.Authority.Session
+                resolvedSession <- session
+                match response.Reply.Outcome with
+                | Result.Ok(Closed closed) when session <> "" -> recordCloseAcknowledgement connection response closed
+                | _ -> ()
+                if not (lock gate (fun () -> active connection)) then
+                  if not connection.IsAlive then withdrawOwned connection "The Composer worker disconnected." |> ignore
+                  return ComposerState.failure response.Reply.Authority RefusalCode.Closed "The response belongs to a retired worker."
+                else
+                  if session <> "" then
+                    if operation <> Operation.Status then
+                      match response.Reply.Outcome with
+                      | Result.Ok(Opened opened) ->
+                        let status: SessionSnapshot =
+                          { Observation = opened.Observation; Project = opened.Project; ManifestPath = opened.ManifestPath
+                            Closed = false; Busy = false; Current = None; RevocationPending = false; BackendError = None; FormatterError = None; FormatterCleanupPending = false; WorkerRetirementRequired = None; CleanupPending = false; CleanupError = None }
+                        { response with Reply = { response.Reply with Outcome = Result.Ok(Observed status) } }
+                        |> ComposerState.projection false "Initial status has not yet been read." |> remember connection |> ignore
+                      // Already recorded by recordCloseAcknowledgement before the liveness check.
+                      | Result.Ok(Closed _) -> ()
+                      | Result.Ok _ ->
+                        cached session |> Option.iter (fun previous ->
+                          { previous with Reply = { previous.Reply with Authority = response.Reply.Authority } }
+                          |> ComposerState.projection false "Session status requires refresh." |> remember connection |> ignore)
+                      | _ -> ()
+                      try let! _ = refresh connection session CancellationToken.None in () with _ -> ()
+                    reconcile connection session
+                  if not (lock gate (fun () -> active connection)) then
+                    return ComposerState.failure response.Reply.Authority RefusalCode.Closed "The response belongs to a retired worker."
+                  else
+                    if operation <> Operation.Status then changed ()
+                    return stale response
+        with
+        | :? OperationCanceledException -> return! interrupted RefusalCode.Canceled "The caller canceled this operation."
+        | :? TimeoutException as error ->
+          match selectedOwner with
+          | Some connection when openDispatched && resolvedSession = "" ->
+            try
+              let! _ = retire request connection
+              return refusal request RefusalCode.Timeout (error.Message + " Worker retired because the open outcome was unknown.")
+            with cleanup -> return refusal request RefusalCode.RetirementFailed (error.Message + " Worker retirement failed: " + cleanup.Message)
+          | _ -> return! interrupted RefusalCode.Timeout error.Message
+        | error ->
+          changed ()
+          return refusal request RefusalCode.ProviderUnavailable error.Message
+      finally
+        if openDispatched then
+          lock gate (fun () -> inFlightOpens <- inFlightOpens - 1)
+          selectedOwner |> Option.iter checkCleanupRetirement
   }
 
   member _.SessionsAsync(cancellation: CancellationToken): Task<ComposerDirectory> = task {
@@ -676,14 +1018,38 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
     match connection with
     | Some current when current.IsAlive ->
       let owner = ComposerWire.workerAddress current.Handshake.Authority
-      let relevant = lock gate (fun () -> owned |> Array.filter (fun session -> ComposerWire.workerAddress snapshots[session].Reply.Authority = owner))
+      let relevant = lock gate (fun () -> owned |> Array.filter (fun session -> snapshots.ContainsKey session && ComposerWire.workerAddress snapshots[session].Reply.Authority = owner))
       let pending = relevant |> Array.map (fun session -> task {
         try let! _ = refresh current session cancellation in () with _ -> ()
         reconcile current session
       })
       let! _ = Task.WhenAll pending
-      ()
+      checkCleanupRetirement current
+    | Some current ->
+      withdrawOwned current "The Composer worker disconnected." |> ignore
     | _ -> ()
+    // Evict dead-epoch closed sessions and closed/withdrawn sessions whose disk .fidproj was deleted (#37).
+    let deletedProjects = probeDeletedDiskProjects ()
+    let manifestsToPrune = ResizeArray<WorkerAddress * string * string>()
+    let removedDead =
+      lock gate (fun () ->
+        let liveOwner = worker |> Option.filter _.IsAlive |> Option.map (fun w -> ComposerWire.workerAddress w.Handshake.Authority)
+        let mutable removed = false
+        for session in snapshots.Keys |> Seq.toArray do
+          let snap = snapshots[session]
+          let belongsToLive = liveOwner |> Option.exists (fun lo -> ComposerWire.workerAddress snap.Reply.Authority = lo)
+          if not belongsToLive then
+            if isAlreadyClosedLocked session snap || Set.contains session deletedProjects then
+              let epoch = ComposerWire.workerAddress snap.Reply.Authority
+              manifestTarget snap |> Option.iter (fun target ->
+                if verifiedEpochsWithSessions.Contains epoch then manifestsToPrune.Add target
+                else queueDeferredManifestLocked epoch target)
+              evictSessionLocked session
+              if (ownedSessionsLocked epoch).IsEmpty then verifiedEpochsWithSessions.Remove epoch |> ignore
+              removed <- true
+        removed)
+    pruneManifests (Seq.toList manifestsToPrune)
+    if removedDead then changed ()
     return directory ()
   }
 
@@ -703,7 +1069,7 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
       worker, retirement)
     lifetime.Cancel()
     if ownedRetirement |> Option.forall _.IsCompleted then
-      connection |> Option.iter (fun current -> withdrawOwned current "Daemon stopped.")
+      connection |> Option.iter (fun current -> withdrawOwned current "Daemon stopped." |> ignore)
     do! lifecycle.WaitAsync()
     try
       match lock gate (fun () -> worker) with
@@ -711,12 +1077,13 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
         try
           do! current.StopAsync()
           if current.IsProcessAlive then invalidOp "The stopped Composer process did not exit."
+          withdrawOwned current "Daemon stopped." |> ignore
           lock gate (fun () -> worker <- None)
         with error ->
           // A terminal stop task can still describe a live, fenced process.
           // Keep its ownership and evidence while joining the other children.
           failures.Add error
-          withdrawOwned current ("Daemon shutdown could not retire the Composer worker: " + error.Message)
+          withdrawOwnedWith true current ("Daemon shutdown could not retire the Composer worker: " + error.Message) |> ignore
       | None -> ()
     finally lifecycle.Release() |> ignore
     let owned = lock gate (fun () -> monitors.Values |> Seq.map (fun value -> value.Task :> Task) |> Seq.toArray)
@@ -735,16 +1102,17 @@ type ComposerSupervisor internal (factory: unit -> Task<IComposerWorker>, config
 module ComposerSupervisor =
   let disabled () = ComposerSupervisor((fun () -> Task.FromException<IComposerWorker>(InvalidOperationException "Composer is not configured.")), false)
   let private createFromEnvironment journalStore =
+    let providerCache = ProviderSessionCache.defaultRoot ()
     let environment name = Environment.GetEnvironmentVariable name |> Option.ofObj |> Option.defaultValue ""
     let worker = environment "BOZZETTO_COMPOSER_WORKER"
     if String.IsNullOrWhiteSpace worker then
       ComposerSupervisor((fun () -> Task.FromException<IComposerWorker>(InvalidOperationException "Composer is not configured.")), false,
-        (fun () -> Task.CompletedTask), ?journalStore = journalStore)
+        (fun () -> Task.CompletedTask), ?journalStore = journalStore, providerCacheRoot = providerCache)
     else
       let dotnet = match environment "DOTNET_HOST_PATH" with value when not (String.IsNullOrWhiteSpace value) -> value | _ -> "dotnet"
       let cache = match environment "XDG_CACHE_HOME" with value when not (String.IsNullOrWhiteSpace value) && Path.IsPathFullyQualified value -> value | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".cache")
       ComposerSupervisor((fun () -> ComposerWorkerClient.start { WorkerPath = worker; DotnetPath = dotnet; EvidenceDirectory = Path.Combine(cache, "bozzetto", "composer-workers", Guid.NewGuid().ToString("N")) }), true,
-        (fun () -> Task.CompletedTask), ?journalStore = journalStore)
+        (fun () -> Task.CompletedTask), ?journalStore = journalStore, providerCacheRoot = providerCache)
 
   let fromEnvironment () = createFromEnvironment None
   let fromEnvironmentWithJournal dbPath = createFromEnvironment (Some(ComposerJournal.openStore dbPath))

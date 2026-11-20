@@ -66,6 +66,9 @@ let private genCommand : Gen<CohortCommand<MemberId>> =
     Gen.map3 (fun by c t -> CohortCommand.ReassignClaim(by, c, t)) genMember genClaimId genMember
     Gen.map3 (fun m c f -> CohortCommand.ReclaimClaim(m, c, f)) genMember genClaimId genFence
     Gen.map2 (fun by t -> CohortCommand.DelegateConductor(by, t)) genMember genMember
+    Gen.constant CohortCommand.PromoteConductor
+    Gen.constant CohortCommand.ExpireOrphanedClaims
+    Gen.map3 (fun m r s -> CohortCommand.JoinNamed(m, r, s, "agent-a")) genMember genRole genSessionOpt
     Gen.map2 (fun m p -> CohortCommand.ObserveSave(m, p)) genMember (Gen.elements [ "P.fs"; "Q.fs" ])
     (gen {
       let! r = genMember
@@ -129,6 +132,7 @@ let private genEvent : Gen<CohortEvent<MemberId>> =
     Gen.map CohortEvent.LeaseRenewed genMember
     Gen.map CohortEvent.ConductorBound genMember
     Gen.map2 (fun f t -> CohortEvent.ConductorDelegated(f, t)) genMember genMember
+    Gen.map2 (fun p n -> CohortEvent.ConductorPromoted(p, n)) genMember genMember
     (gen {
       let! cid = genClaimId
       let! scope = genScope
@@ -301,13 +305,17 @@ let private expectedState : CohortState<MemberId> =
         scenarioAlice,
         { Role = JoinableRole.Implementer
           Presence = MemberPresence.Present
+          JoinedAt = scenarioClock0
           LastRenewal = scenarioClock0
-          Session = Some "sess-alice" }
+          Session = Some "sess-alice"
+          AgentName = None }
         scenarioBob,
         { Role = JoinableRole.Verifier
           Presence = MemberPresence.Present
+          JoinedAt = scenarioClock0.AddMinutes 1.0
           LastRenewal = scenarioClock0.AddMinutes 3.0
-          Session = Some "sess-bob" }
+          Session = Some "sess-bob"
+          AgentName = None }
       ]
     Claims =
       Map.ofList [
@@ -317,7 +325,8 @@ let private expectedState : CohortState<MemberId> =
           Scope = ClaimScope.File "Foo.fs"
           Purpose = purpose
           Since = scenarioClock0.AddMinutes 2.0
-          State = ClaimState.Held scenarioAlice }
+          State = ClaimState.Held scenarioAlice
+          HolderName = None }
       ]
     Landings =
       Map.ofList [

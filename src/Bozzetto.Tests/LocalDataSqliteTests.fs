@@ -152,8 +152,7 @@ let localDataSqliteTests =
         let ada = MemberTable.MemberId.Mcp "ada"
         let joined, join = ledgerEntry 0L t0 (CohortState.empty ()) (CohortCommand.Join(ada, JoinableRole.Implementer, None))
         let _, depart = ledgerEntry 1L (t0.AddHours 1.0) joined (CohortCommand.Depart ada)
-        port.Append join
-        port.Append depart
+        port.AppendBatch [ join; depart ] |> Expect.isOk "append finished cohort entries"
         CohortLedgerSqlite.Sqlite.pruneFinished (TimeSpan.FromDays 7.0) now.UtcDateTime path
         |> Expect.equal "the finished cohort is cleared" (LocalDataRetention.LedgerDecision.Clear(depart.Clock, 2))
         port.ReadAll() |> Expect.isEmpty "nothing left on disk"
@@ -165,7 +164,7 @@ let localDataSqliteTests =
         let port = CohortLedgerSqlite.Sqlite.create path
         let ada = MemberTable.MemberId.Mcp "ada"
         let _, join = ledgerEntry 0L (now.UtcDateTime.AddDays -300.0) (CohortState.empty ()) (CohortCommand.Join(ada, JoinableRole.Implementer, None))
-        port.Append join
+        port.AppendBatch [ join ] |> Expect.isOk "append running cohort entry"
         CohortLedgerSqlite.Sqlite.pruneFinished (TimeSpan.FromDays 7.0) now.UtcDateTime path
         |> Expect.equal "kept" (LocalDataRetention.LedgerDecision.KeepActive(LocalDataRetention.CohortActivity.Active(1, 0, 0)))
         port.ReadAll() |> List.length |> Expect.equal "the row is still there" 1)

@@ -56,6 +56,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   let mutable formatterErrorsTruncated = false
   let mutable cleanupComplete = false
   let mutable cleanupError: string option = None
+  let mutable closeCleanupStartedAt: int64 option = None
   let mutable closeTask: Task<Reply<unit>> option = None
   // The core keeps protocol tombstones for the epoch. Bound the epoch rather
   // than silently discard their duplicate/conflict evidence. Reopen on refusal.
@@ -130,7 +131,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
       ]
   // This deadline changes supervision, never physical ownership. The existing
   // daemon status monitor observes it and retires the whole worker process.
-  let checkFormatterCleanupDeadline () =
+  let checkCleanupDeadlines () =
     if workerRetirementRequired.IsNone then
       let now = cleanupTimestamp ()
       if formatterCleanups.Values |> Seq.exists (fun started ->
@@ -139,11 +140,18 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
         workerRetirementRequired <- Some reason
         current <- None
         recordFormatterError reason
+      elif closed && not cleanupComplete then
+        match closeCleanupStartedAt with
+        | Some started when Diagnostics.Stopwatch.GetElapsedTime(started, now) >= TimeSpan.FromSeconds 30. ->
+          let reason = "Session cleanup exceeded 30 seconds; the supervisor must retire this compiler worker."
+          workerRetirementRequired <- Some reason
+          current <- None
+        | _ -> ()
   let finishFormatterCleanup key = lock gate (fun () ->
-    checkFormatterCleanupDeadline ()
+    checkCleanupDeadlines ()
     formatterCleanups.Remove key |> ignore)
   let obsolete (expected: Authority) =
-    checkFormatterCleanupDeadline ()
+    checkCleanupDeadlines ()
     if closed || workerRetirementRequired.IsSome then Some(refuse "closed" "Open a fresh provider session after compiler replacement.")
     elif generation <> expected.Generation then Some(refuse "superseded" "A newer reservation withdrew this operation's authority.")
     else None
@@ -451,7 +459,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
   member _.Identity = lock gate authority
 
   member _.WorkerRetirementRequired = lock gate (fun () ->
-    checkFormatterCleanupDeadline ()
+    checkCleanupDeadlines ()
     workerRetirementRequired)
 
   member _.Status() =
@@ -464,7 +472,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
       else
         drainObservations ()
         recordFormatterDiagnostics diagnostics
-        checkFormatterCleanupDeadline ()
+        checkCleanupDeadlines ()
         // Number the captured value, not a caller's dispatch or reply order.
         observationSerial <- observationSerial + 1UL
         reply (Result.Ok {
@@ -675,6 +683,9 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
         let! formatterJoined = formatterClose |> Async.AwaitTask
         let formatterDiagnostics = formatter.DrainDiagnostics()
         do! invocation.WaitAsync() |> Async.AwaitTask
+        // The session cleanup deadline measures disposal only. Compiler drain above may
+        // legitimately run for a whole build; it is never counted against the deadline.
+        lock gate (fun () -> if not cleanupComplete then closeCleanupStartedAt <- Some(cleanupTimestamp ()))
         try
           let disposalError = try backend.Dispose(); None with error -> Some error.Message
           let error =
@@ -687,6 +698,7 @@ type ProviderSession<'Ticket>(host, id, epoch, project, backend: IProjectBackend
             recordFormatterDiagnostics formatterDiagnostics
             cleanupError <- error
             cleanupComplete <- error.IsNone
+            if cleanupComplete then closeCleanupStartedAt <- None
             evaluators.Clear()
             reply (match error with Some message -> refuse "cleanup_failed" message | None -> Result.Ok ()))
         finally invocation.Release() |> ignore

@@ -64,40 +64,45 @@ module LinuxProcessEdge =
                 yield Path.Combine(dir, "setsid") ]
       candidates |> List.tryFind File.Exists
 
-  let private readLinuxProcWith (bootMsOpt: int64 option) (clkTck: int64) (includeCmdline: bool) (pid: int) : ProcessWatchdog.ProcProbeObservation =
+  let private readLinuxProcWith (procRoot: string) (readText: string -> string) (bootMsOpt: int64 option) (clkTck: int64) (includeCmdline: bool) (strictCmdline: bool) (pid: int) : ProcessWatchdog.ProcProbeObservation =
     if not (OperatingSystem.IsLinux()) || pid <= 0 then ProcessWatchdog.ProcProbeObservation.Absent
     else
-      let statPath = sprintf "/proc/%d/stat" pid
+      let pidDir = Path.Combine(procRoot, string pid)
+      let statPath = Path.Combine(pidDir, "stat")
       try
-        let statText = File.ReadAllText statPath
+        let statText = readText statPath
         match ProcessWatchdog.parseProcStat (int64 Environment.SystemPageSize) bootMsOpt clkTck statText with
         | None -> ProcessWatchdog.ProcProbeObservation.Inaccessible(sprintf "Malformed /proc/%d/stat" pid)
         | Some record ->
           if not includeCmdline then ProcessWatchdog.ProcProbeObservation.Present record
           else
-            let rawCmd =
-              try File.ReadAllText(sprintf "/proc/%d/cmdline" pid)
-              with
-              | :? FileNotFoundException | :? DirectoryNotFoundException -> ""
-              | _ -> ""
-            let argv = ProcessWatchdog.parseCmdlineArgv rawCmd
-            let cmdline = String.concat " " argv
-            ProcessWatchdog.ProcProbeObservation.Present { record with Cmdline = cmdline; Argv = argv }
+            let cmdlinePath = Path.Combine(pidDir, "cmdline")
+            try
+              let argv = readText cmdlinePath |> ProcessWatchdog.parseCmdlineArgv
+              let cmdline = String.concat " " argv
+              ProcessWatchdog.ProcProbeObservation.Present { record with Cmdline = cmdline; Argv = argv }
+            with
+            | :? FileNotFoundException
+            | :? DirectoryNotFoundException -> ProcessWatchdog.ProcProbeObservation.Absent
+            | :? IOException as ex when ex.HResult = Esrch -> ProcessWatchdog.ProcProbeObservation.Absent
+            | (:? UnauthorizedAccessException | :? IOException) when not strictCmdline ->
+              ProcessWatchdog.ProcProbeObservation.Present { record with Cmdline = ""; Argv = [] }
       with
       | :? FileNotFoundException
       | :? DirectoryNotFoundException -> ProcessWatchdog.ProcProbeObservation.Absent
       | :? UnauthorizedAccessException as ex -> ProcessWatchdog.ProcProbeObservation.Inaccessible ex.Message
+      | :? IOException as ex when ex.HResult = Esrch -> ProcessWatchdog.ProcProbeObservation.Absent
       | :? IOException as ex -> ProcessWatchdog.ProcProbeObservation.Inaccessible ex.Message
 
   let readLinuxProc (pid: int) : ProcessWatchdog.ProcRecord option =
     let clkTck = clockTicksPerSecond () |> Option.defaultValue 0L
-    match readLinuxProcWith (readBootTimeMs ()) clkTck true pid with
+    match readLinuxProcWith "/proc" File.ReadAllText (readBootTimeMs ()) clkTck true false pid with
     | ProcessWatchdog.ProcProbeObservation.Present proc -> Some proc
     | ProcessWatchdog.ProcProbeObservation.Absent
     | ProcessWatchdog.ProcProbeObservation.Inaccessible _ -> None
 
   // Bounded /proc enumeration returning explicit ProcScanError on failure or truncation.
-  let readLinuxProcesses (includeCmdline: bool) : Result<ProcessWatchdog.ProcRecord list, ProcessWatchdog.ProcScanError> =
+  let private readLinuxProcessesCore procRoot readText (includeCmdline: bool) (strict: bool) : Result<ProcessWatchdog.ProcRecord list, ProcessWatchdog.ProcScanError> =
     if not (OperatingSystem.IsLinux()) then Error ProcessWatchdog.ProcScanError.UnsupportedPlatform
     else
       let bootMsOpt = readBootTimeMs ()
@@ -105,8 +110,9 @@ module LinuxProcessEdge =
       let results = ResizeArray<ProcessWatchdog.ProcRecord>()
       let mutable seenNumeric = 0
       let mutable truncated = false
+      let mutable inaccessible = None
       try
-        for dir in Directory.EnumerateDirectories "/proc" do
+        for dir in Directory.EnumerateDirectories procRoot do
           let name = Path.GetFileName dir
           match Int32.TryParse name with
           | true, pid when pid > 0 ->
@@ -114,22 +120,40 @@ module LinuxProcessEdge =
             if seenNumeric > ProcessWatchdog.maxProcScanEntries then
               truncated <- true
             elif not truncated then
-              match readLinuxProcWith bootMsOpt clkTck includeCmdline pid with
+              match readLinuxProcWith procRoot readText bootMsOpt clkTck includeCmdline strict pid with
               | ProcessWatchdog.ProcProbeObservation.Present proc -> results.Add proc
-              | ProcessWatchdog.ProcProbeObservation.Absent
-              | ProcessWatchdog.ProcProbeObservation.Inaccessible _ -> ()
+              | ProcessWatchdog.ProcProbeObservation.Absent -> ()
+              | ProcessWatchdog.ProcProbeObservation.Inaccessible reason ->
+                if strict && inaccessible.IsNone then inaccessible <- Some reason
           | _ -> ()
         if truncated then Error(ProcessWatchdog.ProcScanError.ScanTruncated ProcessWatchdog.maxProcScanEntries)
-        else Ok(results |> Seq.toList)
+        else
+          match inaccessible with
+          | Some reason -> Error(ProcessWatchdog.ProcScanError.ProcDirectoryInaccessible reason)
+          | None -> Ok(results |> Seq.toList)
       with ex ->
         Error(ProcessWatchdog.ProcScanError.ProcDirectoryInaccessible ex.Message)
+
+  let internal readLinuxProcessesFrom procRoot readText (includeCmdline: bool) =
+    readLinuxProcessesCore procRoot readText includeCmdline false
+
+  let readLinuxProcesses includeCmdline =
+    readLinuxProcessesFrom "/proc" File.ReadAllText includeCmdline
+
+  // Fail-closed /proc scan requiring readable stat and cmdline across every live PID
+  // (used exclusively by startup cache cleanup when no live worker may be missed).
+  let internal readLinuxProcessesFromStrict procRoot readText =
+    readLinuxProcessesCore procRoot readText true true
+
+  let readLinuxProcessesStrict () =
+    readLinuxProcessesFromStrict "/proc" File.ReadAllText
 
   let probeProcessLiveness (pid: int) (recordedStartMs: int64) : ProcessWatchdog.ProcessLiveness =
     if pid <= 0 then ProcessWatchdog.ProcessLiveness.Exited
     elif OperatingSystem.IsLinux() then
       match readBootTimeMs (), clockTicksPerSecond () with
       | Some bootMs, Some clkTck ->
-        let observed = readLinuxProcWith (Some bootMs) clkTck false pid
+        let observed = readLinuxProcWith "/proc" File.ReadAllText (Some bootMs) clkTck false false pid
         ProcessWatchdog.evaluateProcessLiveness recordedStartMs observed
       | None, _ ->
         ProcessWatchdog.ProcessLiveness.Unknown "Could not read /proc/stat btime to verify process start time."
@@ -359,7 +383,7 @@ module LinuxProcessEdge =
         return ProcessWatchdog.TerminationOutcome.Unverified ProcessWatchdog.ProcScanError.UnsupportedPlatform
       else
         let clkTck = clockTicksPerSecond () |> Option.defaultValue 0L
-        match readLinuxProcWith (readBootTimeMs ()) clkTck false rootPid with
+        match readLinuxProcWith "/proc" File.ReadAllText (readBootTimeMs ()) clkTck false false rootPid with
         | ProcessWatchdog.ProcProbeObservation.Inaccessible detail ->
           return ProcessWatchdog.TerminationOutcome.Unverified(ProcessWatchdog.ProcScanError.ProcDirectoryInaccessible detail)
         | ProcessWatchdog.ProcProbeObservation.Absent ->

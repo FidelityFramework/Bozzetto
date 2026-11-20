@@ -92,8 +92,10 @@ let private mkSessionInfo (id: Bozzetto.WorkerProtocol.SessionId) (workingDirect
 let private mkAliceMember (sid: Bozzetto.WorkerProtocol.SessionId) : Bozzetto.Cohort.MemberRecord =
   { Role = Bozzetto.Cohort.JoinableRole.Implementer
     Presence = Bozzetto.Cohort.MemberPresence.Present
+    JoinedAt = clock
     LastRenewal = clock
-    Session = Some(Bozzetto.WorkerProtocol.SessionId.value sid) }
+    Session = Some(Bozzetto.WorkerProtocol.SessionId.value sid)
+    AgentName = None }
 
 // ── Tests ──
 
