@@ -651,13 +651,21 @@ OUTPUT FORMAT: Each entry shows a timestamp, cell index, duration, whether it su
         getSessionStatus ctx "mcp" None wd |> withEcho ctx "get_session_status"
     [<McpServerTool>]
     [<Description("Acquire a lease for a caller-owned full build. The lease kind is fixed by this tool; use it only when Bozzetto will not run the build itself.")>]
-    member _.acquire_full_build_lease() : Task<string> =
-        Task.FromResult(acquireWorkLease ctx.ActivityTracker "mcp" Bozzetto.ExpensiveWorkLease.Kind.FullBuild) |> withEcho ctx "acquire_full_build_lease"
+    member _.acquire_full_build_lease(
+        [<Description("Optional override to pin execution on local Z13 and bypass LAN rebalance throttling when EnforceWhenLanIdle is enabled.")>]
+        [<Optional; DefaultParameterValue(false)>]
+        pinned_to_z13: bool
+    ) : Task<string> =
+        Task.FromResult(acquireWorkLeaseWithPin ctx.ActivityTracker "mcp" Bozzetto.ExpensiveWorkLease.Kind.FullBuild pinned_to_z13) |> withEcho ctx "acquire_full_build_lease"
 
     [<McpServerTool>]
     [<Description("Acquire a lease before a caller-owned unfiltered test-suite run. For Bozzetto F# changes, run the built Bozzetto.Tests DLL with --summary and require TRUST verdict=Trusted, then release_work_lease with the granted leaseId. Filters are for iteration only; follow wait/refused lease decisions without bypassing daemon accounting.")>]
-    member _.acquire_test_suite_lease() : Task<string> =
-        Task.FromResult(acquireWorkLease ctx.ActivityTracker "mcp" Bozzetto.ExpensiveWorkLease.Kind.TestSuiteRun) |> withEcho ctx "acquire_test_suite_lease"
+    member _.acquire_test_suite_lease(
+        [<Description("Optional override to pin execution on local Z13 and bypass LAN rebalance throttling when EnforceWhenLanIdle is enabled.")>]
+        [<Optional; DefaultParameterValue(false)>]
+        pinned_to_z13: bool
+    ) : Task<string> =
+        Task.FromResult(acquireWorkLeaseWithPin ctx.ActivityTracker "mcp" Bozzetto.ExpensiveWorkLease.Kind.TestSuiteRun pinned_to_z13) |> withEcho ctx "acquire_test_suite_lease"
 
     [<McpServerTool>]
     [<Description("Acquire a lease for a caller-owned external run-app process. Native Composer execution uses composer_run_current.")>]

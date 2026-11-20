@@ -354,6 +354,39 @@ let threadSafetyTests = testList "AgentActivityTracker — thread safety" [
     let p = (AgentActivityTracker.getPresence tracker "claude").Value
     p.EvalCount
     |> Expect.equal "should count all calls" callCount
+
+  testCase "snapshotWithVersion and Changed emit atomic strictly monotonic versions across record, forget, and cleanup" <| fun _ ->
+    let tracker = AgentActivityTracker.create()
+    let v0, m0 = AgentActivityTracker.snapshotWithVersion tracker
+    v0 |> Expect.equal "initial version is 0" 0L
+    m0 |> Expect.equal "initial map is empty" Map.empty
+    let observed = System.Collections.Concurrent.ConcurrentQueue<int64 * Map<string, DateTime>>()
+    use _sub = tracker.Changed.Subscribe(fun item -> observed.Enqueue item)
+    let t1 = now
+    let t2 = now.AddSeconds 30.0
+    AgentActivityTracker.recordToolCall tracker "claude" "sess-1" None None t1
+    AgentActivityTracker.recordToolCall tracker "codex" "sess-1" None None t2
+    AgentActivityTracker.forget tracker "claude"
+    AgentActivityTracker.cleanup tracker (TimeSpan.FromSeconds 10.0) (t2.AddSeconds 20.0) |> ignore
+    let events = observed.ToArray()
+    events |> Array.map fst |> Expect.equal "monotonic versions 1..4" [| 1L; 2L; 3L; 4L |]
+    events[0] |> snd |> Map.tryFind "claude" |> Expect.equal "v1 contains claude" (Some t1)
+    events[1] |> snd |> Map.tryFind "codex" |> Expect.equal "v2 contains codex" (Some t2)
+    events[2] |> snd |> Map.containsKey "claude" |> Expect.isFalse "v3 forgot claude"
+    events[3] |> snd |> Expect.equal "v4 cleaned up stale codex" Map.empty
+    let vFinal, mFinal = AgentActivityTracker.snapshotWithVersion tracker
+    (vFinal, mFinal) |> Expect.equal "final snapshot matches last Changed event" (4L, Map.empty)
+
+  testCase "Out-of-order older timestamp never regresses LastToolCall" <| fun _ ->
+    let tracker = AgentActivityTracker.create()
+    let tNewer = now.AddSeconds 60.0
+    let tOlder = now.AddSeconds 10.0
+    AgentActivityTracker.recordToolCall tracker "claude" "sess-1" None None tNewer
+    AgentActivityTracker.recordToolCall tracker "claude" "sess-1" None None tOlder
+    let p = (AgentActivityTracker.getPresence tracker "claude").Value
+    p.LastToolCall |> Expect.equal "LastToolCall stays monotonic at tNewer" tNewer
+    snd (AgentActivityTracker.snapshotWithVersion tracker) |> Map.tryFind "claude"
+    |> Expect.equal "snapshotWithVersion map stays at tNewer" (Some tNewer)
 ]
 
 // ── All tests ─────────────────────────────────────────────────────

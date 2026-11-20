@@ -239,6 +239,80 @@ let private uptimeText (uptime: float) (startedAt: float) =
   if uptime < 0.0 then "up since " + dateTime startedAt
   else "up " + duration uptime + " · since " + dateTime startedAt
 
+// Live fleet rebalancing and silent-agent visibility banner (pure Ranvier binding to pushed FleetBalance).
+let private fleetBalanceBanner (stores: Stores) =
+  let balance () = stores.FleetBalance.Value
+  let isUrgent () =
+    let b = balance ()
+    (b.hasAdvisory && b.advisory.throttled)
+    || (b.silentAlerts |> Array.exists (fun a -> a.kind = "silent_auditor"))
+  let silentLabel kind =
+    match kind with
+    | "silent_auditor" -> "Silent auditor"
+    | "silent_implementer" -> "Silent implementer"
+    | _ -> "Silent observer"
+  show (fun () ->
+    stores.FleetBalanceSeen.Value
+    && (balance().hasAdvisory || balance().silentAlerts.Length > 0)) (fun () ->
+    div [|
+      clsRx (fun () ->
+        let tone = if isUrgent () then "border-error/40" else "border-warning/40"
+        "fleet-balance-banner flex flex-col gap-2 p-3 rounded-box bg-base-200 border text-xs w-full max-w-full min-w-0 " + tone)
+      attr "role" "status"
+    |] [|
+      show (fun () -> (balance ()).hasAdvisory) (fun () ->
+        let adv () = (balance ()).advisory
+        div [| cls "fleet-balance-rebalance flex flex-wrap items-center gap-2 min-w-0" |] [|
+          span [| clsRx (fun () -> if (adv ()).throttled then "badge badge-sm badge-error" else "badge badge-sm badge-warning") |] [|
+            rx (fun () -> if (adv ()).throttled then "Z13 throttled" else "Rebalance advisory")
+          |]
+          span [| cls "font-semibold" |] [|
+            rx (fun () -> "Recommend " + (adv ()).recommendedNode.ToUpperInvariant())
+          |]
+          span [| cls "badge badge-xs badge-ghost font-mono" |] [|
+            rx (fun () -> "policy " + (adv ()).policy)
+          |]
+          span [| cls "opacity-80 min-w-0 break-words" |] [|
+            rx (fun () ->
+              let cands =
+                (adv ()).candidates
+                |> Array.map (fun c ->
+                  c.nodeId.ToUpperInvariant() + " " + string c.freeSlots + "/" + string c.leaseCap + " free (" + bytes c.availableRamBytes + ")")
+                |> String.concat " · "
+              let detail = (adv ()).reason
+              if cands = "" then detail else detail + " [" + cands + "]")
+          |]
+        |])
+      show (fun () -> (balance ()).silentAlerts.Length > 0) (fun () ->
+        div [| cls "fleet-balance-silent flex flex-col gap-1 min-w-0" |] [|
+          div [| cls "flex flex-wrap items-center gap-2 min-w-0 opacity-80" |] [|
+            span [| cls "font-semibold" |] [|
+              rx (fun () -> string (balance ()).silentAlerts.Length + " idle/silent cohort member(s)")
+            |]
+            span [| cls "font-mono text-xs" |] [|
+              rx (fun () ->
+                let b = balance ()
+                string b.activeLeaseCount + " active lease · " + string b.openClaimCount + " open claims · " + string b.unauditedRunCount + " unaudited · " + string b.dirtyTrancheCount + " dirty")
+            |]
+          |]
+          each (fun (a: SilentAgentAlertView) -> a.memberKey) (fun () -> (balance ()).silentAlerts) (fun alert ->
+            div [| cls "fleet-silent-row flex flex-wrap items-center gap-2 min-w-0 break-words" |] [|
+              span [|
+                clsRx (fun () ->
+                  if (alert ()).kind = "silent_auditor" then "badge badge-xs badge-error"
+                  else "badge badge-xs badge-warning")
+              |] [| rx (fun () -> silentLabel (alert ()).kind) |]
+              span [| cls "font-semibold" |] [|
+                rx (fun () -> (alert ()).displayName + " (" + (alert ()).agentFamily + ", " + (alert ()).role + ")")
+              |]
+              span [| cls "font-mono opacity-75" |] [|
+                rx (fun () -> "silent " + string (int64 (alert ()).idleSeconds) + "s")
+              |]
+              span [| cls "opacity-80 min-w-0 break-words" |] [| rx (fun () -> (alert ()).reason) |]
+            |])
+        |])
+    |])
+
 // The daemon's health, bound directly to the signals the pushed Health,
 // Welcome and Uptime events write: a pushed verdict or memory-pressure change
 // rewrites its badge in place, with no reload, request or timer.
@@ -1280,7 +1354,7 @@ let app () : V =
   let link = Api.createSignal Bridge.Connecting
   let connected () =
     match link.Value with
-    | Bridge.Connected -> true
+    | Bridge.Connected -> stores.Welcomed.Value && not stores.ProtocolMismatch.Value
     | Bridge.Connecting | Bridge.Retrying _ -> false
 
   let initialDark = Interop.getSavedTheme () <> "light"
@@ -1299,9 +1373,12 @@ let app () : V =
   // the browser console with its wire payload.
   let dispatch (command: Command) =
     let frame = Model.begin' stores commands command
-    let wire = Codec.encodeCommand frame
-    if Bridge.send wire then Interop.consoleLog (sprintf "→ binary frame (%d bytes)" wire.Length)
-    else Model.abandon stores commands frame
+    if not (connected ()) then
+      Model.abandon stores commands frame
+    else
+      let wire = Codec.encodeCommand frame
+      if Bridge.send wire then Interop.consoleLog (sprintf "→ binary frame (%d bytes)" wire.Length)
+      else Model.abandon stores commands frame
 
   let receive (payload: byte array) =
     match Codec.decodeEvent payload with
@@ -1310,7 +1387,9 @@ let app () : V =
       | Health _ | Retrieval _ | Leases _ | Uptime _ | Resources _ | AgentWork _ | WorkNodes _ | NodeResources _ | NodeTranscript _ -> ()
       | _ -> Interop.consoleLog (sprintf "← binary frame (%d bytes)" payload.Length)
       act (fun () -> Model.apply stores commands event)
-    | Error message -> Interop.consoleLog ("← undecodable binary frame: " + message)
+    | Error message ->
+      Interop.consoleLog ("← undecodable binary frame: " + message)
+      act (fun () -> stores.ProtocolMismatch.Value <- true)
 
   let focus (node: NodeWorkView) =
     let current = stores.NodeFocus.Value
@@ -1348,13 +1427,14 @@ let app () : V =
   let view =
     div [| cls "flex flex-col h-screen bg-base-100 text-base-content text-sm" |] [|
       topBar stores link dark toggleTheme
-      show (fun () -> not (connected ())) (fun () ->
+      show (fun () -> not (connected ()) && not stores.ProtocolMismatch.Value) (fun () ->
         div [| cls "px-4 py-1 text-xs bg-warning text-warning-content" |] [| text "Disconnected · last received state · commands unavailable" |])
       show (fun () -> stores.ProtocolMismatch.Value) (fun () ->
         div [| cls "px-4 py-1 text-xs bg-error text-error-content" |] [| text "UI version changed. Reload this page." |])
       div [| clsRx (fun () -> if connected () then "flex-1 min-h-0 overflow-auto" else "flex-1 min-h-0 overflow-auto opacity-70") |] [|
         if workPage then
           div [| cls "grid grid-cols-1 xl:grid-cols-3 gap-4 p-4" |] [|
+            div [| cls "xl:col-span-3" |] [| fleetBalanceBanner stores |]
             div [| cls "xl:col-span-3" |] [| fleetCapacityGrid stores connected |]
             details [| flag "open" true; cls "xl:col-span-3 controller-compiler" |] [|
               summary [| cls "cursor-pointer text-sm font-semibold" |] [| text "Controller compiler controls" |]
@@ -1377,6 +1457,7 @@ let app () : V =
         else
           div [| cls "flex flex-col gap-4 p-4" |] [|
             healthStrip stores
+            fleetBalanceBanner stores
             agentsPanel stores
             hostPanel stores connected selectedResourceNode selectResourceNode resourceDispatch
             details [||] [|
@@ -1395,6 +1476,7 @@ let app () : V =
     act (fun () ->
       match next with
       | Bridge.Retrying _ -> Model.abandonAll stores commands
-      | Bridge.Connecting | Bridge.Connected -> ()
+      | Bridge.Connecting -> stores.Welcomed.Value <- false
+      | Bridge.Connected -> ()
       link.Value <- next))
   view

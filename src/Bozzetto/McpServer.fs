@@ -785,7 +785,12 @@ let mapLeaseCommandRoutes (app: WebApplication) (supervisor: Bozzetto.ComposerIn
         else
           return
             CommandCodec.decodeCommandObservationRequest (body.ToArray())
-            |> Result.mapError (fun reason -> 400, reason)
+            |> Result.mapError (fun reason ->
+              let mapped =
+                if reason.Contains("unsupported version", StringComparison.OrdinalIgnoreCase) then
+                  "protocol_mismatch: " + reason
+                else reason
+              400, mapped)
     }
 
   let validate (request: CommandWire.CommandObservationRequest) =
@@ -2804,7 +2809,8 @@ let mapStatusRoutes (app: WebApplication) (rctx: RouteContext) =
         "restartCount", HttpJson.integer restartCount
         "sessionCount", HttpJson.integer allSessions.Length
         "mcpPort", HttpJson.integer rctx.Config.Port
-        "dashboardPort", HttpJson.integer (rctx.Config.Port + 1) ]
+        "dashboardPort", HttpJson.integer (rctx.Config.Port + 1)
+        "fleetBalance", Bozzetto.FleetBalanceService.summaryJsonForContext rctx.McpContext.CohortOwner rctx.McpContext.ActivityTracker ]
       do! jsonResponse ctx 200 data
     } :> Task
   ) |> ignore
@@ -3064,24 +3070,38 @@ let mapSessionRoutes (app: WebApplication) (rctx: RouteContext) =
     task {
       let! doc = readJsonBody ctx
       let root = doc
-      let str name = HttpJson.stringProperty name root
-      match str "holder", str "kind" |> Option.bind Bozzetto.ExpensiveWorkLease.Kind.tryParse with
-      | None, _ ->
-        do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String ("missing 'holder' — identify the agent/cohort member asking, not a fresh id per call") ])
-      | _, None ->
-        let validKinds = Bozzetto.ExpensiveWorkLease.Kind.all |> List.map Bozzetto.ExpensiveWorkLease.Kind.toToken
-        do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "error", JsonValue.String (sprintf "missing or unrecognized 'kind' — must be one of: %s" (String.concat ", " validKinds)) ])
-      | Some holder, Some kind ->
-        // A decision point reads the machine first: the level it decides on
-        // is current, not the one a sweep left behind.
-        Bozzetto.Server.HealthTick.sample () |> ignore
-        match Bozzetto.Features.LeaseWatch.request holder kind with
-        | Bozzetto.ExpensiveWorkLease.Decision.Granted(leaseId, expiresAt) ->
-          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "decision", JsonValue.String ("granted"); "leaseId", JsonValue.String (Bozzetto.ExpensiveWorkLease.LeaseId.value leaseId); "expiresAt", McpJson.timestamp (expiresAt) ])
-        | Bozzetto.ExpensiveWorkLease.Decision.Wait(retryAfter, reason) ->
-          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "decision", JsonValue.String ("wait"); "retryAfterSeconds", JsonValue.Number (retryAfter.TotalSeconds); "reason", JsonValue.String (reason) ])
-        | Bozzetto.ExpensiveWorkLease.Decision.Refused reason ->
-          do! jsonResponse ctx 200 (JsonValue.Object [ "success", JsonValue.Bool (true); "decision", JsonValue.String ("refused"); "reason", JsonValue.String (reason) ])
+      let protocolVersionOpt =
+        HttpJson.property "protocolVersion" root
+        |> Option.bind JsonValue.tryAsInt64
+      match protocolVersionOpt with
+      | Some v when v = int64 CommandWire.ProtocolVersion ->
+        let str name = HttpJson.stringProperty name root
+        let pinnedResult =
+          match [ "pinned_to_z13"; "pinnedToZ13" ] |> List.tryPick (fun k -> HttpJson.property k root) with
+          | None | Some JsonValue.Null -> Ok false
+          | Some(JsonValue.Bool b) -> Ok b
+          | Some _ -> Error "optional 'pinned_to_z13' must be a boolean"
+        match str "holder", str "kind" |> Option.bind Bozzetto.ExpensiveWorkLease.Kind.tryParse, pinnedResult with
+        | None, _, _ ->
+          do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "protocolVersion", HttpJson.integer CommandWire.ProtocolVersion; "error", JsonValue.String ("missing 'holder' — identify the agent/cohort member asking, not a fresh id per call") ])
+        | _, None, _ ->
+          let validKinds = Bozzetto.ExpensiveWorkLease.Kind.all |> List.map Bozzetto.ExpensiveWorkLease.Kind.toToken
+          do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "protocolVersion", HttpJson.integer CommandWire.ProtocolVersion; "error", JsonValue.String (sprintf "missing or unrecognized 'kind' — must be one of: %s" (String.concat ", " validKinds)) ])
+        | _, _, Error msg ->
+          do! jsonResponse ctx 400 (JsonValue.Object [ "success", JsonValue.Bool (false); "protocolVersion", HttpJson.integer CommandWire.ProtocolVersion; "error", JsonValue.String msg ])
+        | Some holder, Some kind, Ok pinnedToZ13 ->
+          let body =
+            Bozzetto.FleetBalanceService.evaluateAndAcquireWorkLeaseWithNodes
+              (Bozzetto.FleetBalanceService.localNodeId ()) None holder kind pinnedToZ13
+            |> Bozzetto.FleetBalanceService.appendJsonField "protocolVersion" (HttpJson.integer CommandWire.ProtocolVersion)
+            |> Bozzetto.FleetBalanceService.appendJsonField "success" (JsonValue.Bool true)
+          do! rawJsonResponse ctx body
+      | _ ->
+        do! jsonResponse ctx 400 (JsonValue.Object [
+          "success", JsonValue.Bool false
+          "error", JsonValue.String "protocol_mismatch"
+          "expectedProtocolVersion", HttpJson.integer CommandWire.ProtocolVersion
+        ])
     } :> Task
   ) |> ignore
   // A live run renews on a heartbeat instead of racing a fixed TTL. The holder
@@ -3648,10 +3668,12 @@ let startMcpServer (cfg: McpServerConfig) (stopping: System.Threading.Cancellati
       let mutable observePeer = fun (_: string) (_: int) (_: string -> unit) -> async { return raise (InvalidOperationException "Peer observations are starting.") }
       let mutable readPeer = fun (_: Bozzetto.Web.Shared.Protocol.TranscriptReadRequest) (_: CancellationToken) -> async {
         return Bozzetto.Web.Shared.Protocol.TranscriptRefused("node_unavailable", "Peer observations are starting.") }
+      use _fleetCohortReaders = Bozzetto.FleetBalanceService.installCohortReaders cfg.CohortOwner cfg.ActivityTracker
       let workHub =
-        Bozzetto.Server.UiBridge.createObservedWithTranscripts composer cfg.Port cfg.GetDaemonHealth app.Lifetime.ApplicationStopping cfg.CohortOwner
+        Bozzetto.Server.UiBridge.createObservedWithActivity composer cfg.Port cfg.GetDaemonHealth app.Lifetime.ApplicationStopping cfg.CohortOwner
           Bozzetto.BozzettoConfig.WorkNodeId (workPeers |> List.map _.Node) (fun node seconds finish -> observePeer node seconds finish)
           (Bozzetto.Server.UiBridge.Project.transcript composer.ReadTranscript) (fun request cancellation -> readPeer request cancellation)
+          cfg.ActivityTracker
       use workController = new WorkObservation.Controller(workHub, workPeers, app.Lifetime.ApplicationStopping)
       observePeer <- fun node seconds finish -> workController.Observe(node, seconds, finish)
       readPeer <- fun request cancellation -> workController.ReadTranscript(request, cancellation)

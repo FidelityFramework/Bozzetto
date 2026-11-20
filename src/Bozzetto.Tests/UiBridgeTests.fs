@@ -249,6 +249,22 @@ let private events = [
     ChangedAtMs = None; HeldUntilMs = None; QueuedRetrievals = 0
     ExpectedSources = [||]; PendingSources = [||]; StaleSources = [||]; Reasons = [||]
     Revisions = [||]; Note = "Retrieval observation is not configured." }
+  FleetBalance {
+    Revision = 1L; Policy = "enforce_when_lan_idle"; SilentThresholdSeconds = 300
+    LocalNodeId = "z13"; LocalBusy = true
+    Advisory = Some {
+      RecommendedNode = "one"; Reason = "Z13 busy while one has free slots."
+      Policy = "enforce_when_lan_idle"; Throttled = true
+      Candidates = [|
+        { NodeId = "one"; FreeSlots = 3; ActiveLeases = 1; LeaseCap = 4; QueuedLeases = 0
+          AvailableRamBytes = 64_000_000_000L; TotalRamBytes = 96_000_000_000L; Pressure = "Normal" }
+      |] }
+    SilentAlerts = [|
+      { MemberKey = "mcp:auditor"; DisplayName = "pi-auditor"; AgentFamily = "pi"; Role = "Verifier"
+        Kind = "silent_auditor"; IdleSeconds = 420L; LastActivityMs = 1759420380000L
+        Reason = "pi-auditor silent while work accumulates." }
+    |]
+    ActiveLeaseCount = 1; OpenClaimCount = 2; UnauditedRunCount = 1; DirtyTrancheCount = 0 }
 ]
 
 /// The frames bozzetto-web's Fable codecs produce for the samples above:
@@ -615,68 +631,21 @@ let tests =
         retrievalEvents.Length |> Expect.equal "all five retrieval states covered" 5
         for ev in retrievalEvents do
           let encoded = Codec.encodeEvent ev
-          encoded[4] |> Expect.equal "envelope carries ProtocolVersion 13" (byte ProtocolVersion)
+          encoded[4] |> Expect.equal "envelope carries current ProtocolVersion" (byte ProtocolVersion)
           encoded[5] |> Expect.equal "event family is 2" 2uy
           encoded[6] |> Expect.equal "Retrieval tag is 14" 14uy
           Ui.decodeEvent encoded |> Expect.equal "round-trip preserves every field" (Ok ev)
       }
-      test "version 9 agent board uses its historical capacity and version 10 is refused" {
-        // v9 envelope, AgentWork tag, incarnation d, sequence 1, host h,
-        // capacity 256, and empty run and presence arrays.
-        let v9 = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 9uy; 2uy; 9uy
-                    1uy; 100uy; 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy
-                    1uy; 104uy; 0uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
-        let expected = AgentWork { Incarnation = "d"; Sequence = 1L; ExecutionHost = "h"; Runs = [||]
-                                   Presence = [||]; OmittedRuns = 0L; Refusal = "" }
-        Ui.decodeEvent v9 |> Expect.equal "historical layout decoded" (Ok expected)
-        let v10old = Array.copy v9
-        v10old[4] <- 10uy
-        let v10new = Codec.encodeEvent expected
-        v10new[4] <- 10uy
-        for frame in [v10old; v10new] do
-          match Ui.decodeEvent frame with
-          | Error message -> message |> Expect.stringContains "ambiguous version refused" "unsupported version"
-          | Ok _ -> failtest "ambiguous v10 accepted"
-      }
-      test "historical nonempty v9 board retains both usage shapes and presence; v10 refuses" {
-        let historicalRun id usage : AgentRun =
-          { Id = id; Member = "mcp:1"; Role = "Observer"; Name = "name"; Session = "session"; ReportSequence = 5L
-            Model = "model"; Endpoint = "endpoint"; Project = "project"; Focus = "focus"; Operation = "operation"
-            Status = "completed"; UpdatedAtMs = 100L; Activity = [|"new"; "old"|]; OmittedActivity = 3L; Usage = usage; Aged = false }
-        let historicalUsage = Some { AgentUsage.Input = 1L; Output = 2L; CacheRead = 3L; CacheWrite = 4L; Total = 10L; EstimateUsd = Some 0.5 }
-        let historicalExpected = AgentWork { Incarnation = "daemon"; Sequence = 42L; ExecutionHost = "host"
-                                             Runs = [|historicalRun "some" historicalUsage; historicalRun "none" None|]
-                                             Presence = [|{ Name = "pi"; Source = "lease"; Member = "mcp:1"; Project = "project"; Detail = "holding"; SinceMs = 123L }|]
-                                             OmittedRuns = 0L; Refusal = "" }
-        let historicalBytes = [|
-                  66uy; 90uy; 87uy; 49uy; 9uy; 2uy; 9uy; 6uy; 100uy; 97uy; 101uy; 109uy; 111uy; 110uy; 42uy; 0uy;
-                  0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 4uy; 104uy; 111uy; 115uy; 116uy; 0uy; 1uy; 0uy; 0uy; 2uy;
-                  4uy; 115uy; 111uy; 109uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy; 8uy; 79uy; 98uy; 115uy; 101uy;
-                  114uy; 118uy; 101uy; 114uy; 4uy; 110uy; 97uy; 109uy; 101uy; 7uy; 115uy; 101uy; 115uy; 115uy; 105uy; 111uy;
-                  110uy; 5uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 5uy; 109uy; 111uy; 100uy; 101uy; 108uy; 8uy;
-                  101uy; 110uy; 100uy; 112uy; 111uy; 105uy; 110uy; 116uy; 7uy; 112uy; 114uy; 111uy; 106uy; 101uy; 99uy; 116uy;
-                  5uy; 102uy; 111uy; 99uy; 117uy; 115uy; 9uy; 111uy; 112uy; 101uy; 114uy; 97uy; 116uy; 105uy; 111uy; 110uy;
-                  9uy; 99uy; 111uy; 109uy; 112uy; 108uy; 101uy; 116uy; 101uy; 100uy; 100uy; 0uy; 0uy; 0uy; 0uy; 0uy;
-                  0uy; 0uy; 2uy; 3uy; 110uy; 101uy; 119uy; 3uy; 111uy; 108uy; 100uy; 3uy; 0uy; 0uy; 0uy; 0uy;
-                  0uy; 0uy; 0uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 2uy; 0uy; 0uy; 0uy;
-                  0uy; 0uy; 0uy; 0uy; 3uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 4uy; 0uy; 0uy; 0uy;
-                  0uy; 0uy; 0uy; 0uy; 10uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 0uy; 0uy; 0uy;
-                  0uy; 0uy; 0uy; 224uy; 63uy; 4uy; 110uy; 111uy; 110uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy;
-                  8uy; 79uy; 98uy; 115uy; 101uy; 114uy; 118uy; 101uy; 114uy; 4uy; 110uy; 97uy; 109uy; 101uy; 7uy; 115uy;
-                  101uy; 115uy; 115uy; 105uy; 111uy; 110uy; 5uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 5uy; 109uy;
-                  111uy; 100uy; 101uy; 108uy; 8uy; 101uy; 110uy; 100uy; 112uy; 111uy; 105uy; 110uy; 116uy; 7uy; 112uy; 114uy;
-                  111uy; 106uy; 101uy; 99uy; 116uy; 5uy; 102uy; 111uy; 99uy; 117uy; 115uy; 9uy; 111uy; 112uy; 101uy; 114uy;
-                  97uy; 116uy; 105uy; 111uy; 110uy; 9uy; 99uy; 111uy; 109uy; 112uy; 108uy; 101uy; 116uy; 101uy; 100uy; 100uy;
-                  0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 2uy; 3uy; 110uy; 101uy; 119uy; 3uy; 111uy; 108uy; 100uy;
-                  3uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 2uy; 112uy; 105uy; 5uy; 108uy; 101uy;
-                  97uy; 115uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy; 7uy; 112uy; 114uy; 111uy; 106uy; 101uy; 99uy;
-                  116uy; 7uy; 104uy; 111uy; 108uy; 100uy; 105uy; 110uy; 103uy; 123uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy;
-                  0uy
-                |]
-        Ui.decodeEvent historicalBytes |> Expect.equal "historical v9 populated frame" (Ok historicalExpected)
-        let ambiguous = Array.copy historicalBytes
-        ambiguous[4] <- 10uy
-        Ui.decodeEvent ambiguous |> Expect.equal "ambiguous v10 refused" (Error "binary: unsupported version")
+      test "mismatched event versions are strictly refused across all older and future protocol versions" {
+        let board =
+          AgentWork { Incarnation = "d"; Sequence = 1L; ExecutionHost = "h"; Runs = [||]
+                      Presence = [||]; OmittedRuns = 0L; Refusal = "" }
+        let encoded = Codec.encodeEvent board
+        Ui.decodeEvent encoded |> Expect.equal "current v14 event decodes" (Ok board)
+        for badVersion in [ 9uy; 10uy; 11uy; 12uy; 13uy; 15uy ] do
+          let mutated = Array.copy encoded
+          mutated[4] <- badVersion
+          Ui.decodeEvent mutated |> Expect.equal $"v{badVersion} event refused" (Error "binary: unsupported version")
       }
       test "every command and event fixture round trips" {
         for command in ObserveNodeResources { Node = "one"; Seconds = 120 } :: commands do
@@ -708,10 +677,13 @@ let tests =
         for bytes, reason in cases do
           match Codec.decodeCommand bytes with
           | Ok _ -> failtestf "accepted malformed %s" reason
-          | Error error -> error.Message |> Expect.stringContains "specific refusal" reason
+          | Error error ->
+            error.Message |> Expect.stringContains "specific refusal" reason
+            if reason = "version" then
+              error.Code |> Expect.equal "skewed command frame emits canonical protocol_mismatch code" "protocol_mismatch"
       }
       test "UTF8 length and scalar validation never repairs malformed input" {
-        let prefix = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 9uy; 1uy; 1uy; 0uy; 0uy; 0uy; 3uy |]
+        let prefix = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; byte ProtocolVersion; 1uy; 1uy; 0uy; 0uy; 0uy; 3uy |]
         for body, reason in [ [| 2uy; 0xC0uy; 0xAFuy |], "UTF-8"; [| 1uy; 0xC2uy |], "UTF-8"; [| 3uy; 0xEDuy; 0xA0uy; 0x80uy |], "UTF-8"; [| 127uy |], "length"; [| 0x80uy; 0uy |], "noncanonical" ] do
           match Codec.decodeCommand (Array.append prefix body) with
           | Error refusal -> refusal.Message |> Expect.stringContains "precise malformed string" reason
@@ -732,7 +704,7 @@ let tests =
         let capacity = {
           LeaseCap = Some 4; PidVerifiedLeases = 1; UnverifiedLeases = 1; StalePidLeases = 0
           MemoryPressure = "Normal"; MachineAvailableBytes = 32_000_000_000L; MachineTotalBytes = 64_000_000_000L
-          ResidentBytes = 128_000_000L; PeakResidentBytes = 256_000_000L
+          ResidentBytes = 128_000_000L; PeakResidentBytes = 256_000_000L; CheckoutSynced = Some true
         }
         let workWithCap = { work with Capacity = Some capacity }
         let resources = { Sequence = 5L; Status = "unavailable"; SampledAtMs = 123L; IntervalMs = 0.; SampleCostMs = 0.
@@ -751,11 +723,11 @@ let tests =
         Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Array.zeroCreate 4097)
         |> Expect.equal "request cap before parsing" (Error "binary: frame too large")
       }
-      test "v11, v12, and v13 peer envelopes share the observation and transcript payloads" {
+      test "peer envelopes strictly require exact ProtocolVersion across observation and transcript families" {
         let source = { NodeIdentity.Node = "one"; Incarnation = "epoch-1" }
-        let observation = { PeerObserveRequest.ProtocolVersion = 11; Node = source.Node; Topic = "work"; Seconds = 0 }
+        let observation = { PeerObserveRequest.ProtocolVersion = ProtocolVersion; Node = source.Node; Topic = "work"; Seconds = 0 }
         let transcript =
-          { PeerTranscriptRequest.ProtocolVersion = 11
+          { PeerTranscriptRequest.ProtocolVersion = ProtocolVersion
             Request = { Source = source; Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; MaxBytes = 32 } }
         let reply =
           { PeerTranscriptReply.Source = source
@@ -763,31 +735,35 @@ let tests =
                                        NextOffset = None; TotalBytes = 3L; Bytes = [|0uy; 128uy; 255uy|]; Truncated = false } }
         let checkReply encode decode family value =
           let bytes: byte array = encode value
-          bytes[..5] |> Expect.equal "v11 peer can read the reply envelope" [|66uy; 90uy; 87uy; 49uy; 11uy; family|]
-          decode bytes |> Expect.equal "v13 peer reads the v11 reply losslessly" (Ok value)
-          bytes[4] <- 12uy
-          decode bytes |> Expect.equal "v12 envelope carries the same reply payload" (Ok value)
-          bytes[4] <- 13uy
-          decode bytes |> Expect.equal "v13 envelope carries the same reply payload" (Ok value)
-          bytes[4] <- 10uy
-          decode bytes |> Expect.equal "unknown peer envelope refused" (Error "binary: unsupported version")
+          bytes[..5] |> Expect.equal "reply envelope carries exact ProtocolVersion" [|66uy; 90uy; 87uy; 49uy; byte ProtocolVersion; family|]
+          decode bytes |> Expect.equal "v14 peer reads the v14 reply losslessly" (Ok value)
+          for badVersion in [ 9uy; 10uy; 11uy; 12uy; 13uy; 15uy ] do
+            let bad = Array.copy bytes
+            bad[4] <- badVersion
+            decode bad |> Expect.equal $"mismatched v{badVersion} reply envelope refused" (Error "binary: unsupported version")
         checkReply PeerCodec.encodePeerFrame PeerCodec.decodePeerFrame 4uy (PeerHello source)
         checkReply PeerCodec.encodePeerTranscriptReply PeerCodec.decodePeerTranscriptReply 6uy reply
-        for version in [11; 12; 13] do
-          let observation = { observation with ProtocolVersion = version }
-          let transcript = { transcript with ProtocolVersion = version }
-          let observationBytes = PeerCodec.encodePeerObserveRequest observation
-          let transcriptBytes = PeerCodec.encodePeerTranscriptRequest transcript
-          observationBytes[4..5] |> Expect.equal "observation request envelope" [|byte version; 3uy|]
-          transcriptBytes[4..5] |> Expect.equal "transcript request envelope" [|byte version; 5uy|]
-          PeerCodec.decodePeerObserveRequest observationBytes |> Expect.equal "observation request round trip" (Ok observation)
-          PeerCodec.decodePeerTranscriptRequest transcriptBytes |> Expect.equal "transcript request round trip" (Ok transcript)
-          observationBytes[6] <- 10uy
-          transcriptBytes[6] <- 10uy
-          PeerCodec.decodePeerObserveRequest observationBytes |> Expect.equal "unsupported observation payload version refused" (Error "unsupported peer version")
-          PeerCodec.decodePeerTranscriptRequest transcriptBytes |> Expect.equal "unsupported transcript payload version refused" (Error "unsupported peer version")
+        let observationBytes = PeerCodec.encodePeerObserveRequest observation
+        let transcriptBytes = PeerCodec.encodePeerTranscriptRequest transcript
+        observationBytes[4..5] |> Expect.equal "observation request envelope" [|byte ProtocolVersion; 3uy|]
+        transcriptBytes[4..5] |> Expect.equal "transcript request envelope" [|byte ProtocolVersion; 5uy|]
+        PeerCodec.decodePeerObserveRequest observationBytes |> Expect.equal "observation request round trip" (Ok observation)
+        PeerCodec.decodePeerTranscriptRequest transcriptBytes |> Expect.equal "transcript request round trip" (Ok transcript)
+        for badVersion in [ 9uy; 10uy; 11uy; 12uy; 13uy; 15uy ] do
+          let badObsEnv = Array.copy observationBytes
+          badObsEnv[4] <- badVersion
+          PeerCodec.decodePeerObserveRequest badObsEnv |> Expect.equal $"mismatched v{badVersion} observation envelope refused" (Error "binary: unsupported version")
+          let badObsPayload = Array.copy observationBytes
+          badObsPayload[6] <- badVersion
+          PeerCodec.decodePeerObserveRequest badObsPayload |> Expect.equal $"mismatched v{badVersion} observation payload refused" (Error "unsupported peer version")
+          let badTrEnv = Array.copy transcriptBytes
+          badTrEnv[4] <- badVersion
+          PeerCodec.decodePeerTranscriptRequest badTrEnv |> Expect.equal $"mismatched v{badVersion} transcript envelope refused" (Error "binary: unsupported version")
+          let badTrPayload = Array.copy transcriptBytes
+          badTrPayload[6] <- badVersion
+          PeerCodec.decodePeerTranscriptRequest badTrPayload |> Expect.equal $"mismatched v{badVersion} transcript payload refused" (Error "unsupported peer version")
         let browser = Codec.encodeEvent (List.head events)
-        for unsupportedVersion in [11uy; 12uy] do
+        for unsupportedVersion in [ 9uy; 11uy; 12uy; 13uy; 15uy ] do
           let bad = Array.copy browser
           bad[4] <- unsupportedVersion
           PeerCodec.decodeEvent bad |> Expect.equal "stale browser envelopes remain unsupported" (Error "binary: unsupported version")
@@ -795,7 +771,7 @@ let tests =
     ]
 
     testList "command observation codec" [
-      test "private typed observations preserve arguments and refuse legacy or browser frames" {
+      test "private typed observations preserve arguments and require exact ProtocolVersion" {
         let report : CommandObservationRequest = {
           Holder = "agent · /repo"; Project = "/repo"; Kind = "test_suite_run"; LeaseId = "private-token"
           RunId = "run"; Executable = "/sdk/dotnet"; Arguments = [|"vstest"; "path with space"; ""|]
@@ -804,15 +780,17 @@ let tests =
                        OutputTruncated = true; ErrorTruncated = false }
         for value in [report; {report with Observation = CommandFinished result}] do
           let bytes = Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationRequest value
+          bytes[4..5] |> Expect.equal "command observation emits ProtocolVersion" [| byte ProtocolVersion; 7uy |]
           Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest bytes |> Expect.equal "exact command context" (Ok value)
           Bozzetto.Web.Shared.BinaryCodec.decodeCommand bytes |> Expect.equal "private reporting is not a browser command" (Error "binary: wrong message family")
-          let old = Array.copy bytes
-          old[4] <- byte LegacyProtocolVersion
-          Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest old |> Expect.equal "no invented v9 reporting" (Error "binary: unsupported version")
+          for badVersion in [ 9uy; 11uy; 12uy; 13uy; 15uy ] do
+            let old = Array.copy bytes
+            old[4] <- badVersion
+            Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest old |> Expect.equal $"v{badVersion} reporting refused" (Error "binary: unsupported version")
         Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest [|123uy;125uy|] |> Result.isError |> Expect.isTrue "no JSON fallback"
         Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest (Array.zeroCreate (MaxCommandObservationBytes + 1))
         |> Expect.equal "bounded before decoding" (Error "binary: frame too large")
-        let accepted = [|66uy;90uy;87uy;49uy;11uy;8uy;0uy;7uy;0uy;0uy;0uy;0uy;0uy;0uy;0uy|]
+        let accepted = [|66uy;90uy;87uy;49uy;byte ProtocolVersion;8uy;0uy;7uy;0uy;0uy;0uy;0uy;0uy;0uy;0uy|]
         Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationReply (CommandObservationAccepted 7L) |> Expect.equal "independent reply golden" accepted
         Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationReply accepted |> Expect.equal "golden reply decode" (Ok(CommandObservationAccepted 7L))
       }
@@ -1748,7 +1726,7 @@ let observationTests =
   let emptyReconciledCapacity : NodeCapacity =
     { LeaseCap = None; PidVerifiedLeases = 0; UnverifiedLeases = 0; StalePidLeases = 0
       MemoryPressure = ""; MachineAvailableBytes = 0L; MachineTotalBytes = 0L
-      ResidentBytes = 0L; PeakResidentBytes = 0L }
+      ResidentBytes = 0L; PeakResidentBytes = 0L; CheckoutSynced = None }
   let withEmptyCapacity (value: WorkSnapshot) = { value with Capacity = Some emptyReconciledCapacity }
   let workNode (graph: Facts.Graph) node =
     graph.Current() |> List.pick (function WorkNodes board -> board.Nodes |> Array.tryFind (fun value -> value.Source.Node = node) | _ -> None)
@@ -1766,7 +1744,14 @@ let observationTests =
       graph.PeerConnectionUnavailable(b.Node, "late Hello failure") |> Expect.equal "unbound report cannot overwrite a bound connection" (Error Facts.Refusal.ForeignProducer)
       graph.PublishWork(peer, workValue 5L) |> Expect.equal "authenticated source is admitted" (Ok())
       graph.PublishWork({ peer with Correlation = Guid.NewGuid() }, workValue 6L) |> Expect.equal "identity alone grants no publication" (Error Facts.Refusal.ForeignProducer)
-      (workNode graph b.Node).Value |> Expect.equal "the current snapshot names its real observation time" (Some(withEmptyCapacity (workValue 5L)))
+      (workNode graph b.Node).Value |> Expect.equal "the current snapshot names its real observation time" (Some(workValue 5L))
+      graph.RetirePeer(peer, "Disconnected; retained work is not current.") |> Expect.equal "retiring active peer clears binding correlation" (Ok())
+      graph.PublishWork(peer, workValue 6L) |> Expect.equal "retired producer cannot publish" (Error Facts.Refusal.ForeignProducer)
+      graph.PeerConnectionUnavailable(b.Node, "protocol_mismatch (version skew)") |> Expect.equal "retired slot admits version-skew connection failure" (Ok())
+      (workNode graph b.Node).Note |> Expect.equal "version-skew failure surfaced after retire" "protocol_mismatch (version skew)"
+      let rebound = graph.BindPeer b
+      graph.RetirePeer(peer, "stale retire") |> Expect.equal "retired old producer cannot retire new bound connection" (Error Facts.Refusal.ForeignProducer)
+      graph.PublishWork(rebound, workValue 7L) |> Expect.equal "new bound producer still active" (Ok())
       graph.Stop()
 
     testCase "work sequence and unavailable status cannot overwrite or freshen a retained snapshot" <| fun () ->
@@ -1779,7 +1764,7 @@ let observationTests =
       graph.PublishWork(peer, workValue 4L) |> Expect.equal "older snapshot refused" (Error Facts.Refusal.Older)
       for _ in 1 .. 7 do graph.PeerUnavailable(peer, "disconnected") |> Expect.equal "connection status has its own publication order" (Ok())
       let unavailable = workNode graph b.Node
-      (unavailable.Status, unavailable.Value) |> Expect.equal "disconnect retains the exact old timestamp and facts" ("unavailable", Some(withEmptyCapacity value))
+      (unavailable.Status, unavailable.Value) |> Expect.equal "disconnect retains the exact old timestamp and facts" ("unavailable", Some value)
       graph.PublishWork(peer, value) |> Expect.equal "same-incarnation retained snapshot can recover without inventing sequence" (Ok())
       (workNode graph b.Node).Status |> Expect.equal "source is available again" "available"
       graph.Stop()
@@ -1869,7 +1854,7 @@ let observationTests =
           Session = ""; Project = "/repo"; Lease = None; Ok = true; Code = ""; Message = String.replicate 9000 "x"; Run = None }
       let original = { original with Operations = { original.Operations with Entries = [| for sequence in 20L .. -1L .. 1L -> entry sequence |] } }
       let summary = Project.workSummary original
-      let bytes = PeerCodec.encodePeerFrameVersion ProtocolVersion (PeerWork summary)
+      let bytes = PeerCodec.encodePeerFrame (PeerWork summary)
       (bytes.Length <= MaxWorkSnapshotBytes) |> Expect.isTrue "actual envelope fits its wire budget"
       (summary.Operations.Entries.Length < 20 && summary.Operations.Entries.Length > 0) |> Expect.isTrue "byte bound removes settled history beyond the count bound"
       summary.Operations.Entries |> Array.map _.Sequence
@@ -1879,12 +1864,12 @@ let observationTests =
         let terminal = { entry 1L with Message = String.replicate length "x" }
         { original with Operations = { original.Operations with Entries = [|terminal|] } }
       let probeLength = MaxWorkSnapshotBytes - 1024
-      let encoded = PeerCodec.encodePeerFrameVersion ProtocolVersion (PeerWork (withMessage probeLength)) |> Array.length
+      let encoded = PeerCodec.encodePeerFrame (PeerWork (withMessage probeLength)) |> Array.length
       let overWithCapacity = withMessage (probeLength + MaxWorkSnapshotBytes - encoded + 1)
-      (PeerCodec.encodePeerFrame (PeerWork overWithCapacity)).Length
-      |> fun length -> (length <= MaxWorkSnapshotBytes) |> Expect.isTrue "the history row fits when the old envelope omits capacity"
+      (PeerCodec.encodePeerFrame (PeerWork { overWithCapacity with Capacity = None })).Length
+      |> fun length -> (length <= MaxWorkSnapshotBytes) |> Expect.isTrue "the history row fits when capacity is absent"
       (Project.workSummary overWithCapacity).Operations.Entries
-      |> Expect.isEmpty "the capacity-bearing v13 envelope requires dropping the settled row"
+      |> Expect.isEmpty "the capacity-bearing v14 envelope requires dropping the settled row"
       let current = { entry 21L with Code = "running"; Ok = false; Message = String.replicate MaxWorkSnapshotBytes "x" }
       let oversized = { original with Operations = { original.Operations with Entries = Array.append [| current |] original.Operations.Entries } }
       let refused = Project.workSummary oversized
@@ -1899,21 +1884,21 @@ let observationTests =
       let graph = workGraph ()
       let peer = graph.BindPeer b
       let withProject length =
-        let value = workValue 1L
+        let value = withEmptyCapacity (workValue 1L)
         { value with Snapshot = { value.Snapshot with Sessions = [| { bareSession with Project = String.replicate length "x" } |] } }
       let initialLength = MaxWorkSnapshotBytes - 1024
       let initial = withProject initialLength
-      let encodedSize value = PeerCodec.encodePeerFrameVersion ProtocolVersion (PeerWork (withEmptyCapacity value)) |> Array.length
+      let encodedSize value = PeerCodec.encodePeerFrame (PeerWork value) |> Array.length
       let initialSize = encodedSize initial
       let edge = withProject (initialLength + MaxWorkSnapshotBytes - initialSize)
-      encodedSize edge |> Expect.equal "real encoded edge includes the v13 envelope and reconciled capacity" MaxWorkSnapshotBytes
+      encodedSize edge |> Expect.equal "real encoded edge includes the v14 envelope and capacity" MaxWorkSnapshotBytes
       graph.PublishWork(peer, edge) |> Expect.equal "exact budget admitted" (Ok())
       let oversized = { withProject (initialLength + MaxWorkSnapshotBytes - initialSize + 1) with Sequence = 2L }
       graph.PublishWork(peer, oversized) |> Expect.equal "one byte over refused specifically" (Error Facts.Refusal.Oversized)
       let current = workNode graph b.Node
       (current.Status, current.Note, current.Value)
       |> Expect.equal "oversize is visible and preserves the earlier timestamp and busy/lease facts"
-        ("unavailable", "Work snapshot exceeds the encoded observation budget.", Some(withEmptyCapacity edge))
+        ("unavailable", "Work snapshot exceeds the encoded observation budget.", Some edge)
       graph.PublishWork(peer, edge) |> Expect.equal "a valid source can recover from the refused update" (Ok())
       graph.PublishWork(peer, { oversized with Sequence = 0L }) |> Expect.equal "an older oversized payload stays an ordering refusal" (Error Facts.Refusal.Older)
       (workNode graph b.Node).Status |> Expect.equal "late bad payload cannot invalidate the current source" "available"
@@ -2053,7 +2038,7 @@ let observationTests =
           string admittedResponse.Content.Headers.ContentType |> Expect.equal "successful observation stays binary" Observe.MediaType
           use! admittedBody = admittedResponse.Content.ReadAsStreamAsync()
           let! hello = Observe.Frames.read admittedBody CancellationToken.None |> Async.StartAsTask
-          hello |> Option.map (fun bytes -> bytes[4]) |> Expect.equal "v13 requests negotiate v13 stream frames" (Some (byte ProtocolVersion))
+          hello |> Option.map (fun bytes -> bytes[4]) |> Expect.equal "v14 requests negotiate v14 stream frames" (Some (byte ProtocolVersion))
           hello |> Option.map Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame
           |> Expect.equal "headless handler returns its actual node after origin admission" (Some(Ok(PeerHello b)))
           admittedResponse.Dispose()
@@ -2080,13 +2065,13 @@ let observationTests =
           string oversizedResponse.Content.Headers.ContentType |> Expect.equal "handler refusal stays binary" Observe.MediaType
           use! oversizedBody = oversizedResponse.Content.ReadAsStreamAsync()
           let! oversize = Observe.Frames.read oversizedBody CancellationToken.None |> Async.StartAsTask
-          oversize |> Option.map (fun bytes -> bytes[4]) |> Expect.equal "HTTP refusals use the compatibility envelope" (Some (byte PeerCodec.PeerCompatProtocolVersion))
+          oversize |> Option.map (fun bytes -> bytes[4]) |> Expect.equal "HTTP refusals use exact ProtocolVersion" (Some (byte ProtocolVersion))
           oversize |> Option.map Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame
           |> Expect.equal "the route owns its exact bounded-body refusal" (Some(Ok(PeerUnavailable "request_too_large")))
           use! page = client.GetAsync(url + "/work")
           int page.StatusCode |> Expect.equal "headless HTTP does not expose the browser" 404
           let! (initial: NodeWork) = available.Task.WaitAsync(TimeSpan.FromSeconds 5.)
-          (initial.Source, initial.Local, initial.Value) |> Expect.equal "binary Hello and atomic current work identify the actual worker" (b, false, Some(withEmptyCapacity (workValue 7L)))
+          (initial.Source, initial.Local, initial.Value) |> Expect.equal "binary Hello and atomic current work identify the actual worker" (b, false, Some(workValue 7L))
           let read = { Source = b; Journal = "persisted-journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; MaxBytes = 3 }
           let! transcript = controller.ReadTranscript(read, CancellationToken.None) |> Async.StartAsTask
           transcript |> Expect.equal "selected output arrives as exact binary bytes from the named journal"
@@ -2105,11 +2090,11 @@ let observationTests =
           int rejected.StatusCode |> Expect.equal "worker also rejects a crossed identity" 400
           transcriptReads.Count |> Expect.equal "worker identity checked before storage" 2
           requestEnvelopes.ToArray()
-          |> Expect.equal "work negotiates v13 while transcript readback keeps its deployed v9 request layout"
-            [| byte ProtocolVersion, 3uy; byte LegacyProtocolVersion, 5uy; byte LegacyProtocolVersion, 5uy |]
+          |> Expect.equal "work and transcript readback both use exact ProtocolVersion"
+            [| byte ProtocolVersion, 3uy; byte ProtocolVersion, 5uy; byte ProtocolVersion, 5uy |]
           workerGraph.PeerUnavailable(pb, "Worker snapshot is unavailable.") |> Expect.equal "source publishes unavailable without inventing work" (Ok())
           let! (lost: NodeWork) = unavailable.Task.WaitAsync(TimeSpan.FromSeconds 5.)
-          lost.Value |> Expect.equal "HTTP status propagation retains the old snapshot and timestamp" (Some(withEmptyCapacity (workValue 7L)))
+          lost.Value |> Expect.equal "HTTP status propagation retains the old snapshot and timestamp" (Some(workValue 7L))
           do! (controller.Close() |> Async.StartAsTask).WaitAsync(TimeSpan.FromSeconds 5.)
           do! disconnected.Task.WaitAsync(TimeSpan.FromSeconds 5.)
           do! aborted.Task.WaitAsync(TimeSpan.FromSeconds 5.)

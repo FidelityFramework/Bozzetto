@@ -296,7 +296,7 @@ let processWatchdogAndUnleasedAnomalyTests =
               let reqBytes = ms.ToArray()
               if path = "/api/lease/request" then
                 let expires = DateTimeOffset.UtcNow.AddMinutes(5.0).ToString("O")
-                let json = sprintf """{"success":true,"decision":"granted","leaseId":"stub-lease-1","expiresAt":"%s"}""" expires
+                let json = sprintf """{"success":true,"protocolVersion":%d,"decision":"granted","leaseId":"stub-lease-1","expiresAt":"%s"}""" Bozzetto.Web.Shared.Protocol.ProtocolVersion expires
                 let out = System.Text.Encoding.UTF8.GetBytes json
                 ctx.Response.StatusCode <- 200
                 ctx.Response.ContentType <- "application/json"

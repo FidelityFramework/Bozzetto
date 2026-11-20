@@ -15,6 +15,9 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
+[<Literal>]
+let ProtocolVersion = 14
+
 type Admission =
   | Granted of leaseId: string * expiresAt: DateTimeOffset
   | Deferred of reply: string
@@ -40,11 +43,11 @@ let holder (project: string) =
     | value -> value
   $"""{orDefault "ci-pipeline" "BOZZETTO_AGENT"} · {orDefault project "BOZZETTO_PROJECT"}"""
 
-let private post (route: string) (fields: (string * string) list) =
+let private postValuesAt (endpointBase: string) (route: string) (fields: (string * obj) list) =
   async {
     try
       use content = new StringContent(JsonSerializer.Serialize(dict fields), Encoding.UTF8, "application/json")
-      use! response = client.PostAsync($"{endpoint}/{route}", content) |> Async.AwaitTask
+      use! response = client.PostAsync($"{endpointBase}/{route}", content) |> Async.AwaitTask
       let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
       use document = JsonDocument.Parse body
       return Ok(int response.StatusCode, document.RootElement.Clone())
@@ -52,9 +55,61 @@ let private post (route: string) (fields: (string * string) list) =
       return Error $"{route}: {e.Message}"
   }
 
+let private postValues (route: string) (fields: (string * obj) list) =
+  postValuesAt endpoint route fields
+
+let private post (route: string) (fields: (string * string) list) =
+  postValues route (fields |> List.map (fun (k, v) -> k, box v))
+
 let private text (reply: JsonElement) (name: string) =
   match reply.TryGetProperty name with
   | true, value when value.ValueKind = JsonValueKind.String -> Some(value.GetString())
+  | _ -> None
+
+let private integer (reply: JsonElement) (name: string) : int option =
+  match reply.TryGetProperty name with
+  | true, value when value.ValueKind = JsonValueKind.Number ->
+    match value.TryGetInt32() with
+    | true, v -> Some v
+    | false, _ -> None
+  | _ -> None
+
+let private flag (reply: JsonElement) (name: string) =
+  match reply.TryGetProperty name with
+  | true, value when value.ValueKind = JsonValueKind.True -> Some true
+  | true, value when value.ValueKind = JsonValueKind.False -> Some false
+  | _ -> None
+
+let private advisorySummary (reply: JsonElement) : string option =
+  match reply.TryGetProperty "rebalance_advisory" with
+  | true, adv when adv.ValueKind = JsonValueKind.Object ->
+    let recNode = text adv "recommended_node" |> Option.defaultValue "lan-worker"
+    let reason = text adv "reason" |> Option.defaultValue ""
+    let policy = text adv "policy" |> Option.defaultValue ""
+    let throttled = flag adv "throttled" |> Option.defaultValue false
+    let cands =
+      match adv.TryGetProperty "candidates" with
+      | true, arr when arr.ValueKind = JsonValueKind.Array ->
+        arr.EnumerateArray()
+        |> Seq.map (fun c ->
+          let nid = text c "node_id" |> Option.defaultValue "?"
+          let freeSlots =
+            match c.TryGetProperty "free_slots" with
+            | true, v when v.ValueKind = JsonValueKind.Number -> v.GetInt32()
+            | _ -> 0
+          let cap =
+            match c.TryGetProperty "lease_cap" with
+            | true, v when v.ValueKind = JsonValueKind.Number -> v.GetInt32()
+            | _ -> 0
+          let availGb =
+            match c.TryGetProperty "available_ram_bytes" with
+            | true, v when v.ValueKind = JsonValueKind.Number -> float (v.GetInt64()) / 1_073_741_824.0
+            | _ -> 0.0
+          sprintf "%s (%d/%d free, %.1f GiB RAM)" nid freeSlots cap availGb)
+        |> String.concat ", "
+      | _ -> ""
+    let hint = if throttled then " [pass --pin-z13 or BOZZETTO_PIN_Z13=1 to force Z13]" else ""
+    Some(sprintf "rebalance_advisory (%s): recommended=%s; %s%s%s" policy recNode reason (if cands <> "" then " | candidates: " + cands else "") hint)
   | _ -> None
 
 let private instant reply name =
@@ -64,16 +119,44 @@ let private instant reply name =
     | true, at -> Some at
     | false, _ -> None)
 
-let acquire kind holder =
+let internal acquireWithPinAt (endpointBase: string) (pinnedToZ13: bool) kind holder =
   async {
-    match! post "request" [ "kind", kind; "holder", holder ] with
+    let fields =
+      [ "protocolVersion", box ProtocolVersion
+        "kind", box kind
+        "holder", box holder
+        if pinnedToZ13 then "pinned_to_z13", box true ]
+    match! postValuesAt endpointBase "request" fields with
     | Error reason -> return Refused reason
     | Ok(_, reply) ->
-      match text reply "decision", text reply "leaseId", instant reply "expiresAt" with
-      | Some "granted", Some id, Some expires when id <> "" -> return Granted(id, expires)
-      | Some "wait", _, _ -> return Deferred(reply.GetRawText())
-      | _ -> return Refused(reply.GetRawText())
+      match integer reply "protocolVersion" with
+      | Some v when v = ProtocolVersion ->
+        advisorySummary reply |> Option.iter (fun summary -> eprintfn "work-lease: %s" summary)
+        match text reply "decision", text reply "leaseId", instant reply "expiresAt" with
+        | Some "granted", Some id, Some expires when id <> "" -> return Granted(id, expires)
+        | Some "wait", _, _ -> return Deferred(reply.GetRawText())
+        | _ -> return Refused(reply.GetRawText())
+      | _ ->
+        match text reply "decision", text reply "leaseId" with
+        | Some "granted", Some id when id <> "" ->
+          let! _ = postValuesAt endpointBase "release" [ ("leaseId", box id) ]
+          ()
+        | _ -> ()
+        return Refused $"protocol_mismatch: daemon protocol version does not match CLI v{ProtocolVersion} — update the daemon"
   }
+
+let acquireWithPin (pinnedToZ13: bool) kind holder =
+  acquireWithPinAt endpoint pinnedToZ13 kind holder
+
+let acquire kind holder =
+  let envPinned =
+    match Environment.GetEnvironmentVariable "BOZZETTO_PIN_Z13" with
+    | null -> false
+    | raw ->
+      match raw.Trim().ToLowerInvariant() with
+      | "1" | "true" | "yes" | "on" -> true
+      | _ -> false
+  acquireWithPin envPinned kind holder
 
 let renew leaseId holder =
   async {
@@ -271,6 +354,10 @@ let runWith (client: Client) (kind: string) (holder: string) (cancellation: Canc
 /// Retry a deferred stable ask every 15 seconds for at most ten minutes. Renew a
 /// granted lease at a third of its remaining lifetime, never sooner than 30 seconds.
 let runWithCancellation kind holder cancellation work = runWith api kind holder cancellation work
+
+let runWithCancellationPinned (pinnedToZ13: bool) kind holder cancellation work =
+  let client = { api with Acquire = acquireWithPin pinnedToZ13 }
+  runWith client kind holder cancellation work
 
 /// Compatibility wrapper for existing pipeline and command-runner callers.
 let run kind holder (work: CancellationToken -> Async<Result<unit, string>>) =

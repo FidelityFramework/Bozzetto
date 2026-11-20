@@ -188,4 +188,43 @@ let replGuardTests = testList "bozzetto-repl-guard decision" [
         { WorkingDirectory = "/repo"; Status = "Faulted" }
         { WorkingDirectory = "/repo"; Status = "Ready" } ]
     |> Expect.equal "the third session is Ready and covers cwd" ReadySessionCoversCwd
+
+  testCase "WHY — protocol_mismatch on POST /api/lease/request fails closed (Deny), never fails open, and exposes legacy leaseId for release" <| fun _ ->
+    ExpectedProtocolVersion |> Expect.equal "ReplGuard.ExpectedProtocolVersion matches shared ProtocolVersion" Bozzetto.Web.Shared.Protocol.ProtocolVersion
+    // Positive control: strict v14 granted -> Allow
+    let okProbe, okRelease = parseLeaseResponse 200 """{"protocolVersion":14,"decision":"granted","leaseId":"v14-1"}"""
+    okProbe |> Expect.equal "v14 grant parses as LeaseGranted" (Some LeaseGranted)
+    okRelease |> Expect.isNone "v14 grant needs no rollback release"
+    decide "BOZZETTO_FINAL_GATE=1 dotnet build" { live with Lease = okProbe } |> Expect.equal "v14 grant allows" Allow
+
+    // Exact-reason negative control: HTTP 400 protocol_mismatch -> Deny naming protocol_mismatch
+    let bad400Probe, bad400Release =
+      parseLeaseResponse 400 """{"error":"protocol_mismatch","reason":"protocol_mismatch: expected protocolVersion 14"}"""
+    bad400Release |> Expect.isNone "HTTP 400 has no granted lease to release"
+    match decide "BOZZETTO_FINAL_GATE=1 dotnet test" { live with Lease = bad400Probe } with
+    | Allow -> failtest "HTTP 400 protocol_mismatch must NEVER fail open"
+    | Deny reason ->
+      reason |> Expect.stringContains "names protocol_mismatch" "protocol_mismatch"
+      reason |> Expect.stringContains "tells operator to update daemon/hook" "Update the Bozzetto daemon"
+
+    // Fault-injection negative controls: skewed v13, unversioned legacy 200 grant, OR unparseable/empty/non-object 2xx -> Deny
+    for label, status, payload, expectedId in [
+      "unversioned legacy", 200, """{"decision":"granted","leaseId":"legacy-1"}""", Some "legacy-1"
+      "skewed v13", 200, """{"protocolVersion":13,"decision":"granted","leaseId":"legacy-13"}""", Some "legacy-13"
+      "HTTP 204 empty", 204, "", None
+      "HTTP 200 empty", 200, "", None
+      "HTTP 200 JSON array", 200, "[]", None
+      "HTTP 200 malformed JSON", 200, "not-json", None
+      "HTTP 200 missing decision", 200, """{"protocolVersion":14}""", None
+    ] do
+      let skewProbe, skewRelease = parseLeaseResponse status payload
+      skewRelease |> Expect.equal (sprintf "%s exposes granted leaseId for rollback release" label) expectedId
+      match decide "BOZZETTO_FINAL_GATE=1 dotnet build" { live with Lease = skewProbe } with
+      | Allow -> failtestf "%s reply must NEVER fail open" label
+      | Deny reason ->
+        reason |> Expect.stringContains (sprintf "%s deny carries protocol_mismatch" label) "protocol_mismatch"
+
+    // Non-protocol transport/500 failure remains fail-open (None -> Allow)
+    parseLeaseResponse 503 "service unavailable" |> Expect.equal "503 stays None" (None, None)
+    decide "BOZZETTO_FINAL_GATE=1 dotnet build" { live with Lease = None } |> Expect.equal "transport None stays Allow" Allow
 ]

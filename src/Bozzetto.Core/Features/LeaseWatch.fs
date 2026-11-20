@@ -32,49 +32,64 @@ module LeaseWatch =
     try changedEvent.Trigger change
     with _ -> () // An observer cannot fail the admission or release operation.
 
-  let internal nextExpiry now active =
-    active
-    |> List.map (fun (grant: ExpensiveWorkLease.GrantView) -> grant.ExpiresAt)
+  let internal nextExpiryFromTimestamps (now: DateTimeOffset) (expiries: DateTimeOffset list) =
+    expiries
     |> List.filter (fun expires -> expires > now)
     |> List.sort
     |> List.tryHead
 
+  let internal nextExpiry now (active: ExpensiveWorkLease.GrantView list) =
+    nextExpiryFromTimestamps now (active |> List.map (fun (grant: ExpensiveWorkLease.GrantView) -> grant.ExpiresAt))
+
+  let internal nextPoolExpiry (now: DateTimeOffset) (state: ExpensiveWorkLease.PoolState) =
+    let live = ExpensiveWorkLease.reapExpired now state
+    (live.Active |> List.map _.ExpiresAt) @ (live.Queue |> List.map _.ExpiresAt)
+    |> nextExpiryFromTimestamps now
+
   /// Under the gate: the next published pool, one serial on from the last.
-  let private advance () =
-    let live = ExpensiveWorkLease.snapshot DateTimeOffset.UtcNow pool
+  let private advanceAt (now: DateTimeOffset) =
+    let live = ExpensiveWorkLease.snapshot now pool
     latest <- { Serial = latest.Serial + 1L; Active = live.Active; Queue = live.Queue }
     latest
 
   /// A single one-shot deadline belongs to the pool, not to any browser. Each
   /// mutation replaces it; an already-queued callback is fenced by generation.
-  let rec private schedule () =
+  let rec private scheduleAt (now: DateTimeOffset) =
     generation <- generation + 1L
     let run = generation
     deadline |> Option.iter _.Dispose()
     deadline <- None
-    let now = DateTimeOffset.UtcNow
-    let live = ExpensiveWorkLease.snapshot now pool
-    match nextExpiry now live.Active with
+    match nextPoolExpiry now pool with
     | None -> ()
     | Some expires ->
+      let maxDue = TimeSpan.FromDays 45.0
+      let delay = min maxDue (max (TimeSpan.FromMilliseconds 1.) (expires - now + TimeSpan.FromMilliseconds 1.))
       let callback _ =
         let change = lock gate (fun () ->
           if generation <> run then None
           else
-            schedule ()
-            Some(advance ()))
+            let firedAt = DateTimeOffset.UtcNow
+            pool <- ExpensiveWorkLease.reapExpired firedAt pool
+            scheduleAt firedAt
+            let after = ExpensiveWorkLease.snapshot firedAt pool
+            if latest.Active <> after.Active || latest.Queue <> after.Queue then
+              Some(advanceAt firedAt)
+            else
+              None)
         change |> Option.iter notify
-      deadline <- Some(new Timer(TimerCallback callback, null, expires - now + TimeSpan.FromMilliseconds 1., Timeout.InfiniteTimeSpan))
+      deadline <- Some(new Timer(TimerCallback callback, null, delay, Timeout.InfiniteTimeSpan))
 
   let private update transition =
     let result, change = lock gate (fun () ->
-      let now = DateTimeOffset.UtcNow
-      let before = ExpensiveWorkLease.snapshot now pool
+      let prior = pool
       let next, result = transition pool
-      pool <- next
-      if before <> ExpensiveWorkLease.snapshot now pool then
-        schedule ()
-        result, Some(advance ())
+      let now = DateTimeOffset.UtcNow
+      pool <- ExpensiveWorkLease.reapExpired now next
+      if pool <> prior then
+        scheduleAt now
+      let after = ExpensiveWorkLease.snapshot now pool
+      if latest.Active <> after.Active || latest.Queue <> after.Queue then
+        result, Some(advanceAt now)
       else result, None)
     change |> Option.iter notify
     result
@@ -83,6 +98,42 @@ module LeaseWatch =
   let request (holder: string) (kind: ExpensiveWorkLease.Kind) : ExpensiveWorkLease.Decision =
     update (fun state ->
       ExpensiveWorkLease.request DateTimeOffset.UtcNow (MemoryPressureWatch.currentLevel ()) state holder kind)
+
+  // Atomic placement evaluation and admission inside the lease pool's own lock.
+  // Reaps expired leases before evaluating placement; withdraws any stale queued
+  // ask when throttled so a deferred caller never leaves a ghost queue entry.
+  let requestWithPlacement
+      (holder: string)
+      (kind: ExpensiveWorkLease.Kind)
+      (evaluatePlacement: ExpensiveWorkLease.PoolState -> MemoryPressure -> DateTimeOffset -> FleetBalance.PlacementDecision)
+      : Result<ExpensiveWorkLease.Decision * FleetBalance.RebalanceAdvisory option, FleetBalance.RebalanceAdvisory> =
+    let outcome, change =
+      lock gate (fun () ->
+        let prior = pool
+        let now = DateTimeOffset.UtcNow
+        let livePool = ExpensiveWorkLease.reapExpired now pool
+        let pressure = MemoryPressureWatch.currentLevel ()
+        let nextPool, result =
+          match evaluatePlacement livePool pressure now with
+          | FleetBalance.PlacementDecision.Throttled advisory ->
+            let withdrawnPool, _ = ExpensiveWorkLease.withdraw holder kind livePool
+            withdrawnPool, Error advisory
+          | FleetBalance.PlacementDecision.Proceed advisoryOpt ->
+            let grantedPool, decision = ExpensiveWorkLease.request now pressure livePool holder kind
+            grantedPool, Ok(decision, advisoryOpt)
+          | FleetBalance.PlacementDecision.BypassedPinned _ ->
+            let grantedPool, decision = ExpensiveWorkLease.request now pressure livePool holder kind
+            grantedPool, Ok(decision, None)
+        pool <- ExpensiveWorkLease.reapExpired now nextPool
+        if pool <> prior then
+          scheduleAt now
+        let after = ExpensiveWorkLease.snapshot now pool
+        if latest.Active <> after.Active || latest.Queue <> after.Queue then
+          result, Some(advanceAt now)
+        else
+          result, None)
+    change |> Option.iter notify
+    outcome
 
   let release (leaseId: ExpensiveWorkLease.LeaseId) : ExpensiveWorkLease.ReleaseOutcome =
     update (ExpensiveWorkLease.release leaseId)
@@ -158,7 +209,16 @@ module LeaseWatch =
 
   let reset () : unit =
     let change = lock gate (fun () ->
+      let now = DateTimeOffset.UtcNow
       pool <- ExpensiveWorkLease.empty
-      schedule ()
-      advance ())
+      scheduleAt now
+      advanceAt now)
+    notify change
+
+  let internal seedPoolForTest (state: ExpensiveWorkLease.PoolState) : unit =
+    let change = lock gate (fun () ->
+      let now = DateTimeOffset.UtcNow
+      pool <- state
+      scheduleAt now
+      advanceAt now)
     notify change

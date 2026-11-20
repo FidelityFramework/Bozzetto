@@ -34,7 +34,29 @@ module AgentActivityTracker =
 
   /// The tracker instance. Create one per daemon lifetime.
   type Tracker internal (agents: ConcurrentDictionary<string, AgentSnapshot>) =
+    let versionGate = obj ()
+    let mutable version = 0L
+    let changed = Event<int64 * Map<string, DateTime>>()
+    let captureMap () =
+      agents.Values
+      |> Seq.map (fun s -> s.AgentName, s.LastToolCall)
+      |> Map.ofSeq
     member internal _.Agents = agents
+    member internal _.CommitMutation(mutate: unit -> bool) : (int64 * Map<string, DateTime>) option =
+      lock versionGate (fun () ->
+        if mutate () then
+          version <- version + 1L
+          Some(version, captureMap ())
+        else None)
+    member internal _.NotifyChanged(snapshot: int64 * Map<string, DateTime>) =
+      try changed.Trigger snapshot with _ -> ()
+    member internal _.SnapshotWithVersion() : int64 * Map<string, DateTime> =
+      lock versionGate (fun () -> version, captureMap ())
+    member _.Changed : IObservable<int64 * Map<string, DateTime>> = changed.Publish
+
+  // Capture an atomic (version, agent -> lastToolCall) snapshot aligned with Changed serials.
+  let snapshotWithVersion (tracker: Tracker) : int64 * Map<string, DateTime> =
+    tracker.SnapshotWithVersion()
 
   /// Create a fresh tracker (empty).
   let create () : Tracker =
@@ -56,46 +78,50 @@ module AgentActivityTracker =
     (intent: string option)
     (now: DateTime)
     : unit =
-    tracker.Agents.AddOrUpdate(
-      key,
-      // Factory: first time we see this agent
-      (fun _key ->
-        let files =
-          match filePath with
-          | Some f -> [f]
-          | None -> []
-        {
-          AgentName = key
-          Role = role
-          SessionId = sessionId
-          LastToolCall = now
-          Intent = intent
-          RecentFiles = files
-          EvalCount = 1
-        }),
-      // Update: agent already exists
-      (fun _key existing ->
-        let newFiles =
-          match filePath with
-          | Some f ->
-            let updated = f :: (existing.RecentFiles |> List.filter (fun x -> x <> f))
-            match updated.Length > MaxRecentFiles with
-            | true -> updated |> List.take MaxRecentFiles
-            | false -> updated
-          | None -> existing.RecentFiles
-        let newIntent =
-          match intent with
-          | Some _ -> intent
-          | None -> existing.Intent
-        {
-          existing with
-            SessionId = if sessionId = "" then existing.SessionId else sessionId
-            LastToolCall = now
-            Intent = newIntent
-            RecentFiles = newFiles
-            EvalCount = existing.EvalCount + 1
-        })
-    ) |> ignore
+    let published =
+      tracker.CommitMutation(fun () ->
+        tracker.Agents.AddOrUpdate(
+          key,
+          // Factory: first time we see this agent
+          (fun _key ->
+            let files =
+              match filePath with
+              | Some f -> [f]
+              | None -> []
+            {
+              AgentName = key
+              Role = role
+              SessionId = sessionId
+              LastToolCall = now
+              Intent = intent
+              RecentFiles = files
+              EvalCount = 1
+            }),
+          // Update: agent already exists
+          (fun _key existing ->
+            let newFiles =
+              match filePath with
+              | Some f ->
+                let updated = f :: (existing.RecentFiles |> List.filter (fun x -> x <> f))
+                match updated.Length > MaxRecentFiles with
+                | true -> updated |> List.take MaxRecentFiles
+                | false -> updated
+              | None -> existing.RecentFiles
+            let newIntent =
+              match intent with
+              | Some _ -> intent
+              | None -> existing.Intent
+            {
+              existing with
+                SessionId = if sessionId = "" then existing.SessionId else sessionId
+                LastToolCall = if now > existing.LastToolCall then now else existing.LastToolCall
+                Intent = newIntent
+                RecentFiles = newFiles
+                EvalCount = existing.EvalCount + 1
+            })
+        ) |> ignore
+        true)
+    published |> Option.iter tracker.NotifyChanged
 
   /// Record a tool call from an agent, keyed by its caller-supplied name.
   /// Role is derived by re-classifying that name's text (`OccupantRole.classify`).
@@ -143,7 +169,8 @@ module AgentActivityTracker =
   /// presence should disappear immediately rather than wait out the staleness
   /// window `cleanup` enforces.
   let forget (tracker: Tracker) (key: string) : unit =
-    tracker.Agents.TryRemove(key) |> ignore
+    let published = tracker.CommitMutation(fun () -> tracker.Agents.TryRemove(key) |> fst)
+    published |> Option.iter tracker.NotifyChanged
 
   /// Get an agent's current presence as an immutable snapshot.
   /// Returns None if the agent has never been seen.
@@ -196,14 +223,22 @@ module AgentActivityTracker =
     (timeout: TimeSpan)
     (now: DateTime)
     : OccupancyCleanupOutcome =
-    let staleAgents =
-      tracker.Agents
-      |> Seq.filter (fun kv -> (now - kv.Value.LastToolCall) > timeout)
-      |> Seq.map (fun kv -> kv.Key)
-      |> Seq.toList
-    match staleAgents with
-    | [] -> OccupancyCleanupOutcome.NothingToClean
-    | agents ->
-      agents |> List.iter (fun name ->
-        tracker.Agents.TryRemove(name) |> ignore)
-      OccupancyCleanupOutcome.EvictedStale agents
+    let mutable outcome = OccupancyCleanupOutcome.NothingToClean
+    let published =
+      tracker.CommitMutation(fun () ->
+        let staleAgents =
+          tracker.Agents
+          |> Seq.filter (fun kv -> (now - kv.Value.LastToolCall) > timeout)
+          |> Seq.map (fun kv -> kv.Key)
+          |> Seq.toList
+        match staleAgents with
+        | [] ->
+          outcome <- OccupancyCleanupOutcome.NothingToClean
+          false
+        | agents ->
+          agents |> List.iter (fun name ->
+            tracker.Agents.TryRemove(name) |> ignore)
+          outcome <- OccupancyCleanupOutcome.EvictedStale agents
+          true)
+    published |> Option.iter tracker.NotifyChanged
+    outcome

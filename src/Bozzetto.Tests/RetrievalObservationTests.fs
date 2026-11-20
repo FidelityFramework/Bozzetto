@@ -1347,4 +1347,51 @@ let httpRouteTests =
       | Ok () -> ()
       | Error ex -> raise ex
     }
+
+    testCaseTask "checkout ref watcher catches packed-to-loose transition when refs/ is absent at startup and subsequent loose updates" <| fun () -> task {
+      let shaA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      let shaB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      let shaC = "cccccccccccccccccccccccccccccccccccccccc"
+      let repoDir = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../../test-results/scratch", "boz-packed-to-loose-" + Guid.NewGuid().ToString("N")))
+      Directory.CreateDirectory(Path.Combine(repoDir, ".git")) |> ignore
+      File.WriteAllText(Path.Combine(repoDir, ".git", "HEAD"), "ref: refs/heads/main\n")
+      File.WriteAllText(Path.Combine(repoDir, ".git", "packed-refs"), "# pack-refs\n" + shaB + " refs/heads/main\n")
+      try
+        use handler = new SseTestHandler(fun _ _ stream -> okSseResponse stream)
+        use stopping = new CancellationTokenSource()
+        use controller =
+          Controller.CreateForTest(
+            Some testConfig,
+            repoDir,
+            stopping.Token,
+            handler,
+            readToken = (fun _ -> "tok"),
+            delayAsync = (fun _ ct -> Task.Delay(10, ct)))
+        let! outcome = task {
+          try
+            (controller.Current()).Branch.HeadRevision
+            |> Expect.equal "starts on packed-refs SHA when refs/ does not yet exist" (Some shaB)
+
+            let sawLooseA = waitForObservation controller (fun o -> o.Branch.HeadRevision = Some shaA) 5000
+            let headsDir = Path.Combine(repoDir, ".git", "refs", "heads")
+            Directory.CreateDirectory headsDir |> ignore
+            File.WriteAllText(Path.Combine(headsDir, "main"), shaA + "\n")
+            let! obsA = sawLooseA
+            obsA.Branch.HeadRevision |> Expect.equal "packed-to-loose creation pushes new HeadRevision" (Some shaA)
+
+            let sawLooseC = waitForObservation controller (fun o -> o.Branch.HeadRevision = Some shaC) 5000
+            File.WriteAllText(Path.Combine(headsDir, "main"), shaC + "\n")
+            let! obsC = sawLooseC
+            obsC.Branch.HeadRevision |> Expect.equal "newly attached refs/ watcher pushes subsequent loose ref update" (Some shaC)
+            return Ok ()
+          with ex -> return Error ex
+        }
+        stopping.Cancel()
+        do! (controller.Close() |> Async.StartAsTask).WaitAsync(TimeSpan.FromSeconds 5.)
+        match outcome with
+        | Ok () -> ()
+        | Error ex -> raise ex
+      finally
+        if Directory.Exists repoDir then Directory.Delete(repoDir, true)
+    }
   ]

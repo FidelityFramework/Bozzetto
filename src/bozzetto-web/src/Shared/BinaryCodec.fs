@@ -12,14 +12,12 @@ let MaxFrameBytes = 4 * 1024 * 1024
 [<Literal>]
 let MaxRequestBytes = 4096
 [<Literal>]
-let PeerCompatProtocolVersion = 11
-[<Literal>]
 let private MaxItems = 65536
 [<Literal>]
 let private MaxStringBytes = 1024 * 1024
 
-type private Reader = { Bytes: byte array; mutable Offset: int; mutable Version: int }
-type private Writer = { Bytes: ResizeArray<byte>; Limit: int; Version: int }
+type private Reader = { Bytes: byte array; mutable Offset: int }
+type private Writer = { Bytes: ResizeArray<byte>; Limit: int }
 type private Codec<'T> = { Read: Reader -> 'T; Write: Writer -> 'T -> unit }
 
 let private fail message = invalidOp ("binary: " + message)
@@ -750,7 +748,7 @@ let private agentRun : Codec<AgentRun> = {
     (array text).Write w value.Activity
     wide.Write w value.OmittedActivity
     (optional agentUsage).Write w value.Usage
-    if w.Version >= 13 then flag.Write w value.Aged
+    flag.Write w value.Aged
   Read = fun r ->
     let f0 = text.Read r
     let f1 = text.Read r
@@ -768,7 +766,7 @@ let private agentRun : Codec<AgentRun> = {
     let f13 = (array text).Read r
     let f14 = wide.Read r
     let f15 = (optional agentUsage).Read r
-    let f16 = if r.Version >= 13 then flag.Read r else false
+    let f16 = flag.Read r
     { AgentRun.Id = f0; Member = f1; Role = f2; Name = f3; Session = f4; ReportSequence = f5; Model = f6; Endpoint = f7; Project = f8; Focus = f9; Operation = f10; Status = f11; UpdatedAtMs = f12; Activity = f13; OmittedActivity = f14; Usage = f15; Aged = f16 }
 }
 
@@ -803,10 +801,10 @@ let private agentWorkBoard : Codec<AgentWorkBoard> = {
     let f0 = text.Read r
     let f1 = wide.Read r
     let f2 = text.Read r
-    if r.Version = LegacyProtocolVersion then whole.Read r |> ignore // v9 capacity, no longer asserted
     let f3 = (array agentRun).Read r
     let f4 = (array agentPresence).Read r
-    let omitted, refusal = if r.Version = LegacyProtocolVersion then 0L, "" else wide.Read r, text.Read r
+    let omitted = wide.Read r
+    let refusal = text.Read r
     { AgentWorkBoard.Incarnation = f0; Sequence = f1; ExecutionHost = f2; Runs = f3; Presence = f4
       OmittedRuns = omitted; Refusal = refusal }
 }
@@ -849,9 +847,7 @@ let private operationRun : Codec<OperationRun> = {
     flag.Write w value.Dropped
   Read = fun r ->
     let f0 = whole.Read r
-    let compiler =
-      if r.Version = LegacyProtocolVersion then Some(operationCompiler.Read r)
-      else (optional operationCompiler).Read r
+    let compiler = (optional operationCompiler).Read r
     let f3 = text.Read r
     let f4 = text.Read r
     let f5 = flag.Read r
@@ -882,7 +878,7 @@ let private operationEntry : Codec<OperationEntry> = {
     let f7 = text.Read r
     let f8 = text.Read r
     let f9 = (optional operationRun).Read r
-    let lease = if r.Version = LegacyProtocolVersion then None else (optional leasedCommand).Read r
+    let lease = (optional leasedCommand).Read r
     { OperationEntry.Sequence = f0; AtMs = f1; CallerLabel = f2; Operation = f3; Session = f4; Project = f5; Ok = f6; Code = f7; Message = f8; Run = f9; Lease = lease }
 }
 
@@ -910,6 +906,7 @@ let private nodeCapacity : Codec<NodeCapacity> = {
     wide.Write w value.MachineTotalBytes
     wide.Write w value.ResidentBytes
     wide.Write w value.PeakResidentBytes
+    (optional flag).Write w value.CheckoutSynced
   Read = fun r ->
     let f0 = (optional whole).Read r
     let f1 = whole.Read r
@@ -920,9 +917,10 @@ let private nodeCapacity : Codec<NodeCapacity> = {
     let f6 = wide.Read r
     let f7 = wide.Read r
     let f8 = wide.Read r
+    let f9 = (optional flag).Read r
     { NodeCapacity.LeaseCap = f0; PidVerifiedLeases = f1; UnverifiedLeases = f2; StalePidLeases = f3
       MemoryPressure = f4; MachineAvailableBytes = f5; MachineTotalBytes = f6
-      ResidentBytes = f7; PeakResidentBytes = f8 }
+      ResidentBytes = f7; PeakResidentBytes = f8; CheckoutSynced = f9 }
 }
 
 let private workSnapshot : Codec<WorkSnapshot> = {
@@ -933,7 +931,7 @@ let private workSnapshot : Codec<WorkSnapshot> = {
     leaseBoard.Write w value.Leases
     operationsBoard.Write w value.Operations
     flag.Write w value.TranscriptsOmitted
-    if w.Version >= 13 then (optional nodeCapacity).Write w value.Capacity
+    (optional nodeCapacity).Write w value.Capacity
   Read = fun r ->
     let f0 = wide.Read r
     let f1 = wide.Read r
@@ -941,7 +939,7 @@ let private workSnapshot : Codec<WorkSnapshot> = {
     let f3 = leaseBoard.Read r
     let f4 = operationsBoard.Read r
     let f5 = flag.Read r
-    let f6 = if r.Version >= 13 then (optional nodeCapacity).Read r else None
+    let f6 = (optional nodeCapacity).Read r
     { WorkSnapshot.Sequence = f0; SampledAtMs = f1; Snapshot = f2; Leases = f3; Operations = f4; TranscriptsOmitted = f5; Capacity = f6 }
 }
 
@@ -1068,6 +1066,98 @@ let private retrievalStatus : Codec<RetrievalStatus> = {
       Reasons = f14; Revisions = f15; Note = f16 }
 }
 
+let private rebalanceCandidate : Codec<RebalanceCandidate> = {
+  Write = fun w value ->
+    text.Write w value.NodeId
+    whole.Write w value.FreeSlots
+    whole.Write w value.ActiveLeases
+    whole.Write w value.LeaseCap
+    whole.Write w value.QueuedLeases
+    wide.Write w value.AvailableRamBytes
+    wide.Write w value.TotalRamBytes
+    text.Write w value.Pressure
+  Read = fun r ->
+    let f0 = text.Read r
+    let f1 = whole.Read r
+    let f2 = whole.Read r
+    let f3 = whole.Read r
+    let f4 = whole.Read r
+    let f5 = wide.Read r
+    let f6 = wide.Read r
+    let f7 = text.Read r
+    { RebalanceCandidate.NodeId = f0; FreeSlots = f1; ActiveLeases = f2; LeaseCap = f3
+      QueuedLeases = f4; AvailableRamBytes = f5; TotalRamBytes = f6; Pressure = f7 }
+}
+
+let private rebalanceAdvisoryWire : Codec<RebalanceAdvisoryWire> = {
+  Write = fun w value ->
+    text.Write w value.RecommendedNode
+    text.Write w value.Reason
+    text.Write w value.Policy
+    flag.Write w value.Throttled
+    (array rebalanceCandidate).Write w value.Candidates
+  Read = fun r ->
+    let f0 = text.Read r
+    let f1 = text.Read r
+    let f2 = text.Read r
+    let f3 = flag.Read r
+    let f4 = (array rebalanceCandidate).Read r
+    { RebalanceAdvisoryWire.RecommendedNode = f0; Reason = f1; Policy = f2; Throttled = f3; Candidates = f4 }
+}
+
+let private silentAgentAlertWire : Codec<SilentAgentAlertWire> = {
+  Write = fun w value ->
+    text.Write w value.MemberKey
+    text.Write w value.DisplayName
+    text.Write w value.AgentFamily
+    text.Write w value.Role
+    text.Write w value.Kind
+    wide.Write w value.IdleSeconds
+    wide.Write w value.LastActivityMs
+    text.Write w value.Reason
+  Read = fun r ->
+    let f0 = text.Read r
+    let f1 = text.Read r
+    let f2 = text.Read r
+    let f3 = text.Read r
+    let f4 = text.Read r
+    let f5 = wide.Read r
+    let f6 = wide.Read r
+    let f7 = text.Read r
+    { SilentAgentAlertWire.MemberKey = f0; DisplayName = f1; AgentFamily = f2; Role = f3
+      Kind = f4; IdleSeconds = f5; LastActivityMs = f6; Reason = f7 }
+}
+
+let private fleetBalanceStatus : Codec<FleetBalanceStatus> = {
+  Write = fun w value ->
+    wide.Write w value.Revision
+    text.Write w value.Policy
+    whole.Write w value.SilentThresholdSeconds
+    text.Write w value.LocalNodeId
+    flag.Write w value.LocalBusy
+    (optional rebalanceAdvisoryWire).Write w value.Advisory
+    (array silentAgentAlertWire).Write w value.SilentAlerts
+    whole.Write w value.ActiveLeaseCount
+    whole.Write w value.OpenClaimCount
+    whole.Write w value.UnauditedRunCount
+    whole.Write w value.DirtyTrancheCount
+  Read = fun r ->
+    let f0 = wide.Read r
+    let f1 = text.Read r
+    let f2 = whole.Read r
+    let f3 = text.Read r
+    let f4 = flag.Read r
+    let f5 = (optional rebalanceAdvisoryWire).Read r
+    let f6 = (array silentAgentAlertWire).Read r
+    let f7 = whole.Read r
+    let f8 = whole.Read r
+    let f9 = whole.Read r
+    let f10 = whole.Read r
+    { FleetBalanceStatus.Revision = f0; Policy = f1; SilentThresholdSeconds = f2; LocalNodeId = f3
+      LocalBusy = f4; Advisory = f5; SilentAlerts = f6; ActiveLeaseCount = f7; OpenClaimCount = f8
+      UnauditedRunCount = f9; DirtyTrancheCount = f10 }
+}
+
 let private event : Codec<Event> = {
   Write = fun w value ->
     match value with
@@ -1086,6 +1176,7 @@ let private event : Codec<Event> = {
     | NodeResources item -> uint.Write w 12; nodeResources.Write w item
     | NodeTranscript item -> uint.Write w 13; nodeTranscript.Write w item
     | Retrieval item -> uint.Write w 14; retrievalStatus.Write w item
+    | FleetBalance item -> uint.Write w 15; fleetBalanceStatus.Write w item
   Read = fun r ->
     match uint.Read r with
     | 0 -> Welcome(bridgeWelcome.Read r)
@@ -1103,6 +1194,7 @@ let private event : Codec<Event> = {
     | 12 -> NodeResources(nodeResources.Read r)
     | 13 -> NodeTranscript(nodeTranscript.Read r)
     | 14 -> Retrieval(retrievalStatus.Read r)
+    | 15 -> FleetBalance(fleetBalanceStatus.Read r)
     | _ -> fail "unknown Event tag"
 }
 
@@ -1170,34 +1262,23 @@ let private commandObservationReply : Codec<CommandObservationReply> = {
     | _ -> fail "unknown CommandObservationReply tag"
 }
 
-let private encodeVersion version family limit codec value =
-  let writer = { Writer.Bytes = ResizeArray<byte>(); Limit = limit; Version = version }
+let private encode family limit codec value =
+  let writer = { Writer.Bytes = ResizeArray<byte>(); Limit = limit }
   for b in [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy |] do put writer b
-  uint.Write writer version
+  uint.Write writer ProtocolVersion
   uint.Write writer family
   codec.Write writer value
   writer.Bytes.ToArray()
 
-let private encode family limit codec value = encodeVersion ProtocolVersion family limit codec value
-
-let isPeerProtocolVersion version =
-  version = ProtocolVersion || version = 12 || version = PeerCompatProtocolVersion || version = LegacyProtocolVersion
-
 let private decode family limit codec (bytes: byte array) =
   try
     if isNull bytes || bytes.Length > limit then fail "frame too large"
-    let reader = { Reader.Bytes = bytes; Offset = 0; Version = 0 }
+    let reader = { Reader.Bytes = bytes; Offset = 0 }
     for b in [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy |] do
       if take reader <> b then fail "wrong magic"
-    reader.Version <- uint.Read reader
+    let version = uint.Read reader
     if uint.Read reader <> family then fail "wrong message family"
-    let supported =
-      match family with
-      | 3 | 4 | 5 | 6 -> isPeerProtocolVersion reader.Version
-      | 1 | 2 -> reader.Version = ProtocolVersion || reader.Version = LegacyProtocolVersion
-      | 7 | 8 -> reader.Version = ProtocolVersion || reader.Version = 12 || reader.Version = 11
-      | _ -> false
-    if not supported then fail "unsupported version"
+    if version <> ProtocolVersion then fail "unsupported version"
     let value = codec.Read reader
     if reader.Offset <> bytes.Length then fail "trailing bytes"
     Ok value
@@ -1220,7 +1301,7 @@ let private validateCommand (frame: CommandFrame) =
     | _ -> Ok frame
 
 let private validatePeer (request: PeerObserveRequest) =
-  if not (isPeerProtocolVersion request.ProtocolVersion) then Error "unsupported peer version"
+  if request.ProtocolVersion <> ProtocolVersion then Error "unsupported peer version"
   elif String.IsNullOrWhiteSpace request.Node then Error "node: required"
   elif request.Topic <> "work" && request.Topic <> "resources" then Error "unknown observation topic"
   elif request.Seconds < 0 || request.Seconds > 120 then Error "seconds: expected 0 through 120"
@@ -1231,23 +1312,20 @@ let encodeCommand value = encode 1 MaxFrameBytes commandFrame (validateCommand v
 let decodeCommand bytes = decode 1 MaxFrameBytes commandFrame bytes |> Result.bind validateCommand
 let encodeEvent value = encode 2 MaxFrameBytes event value
 let decodeEvent bytes = decode 2 MaxFrameBytes event bytes
-let encodePeerObserveRequest (value: PeerObserveRequest) = encodeVersion value.ProtocolVersion 3 MaxRequestBytes peerObserveRequest (validatePeer value |> require)
+let encodePeerObserveRequest (value: PeerObserveRequest) = encode 3 MaxRequestBytes peerObserveRequest (validatePeer value |> require)
 let decodePeerObserveRequest bytes = decode 3 MaxRequestBytes peerObserveRequest bytes |> Result.bind validatePeer
-let encodePeerFrame value = encodeVersion PeerCompatProtocolVersion 4 MaxFrameBytes peerFrame value
-let encodePeerFrameVersion version value = encodeVersion version 4 MaxFrameBytes peerFrame value
+let encodePeerFrame value = encode 4 MaxFrameBytes peerFrame value
 let decodePeerFrame bytes = decode 4 MaxFrameBytes peerFrame bytes
 
 let private validatePeerTranscript (request: PeerTranscriptRequest) =
-  if not (isPeerProtocolVersion request.ProtocolVersion) then Error "unsupported peer version"
+  if request.ProtocolVersion <> ProtocolVersion then Error "unsupported peer version"
   else validateTranscript request.Request |> Result.map (fun _ -> request)
-let encodePeerTranscriptRequest (value: PeerTranscriptRequest) = encodeVersion value.ProtocolVersion 5 MaxRequestBytes peerTranscriptRequest (validatePeerTranscript value |> require)
+let encodePeerTranscriptRequest (value: PeerTranscriptRequest) = encode 5 MaxRequestBytes peerTranscriptRequest (validatePeerTranscript value |> require)
 let decodePeerTranscriptRequest bytes = decode 5 MaxRequestBytes peerTranscriptRequest bytes |> Result.bind validatePeerTranscript
-let encodePeerTranscriptReply value = encodeVersion PeerCompatProtocolVersion 6 MaxTranscriptBytes peerTranscriptReply value
+let encodePeerTranscriptReply value = encode 6 MaxTranscriptBytes peerTranscriptReply value
 let decodePeerTranscriptReply bytes = decode 6 MaxTranscriptBytes peerTranscriptReply bytes
 
-// Private reporting families 7 & 8 keep their unchanged v11 wire layout (no v9
-// representation) so lease.fsx remains compatible across v11/v12 daemon rollouts.
-let encodeCommandObservationRequest value = encodeVersion 11 7 MaxCommandObservationBytes commandObservationRequest value
+let encodeCommandObservationRequest value = encode 7 MaxCommandObservationBytes commandObservationRequest value
 let decodeCommandObservationRequest bytes = decode 7 MaxCommandObservationBytes commandObservationRequest bytes
-let encodeCommandObservationReply value = encodeVersion 11 8 MaxCommandObservationReplyBytes commandObservationReply value
+let encodeCommandObservationReply value = encode 8 MaxCommandObservationReplyBytes commandObservationReply value
 let decodeCommandObservationReply bytes = decode 8 MaxCommandObservationReplyBytes commandObservationReply bytes

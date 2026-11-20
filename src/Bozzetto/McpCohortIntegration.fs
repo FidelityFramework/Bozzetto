@@ -63,7 +63,9 @@ module McpCohortIntegration =
         AgentActivityTracker.recordMemberActivity ctx.ActivityTracker (MemberTable.MemberId.Mcp transport) "" None (Some "get_agent_work") System.DateTime.UtcNow
       | _ -> ()
       let! result = owner.ReconcileWork() |> Async.StartAsTask
-      return result |> Result.map (fun _ -> AgentWork.json (owner.ReadWork()))
+      return result |> Result.map (fun _ ->
+                      AgentWork.json (owner.ReadWork())
+                      |> FleetBalanceService.appendJsonField "fleetBalance" (FleetBalanceService.summaryJsonForContext ctx.CohortOwner ctx.ActivityTracker))
                     |> Result.mapError (fun error -> BozzettoError.CohortActionFailed(AgentWork.code error, "Owner state is retained; retry get_agent_work after fixing publication."))
   }
 

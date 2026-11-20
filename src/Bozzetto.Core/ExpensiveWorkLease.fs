@@ -206,7 +206,7 @@ module ExpensiveWorkLease =
   /// every queued ask whose holder has not come back within the ask's
   /// lifetime. A retry refreshes `LastAskedAt` (see `requestCore`), so the
   /// age is measured from the holder's most recent ask, not its first.
-  let private reapExpired (now: DateTimeOffset) (state: PoolState) : PoolState =
+  let internal reapExpired (now: DateTimeOffset) (state: PoolState) : PoolState =
     { state with
         Active = state.Active |> List.filter (fun l -> l.ExpiresAt > now)
         Queue = state.Queue |> List.filter (fun q -> q.ExpiresAt > now) }

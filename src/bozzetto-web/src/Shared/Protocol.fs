@@ -5,11 +5,7 @@ module Bozzetto.Web.Shared.Protocol
 
 /// Binary envelope and vocabulary version, also carried in Welcome.
 [<Literal>]
-let ProtocolVersion = 13
-
-/// Existing observation requests are unchanged; deployed v9 peers remain readable.
-[<Literal>]
-let LegacyProtocolVersion = 9
+let ProtocolVersion = 14
 
 [<Literal>]
 let MaxObservedPeers = 16
@@ -402,6 +398,7 @@ type NodeCapacity = {
   MachineTotalBytes: int64
   ResidentBytes: int64
   PeakResidentBytes: int64
+  CheckoutSynced: bool option
 }
 
 /// The peer's own complete work observation. It carries no admission capability.
@@ -449,6 +446,50 @@ type RetrievalStatus = {
   Note: string
 }
 
+type RebalanceCandidate = {
+  NodeId: string
+  FreeSlots: int32
+  ActiveLeases: int32
+  LeaseCap: int32
+  QueuedLeases: int32
+  AvailableRamBytes: int64
+  TotalRamBytes: int64
+  Pressure: string
+}
+
+type RebalanceAdvisoryWire = {
+  RecommendedNode: string
+  Reason: string
+  Policy: string
+  Throttled: bool
+  Candidates: RebalanceCandidate array
+}
+
+type SilentAgentAlertWire = {
+  MemberKey: string
+  DisplayName: string
+  AgentFamily: string
+  Role: string
+  Kind: string
+  IdleSeconds: int64
+  LastActivityMs: int64
+  Reason: string
+}
+
+type FleetBalanceStatus = {
+  Revision: int64
+  Policy: string
+  SilentThresholdSeconds: int32
+  LocalNodeId: string
+  LocalBusy: bool
+  Advisory: RebalanceAdvisoryWire option
+  SilentAlerts: SilentAgentAlertWire array
+  ActiveLeaseCount: int32
+  OpenClaimCount: int32
+  UnauditedRunCount: int32
+  DirtyTrancheCount: int32
+}
+
 /// What the backend pushes to the UI. Events fold into the UI's model.
 type Event =
   | Welcome of BridgeWelcome
@@ -466,3 +507,4 @@ type Event =
   | NodeResources of NodeResources
   | NodeTranscript of NodeTranscript
   | Retrieval of RetrievalStatus
+  | FleetBalance of FleetBalanceStatus

@@ -34,6 +34,7 @@ module WatchdogCli =
     | UnknownCanaryPreset of name: string
     | InvalidPositiveFloat of source: string * raw: string
     | InvalidPositiveInt64 of source: string * raw: string
+    | InvalidBoolean of source: string * raw: string
     | EmptyReceiptPath of source: string
 
   module WatchdogOptionError =
@@ -46,6 +47,8 @@ module WatchdogCli =
         sprintf "invalid positive number for %s: '%s'" source raw
       | WatchdogOptionError.InvalidPositiveInt64(source, raw) ->
         sprintf "invalid positive integer MB for %s: '%s'" source raw
+      | WatchdogOptionError.InvalidBoolean(source, raw) ->
+        sprintf "invalid boolean for %s: '%s' (expected 1|0|true|false|yes|no|on|off)" source raw
       | WatchdogOptionError.EmptyReceiptPath source ->
         sprintf "empty receipt path for %s" source
 
@@ -53,7 +56,18 @@ module WatchdogCli =
     CanaryPreset: string option
     Limits: ProcessWatchdog.FuseLimits
     ReceiptPath: string option
+    PinZ13: bool
   }
+
+  let parsePinZ13Env (rawOpt: string option) : Result<bool, WatchdogOptionError> =
+    match rawOpt with
+    | None -> Ok false
+    | Some s when String.IsNullOrWhiteSpace s -> Ok false
+    | Some s ->
+      match s.Trim().ToLowerInvariant() with
+      | "1" | "true" | "yes" | "on" -> Ok true
+      | "0" | "false" | "no" | "off" -> Ok false
+      | _ -> Error(WatchdogOptionError.InvalidBoolean("BOZZETTO_PIN_Z13", s))
 
   let private parsePositiveFloat (source: string) (raw: string) : Result<float, WatchdogOptionError> =
     match Double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture) with
@@ -96,7 +110,8 @@ module WatchdogCli =
     |> Result.map (fun (presetName, limits) ->
       { CanaryPreset = presetName
         Limits = limits
-        ReceiptPath = nonEmpty receiptPathEnv |> Option.map _.Trim() })
+        ReceiptPath = nonEmpty receiptPathEnv |> Option.map _.Trim()
+        PinZ13 = false })
 
   // Parse leading lease.fsx watchdog flags before <kind> <command> [args...].
   // Explicit --wall-limit-secs / --rss-limit-mb always override --canary regardless
@@ -108,27 +123,30 @@ module WatchdogCli =
         (explicitWall: float option)
         (explicitRss: int64 option)
         (receiptPath: string option)
+        (pinZ13: bool)
         (remaining: string list) =
       match remaining with
       | "--canary" :: value :: rest ->
         match tryCanaryPreset value with
-        | Some preset -> loop (Some(value.Trim())) (Some preset) explicitWall explicitRss receiptPath rest
+        | Some preset -> loop (Some(value.Trim())) (Some preset) explicitWall explicitRss receiptPath pinZ13 rest
         | None -> Error(WatchdogOptionError.UnknownCanaryPreset value)
       | [ "--canary" ] -> Error(WatchdogOptionError.MissingValue "--canary")
       | "--wall-limit-secs" :: value :: rest ->
         match parsePositiveFloat "--wall-limit-secs" value with
-        | Ok secs -> loop presetName presetLimits (Some secs) explicitRss receiptPath rest
+        | Ok secs -> loop presetName presetLimits (Some secs) explicitRss receiptPath pinZ13 rest
         | Error err -> Error err
       | [ "--wall-limit-secs" ] -> Error(WatchdogOptionError.MissingValue "--wall-limit-secs")
       | "--rss-limit-mb" :: value :: rest ->
         match parsePositiveRssBytes "--rss-limit-mb" value with
-        | Ok bytes -> loop presetName presetLimits explicitWall (Some bytes) receiptPath rest
+        | Ok bytes -> loop presetName presetLimits explicitWall (Some bytes) receiptPath pinZ13 rest
         | Error err -> Error err
       | [ "--rss-limit-mb" ] -> Error(WatchdogOptionError.MissingValue "--rss-limit-mb")
       | "--receipt-path" :: value :: rest ->
         if String.IsNullOrWhiteSpace value then Error(WatchdogOptionError.EmptyReceiptPath "--receipt-path")
-        else loop presetName presetLimits explicitWall explicitRss (Some(value.Trim())) rest
+        else loop presetName presetLimits explicitWall explicitRss (Some(value.Trim())) pinZ13 rest
       | [ "--receipt-path" ] -> Error(WatchdogOptionError.MissingValue "--receipt-path")
+      | "--pin-z13" :: rest ->
+        loop presetName presetLimits explicitWall explicitRss receiptPath true rest
       | rest ->
         let baseLimits = presetLimits |> Option.defaultValue defaults.Limits
         let resolvedLimits : ProcessWatchdog.FuseLimits = {
@@ -138,9 +156,10 @@ module WatchdogCli =
         Ok(
           { CanaryPreset = presetName
             Limits = resolvedLimits
-            ReceiptPath = receiptPath },
+            ReceiptPath = receiptPath
+            PinZ13 = pinZ13 },
           rest)
-    loop defaults.CanaryPreset None None None defaults.ReceiptPath argv
+    loop defaults.CanaryPreset None None None defaults.ReceiptPath defaults.PinZ13 argv
 
   type WatchdogReceipt = {
     RootPid: int

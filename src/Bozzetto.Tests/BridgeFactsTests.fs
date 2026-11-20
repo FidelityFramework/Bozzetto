@@ -290,7 +290,7 @@ let factsTests =
       let obs serial readiness : Server.RetrievalObservation.Observation =
         { Serial = serial
           ObservedAtMs = serial * 1000L
-          Branch = { BranchName = "main"; OnMain = true; Repository = Some "Farscape" }
+          Branch = { BranchName = "main"; OnMain = true; Repository = Some "Farscape"; HeadRevision = None }
           Readiness = readiness
           LastFreshSources = [||] }
       let indexing =

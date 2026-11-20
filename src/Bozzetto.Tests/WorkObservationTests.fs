@@ -25,7 +25,7 @@ let private config rows = "{\"workers\":[" + String.concat "," rows + "]}"
 let private transportedCapacity : NodeCapacity =
   { LeaseCap = Some 1; PidVerifiedLeases = 1; UnverifiedLeases = 1; StalePidLeases = 1
     MemoryPressure = "Tight"; MachineAvailableBytes = 8_000_000_000L; MachineTotalBytes = 64_000_000_000L
-    ResidentBytes = 140_000_000L; PeakResidentBytes = 350_000_000L }
+    ResidentBytes = 140_000_000L; PeakResidentBytes = 350_000_000L; CheckoutSynced = Some true }
 
 let private work : WorkSnapshot =
   let grants =
@@ -35,11 +35,6 @@ let private work : WorkSnapshot =
     Leases = { Revision = 1L; Active = grants; Queued = [||] }
     Operations = { Revision = 1L; Incarnation = "journal"; StorageError = None; Entries = [||] }
     TranscriptsOmitted = true; Capacity = Some transportedCapacity }
-
-let private legacyCapacity : NodeCapacity =
-  { LeaseCap = None; PidVerifiedLeases = 0; UnverifiedLeases = 3; StalePidLeases = 0
-    MemoryPressure = ""; MachineAvailableBytes = 0L; MachineTotalBytes = 0L
-    ResidentBytes = 0L; PeakResidentBytes = 0L }
 
 let private constants : Facts.Constants = { McpPort = 47759; Version = "test"; ProcessId = 99 }
 
@@ -85,7 +80,7 @@ let private observePeer map (completed: NodeWork -> 'a option) = task {
     Directory.Delete(directory, true)
 }
 
-let private mockPeer (versions: ConcurrentQueue<int>) reply (app: WebApplication) =
+let private mockPeerRaw (versions: ConcurrentQueue<int>) (reply: int -> int * byte array list) (app: WebApplication) =
   app.MapPost(Route, RequestDelegate(fun ctx -> task {
     use buffer = new MemoryStream()
     do! ctx.Request.Body.CopyToAsync(buffer, ctx.RequestAborted)
@@ -98,11 +93,16 @@ let private mockPeer (versions: ConcurrentQueue<int>) reply (app: WebApplication
       ctx.Response.StatusCode <- status
       ctx.Response.ContentType <- MediaType
       for frame in frames do
-        do! Frames.write ctx.Response.Body (Codec.encodePeerFrame frame) ctx.RequestAborted |> Async.StartAsTask
+        do! Frames.write ctx.Response.Body frame ctx.RequestAborted |> Async.StartAsTask
       if status = 200 then
         try do! Task.Delay(Timeout.Infinite, ctx.RequestAborted)
         with :? OperationCanceledException -> ()
   })) |> ignore
+
+let private mockPeer (versions: ConcurrentQueue<int>) reply (app: WebApplication) =
+  mockPeerRaw versions (fun version ->
+    let status, frames = reply version
+    status, frames |> List.map Codec.encodePeerFrame) app
 
 let private available (value: NodeWork) = if value.Status = "available" then Some value else None
 let private capacityOf (value: NodeWork) = value.Value |> Option.bind _.Capacity
@@ -111,7 +111,7 @@ let private hasTransportedCapacity value = capacityOf value = Some transportedCa
 [<Tests>]
 let tests =
   testList "Work observation transport" [
-    testTask "v13 observation route sends complete capacity to the controller's WorkNodes" {
+    testTask "v14 observation route sends complete capacity including CheckoutSynced to the controller's WorkNodes" {
       let stopping = new CancellationTokenSource()
       let producer = owner node
       let graph = Facts.Graph(constants, node.Incarnation, "journal", observationOwners = [producer], localNode = node.Node)
@@ -120,41 +120,232 @@ let tests =
         let worker = UiBridgeTests.observationHub graph producer stopping.Token None
         let! (observed: NodeWork) = observePeer (fun app -> mapRoutes app worker) available
         observed.Source |> Expect.equal "capacity arrived from the authenticated node" node
-        hasTransportedCapacity observed |> Expect.isTrue "v13 preserves the cap, pressure, RAM, RSS and all PID counts"
+        hasTransportedCapacity observed |> Expect.isTrue "v14 preserves cap, pressure, RAM, RSS, PID counts, and CheckoutSynced"
       finally
         stopping.Cancel()
         graph.Stop()
         stopping.Dispose()
     }
-    testTask "only a protocol rejection permits a legacy retry and the missing cap stays unknown" {
+    testTask "strict exact-version parity: protocol rejection fails immediately with zero downgrade retries and surfaces version-skew diagnostic" {
       for refusal in ["binary: unsupported version"; "protocol_mismatch"; "binary: wrong message family"] do
         let versions = ConcurrentQueue<int>()
-        let reply version =
-          if version = LegacyProtocolVersion then 200, [PeerHello node; PeerWork work]
-          else 400, [PeerUnavailable refusal]
-        let! observed = observePeer (mockPeer versions reply) available
-        versions.ToArray() |> Expect.equal $"one v13 attempt followed by one v9 retry on {refusal}" [|ProtocolVersion; LegacyProtocolVersion|]
-        capacityOf observed |> Expect.equal $"v11 capacity derives counts and leaves cap and RAM unobserved ({refusal})" (Some legacyCapacity)
+        let reply _ = 400, [PeerUnavailable refusal]
+        let completed (value: NodeWork) =
+          if value.Status = "available" || value.Note.Contains("version skew", StringComparison.OrdinalIgnoreCase) then
+            Some (value.Status, value.Note, versions.ToArray())
+          else None
+        let! status, note, seen = observePeer (mockPeer versions reply) completed
+        status |> Expect.equal $"HTTP 400 {refusal} marks peer unavailable" "unavailable"
+        seen |> Expect.equal $"exactly one v14 attempt with zero retries on {refusal}" [|ProtocolVersion|]
+        note |> Expect.stringContains $"names refusal {refusal}" refusal
+        note |> Expect.stringContains "names version skew" "version skew"
     }
-    testTask "explicit non-protocol refusals never negotiate down to v9" {
+    testTask "strict exact-version parity: older-version peer refusal or stream frames are rejected immediately without fallback" {
+      for badVersion in [ 9uy; 11uy; 12uy; 13uy; 15uy ] do
+        let versions = ConcurrentQueue<int>()
+        let reply _ =
+          let badFrame = Codec.encodePeerFrame (PeerHello node)
+          badFrame[4] <- badVersion
+          200, [badFrame]
+        let completed (value: NodeWork) =
+          if value.Status = "available" || value.Note.Contains("version skew", StringComparison.OrdinalIgnoreCase) then
+            Some (value.Status, value.Note, versions.ToArray())
+          else None
+        let! status, note, seen = observePeer (mockPeerRaw versions reply) completed
+        status |> Expect.equal $"mismatched v{badVersion} stream marks peer unavailable" "unavailable"
+        seen |> Expect.equal $"exactly one v14 attempt with zero retries against v{badVersion}" [|ProtocolVersion|]
+        note |> Expect.stringContains "names protocol_mismatch" "protocol_mismatch"
+    }
+    testTask "peer that served v14, disconnects, and reconnects on v13 surfaces explicit protocol_mismatch version-skew note instead of generic disconnect" {
+      let! () = task {
+        use stopping = new CancellationTokenSource()
+        let local = owner { Node = "controller"; Incarnation = "controller-1" }
+        let graph = Facts.Graph(constants, "controller-1", "journal", observationOwners = [local], localNode = local.Source.Node, peerNodes = [node.Node])
+        let availableSeen = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let skewSeen = TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let _, sub = graph.Register(fun _ event ->
+          match event with
+          | WorkNodes board ->
+            match board.Nodes |> Array.tryFind (fun value -> value.Source.Node = node.Node) with
+            | Some value when value.Status = "available" -> availableSeen.TrySetResult() |> ignore
+            | Some value when value.Status = "unavailable" && value.Note.Contains("protocol_mismatch", StringComparison.OrdinalIgnoreCase) ->
+              skewSeen.TrySetResult value.Note |> ignore
+            | _ -> ()
+          | _ -> ())
+        use _sub = sub
+        let directory = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../../test-results/scratch/work-observation", Guid.NewGuid().ToString("N")))
+        Directory.CreateDirectory directory |> ignore
+        let mutable connectionCount = 0
+        let mapSkewedReconnect (app: WebApplication) =
+          app.MapPost(Route, RequestDelegate(fun ctx -> task {
+            use buffer = new MemoryStream()
+            do! ctx.Request.Body.CopyToAsync(buffer, ctx.RequestAborted)
+            match Codec.decodePeerObserveRequest (buffer.ToArray()) with
+            | Error reason -> failtest reason
+            | Ok _ ->
+              let attempt = Interlocked.Increment(&connectionCount)
+              ctx.Response.ContentType <- MediaType
+              if attempt = 1 then
+                ctx.Response.StatusCode <- 200
+                do! Frames.write ctx.Response.Body (Codec.encodePeerFrame (PeerHello node)) ctx.RequestAborted |> Async.StartAsTask
+                do! Frames.write ctx.Response.Body (Codec.encodePeerFrame (PeerWork work)) ctx.RequestAborted |> Async.StartAsTask
+                do! Task.Delay(50, ctx.RequestAborted)
+              elif attempt = 2 then
+                ctx.Response.StatusCode <- 400
+                do! Frames.write ctx.Response.Body (Codec.encodePeerFrame (PeerUnavailable "protocol_mismatch")) ctx.RequestAborted |> Async.StartAsTask
+              else
+                ctx.Response.StatusCode <- 503
+          })) |> ignore
+        try
+          let tokenFile = Path.Combine(directory, "peer.token")
+          File.WriteAllText(tokenFile, "fixture-token")
+          let! server, url = Hosting.start mapSkewedReconnect
+          use _server = server :> IAsyncDisposable
+          let hub = UiBridgeTests.observationHub graph local stopping.Token None
+          let controller = new Controller(hub, [ { Node = node.Node; Endpoint = Uri(url + Route); TokenFile = tokenFile } ], stopping.Token)
+          let! outcome = task {
+            try
+              do! availableSeen.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+              let! skewNote = skewSeen.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+              skewNote |> Expect.stringContains "surfaces protocol_mismatch on v13 reconnect" "protocol_mismatch"
+              skewNote |> Expect.stringContains "surfaces explicit version skew guidance" "version skew"
+              let readReq : TranscriptReadRequest =
+                { Source = node; Journal = "j"; Sequence = 1L; Stream = Stdout; Offset = 0L; MaxBytes = 1024 }
+              let! disconnectedTr = controller.ReadTranscript(readReq, CancellationToken.None) |> Async.StartAsTask
+              match disconnectedTr with
+              | TranscriptRefused(code, msg) ->
+                code |> Expect.equal "ReadTranscript preserves protocol_mismatch while peer is disconnected due to skew" "protocol_mismatch"
+                msg |> Expect.stringContains "ReadTranscript preserves version skew message" "version skew"
+              | other -> failtestf "expected TranscriptRefused(protocol_mismatch) after disconnect, got %A" other
+              return Ok()
+            with ex -> return Error ex
+          }
+          stopping.Cancel()
+          do! (controller.Close() |> Async.StartAsTask).WaitAsync(TimeSpan.FromSeconds 5.)
+          match outcome with
+          | Ok() -> ()
+          | Error ex -> raise ex
+        finally
+          graph.Stop()
+          Directory.Delete(directory, true)
+      }
+      ()
+    }
+    testTask "mapRoutes maps skewed v13 request to canonical protocol_mismatch and ReadTranscript surfaces TranscriptRefused(protocol_mismatch)" {
+      let! () = task {
+        use stopping = new CancellationTokenSource()
+        let local = owner { Node = "controller"; Incarnation = "controller-1" }
+        let graph = Facts.Graph(constants, "controller-1", "journal", observationOwners = [local], localNode = local.Source.Node, peerNodes = [node.Node])
+        let availableSeen = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let skewRetiredSeen = TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let _, sub = graph.Register(fun _ event ->
+          match event with
+          | WorkNodes board ->
+            match board.Nodes |> Array.tryFind (fun value -> value.Source.Node = node.Node) with
+            | Some value when value.Status = "available" -> availableSeen.TrySetResult() |> ignore
+            | Some value when value.Status = "unavailable" && value.Note.Contains("protocol_mismatch", StringComparison.OrdinalIgnoreCase) ->
+              skewRetiredSeen.TrySetResult value.Note |> ignore
+            | _ -> ()
+          | _ -> ())
+        use _sub = sub
+        let directory = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../../test-results/scratch/work-observation", Guid.NewGuid().ToString("N")))
+        Directory.CreateDirectory directory |> ignore
+        let mutable transcriptCalls = 0
+        let mapTranscriptSkew (app: WebApplication) =
+          app.MapPost(Route, RequestDelegate(fun ctx -> task {
+            use buffer = new MemoryStream()
+            do! ctx.Request.Body.CopyToAsync(buffer, ctx.RequestAborted)
+            let bytes = buffer.ToArray()
+            match Codec.decodePeerObserveRequest bytes with
+            | Ok _ ->
+              ctx.Response.StatusCode <- 200
+              ctx.Response.ContentType <- MediaType
+              do! Frames.write ctx.Response.Body (Codec.encodePeerFrame (PeerHello node)) ctx.RequestAborted |> Async.StartAsTask
+              do! Frames.write ctx.Response.Body (Codec.encodePeerFrame (PeerWork work)) ctx.RequestAborted |> Async.StartAsTask
+              try do! Task.Delay(Timeout.Infinite, ctx.RequestAborted)
+              with :? OperationCanceledException -> ()
+            | Error _ ->
+              let n = Interlocked.Increment(&transcriptCalls)
+              if n = 1 then
+                ctx.Response.StatusCode <- 400
+                ctx.Response.ContentType <- MediaType
+                do! Frames.write ctx.Response.Body (Codec.encodePeerFrame (PeerUnavailable "binary: unsupported version")) ctx.RequestAborted |> Async.StartAsTask
+              else
+                ctx.Response.StatusCode <- 503
+          })) |> ignore
+        try
+          let tokenFile = Path.Combine(directory, "peer.token")
+          File.WriteAllText(tokenFile, "fixture-token")
+          let! server, url = Hosting.start mapTranscriptSkew
+          use _server = server :> IAsyncDisposable
+          let hub = UiBridgeTests.observationHub graph local stopping.Token None
+          let controller = new Controller(hub, [ { Node = node.Node; Endpoint = Uri(url + Route); TokenFile = tokenFile } ], stopping.Token)
+
+          // Also test real mapRoutes inbound HTTP 400 refusal on skewed v13 request.
+          let workerGraph = Facts.Graph(constants, node.Incarnation, "journal", observationOwners = [owner node], localNode = node.Node)
+          let workerHub = UiBridgeTests.observationHub workerGraph (owner node) stopping.Token None
+          let! workerServer, workerUrl = Hosting.start (fun app -> mapRoutes app workerHub)
+          use _workerServer = workerServer :> IAsyncDisposable
+
+          let! outcome = task {
+            try
+              do! availableSeen.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+              let readReq : TranscriptReadRequest =
+                { Source = node; Journal = "j"; Sequence = 1L; Stream = Stdout; Offset = 0L; MaxBytes = 1024 }
+              let! trOutcome = controller.ReadTranscript(readReq, CancellationToken.None) |> Async.StartAsTask
+              match trOutcome with
+              | TranscriptRefused(code, msg) ->
+                code |> Expect.equal "ReadTranscript preserves protocol_mismatch code" "protocol_mismatch"
+                msg |> Expect.stringContains "ReadTranscript preserves version-skew guidance" "version skew"
+              | other -> failtestf "expected TranscriptRefused(protocol_mismatch), got %A" other
+
+              // Recorded skew retires peer for placement AND takes precedence over live binding on subsequent reads (even if backend returns 503).
+              let! retiredNote = skewRetiredSeen.Task.WaitAsync(TimeSpan.FromSeconds 5.)
+              retiredNote |> Expect.stringContains "skewed transcript reply retires peer with protocol_mismatch" "protocol_mismatch"
+              let! secondTrOutcome = controller.ReadTranscript(readReq, CancellationToken.None) |> Async.StartAsTask
+              match secondTrOutcome with
+              | TranscriptRefused(code, msg) ->
+                code |> Expect.equal "subsequent ReadTranscript preserves protocol_mismatch precedence before fresh v14 hello" "protocol_mismatch"
+                msg |> Expect.stringContains "subsequent ReadTranscript keeps version-skew guidance" "version skew"
+              | other -> failtestf "expected TranscriptRefused(protocol_mismatch) on second call, got %A" other
+
+              // Real mapRoutes inbound skewed v13 observe request -> HTTP 400 PeerUnavailable "protocol_mismatch"
+              use http = new Net.Http.HttpClient()
+              let skewedObs = Codec.encodePeerObserveRequest (request "work" 0)
+              skewedObs[4] <- 13uy
+              use content = new Net.Http.ByteArrayContent(skewedObs)
+              content.Headers.ContentType <- Net.Http.Headers.MediaTypeHeaderValue MediaType
+              use! resp = http.PostAsync(workerUrl + Route, content)
+              int resp.StatusCode |> Expect.equal "skewed v13 observe request returns HTTP 400" 400
+              use! stream = resp.Content.ReadAsStreamAsync()
+              let! rawFrame = Frames.read stream CancellationToken.None |> Async.StartAsTask
+              rawFrame |> Option.map Codec.decodePeerFrame
+              |> Expect.equal "inbound skewed request maps to canonical protocol_mismatch" (Some(Ok(PeerUnavailable "protocol_mismatch")))
+              return Ok()
+            with ex -> return Error ex
+          }
+          stopping.Cancel()
+          do! (controller.Close() |> Async.StartAsTask).WaitAsync(TimeSpan.FromSeconds 5.)
+          workerGraph.Stop()
+          match outcome with
+          | Ok() -> ()
+          | Error ex -> raise ex
+        finally
+          graph.Stop()
+          Directory.Delete(directory, true)
+      }
+      ()
+    }
+    testTask "explicit non-protocol refusals fail closed after exactly one v14 attempt" {
       for status, reason in [400, "node_mismatch"; 400, "invalid_observation_scope"; 403, "binary: unsupported version"] do
         let versions = ConcurrentQueue<int>()
-        let reply version =
-          if version = ProtocolVersion then status, [PeerUnavailable reason]
-          else 200, [PeerHello node; PeerWork work]
+        let reply _ = status, [PeerUnavailable reason]
         let completed (value: NodeWork) =
           if value.Status = "available" || value.Note = "Authenticated observation connection is unavailable." then
             Some (value.Status, versions.ToArray())
           else None
         let! verdict = observePeer (mockPeer versions reply) completed
-        verdict |> Expect.equal $"HTTP {status} {reason} publishes unavailable after just v13" ("unavailable", [|ProtocolVersion|])
-    }
-    testTask "fault injection: forcing a v11 reply fails the v13 capacity check" {
-      let versions = ConcurrentQueue<int>()
-      let! observed = observePeer (mockPeer versions (fun _ -> 200, [PeerHello node; PeerWork work])) available
-      versions.ToArray() |> Expect.equal "the controller requested v13 and received a compatible v11 reply" [|ProtocolVersion|]
-      capacityOf observed |> Expect.equal "the older frame omitted the sender's telemetry" (Some legacyCapacity)
-      hasTransportedCapacity observed |> Expect.isFalse "the same v13 check detects loss of cap, RAM and PID counts"
+        verdict |> Expect.equal $"HTTP {status} {reason} publishes unavailable after just v14" ("unavailable", [|ProtocolVersion|])
     }
     testCase "existing Pi authority supplies only fixed observe destinations" <| fun () ->
       let value = config [worker "one" "https://proxy.example/workers/one/" "/private/one.token"; worker "two" "http://10.0.0.2:8787" "/private/two.token"]
@@ -178,24 +369,24 @@ let tests =
         validateRequest node (request "resources" seconds) |> Expect.equal "bounded resources admitted" (Ok ())
       for topic, seconds in ["build",0;"work",1;"resources",0;"resources",121] do
         validateRequest node (request topic seconds) |> Expect.equal "execution and invalid windows refused" (Error "invalid_observation_scope")
-    testCase "node and protocol are checked before scope admission" <| fun () ->
+    testCase "node and exact protocol version are checked before scope admission" <| fun () ->
       validateRequest node { request "work" 0 with Node = "two" }
       |> Expect.equal "cannot observe another node by alias" (Error "node_mismatch")
-      for version in [LegacyProtocolVersion; 11; 12; ProtocolVersion] do
+      validateRequest node { request "work" 0 with ProtocolVersion = ProtocolVersion }
+      |> Expect.equal "exact ProtocolVersion admitted" (Ok ())
+      for version in [9; 10; 11; 12; 13; 15] do
         validateRequest node { request "work" 0 with ProtocolVersion = version }
-        |> Expect.equal "supported peer version admitted" (Ok ())
-      validateRequest node { request "work" 0 with ProtocolVersion = 10 }
-      |> Expect.equal "unsupported peer version refused" (Error "protocol_mismatch")
-    testCase "transcript reads bind the node incarnation and bounded cursor" <| fun () ->
+        |> Expect.equal $"mismatched peer version {version} refused" (Error "protocol_mismatch")
+    testCase "transcript reads bind the node incarnation, exact protocol version, and bounded cursor" <| fun () ->
       let read = { PeerTranscriptRequest.ProtocolVersion = ProtocolVersion
                    Request = { Source = node; Journal = "journal"; Sequence = 1L; Stream = Stdout; Offset = 0L; MaxBytes = MaxTranscriptPageBytes } }
-      for version in [LegacyProtocolVersion; 11; 12; ProtocolVersion] do
+      validateTranscriptRequest node read
+      |> Expect.equal "bounded read admitted on exact ProtocolVersion" (Ok ())
+      for version in [9; 10; 11; 12; 13; 15] do
         validateTranscriptRequest node { read with ProtocolVersion = version }
-        |> Expect.equal "bounded read admitted on supported peer version" (Ok ())
+        |> Expect.equal $"mismatched transcript version {version} refused" (Error "protocol_mismatch")
       validateTranscriptRequest node { read with Request = { read.Request with Source = { node with Incarnation = "retired" } } }
       |> Expect.equal "same node name is insufficient" (Error "node_mismatch")
-      validateTranscriptRequest node { read with ProtocolVersion = 10 }
-      |> Expect.equal "unsupported transcript version refused" (Error "protocol_mismatch")
       for limit in [0; MaxTranscriptPageBytes + 1] do
         validateTranscriptRequest node { read with Request = { read.Request with MaxBytes = limit } }
         |> Expect.equal "exact byte bound enforced" (Error "invalid_limit")

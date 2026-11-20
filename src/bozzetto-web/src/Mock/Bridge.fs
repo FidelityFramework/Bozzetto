@@ -121,6 +121,54 @@ let private health () = Health(healthValue ())
 let private retrievalSources = [| "clef"; "Fidelity.PSG" |]
 let private retrievalProject = "/mock/retrieval-index.fidproj"
 let private quarantineProject = "/mock/quarantined-branch.fidproj"
+let private fleetBalanceProject = "/mock/fleet-balance-alert.fidproj"
+
+let private balancedFleetBalance revision : FleetBalanceStatus =
+  { Revision = revision
+    Policy = "advisory_only"
+    SilentThresholdSeconds = 300
+    LocalNodeId = "controller"
+    LocalBusy = false
+    Advisory = None
+    SilentAlerts = [||]
+    ActiveLeaseCount = 0
+    OpenClaimCount = 0
+    UnauditedRunCount = 0
+    DirtyTrancheCount = 0 }
+
+let private alertFleetBalance revision : FleetBalanceStatus =
+  { Revision = revision
+    Policy = "enforce_when_lan_idle"
+    SilentThresholdSeconds = 300
+    LocalNodeId = "controller"
+    LocalBusy = true
+    Advisory =
+      Some {
+        RecommendedNode = "one"
+        Reason = "Local node controller is busy/constrained while LAN worker one has 3 free slot(s); policy enforce_when_lan_idle deferred local full_build."
+        Policy = "enforce_when_lan_idle"
+        Throttled = true
+        Candidates = [|
+          { NodeId = "one"; FreeSlots = 3; ActiveLeases = 1; LeaseCap = 4; QueuedLeases = 0
+            AvailableRamBytes = 64L * 1024L * 1024L * 1024L; TotalRamBytes = 96L * 1024L * 1024L * 1024L; Pressure = "Normal" }
+        |]
+      }
+    SilentAlerts = [|
+      { MemberKey = "mcp:verifier-pi"
+        DisplayName = "pi-auditor"
+        AgentFamily = "pi"
+        Role = "Verifier"
+        Kind = "silent_auditor"
+        IdleSeconds = 420L
+        LastActivityMs = int64 startedAt - 420_000L
+        Reason = "pi-auditor (pi, Verifier) silent for 420s while work is accumulating (1 active lease(s), 2 open claim(s), 1 unaudited run(s), 1 dirty tranche(s))." }
+    |]
+    ActiveLeaseCount = 1
+    OpenClaimCount = 2
+    UnauditedRunCount = 1
+    DirtyTrancheCount = 1 }
+
+let mutable private fleetBalance = balancedFleetBalance 1L
 
 let private freshRetrieval generation publishedAt : RetrievalStatus =
   { Revision = 1L
@@ -216,6 +264,7 @@ let private workNodes () =
       MemoryPressure = (if open' >= 3 then "Tight" else "Normal")
       MachineAvailableBytes = (if open' >= 3 then 11_982_958_756L else 38_500_000_000L)
       MachineTotalBytes = 66_571_993_088L; ResidentBytes = 186_000_000L; PeakResidentBytes = 240_000_000L
+      CheckoutSynced = Some true
     }
   }
   let remote = {
@@ -225,6 +274,7 @@ let private workNodes () =
       Capacity = Some {
         LeaseCap = None; PidVerifiedLeases = 0; UnverifiedLeases = 0; StalePidLeases = 0; MemoryPressure = ""
         MachineAvailableBytes = 0L; MachineTotalBytes = 0L; ResidentBytes = 0L; PeakResidentBytes = 0L
+        CheckoutSynced = None
       }
   }
   let finished = sessions.Count >= 2
@@ -275,6 +325,7 @@ let private workNodes () =
         LeaseCap = Some 4; PidVerifiedLeases = (if finished then 0 else 1); UnverifiedLeases = 0; StalePidLeases = 0
         MemoryPressure = "Normal"; MachineAvailableBytes = 48_000_000_000L; MachineTotalBytes = 64_000_000_000L
         ResidentBytes = 512_000_000L; PeakResidentBytes = 768_000_000L
+        CheckoutSynced = Some true
       }
   }
   WorkNodes { Revision = workRevision; Nodes = [|
@@ -302,6 +353,15 @@ let private restoreRetrieval project =
   if (project = retrievalProject && retrieval.State = "indexing")
      || (project = quarantineProject && retrieval.BranchStatus = "quarantined_branch") then
     publishRetrieval (freshRetrieval retrieval.Generation retrieval.PublishedAtMs)
+
+let private publishFleetBalance next =
+  fleetBalance <- next
+  broadcast (FleetBalance fleetBalance)
+
+let private restoreFleetBalance project =
+  if project = fleetBalanceProject
+     && not (sessions |> Seq.exists (fun s -> not s.Status.Closed && s.Status.Project = fleetBalanceProject)) then
+    publishFleetBalance (balancedFleetBalance (fleetBalance.Revision + 1L))
 
 /// The mock's one clock, as the daemon's: a clock-owned push, not a poll. Each
 /// tick pushes the uptime it measures and reads nothing else. It runs only
@@ -494,6 +554,8 @@ let private handle (send: byte array -> unit) (frame: CommandFrame) =
               BranchName = "fidelity/pi-checkout-coaching"
               OnMain = false
               Note = "Mock side-branch checkout" }
+      if project = fleetBalanceProject then
+        publishFleetBalance (alertFleetBalance (fleetBalance.Revision + 1L))
       accept send correlation target SessionOpened
   | Reserve edit ->
     withSession send correlation edit.Target (fun session ->
@@ -568,6 +630,7 @@ let private handle (send: byte array -> unit) (frame: CommandFrame) =
       session.Reservation <- None
       update session (fun s -> { s with Closed = true; Busy = false; Current = None; CleanupPending = true })
       restoreRetrieval session.Status.Project
+      restoreFleetBalance session.Status.Project
       after 900 (fun () -> update session (fun s -> { s with CleanupPending = false }))
       accept send correlation session.Status.Target SessionClosed)
   | RetireWorker target ->
@@ -615,6 +678,7 @@ let connect (send: byte array -> unit) : obj =
   reply send (agentWork ())
   reply send (operations ())
   reply send (workNodes ())
+  reply send (FleetBalance fleetBalance)
   // Pushes follow the prologue.
   clients[id] <- send
   attachClock ()

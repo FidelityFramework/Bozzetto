@@ -108,7 +108,7 @@ module Frames =
   }
 
 let validateRequest (identity: NodeIdentity) (request: PeerObserveRequest) =
-  if not (isPeerProtocolVersion request.ProtocolVersion) then Error "protocol_mismatch"
+  if request.ProtocolVersion <> ProtocolVersion then Error "protocol_mismatch"
   elif request.Node <> identity.Node then Error "node_mismatch"
   else
     match request.Topic, request.Seconds with
@@ -119,11 +119,16 @@ let validateRequest (identity: NodeIdentity) (request: PeerObserveRequest) =
 type private ReadRequest = Observe of PeerObserveRequest | Transcript of PeerTranscriptRequest
 
 let validateTranscriptRequest (identity: NodeIdentity) (request: PeerTranscriptRequest) =
-  if not (isPeerProtocolVersion request.ProtocolVersion) then Error "protocol_mismatch"
+  if request.ProtocolVersion <> ProtocolVersion then Error "protocol_mismatch"
   elif request.Request.Source <> identity then Error "node_mismatch"
   elif request.Request.MaxBytes < 1 || request.Request.MaxBytes > MaxTranscriptPageBytes then Error "invalid_limit"
   elif request.Request.Offset < 0L || request.Request.Sequence < 1L || String.IsNullOrWhiteSpace request.Request.Journal then Error "invalid_cursor"
   else Ok ()
+
+let private mapRequestDecodeError (reason: string) =
+  if reason = "binary: unsupported version" || reason = "unsupported peer version" then
+    "protocol_mismatch"
+  else reason
 
 let private requestBody (ctx: HttpContext) = async {
   let buffer = Array.zeroCreate<byte> (MaxRequestBytes + 1)
@@ -137,11 +142,12 @@ let private requestBody (ctx: HttpContext) = async {
     let bytes = buffer[..size - 1]
     match decodePeerObserveRequest bytes with
     | Ok request -> return Ok(Observe request)
-    | Error "binary: wrong message family" -> return decodePeerTranscriptRequest bytes |> Result.map Transcript
-    | Error reason -> return Error reason
+    | Error "binary: wrong message family" ->
+      return decodePeerTranscriptRequest bytes |> Result.map Transcript |> Result.mapError mapRequestDecodeError
+    | Error reason -> return Error(mapRequestDecodeError reason)
 }
 
-let private sendFrame version stream ct frame = Frames.write stream (encodePeerFrameVersion version frame) ct
+let private sendFrame stream ct frame = Frames.write stream (encodePeerFrame frame) ct
 
 /// This route is present on headless nodes. The daemon remains loopback-only;
 /// the native Pi gateway authenticates before relaying this one fixed route.
@@ -166,12 +172,11 @@ let mapRoutes (app: WebApplication) (hub: UiBridge.Hub) =
       match accepted with
       | Error reason ->
         ctx.Response.StatusCode <- 400
-        do! sendFrame PeerCompatProtocolVersion ctx.Response.Body ctx.RequestAborted (PeerUnavailable reason)
+        do! sendFrame ctx.Response.Body ctx.RequestAborted (PeerUnavailable reason)
       | Ok(Transcript request) ->
         let reply = { PeerTranscriptReply.Source = hub.LocalNode; Outcome = hub.ReadLocalTranscript request.Request }
         do! Frames.write ctx.Response.Body (encodePeerTranscriptReply reply) ctx.RequestAborted
       | Ok(Observe request) ->
-        let replyVersion = if request.ProtocolVersion >= ProtocolVersion then ProtocolVersion else PeerCompatProtocolVersion
         use lifetime = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, app.Lifetime.ApplicationStopping)
         let options = BoundedChannelOptions(16, SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait)
         let channel = Channel.CreateBounded<PeerFrame>(options)
@@ -179,7 +184,7 @@ let mapRoutes (app: WebApplication) (hub: UiBridge.Hub) =
           if not (channel.Writer.TryWrite frame) then
             channel.Writer.TryComplete(InvalidDataException "Observation consumer is too slow.") |> ignore
             lifetime.Cancel()
-        do! sendFrame replyVersion ctx.Response.Body lifetime.Token (PeerHello hub.LocalNode)
+        do! sendFrame ctx.Response.Body lifetime.Token (PeerHello hub.LocalNode)
         let mutable subscription: IDisposable option = None
         let mutable resource: int64 option = None
         try
@@ -191,8 +196,8 @@ let mapRoutes (app: WebApplication) (hub: UiBridge.Hub) =
             let current, joined = hub.RegisterLocalWork(frameOf >> enqueue)
             subscription <- Some joined
             match current with
-            | Some state -> do! sendFrame replyVersion ctx.Response.Body lifetime.Token (frameOf state)
-            | None -> do! sendFrame replyVersion ctx.Response.Body lifetime.Token (PeerUnavailable "Local work has not published.")
+            | Some state -> do! sendFrame ctx.Response.Body lifetime.Token (frameOf state)
+            | None -> do! sendFrame ctx.Response.Body lifetime.Token (PeerUnavailable "Local work has not published.")
           else
             let id = Interlocked.Decrement(&nextResource)
             resource <- Some id
@@ -207,7 +212,7 @@ let mapRoutes (app: WebApplication) (hub: UiBridge.Hub) =
             else
               let mutable next = Unchecked.defaultof<PeerFrame>
               while channel.Reader.TryRead(&next) do
-                do! sendFrame replyVersion ctx.Response.Body lifetime.Token next
+                do! sendFrame ctx.Response.Body lifetime.Token next
         finally
           subscription |> Option.iter _.Dispose()
           // Remove only this observer. It has no compiler/work cancellation authority.
@@ -224,6 +229,9 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
   let handler = new SocketsHttpHandler(AllowAutoRedirect = false, UseProxy = false, ConnectTimeout = TimeSpan.FromSeconds 10.)
   let client = new HttpClient(handler, Timeout = Timeout.InfiniteTimeSpan)
   let mutable bindings: Map<string, UiBridge.Facts.ObservationProducer> = Map.empty
+  let mutable peerGen: Map<string, int64> = Map.empty
+  let mutable nextPeerGen = 0L
+  let mutable skewReasons: Map<string, string> = Map.empty
   let mutable jobs: Task<unit> list = []
   let mutable resources: Map<Guid, CancellationTokenSource * Task<unit>> = Map.empty
   let mutable closed = false
@@ -270,6 +278,8 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
       let! bytes = Frames.read stream deadline.Token
       match bytes |> Option.map decodePeerFrame with
       | Some(Ok(PeerUnavailable reason)) -> return Some reason
+      | Some(Error err) when err.Contains("unsupported version", StringComparison.OrdinalIgnoreCase) ->
+        return Some "protocol_mismatch"
       | _ -> return None
     with error when not ct.IsCancellationRequested ->
       match error.GetBaseException() with
@@ -277,24 +287,14 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
       | _ -> return raise error
   }
 
-  let openObserveStream (peer: Peer) topic seconds (ct: CancellationToken) =
-    let rec openVersion version = async {
-      let payload = encodePeerObserveRequest { ProtocolVersion = version; Node = peer.Node; Topic = topic; Seconds = seconds }
-      let! response = openPayload peer payload ct
-      if response.StatusCode = HttpStatusCode.BadRequest && isObservationResponse response then
-        let! reason = readRefusal response ct
-        match reason with
-        // Pre-v13 peers fall through from decodePeerObserveRequest's version refusal into
-        // decodePeerTranscriptRequest, masking unsupported version as "binary: wrong message family".
-        | Some reason when version = ProtocolVersion &&
-            (reason = "protocol_mismatch"
-             || reason.Contains("unsupported version", StringComparison.OrdinalIgnoreCase)
-             || reason = "binary: wrong message family") ->
-          return! openVersion LegacyProtocolVersion
-        | _ -> return refuseResponse (int HttpStatusCode.BadRequest) reason
-      else return acceptResponse response
-    }
-    openVersion ProtocolVersion
+  let openObserveStream (peer: Peer) topic seconds (ct: CancellationToken) = async {
+    let payload = encodePeerObserveRequest { ProtocolVersion = ProtocolVersion; Node = peer.Node; Topic = topic; Seconds = seconds }
+    let! response = openPayload peer payload ct
+    if response.StatusCode = HttpStatusCode.BadRequest && isObservationResponse response then
+      let! reason = readRefusal response ct
+      return refuseResponse (int HttpStatusCode.BadRequest) reason
+    else return acceptResponse response
+  }
 
   let nextFrame (stream: Stream) (ct: CancellationToken) = async {
     use deadline = CancellationTokenSource.CreateLinkedTokenSource ct
@@ -305,6 +305,8 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
     | Some bytes ->
       match decodePeerFrame bytes with
       | Ok frame -> return frame
+      | Error err when err.Contains("unsupported version", StringComparison.OrdinalIgnoreCase) ->
+        return raise (InvalidDataException(sprintf "protocol_mismatch: %s" err))
       | Error _ -> return raise (InvalidDataException "Observation binary frame is invalid.")
   }
 
@@ -315,19 +317,57 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
     | _ -> return raise (InvalidDataException "Observation node identity mismatch.")
   }
 
+  let isVersionSkewReason (msg: string) =
+    not (String.IsNullOrWhiteSpace msg)
+    && (msg.Contains("protocol_mismatch", StringComparison.OrdinalIgnoreCase)
+        || msg.Contains("unsupported version", StringComparison.OrdinalIgnoreCase)
+        || msg.Contains("wrong message family", StringComparison.OrdinalIgnoreCase))
+
+  let versionSkewNote (peerNode: string) (detail: string) =
+    let prefixed =
+      if detail.Contains("protocol_mismatch", StringComparison.OrdinalIgnoreCase) then detail
+      else sprintf "protocol_mismatch: %s" detail
+    sprintf "%s (version skew — update node %s to protocol v%d)." prefixed peerNode ProtocolVersion
+
   let unavailable producer reason = hub.PeerUnavailable(producer, reason) |> ignore
+
+  let recordSkew (peerNode: string) (expectedGen: int64 option) (skew: string) =
+    let retired =
+      lock gate (fun () ->
+        let genMatches =
+          match expectedGen with
+          | None -> true
+          | Some g -> Map.tryFind peerNode peerGen = Some g
+        if not genMatches then None
+        else
+          skewReasons <- Map.add peerNode skew skewReasons
+          match Map.tryFind peerNode bindings with
+          | Some prod ->
+            bindings <- Map.remove peerNode bindings
+            Some prod
+          | None -> None)
+    match retired with
+    | Some prod -> hub.RetirePeer(prod, skew) |> ignore
+    | None ->
+      if expectedGen.IsNone then
+        hub.PeerConnectionUnavailable(peerNode, skew) |> ignore
 
   let watch peer = async {
     let mutable retrySeconds = 1
     while not lifetime.IsCancellationRequested do
       let mutable admitted = None
+      let mutable disconnectReason = "Disconnected; retained work is not current."
       try
         use! response = openObserveStream peer "work" 0 controllerCancellation
         use! stream = response.Content.ReadAsStreamAsync(controllerCancellation) |> Async.AwaitTask
         let! identity = hello peer stream controllerCancellation
         let producer = hub.BindPeer identity
         admitted <- Some producer
-        lock gate (fun () -> bindings <- Map.add peer.Node producer bindings)
+        lock gate (fun () ->
+          nextPeerGen <- nextPeerGen + 1L
+          peerGen <- Map.add peer.Node nextPeerGen peerGen
+          bindings <- Map.add peer.Node producer bindings
+          skewReasons <- Map.remove peer.Node skewReasons)
         let mutable haveState = false
         while not lifetime.IsCancellationRequested do
           let! frame = nextFrame stream controllerCancellation
@@ -344,15 +384,30 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
           | _ -> raise (InvalidDataException "Unexpected observation frame.")
       with
       | :? OperationCanceledException when lifetime.IsCancellationRequested -> ()
+      | :? InvalidDataException as ex when isVersionSkewReason ex.Message ->
+        let skew = versionSkewNote peer.Node ex.Message
+        lock gate (fun () -> skewReasons <- Map.add peer.Node skew skewReasons)
+        match admitted with
+        | Some _ -> disconnectReason <- skew
+        | None -> hub.PeerConnectionUnavailable(peer.Node, skew) |> ignore
       | _ ->
         match admitted with
-        | Some producer -> unavailable producer "Connection lost; work state is unavailable."
-        | None -> hub.PeerConnectionUnavailable(peer.Node, "Authenticated observation connection is unavailable.") |> ignore
+        | Some _ -> ()
+        | None ->
+          let note =
+            lock gate (fun () -> Map.tryFind peer.Node skewReasons)
+            |> Option.defaultValue "Authenticated observation connection is unavailable."
+          hub.PeerConnectionUnavailable(peer.Node, note) |> ignore
       match admitted with
       | Some producer ->
-        lock gate (fun () ->
-          if Map.tryFind peer.Node bindings = Some producer then bindings <- Map.remove peer.Node bindings)
-        unavailable producer "Disconnected; retained work is not current."
+        let stillBound =
+          lock gate (fun () ->
+            if Map.tryFind peer.Node bindings = Some producer then
+              bindings <- Map.remove peer.Node bindings
+              true
+            else false)
+        if stillBound then
+          hub.RetirePeer(producer, disconnectReason) |> ignore
       | None -> ()
       if not lifetime.IsCancellationRequested then
         try do! Task.Delay(retrySeconds * 1000, controllerCancellation) |> Async.AwaitTask
@@ -365,8 +420,12 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
 
   member _.Observe(node: string, seconds: int, finish: string -> unit) : Async<IDisposable> = async {
     let request = { NodeObservationRequest.Node = node; Seconds = seconds }
-    match peers |> List.tryFind (fun peer -> peer.Node = request.Node), lock gate (fun () -> if closed then None else Map.tryFind request.Node bindings) with
-    | Some peer, Some producer when request.Seconds >= 1 && request.Seconds <= 120 ->
+    let peerState =
+      lock gate (fun () ->
+        if closed then None, None, None
+        else Map.tryFind request.Node skewReasons, Map.tryFind request.Node bindings, Map.tryFind request.Node peerGen)
+    match peers |> List.tryFind (fun peer -> peer.Node = request.Node), peerState with
+    | Some peer, (None, Some producer, Some gen) when request.Seconds >= 1 && request.Seconds <= 120 ->
       let id = Guid.NewGuid()
       let cancellation = CancellationTokenSource.CreateLinkedTokenSource controllerCancellation
       let run = async {
@@ -394,6 +453,11 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
             | _ -> raise (InvalidDataException "Unexpected resource frame.")
         with
         | :? OperationCanceledException when cancellation.IsCancellationRequested -> ()
+        | :? InvalidDataException as ex when isVersionSkewReason ex.Message ->
+          let skew = versionSkewNote peer.Node ex.Message
+          recordSkew peer.Node (Some gen) skew
+          if lock gate (fun () -> Map.containsKey id resources && not cancellation.IsCancellationRequested) then
+            finish "unavailable"
         | _ ->
           if lock gate (fun () -> Map.containsKey id resources && not cancellation.IsCancellationRequested) then
             finish "unavailable"
@@ -431,8 +495,14 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
 
   member _.ReadTranscript(request: TranscriptReadRequest, caller: CancellationToken) : Async<TranscriptReadOutcome> = async {
     let current () = lock gate (fun () -> if closed then None else Map.tryFind request.Source.Node bindings)
-    match peers |> List.tryFind (fun peer -> peer.Node = request.Source.Node), current () with
-    | Some peer, Some producer when producer.Source = request.Source ->
+    let skewOpt, prodOpt, genOpt =
+      lock gate (fun () ->
+        if closed then None, None, None
+        else Map.tryFind request.Source.Node skewReasons, Map.tryFind request.Source.Node bindings, Map.tryFind request.Source.Node peerGen)
+    match peers |> List.tryFind (fun peer -> peer.Node = request.Source.Node), skewOpt, prodOpt, genOpt with
+    | Some _, Some skew, _, _ ->
+      return TranscriptRefused("protocol_mismatch", skew)
+    | Some peer, None, Some producer, Some gen when producer.Source = request.Source ->
       let cancellation = CancellationTokenSource.CreateLinkedTokenSource(controllerCancellation, caller)
       cancellation.CancelAfter(TimeSpan.FromSeconds 15.)
       let id = Guid.NewGuid()
@@ -446,25 +516,46 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
       else
         try
           try
-            let! response = openPayload peer (encodePeerTranscriptRequest { ProtocolVersion = LegacyProtocolVersion; Request = request }) cancellation.Token
-            use response = acceptResponse response
-            use! stream = response.Content.ReadAsStreamAsync(cancellation.Token) |> Async.AwaitTask
-            let! frame = Frames.read stream cancellation.Token
-            match frame |> Option.map decodePeerTranscriptReply with
-            | Some(Ok reply) when reply.Source = request.Source && current () = Some producer ->
-              match reply.Outcome with
-              | TranscriptPage page when
-                  page.Journal = request.Journal && page.Sequence = request.Sequence && page.Stream = request.Stream
-                  && page.Offset = request.Offset && page.Bytes.Length <= request.MaxBytes
-                  && page.TotalBytes >= page.Offset + int64 page.Bytes.Length
-                  && page.TotalBytes <= int64 MaxTranscriptBytes
-                  && (match page.NextOffset with
-                      | Some next -> next = page.Offset + int64 page.Bytes.Length && next > page.Offset && next < page.TotalBytes
-                      | None -> page.Offset + int64 page.Bytes.Length = page.TotalBytes) -> return reply.Outcome
-              | TranscriptRefused _ -> return reply.Outcome
-              | _ -> return TranscriptRefused("invalid_transcript", "The node returned a mismatched transcript page.")
-            | _ -> return TranscriptRefused("node_mismatch", "The transcript connection or node incarnation changed.")
-          with _ -> return TranscriptRefused("node_unavailable", "The transcript request could not be completed.")
+            let! response = openPayload peer (encodePeerTranscriptRequest { ProtocolVersion = ProtocolVersion; Request = request }) cancellation.Token
+            if response.StatusCode = HttpStatusCode.BadRequest && isObservationResponse response then
+              let! reason = readRefusal response cancellation.Token
+              match reason with
+              | Some r when isVersionSkewReason r ->
+                let skew = versionSkewNote peer.Node (sprintf "Transcript endpoint refused HTTP 400: %s" r)
+                recordSkew peer.Node (Some gen) skew
+                return TranscriptRefused("protocol_mismatch", skew)
+              | Some r ->
+                return TranscriptRefused("node_unavailable", sprintf "Transcript endpoint refused HTTP 400: %s." r)
+              | None ->
+                return TranscriptRefused("node_unavailable", "The transcript request could not be completed.")
+            else
+              use response = acceptResponse response
+              use! stream = response.Content.ReadAsStreamAsync(cancellation.Token) |> Async.AwaitTask
+              let! frame = Frames.read stream cancellation.Token
+              match frame |> Option.map decodePeerTranscriptReply with
+              | Some(Ok reply) when reply.Source = request.Source && current () = Some producer ->
+                match reply.Outcome with
+                | TranscriptPage page when
+                    page.Journal = request.Journal && page.Sequence = request.Sequence && page.Stream = request.Stream
+                    && page.Offset = request.Offset && page.Bytes.Length <= request.MaxBytes
+                    && page.TotalBytes >= page.Offset + int64 page.Bytes.Length
+                    && page.TotalBytes <= int64 MaxTranscriptBytes
+                    && (match page.NextOffset with
+                        | Some next -> next = page.Offset + int64 page.Bytes.Length && next > page.Offset && next < page.TotalBytes
+                        | None -> page.Offset + int64 page.Bytes.Length = page.TotalBytes) -> return reply.Outcome
+                | TranscriptRefused _ -> return reply.Outcome
+                | _ -> return TranscriptRefused("invalid_transcript", "The node returned a mismatched transcript page.")
+              | Some(Error err) when isVersionSkewReason err ->
+                let skew = versionSkewNote peer.Node (sprintf "protocol_mismatch: %s" err)
+                recordSkew peer.Node (Some gen) skew
+                return TranscriptRefused("protocol_mismatch", skew)
+              | _ -> return TranscriptRefused("node_mismatch", "The transcript connection or node incarnation changed.")
+          with
+          | :? InvalidDataException as ex when isVersionSkewReason ex.Message ->
+            let skew = versionSkewNote peer.Node ex.Message
+            recordSkew peer.Node (Some gen) skew
+            return TranscriptRefused("protocol_mismatch", skew)
+          | _ -> return TranscriptRefused("node_unavailable", "The transcript request could not be completed.")
         finally
           lock gate (fun () -> resources <- Map.remove id resources)
           cancellation.Dispose()

@@ -346,39 +346,7 @@ let tests =
       classify retired |> Expect.equal "an explicit ID mismatch leaves the active grant unverified" (1, 0, 0)
       classify { retired with LeaseId = active.DisplayId } |> Expect.equal "matching the exact ID classifies the stale PID" (0, 1, 0)
 
-    testCase "legacy reconciliation uses newest journal sequence and the authoritative grant ID" <| fun () ->
-      let grantedAt = dto0.AddTicks 1L
-      let holder, kind = "pi · /repo", "full_build"
-      let id = ExpensiveWorkLease.displayId holder kind grantedAt
-      let grant : LeaseGrant =
-        { Id = id; Holder = holder; Kind = kind; GrantedAtMs = grantedAt.ToUnixTimeMilliseconds()
-          ExpiresAtMs = grantedAt.AddMinutes(10.).ToUnixTimeMilliseconds() }
-      ExpensiveWorkLease.displayId holder kind (DateTimeOffset.FromUnixTimeMilliseconds grant.GrantedAtMs)
-      |> Expect.notEqual "millisecond precision loses the ticks used in the transmitted ID" id
-      let running : OperationEntry =
-        { Sequence = 2L; AtMs = grant.GrantedAtMs; CallerLabel = holder; Operation = kind; Session = ""; Project = "/repo"
-          Ok = false; Code = "running"; Message = ""; Run = None
-          Lease = Some { Kind = kind; LeaseId = id; RunId = "new"; Executable = "dotnet"; Arguments = [|"build"|]
-                         ProcessId = 444; StartedAtMs = grant.GrantedAtMs } }
-      let finished =
-        { running with
-            Sequence = 1L; AtMs = running.AtMs + 1L; Ok = true; Code = ""
-            Lease = running.Lease |> Option.map (fun command -> { command with RunId = "old"; ProcessId = 443 }) }
-      let classify entries =
-        let capacity =
-          Project.reconcileSnapshotCapacity
-            { Sequence = 1L; SampledAtMs = grant.GrantedAtMs
-              Snapshot = { Revision = 1L; Worker = Idle; Sessions = [||] }
-              Leases = { Revision = 1L; Active = [|grant|]; Queued = [||] }
-              Operations = { Revision = 1L; Incarnation = "journal"; StorageError = None; Entries = entries }
-              TranscriptsOmitted = true; Capacity = None }
-        capacity.UnverifiedLeases, capacity.StalePidLeases, capacity.PidVerifiedLeases
-      for entries in [ [|running; finished|]; [|finished; running|] ] do
-        classify entries |> Expect.equal "the newest running row wins by sequence over a finished row with later wall time" (1, 0, 0)
-      let verified = { running with Message = "owner liveness verified 2026-11-20T12:00:00.0000000+00:00" }
-      classify [|finished; verified|] |> Expect.equal "the wire ID still classifies verified liveness after time truncation" (0, 0, 1)
-
-    testTask "positive control: PublishLocalWork populates Capacity with monotonic PeakResidentBytes and reconciled lease counts; remote v11 peers derive lease counts" {
+    testTask "positive control: PublishLocalWork populates Capacity with monotonic PeakResidentBytes and reconciled lease counts; Capacity = None on a peer stays None without fabrication" {
       let directory = System.IO.Path.GetFullPath(System.IO.Path.Combine(__SOURCE_DIRECTORY__, "../../test-results/scratch/fleet-grid-controls", Guid.NewGuid().ToString("N")))
       System.IO.Directory.CreateDirectory directory |> ignore
       let dbPath = System.IO.Path.Combine(directory, "operations.db")
@@ -465,7 +433,7 @@ let tests =
         let cap3 = capOf "z13" |> Option.defaultWith (fun () -> failtest "expected local Capacity under critical pressure")
         cap3.LeaseCap |> Expect.equal "Critical pressure publishes an observed zero cap" (Some 0)
 
-        // Remote v11 peer snapshot (Capacity = None) still derives live reconciled lease counts!
+        // Peer snapshot with Capacity = None keeps Capacity = None (never fabricates legacy v11 telemetry).
         let peerProducer = graph.BindPeer peerSource
         let peerGrant : LeaseGrant = { Id = "lease-peer1"; Kind = "full_build"; Holder = "pi · /repo"; GrantedAtMs = 1L; ExpiresAtMs = 100_000L }
         let peerUnreported : LeaseGrant = { Id = "lease-peer2"; Kind = "rebuild"; Holder = "mcp · /repo"; GrantedAtMs = 2L; ExpiresAtMs = 100_000L }
@@ -478,14 +446,8 @@ let tests =
             Leases = { Revision = 1L; Active = [| peerGrant; peerUnreported |]; Queued = [||] }
             Operations = { Revision = 1L; Incarnation = "j-one"; StorageError = None; Entries = [| peerOp |] }
             TranscriptsOmitted = false; Capacity = None }
-        graph.PublishWork(peerProducer, peerSnap) |> Expect.isOk "peer v11 work admitted"
-        let peerCap = capOf "one" |> Option.defaultWith (fun () -> failtest "expected derived peer Capacity")
-        peerCap.PidVerifiedLeases |> Expect.equal "remote peer derived 1 PID-verified lease" 1
-        peerCap.UnverifiedLeases |> Expect.equal "remote peer derived 1 unverified lease" 1
-        peerCap.StalePidLeases |> Expect.equal "remote peer derived 0 stale leases" 0
-        peerCap.LeaseCap |> Expect.isNone "v11 peer leaves the cap unknown"
-        peerCap.MemoryPressure |> Expect.equal "v11 peer leaves pressure blank until resources/upgrade" ""
-        peerCap.MachineTotalBytes |> Expect.equal "v11 peer leaves RAM 0 until resources/upgrade" 0L
+        graph.PublishWork(peerProducer, peerSnap) |> Expect.isOk "peer work admitted"
+        capOf "one" |> Expect.isNone "missing Capacity stays None without legacy synthesis"
 
         graph.Stop()
 
@@ -556,11 +518,11 @@ let tests =
       finally
         graph.Stop()
 
-    testCase "mixed v9/v11/v12/v13 peer frame and browser v13 codec round-trip" <| fun () ->
+    testCase "strict exact-version v14 peer frame and browser codec round-trip refuses mismatched versions" <| fun () ->
       let cap : NodeCapacity =
         { LeaseCap = Some 4; PidVerifiedLeases = 2; UnverifiedLeases = 1; StalePidLeases = 1
           MemoryPressure = "Normal"; MachineAvailableBytes = 10_000L; MachineTotalBytes = 20_000L
-          ResidentBytes = 3_000L; PeakResidentBytes = 4_000L }
+          ResidentBytes = 3_000L; PeakResidentBytes = 4_000L; CheckoutSynced = Some true }
       let snap : WorkSnapshot =
         { Sequence = 9L; SampledAtMs = 12345L
           Snapshot = { Revision = 1L; Worker = Idle; Sessions = [||] }
@@ -568,23 +530,25 @@ let tests =
           Operations = { Revision = 1L; Incarnation = "j"; StorageError = None; Entries = [||] }
           TranscriptsOmitted = true; Capacity = Some cap }
 
-      // Browser event (family 2, v13) round-trips Capacity and AgentRun.Aged.
+      // Browser event (family 2, v14) round-trips Capacity and AgentRun.Aged.
       let workBytes = Bozzetto.Web.Shared.BinaryCodec.encodeEvent (WorkNodes { Revision = 1L; Nodes = [| { Source = { Node = "z13"; Incarnation = "i" }; Local = true; Status = "available"; Note = ""; Value = Some snap } |] })
-      workBytes[4] |> Expect.equal "browser envelope is v13" (byte ProtocolVersion)
+      workBytes[4] |> Expect.equal "browser envelope is v14" (byte ProtocolVersion)
       Bozzetto.Web.Shared.BinaryCodec.decodeEvent workBytes
-      |> Expect.equal "browser v13 WorkNodes preserves Capacity" (Ok (WorkNodes { Revision = 1L; Nodes = [| { Source = { Node = "z13"; Incarnation = "i" }; Local = true; Status = "available"; Note = ""; Value = Some snap } |] }))
+      |> Expect.equal "browser v14 WorkNodes preserves Capacity" (Ok (WorkNodes { Revision = 1L; Nodes = [| { Source = { Node = "z13"; Incarnation = "i" }; Local = true; Status = "available"; Note = ""; Value = Some snap } |] }))
 
-      // PeerFrame (family 4) emits v11 (Capacity omitted on wire for deployed peers), accepts {9, 11, 12, 13}.
-      let peerBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame (PeerWork snap)
-      peerBytes[4] |> Expect.equal "peer frame emits v11 compat" (byte Bozzetto.Web.Shared.BinaryCodec.PeerCompatProtocolVersion)
-      for version in [ byte LegacyProtocolVersion; 11uy; 12uy ] do
-        let copy = Array.copy peerBytes
-        copy[4] <- version
-        Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame copy
-        |> Expect.equal (sprintf "v%d peer frame decodes with Capacity = None" version) (Ok (PeerWork { snap with Capacity = None }))
+      // PeerFrame (family 4, v14) encodes strictly at ProtocolVersion and refuses mismatched versions.
+      let peerV14Bytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame (PeerWork snap)
+      peerV14Bytes[4] |> Expect.equal "v14 peer envelope carries ProtocolVersion" (byte ProtocolVersion)
+      Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame peerV14Bytes
+      |> Expect.equal "v14 peer frame decodes Capacity losslessly including CheckoutSynced" (Ok (PeerWork snap))
 
-      let peerV13Bytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrameVersion ProtocolVersion (PeerWork snap)
-      peerV13Bytes[4] |> Expect.equal "v13 peer envelope carries version 13" (byte ProtocolVersion)
-      Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame peerV13Bytes
-      |> Expect.equal "v13 peer frame decodes Capacity losslessly" (Ok (PeerWork snap))
+      for badVersion in [ 9uy; 11uy; 12uy; 13uy; 15uy ] do
+        let badPeer = Array.copy peerV14Bytes
+        badPeer[4] <- badVersion
+        Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame badPeer
+        |> Expect.equal (sprintf "v%d peer frame refused" badVersion) (Error "binary: unsupported version")
+        let badBrowser = Array.copy workBytes
+        badBrowser[4] <- badVersion
+        Bozzetto.Web.Shared.BinaryCodec.decodeEvent badBrowser
+        |> Expect.equal (sprintf "v%d browser frame refused" badVersion) (Error "binary: unsupported version")
   ]

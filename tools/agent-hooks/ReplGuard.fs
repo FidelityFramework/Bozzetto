@@ -27,6 +27,74 @@ type LeaseProbe =
   | LeaseGranted
   | LeaseRefused of reason: string
   | LeaseMustWait of retryAfterSeconds: float * reason: string
+  | LeaseProtocolMismatch of detail: string
+
+[<Literal>]
+let ExpectedProtocolVersion = 14
+
+// Pure parser for POST /api/lease/request responses so both the hook script and
+// ReplGuardTests exercise identical strict-v14 version-skew handling.
+// Returns (probe, leaseIdToReleaseOnSkewedDaemon).
+let parseLeaseResponse (statusCode: int) (body: string) : LeaseProbe option * string option =
+  let raw = if isNull body then "" else body
+  try
+    if statusCode = 400 then
+      use doc = System.Text.Json.JsonDocument.Parse raw
+      let root = doc.RootElement
+      let errCode =
+        match root.TryGetProperty "error" with
+        | true, el when el.ValueKind = System.Text.Json.JsonValueKind.String -> el.GetString()
+        | _ -> ""
+      if System.String.Equals(errCode, "protocol_mismatch", System.StringComparison.OrdinalIgnoreCase)
+         || raw.Contains("protocol_mismatch", System.StringComparison.OrdinalIgnoreCase) then
+        let detail =
+          match root.TryGetProperty "reason" with
+          | true, el when el.ValueKind = System.Text.Json.JsonValueKind.String && not (System.String.IsNullOrWhiteSpace(el.GetString())) ->
+            el.GetString()
+          | _ -> sprintf "protocol_mismatch: daemon rejected hook protocolVersion %d" ExpectedProtocolVersion
+        Some(LeaseProtocolMismatch detail), None
+      else None, None
+    elif statusCode >= 200 && statusCode < 300 then
+      let mismatchDetail =
+        sprintf "protocol_mismatch: daemon reply lacks a verifiable v%d lease envelope — update the daemon" ExpectedProtocolVersion
+      try
+        use doc = System.Text.Json.JsonDocument.Parse raw
+        let root = doc.RootElement
+        if root.ValueKind <> System.Text.Json.JsonValueKind.Object then
+          Some(LeaseProtocolMismatch mismatchDetail), None
+        else
+          let versionOk =
+            match root.TryGetProperty "protocolVersion" with
+            | true, pv when pv.ValueKind = System.Text.Json.JsonValueKind.Number ->
+              pv.TryGetInt32() = (true, ExpectedProtocolVersion)
+            | _ -> false
+          if not versionOk then
+            let grantedLeaseId =
+              match root.TryGetProperty "leaseId" with
+              | true, lid when lid.ValueKind = System.Text.Json.JsonValueKind.String ->
+                let value = lid.GetString()
+                if System.String.IsNullOrWhiteSpace value then None else Some value
+              | _ -> None
+            Some(LeaseProtocolMismatch mismatchDetail), grantedLeaseId
+          else
+            match root.TryGetProperty "decision" with
+            | true, dec when dec.ValueKind = System.Text.Json.JsonValueKind.String ->
+              match dec.GetString() with
+              | "granted" -> Some LeaseGranted, None
+              | "wait" ->
+                let retryAfter = root.GetProperty("retryAfterSeconds").GetDouble()
+                let reason = root.GetProperty("reason").GetString()
+                Some(LeaseMustWait(retryAfter, reason)), None
+              | "refused" -> Some(LeaseRefused(root.GetProperty("reason").GetString())), None
+              | _ -> Some(LeaseProtocolMismatch mismatchDetail), None
+            | _ -> Some(LeaseProtocolMismatch mismatchDetail), None
+      with _ ->
+        Some(LeaseProtocolMismatch mismatchDetail), None
+    else None, None
+  with _ ->
+    if statusCode = 400 && raw.Contains("protocol_mismatch", System.StringComparison.OrdinalIgnoreCase) then
+      Some(LeaseProtocolMismatch(sprintf "protocol_mismatch: daemon rejected hook protocolVersion %d" ExpectedProtocolVersion)), None
+    else None, None
 
 /// Whether some Ready daemon session's working directory contains (is at
 /// or above) the command's cwd. `NoReadySessionCoversCwd` covers both "no
@@ -251,10 +319,19 @@ let busyDenyReason (verb: SlowVerb) (leaseProbe: LeaseProbe) =
     | LeaseGranted -> "" // unreachable from decide's Deny path
     | LeaseRefused reason -> sprintf "Bozzetto refused the lease: %s" reason
     | LeaseMustWait(retryAfterSeconds, reason) -> sprintf "Bozzetto said wait %.0fs: %s" retryAfterSeconds reason
+    | LeaseProtocolMismatch detail -> sprintf "Bozzetto protocol mismatch: %s" detail
   String.concat "\n" [
     sprintf "Bozzetto is BUSY, not broken — `dotnet %s` (a declared final gate) costs real memory Bozzetto is trying to manage, even though Bozzetto itself never ran it." v
     whatItSaid
     "This is a WAIT, not a bug to route around: sleep the named time and rerun the identical command. Shelling out anyway spends the exact memory Bozzetto is trying to reclaim, invisibly to it — that is how five agents starved one daemon in one night."
+  ]
+
+let protocolMismatchDenyReason (verb: SlowVerb) (detail: string) =
+  let v = SlowVerb.toToken verb
+  String.concat "\n" [
+    sprintf "Bozzetto protocol mismatch (`protocol_mismatch`) — `dotnet %s` cannot be admitted across skewed daemon/hook versions." v
+    detail
+    sprintf "Update the Bozzetto daemon and agent hook to the same version (strict v%d) and rerun." ExpectedProtocolVersion
   ]
 
 /// The guard's whole decision.
@@ -282,6 +359,7 @@ let decide (command: string) (ctx: Context) : Decision =
     | _, DaemonNotAnswering, _ -> Allow
   | DeclaredFinalGate verb ->
     match ctx.Project, ctx.Daemon, ctx.Lease with
+    | FSharpWorkspace, DaemonAnswering, Some(LeaseProtocolMismatch detail) -> Deny(protocolMismatchDenyReason verb detail)
     | FSharpWorkspace, DaemonAnswering, Some(LeaseRefused _ as probe)
     | FSharpWorkspace, DaemonAnswering, Some(LeaseMustWait _ as probe) -> Deny(busyDenyReason verb probe)
     | FSharpWorkspace, DaemonAnswering, Some LeaseGranted

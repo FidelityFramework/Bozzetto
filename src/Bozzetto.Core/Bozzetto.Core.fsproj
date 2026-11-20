@@ -249,6 +249,7 @@
         <!-- The coordination point for expensive, memory-costly work
              (session create/warmup, rebuild, full build, test run, run app). -->
         <Compile Include="ExpensiveWorkLease.fs" />
+        <Compile Include="FleetBalance.fs" />
         <Compile Include="Features\LeaseWatch.fs" />
         <Compile Include="ProcessEnvironment.fs" />
         <Compile Include="SessionBuild.fs" />

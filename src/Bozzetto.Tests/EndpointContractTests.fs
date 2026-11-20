@@ -479,6 +479,14 @@ let leasedCommandTests =
             fst truncated
             |> Expect.equal "missing typed flag refuses the incomplete frame" 400
 
+            let encodedStart = CommandCodec.encodeCommandObservationRequest original
+            for mismatchedVersion in [ 9uy; 11uy; 13uy; 15uy ] do
+              let skewed = Array.copy encodedStart
+              skewed[4] <- mismatchedVersion
+              let! refused = postBytes client "start" CommandWire.CommandObservationMediaType skewed
+              requireRefusal 400 "protocol_mismatch" refused
+              requireRefusal 400 "unsupported version" refused
+
             let! json =
               postBytes client "start" "application/json" (Text.Encoding.UTF8.GetBytes "{}")
 

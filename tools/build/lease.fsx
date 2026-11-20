@@ -44,6 +44,10 @@ let reportCommand phase observation =
         match BinaryCodec.decodeCommandObservationReply bytes with
         | Ok(CommandObservationAccepted _) when status = 200 -> return Ok()
         | Ok(CommandObservationRefused reason) -> return Error reason
+        | Error err when err.Contains("unsupported version", StringComparison.OrdinalIgnoreCase) ->
+          return Error $"protocol_mismatch: command/{phase} HTTP {status}; {err}"
+        | Error err ->
+          return Error $"command/{phase}: HTTP {status}; invalid binary acknowledgement ({err})"
         | _ -> return Error $"command/{phase}: HTTP {status}; invalid binary acknowledgement"
     with error ->
       return Error $"command/{phase}: {error.Message}"
@@ -125,6 +129,9 @@ let parsed =
     (envOpt "BOZZETTO_WALL_LIMIT_SECS")
     (envOpt "BOZZETTO_RSS_LIMIT_MB")
     (envOpt "BOZZETTO_WATCHDOG_RECEIPT")
+  |> Result.bind (fun envOpts ->
+    WatchdogCli.parsePinZ13Env (envOpt "BOZZETTO_PIN_Z13")
+    |> Result.map (fun pinZ13 -> { envOpts with PinZ13 = pinZ13 }))
   |> Result.bind (fun envOpts ->
     WatchdogCli.parseWatchdogArgs envOpts (fsi.CommandLineArgs |> Array.toList |> List.tail))
 
@@ -462,7 +469,7 @@ match parsed with
   let sigIntReg = registerSignal PosixSignal.SIGINT
   try
     match
-      WorkLease.runWithCancellation kind holder hostCancel.Token work
+      WorkLease.runWithCancellationPinned options.PinZ13 kind holder hostCancel.Token work
       |> Async.RunSynchronously
     with
     | Ok() -> exit 0
@@ -474,5 +481,5 @@ match parsed with
     sigTermReg |> Option.iter _.Dispose()
     sigIntReg |> Option.iter _.Dispose()
 | _ ->
-  eprintfn "usage: dotnet fsi tools/build/lease.fsx [--canary hello|hello-p3|sqlite|challenge|challenge-p3] [--wall-limit-secs N] [--rss-limit-mb N] [--receipt-path PATH] <full_build|test_suite_run> <command> [args...]"
+  eprintfn "usage: dotnet fsi tools/build/lease.fsx [--canary hello|hello-p3|sqlite|challenge|challenge-p3] [--wall-limit-secs N] [--rss-limit-mb N] [--receipt-path PATH] [--pin-z13] <full_build|test_suite_run> <command> [args...]"
   exit 64

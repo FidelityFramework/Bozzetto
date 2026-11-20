@@ -575,6 +575,33 @@ async function check() {
     }]));
     for (const [name] of retrievalTabs) assert.deepEqual(traffic[name], {fetches: 0, commands: 0}, `${name}: retrieval updates require no browser requests or commands`);
     await writeFile(join(evidence, 'live-retrieval.json'), JSON.stringify({states: retrievalStates, traffic, reloads: 0, missedTransitionCaught: true}, null, 2));
+    const balanceBanner = 'document.querySelector(".fleet-balance-banner")';
+    for (const [name, page] of retrievalTabs) {
+      assert.equal(await evaluate(page, `${balanceBanner} === null`), true, `${name}: balanced state hides .fleet-balance-banner`);
+    }
+    const trafficBeforeBalance = retrievalTraffic();
+    const fleetTarget = await openProject('fleet-balance-alert', 111);
+    for (const [name, page] of retrievalTabs) {
+      await waitFor(page, `${balanceBanner} !== null`);
+      const text = await evaluate(page, `${balanceBanner}.innerText`);
+      for (const snippet of ['Z13 throttled', 'Recommend ONE', 'policy enforce_when_lan_idle', 'Silent auditor', 'pi-auditor (pi, Verifier)', 'silent 420s']) {
+        assert.ok(text.includes(snippet), `${name}: fleet-balance-banner shows ${snippet}: ${text}`);
+      }
+      await call('Emulation.setDeviceMetricsOverride', { width: 480, height: 900, deviceScaleFactor: 1, mobile: false }, page);
+      assert.equal((await inspect(page)).overflow, false, `${name}: active fleet-balance-banner fits 480px viewport`);
+      await call('Emulation.setDeviceMetricsOverride', { width: 900, height: 900, deviceScaleFactor: 1, mobile: false }, page);
+    }
+    await closeProject(fleetTarget, 112);
+    for (const [name, page] of retrievalTabs) {
+      await waitFor(page, `${balanceBanner} === null`);
+    }
+    const trafficAfterBalance = retrievalTraffic();
+    const balanceTraffic = Object.fromEntries(retrievalTabs.map(([name]) => [name, {
+      fetches: trafficAfterBalance[name].fetches - trafficBeforeBalance[name].fetches,
+      commands: trafficAfterBalance[name].commands - trafficBeforeBalance[name].commands,
+    }]));
+    for (const [name] of retrievalTabs) assert.deepEqual(balanceTraffic[name], {fetches: 0, commands: 0}, `${name}: fleet balance updates require no browser requests or commands`);
+    await writeFile(join(evidence, 'live-fleet-balance.json'), JSON.stringify({traffic: balanceTraffic, testedBannerOnBothPages: true, tested480Overflow: true}, null, 2));
   } finally { agent.terminate(); }
   assert.equal(await evaluate(work, "document.querySelector('input[placeholder=\"/absolute/path/Project.fidproj\"]').closest('details').open"), false, 'no manual opening was needed');
   assert.ok(!(await inspect(dashboard)).text.includes('SideBySide.fidproj'));

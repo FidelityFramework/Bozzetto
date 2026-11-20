@@ -104,23 +104,21 @@ let leaseProbe (verb: SlowVerb) : LeaseProbe option =
       // the same shell session, so a retry is recognized as the same ask.
       sprintf "dotnet-cli:%s:%d" (Environment.GetEnvironmentVariable "USER" |> Option.ofObj |> Option.defaultValue "unknown") (Environment.ProcessId)
     use http = new HttpClient(Timeout = TimeSpan.FromMilliseconds 1500.0)
-    let body = JsonSerializer.Serialize {| holder = holder; kind = kind |}
+    let body = JsonSerializer.Serialize {| protocolVersion = ExpectedProtocolVersion; holder = holder; kind = kind |}
     use content = new StringContent(body, Text.Encoding.UTF8, "application/json")
     use resp = http.PostAsync(sprintf "http://localhost:%d/api/lease/request" (mcpPort ()), content).GetAwaiter().GetResult()
-    match resp.IsSuccessStatusCode with
-    | false -> None
-    | true ->
-      let text = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-      use doc = JsonDocument.Parse text
-      let root = doc.RootElement
-      match root.GetProperty("decision").GetString() with
-      | "granted" -> Some LeaseGranted
-      | "wait" ->
-        let retryAfter = root.GetProperty("retryAfterSeconds").GetDouble()
-        let reason = root.GetProperty("reason").GetString()
-        Some(LeaseMustWait(retryAfter, reason))
-      | "refused" -> Some(LeaseRefused(root.GetProperty("reason").GetString()))
-      | _ -> None
+    let text = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    let probe, leaseToRelease = parseLeaseResponse (int resp.StatusCode) text
+    match leaseToRelease with
+    | Some leaseId ->
+      try
+        let relBody = JsonSerializer.Serialize {| leaseId = leaseId |}
+        use relContent = new StringContent(relBody, Text.Encoding.UTF8, "application/json")
+        use _ = http.PostAsync(sprintf "http://localhost:%d/api/lease/release" (mcpPort ()), relContent).GetAwaiter().GetResult()
+        ()
+      with _ -> ()
+    | None -> ()
+    probe
   with _ -> None
 
 if needsContext command then

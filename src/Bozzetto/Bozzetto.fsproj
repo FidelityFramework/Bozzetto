@@ -102,6 +102,7 @@
         <Compile Include="McpStateHandlers.fs" />
         <Compile Include="SessionPathValidation.fs" />
         <Compile Include="McpAdapter.fs" />
+        <Compile Include="FleetBalanceService.fs" />
         <Compile Include="DaemonStatusPayload.fs" />
         <Compile Include="McpSessionRouting.fs" />
         <Compile Include="McpRouteError.fs" />

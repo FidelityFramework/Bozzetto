@@ -249,7 +249,7 @@ module Project =
     let rec fit entries =
       let summary = { value with Operations = { value.Operations with Entries = entries }; TranscriptsOmitted = true }
       let fits =
-        try (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrameVersion ProtocolVersion (PeerWork summary)).Length <= MaxWorkSnapshotBytes
+        try (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame (PeerWork summary)).Length <= MaxWorkSnapshotBytes
         with :? InvalidOperationException -> false
       if fits then summary
       else
@@ -480,60 +480,6 @@ module Project =
       Bozzetto.ExpensiveWorkLease.LeasedPidStatus.LivenessVerified = verified
       Bozzetto.ExpensiveWorkLease.LeasedPidStatus.Alive = alive }
 
-  // Reconcile lease/PID counts from a remote peer's WorkSnapshot when Capacity was omitted (v11 peer).
-  let reconcileSnapshotCapacity (snapshot: WorkSnapshot) : NodeCapacity =
-    let activeGrants : Bozzetto.ExpensiveWorkLease.ReconciledGrant list =
-      snapshot.Leases.Active
-      |> Array.map (fun g ->
-        { Bozzetto.ExpensiveWorkLease.ReconciledGrant.DisplayId = g.Id
-          Bozzetto.ExpensiveWorkLease.ReconciledGrant.Grant =
-            { Bozzetto.ExpensiveWorkLease.GrantView.Holder = g.Holder
-              Bozzetto.ExpensiveWorkLease.GrantView.Kind = g.Kind
-              Bozzetto.ExpensiveWorkLease.GrantView.GrantedAt = DateTimeOffset.FromUnixTimeMilliseconds g.GrantedAtMs
-              Bozzetto.ExpensiveWorkLease.GrantView.ExpiresAt = DateTimeOffset.FromUnixTimeMilliseconds g.ExpiresAtMs } })
-      |> Array.toList
-    let queueViews : Bozzetto.ExpensiveWorkLease.QueueView list =
-      snapshot.Leases.Queued
-      |> Array.map (fun q ->
-        { Bozzetto.ExpensiveWorkLease.QueueView.Holder = q.Holder
-          Bozzetto.ExpensiveWorkLease.QueueView.Kind = q.Kind
-          Bozzetto.ExpensiveWorkLease.QueueView.RequestedAt = DateTimeOffset.FromUnixTimeMilliseconds q.RequestedAtMs })
-      |> Array.toList
-    let activeById = activeGrants |> List.map (fun g -> g.DisplayId, g.Grant) |> Map.ofList
-    let pidStatuses : Bozzetto.ExpensiveWorkLease.LeasedPidStatus list =
-      snapshot.Operations.Entries
-      |> Array.sortByDescending _.Sequence
-      |> Array.choose (fun entry -> entry.Lease |> Option.map (fun cmd -> entry, cmd))
-      |> Array.distinctBy (fun (_, cmd) -> cmd.LeaseId)
-      |> Array.choose (fun (entry, cmd) ->
-        Map.tryFind cmd.LeaseId activeById
-        |> Option.map (fun grant ->
-          let verified, alive =
-            if entry.Code = "running" then
-              entry.Message.StartsWith("owner liveness verified ", StringComparison.Ordinal), true
-            elif entry.Code = "unknown" then
-              false, true
-            else
-              true, false
-          mkPidStatus cmd.LeaseId grant.Holder grant.Kind cmd.ProcessId verified alive))
-      |> Array.toList
-    let reconciled =
-      Bozzetto.ExpensiveWorkLease.reconcileCapacity
-        (DateTimeOffset.FromUnixTimeMilliseconds snapshot.SampledAtMs)
-        None
-        activeGrants
-        queueViews
-        pidStatuses
-    { NodeCapacity.LeaseCap = reconciled.LeaseCap
-      PidVerifiedLeases = reconciled.PidVerifiedLeases
-      UnverifiedLeases = reconciled.UnverifiedLeases
-      StalePidLeases = reconciled.StalePidLeases
-      MemoryPressure = ""
-      MachineAvailableBytes = 0L
-      MachineTotalBytes = 0L
-      ResidentBytes = 0L
-      PeakResidentBytes = 0L }
-
   /// The pool as `ExpensiveWorkLease.snapshot` reports it, which carries no
   /// LeaseId, stamped by the publication that produced it.
   let leaseBoard (revision: int64) (active: Bozzetto.ExpensiveWorkLease.GrantView list) (queue: Bozzetto.ExpensiveWorkLease.QueueView list) : LeaseBoard =
@@ -678,6 +624,7 @@ type Push =
   | WorkNodes
   | NodeResources
   | Retrieval
+  | FleetBalance
 
 [<RequireQualifiedAccess>]
 type Inbound =
@@ -707,7 +654,7 @@ type private Write =
 /// still runs.
 type internal Outbox(socket: IBridgeSocket, sendTimeout: TimeSpan, closeTimeout: TimeSpan) =
   let gate = obj ()
-  let pushes: Outbound option array = Array.create 10 None
+  let pushes: Outbound option array = Array.create 11 None
   let mutable closed = false
   let mutable wakePending = false
   // Owned by the writer agent.
@@ -727,6 +674,7 @@ type internal Outbox(socket: IBridgeSocket, sendTimeout: TimeSpan, closeTimeout:
     | Push.WorkNodes -> 7
     | Push.NodeResources -> 8
     | Push.Retrieval -> 9
+    | Push.FleetBalance -> 10
 
   let send (frame: Outbound) = async {
     return!
@@ -1014,8 +962,11 @@ module Facts =
     | Membership of Membership
     | Journal of ComposerJournal.Journal
     | Liveness of LeasedLivenessSnapshot
-    | Retrieval of RetrievalStatus
+    | Retrieval of RetrievalStatus * checkoutSynced: bool option
     | Dwell of DateTime
+    | Activity of Map<string, DateTime>
+    | Silence of DateTime
+    | FleetContext of Bozzetto.FleetBalanceService.CohortWorkFacts
     | Observation of int64 * Result<HostResources, string>
     | PeerObservation of HostResources option * Result<HostResources, string>
     | NodeWork of NodeWork
@@ -1029,8 +980,10 @@ module Facts =
 
   let private tickInput, poolInput, agentsInput, membershipInput, journalInput, livenessInput, retrievalInput, dwellInput =
     InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL, InputId 5UL, InputId 6UL, InputId 7UL, InputId 8UL
+  let private activityInput, silenceInput, fleetContextInput =
+    InputId 9UL, InputId 10UL, InputId 11UL
   let private healthWork, leasesWork, boardWork, operationsWork = WorkId 1UL, WorkId 2UL, WorkId 3UL, WorkId 4UL
-  let private workBoard, retrievalWork = WorkId 5UL, WorkId 6UL
+  let private workBoard, retrievalWork, fleetBalanceWork = WorkId 5UL, WorkId 6UL, WorkId 7UL
   let private scope = ScopeId 1UL
 
   /// Sets admitted per epoch before the plane retires it and starts the next:
@@ -1040,8 +993,9 @@ module Facts =
   /// The plane of one daemon. `incarnation` is the agent board owner's, bound
   /// at start: a publication from any other incarnation is refused, so a
   /// retired owner can never roll the board back.
-  type Graph(constants: Constants, incarnation: string, journalIncarnation: string, ?observationOwners: ObservationProducer list, ?localNode: string, ?peerNodes: string list, ?utcNow: unit -> DateTime) =
+  type Graph(constants: Constants, incarnation: string, journalIncarnation: string, ?observationOwners: ObservationProducer list, ?localNode: string, ?peerNodes: string list, ?utcNow: unit -> DateTime, ?silenceThreshold: TimeSpan) =
     let nowFn = defaultArg utcNow (fun () -> DateTime.UtcNow)
+    let thresholdFn () = silenceThreshold |> Option.defaultWith Bozzetto.FleetBalanceService.currentSilenceThreshold
     let owners = defaultArg observationOwners []
     let peers = defaultArg peerNodes []
     do
@@ -1065,19 +1019,19 @@ module Facts =
     // changes; no transport registry or duplicate fact store lives here.
     let mutable sourceSlots =
       owners @ (peers |> List.map (fun node -> { Source = { Node = node; Incarnation = "" }; Correlation = Guid.Empty }))
-      |> List.mapi (fun index owner -> owner.Source.Node, (owner, InputId(uint64 index * 2UL + 9UL), WorkId(uint64 index + 7UL)))
+      |> List.mapi (fun index owner -> owner.Source.Node, (owner, InputId(uint64 index * 2UL + 12UL), WorkId(uint64 index + 8UL)))
       |> Map.ofList
     let observationWorks = sourceSlots |> Map.toList |> List.map (fun (_, (_, input, work)) -> work, input) |> Map.ofList
     let nodeInputs = sourceSlots |> Map.toList |> List.map (fun (node, (_, InputId input, _)) -> node, InputId(input + 1UL)) |> Map.ofList
     let gate = obj ()
     let mutable epoch = 1UL
     let mutable core = Core.init (EpochId epoch)
-    /// One counter for input stamps and value tokens: unique for the plane's lifetime.
+    // One counter for input stamps and value tokens: unique for the plane's lifetime.
     let mutable serial = 0UL
     let mutable store : Map<ValueToken, Payload> = Map.empty
     let mutable inputs : Map<InputId, ValueToken> = Map.empty
     let mutable admitted : Map<InputId, int64> = Map.empty
-    /// The publication serial each work's current value carries on the wire.
+    // The publication serial each work's current value carries on the wire.
     let mutable stamps : Map<WorkId, int64> = Map.empty
     let mutable failed : Set<WorkId> = Set.empty
     let mutable sets = 0
@@ -1088,10 +1042,20 @@ module Facts =
     let mutable dwellSerial = 0L
     let mutable dwellTimer : Timer option = None
     let mutable dwellGeneration = 0L
+    let mutable latestCohortFrame : Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTable.MemberId> option = None
+    let mutable latestAgentsState : Bozzetto.AgentWork.State option = None
+    let mutable activityMapCache : Map<string, DateTime> = Map.empty
+    let mutable fleetContextSerial = 0L
+    let mutable silenceSerial = 0L
+    let mutable silenceTimer : Timer option = None
+    let mutable silenceGeneration = 0L
+    let mutable latestWorkBoard : WorkBoard option = None
+    let mutable applyDepth = 0
+    let pendingDeliveries = System.Collections.Generic.Queue<WorkId * ValueToken * Payload>()
     let sinks = System.Collections.Generic.Dictionary<int64, Push -> Event -> unit>()
     let mutable nextSink = 0L
     let observers = System.Collections.Generic.Dictionary<Guid, ObservationBinding * DemandId * (Observation -> unit)>()
-    let mutable nextObserver = 6UL
+    let mutable nextObserver = 7UL
 
     let pushOf (work: WorkId) =
       if work = healthWork then Push.Health
@@ -1099,6 +1063,7 @@ module Facts =
       elif work = operationsWork then Push.Operations
       elif work = workBoard then Push.WorkNodes
       elif work = retrievalWork then Push.Retrieval
+      elif work = fleetBalanceWork then Push.FleetBalance
       else Push.AgentWork
 
     /// The projection of one work over the facts its frozen reads name, with
@@ -1135,8 +1100,30 @@ module Facts =
         Payload.Value(WorkNodes { Revision = stamp; Nodes = nodes })
       elif work = retrievalWork then
         match fact 1UL with
-        | Some(Fact.Retrieval status) -> Payload.Value(Retrieval { status with Revision = stamp })
+        | Some(Fact.Retrieval(status, _)) -> Payload.Value(Retrieval { status with Revision = stamp })
         | other -> invalidOp (sprintf "Bridge facts: Retrieval read %A" other)
+      elif work = fleetBalanceWork then
+        match fact 1UL, fact 2UL, fact 3UL, fact 4UL, fact 5UL, fact 6UL with
+        | Some(Fact.Tick tick), Some(Fact.Pool pool), Some(Fact.FleetContext context), Some(Fact.Activity _), Some(Fact.Silence now), Some(Fact.Retrieval(_, localCheckoutSynced)) ->
+          let boardNodes =
+            facts
+            |> Map.toSeq
+            |> Seq.choose (fun (ReadSlotId slotId, value) ->
+              if slotId >= 7UL then
+                match value with Fact.NodeWork node -> Some node | _ -> None
+              else None)
+            |> Seq.toArray
+          let boardOpt =
+            if localNode.IsSome then Some { Revision = stamp; Nodes = boardNodes }
+            else None
+          let localId = localNode |> Option.defaultWith Bozzetto.FleetBalanceService.localNodeId
+          let policy, _ = Bozzetto.FleetBalanceService.currentPolicy ()
+          let threshold = thresholdFn ()
+          let summary, workCtx =
+            Bozzetto.FleetBalanceService.summarizeAt
+              now policy threshold localId (Some tick.Level) pool tick.Machine localCheckoutSynced boardOpt context
+          Payload.Value(FleetBalance(Bozzetto.FleetBalanceService.toWireStatus stamp workCtx summary))
+        | other -> invalidOp (sprintf "Bridge facts: FleetBalance read %A" other)
       else
         match fact 1UL, fact 2UL, fact 3UL, fact 4UL with
         | Some(Fact.Agents state), Some(Fact.Pool pool), Some(Fact.Membership membership), Some(Fact.Dwell now) ->
@@ -1165,50 +1152,61 @@ module Facts =
     /// order. A projection runs here, synchronously, over frozen receipts:
     /// Start, store, Finished, Drained; the Offer that follows is delivered.
     let rec apply (action: Action) : unit =
-      let next, effects =
-        Core.step { Epoch = EpochId epoch; Action = action } core
-        |> Result.defaultWith (fun error -> invalidOp (sprintf "Bridge facts: %A" error))
-      core <- next
-      for effect in effects do
-        match effect.Action with
-        | EffectAction.Start request ->
-          let work = request.Definition.Work
-          let facts =
-            request.Reads
-            |> List.choose (fun read ->
-              match read.Value with
-              | ReadValue.Input(_, _, token) ->
-                match Map.tryFind token store with
-                | Some(Payload.Fact fact) -> Some(read.Slot, fact)
-                | _ -> None
-              | ReadValue.Work _ -> None)
-            |> Map.ofList
-          // A recomputation during an epoch handover is not news: it keeps its stamp.
-          let stamp = (Map.tryFind work stamps |> Option.defaultValue 0L) + (if handover then 0L else 1L)
-          match (try Ok(project work stamp facts) with error -> Error error) with
-          | Ok projection ->
-            serial <- serial + 1UL
-            let token = ValueToken serial
-            store <- Map.add token projection store
-            stamps <- Map.add work stamp stamps
-            apply (Action.Finished(request.Attempt, Completion.Succeeded token))
-            apply (Action.Drained request.Attempt)
-          | Error error ->
-            Log.warn "[ui-bridge] projecting %A failed: %s" work error.Message
-            faults <- faults + 1
-            failed <- Set.add work failed
-            apply (Action.Finished(request.Attempt, Completion.Failed({ Code = "projection"; Message = error.Message }: Failure)))
-            apply (Action.Drained request.Attempt)
-        | EffectAction.Offer handle ->
-          match Map.tryFind handle.Value store with
-          | Some payload when not handover -> deliver handle.Work handle.Value payload
-          | _ -> ()
-        | EffectAction.Withdraw handle -> store <- Map.remove handle.Value store
-        | EffectAction.Cancel attempt ->
-          apply (Action.Finished(attempt, Completion.Cancelled))
-          apply (Action.Drained attempt)
-        | EffectAction.Drain attempt -> apply (Action.Drained attempt)
-        | EffectAction.Suspended _ | EffectAction.Continue _ | EffectAction.ScopeClosed _ | EffectAction.EpochDrained -> ()
+      applyDepth <- applyDepth + 1
+      try
+        let next, effects =
+          Core.step { Epoch = EpochId epoch; Action = action } core
+          |> Result.defaultWith (fun error -> invalidOp (sprintf "Bridge facts: %A" error))
+        core <- next
+        for effect in effects do
+          match effect.Action with
+          | EffectAction.Start request ->
+            let work = request.Definition.Work
+            let facts =
+              request.Reads
+              |> List.choose (fun read ->
+                match read.Value with
+                | ReadValue.Input(_, _, token) ->
+                  match Map.tryFind token store with
+                  | Some(Payload.Fact fact) -> Some(read.Slot, fact)
+                  | _ -> None
+                | ReadValue.Work _ -> None)
+              |> Map.ofList
+            // A recomputation during an epoch handover is not news: it keeps its stamp.
+            let stamp = (Map.tryFind work stamps |> Option.defaultValue 0L) + (if handover then 0L else 1L)
+            match (try Ok(project work stamp facts) with error -> Error error) with
+            | Ok projection ->
+              serial <- serial + 1UL
+              let token = ValueToken serial
+              store <- Map.add token projection store
+              stamps <- Map.add work stamp stamps
+              apply (Action.Finished(request.Attempt, Completion.Succeeded token))
+              apply (Action.Drained request.Attempt)
+            | Error error ->
+              Log.warn "[ui-bridge] projecting %A failed: %s" work error.Message
+              faults <- faults + 1
+              failed <- Set.add work failed
+              apply (Action.Finished(request.Attempt, Completion.Failed({ Code = "projection"; Message = error.Message }: Failure)))
+              apply (Action.Drained request.Attempt)
+          | EffectAction.Offer handle ->
+            match Map.tryFind handle.Value store with
+            | Some(Payload.Value(WorkNodes board) as payload) when not handover ->
+              Volatile.Write(&latestWorkBoard, Some board)
+              pendingDeliveries.Enqueue(handle.Work, handle.Value, payload)
+            | Some payload when not handover -> pendingDeliveries.Enqueue(handle.Work, handle.Value, payload)
+            | _ -> ()
+          | EffectAction.Withdraw handle -> store <- Map.remove handle.Value store
+          | EffectAction.Cancel attempt ->
+            apply (Action.Finished(attempt, Completion.Cancelled))
+            apply (Action.Drained attempt)
+          | EffectAction.Drain attempt -> apply (Action.Drained attempt)
+          | EffectAction.Suspended _ | EffectAction.Continue _ | EffectAction.ScopeClosed _ | EffectAction.EpochDrained -> ()
+      finally
+        applyDepth <- applyDepth - 1
+      if applyDepth = 0 then
+        while pendingDeliveries.Count > 0 do
+          let work, token, payload = pendingDeliveries.Dequeue()
+          deliver work token payload
 
     let define () =
       apply (Action.ReserveScope(scope, RevisionId 1UL))
@@ -1228,6 +1226,18 @@ module Facts =
         ScopeEntry.Define {
           Work = retrievalWork; Stamp = DefinitionStamp 1UL
           Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input retrievalInput } ] }
+        ScopeEntry.Define {
+          Work = fleetBalanceWork; Stamp = DefinitionStamp 1UL
+          Reads =
+            [ yield { Slot = ReadSlotId 1UL; Source = ReadSource.Input tickInput }
+              yield { Slot = ReadSlotId 2UL; Source = ReadSource.Input poolInput }
+              yield { Slot = ReadSlotId 3UL; Source = ReadSource.Input fleetContextInput }
+              yield { Slot = ReadSlotId 4UL; Source = ReadSource.Input activityInput }
+              yield { Slot = ReadSlotId 5UL; Source = ReadSource.Input silenceInput }
+              yield { Slot = ReadSlotId 6UL; Source = ReadSource.Input retrievalInput }
+              if localNode.IsSome then
+                for i, (_, input) in nodeInputs |> Map.toList |> List.indexed do
+                  yield { Slot = ReadSlotId(uint64 i + 7UL); Source = ReadSource.Input input } ] }
         if localNode.IsSome then
           ScopeEntry.Define { Work = workBoard; Stamp = DefinitionStamp 1UL
                               Reads = nodeInputs |> Map.toList |> List.mapi (fun i (_, input) -> { Slot = ReadSlotId(uint64 i + 1UL); Source = ReadSource.Input input }) }
@@ -1239,6 +1249,7 @@ module Facts =
       apply (Action.Demand(DemandId 4UL, operationsWork))
       if localNode.IsSome then apply (Action.Demand(DemandId 5UL, workBoard))
       apply (Action.Demand(DemandId 6UL, retrievalWork))
+      apply (Action.Demand(DemandId 7UL, fleetBalanceWork))
       for binding, demand, _ in observers.Values do
         let _, _, work = sourceSlots[binding.Source.Node]
         apply (Action.Demand(demand, work))
@@ -1263,25 +1274,27 @@ module Facts =
         if not values.IsEmpty then apply (Action.SetInputs values)
       finally handover <- false
 
-    /// Admission, before SetInputs and under the gate: the owner's serial
-    /// orders its publications, since the core itself only refuses a reused
-    /// stamp and treats an exact duplicate as a no-op. Every fact is a complete
-    /// replacement snapshot, so an older serial is dropped whole.
-    let admit (input: InputId) (ownerSerial: int64) (fact: Fact) : Result<unit, Refusal> =
-      lock gate (fun () ->
-        match Map.tryFind input admitted with
-        | _ when stopped -> Error Refusal.Retired
-        | Some last when ownerSerial < last -> Error Refusal.Older
-        | Some last when ownerSerial = last ->
-          let current = Map.tryFind input inputs |> Option.bind (fun token -> Map.tryFind token store)
-          if current = Some(Payload.Fact fact) then Error Refusal.Duplicate
-          else
-            faults <- faults + 1
-            Log.warn "[ui-bridge] %A republished serial %d with different content" input ownerSerial
-            Error Refusal.Conflict
-        | _ ->
-          for work in failed do apply (Action.Retry work)
-          failed <- Set.empty
+    let validateAdmitLocked (input: InputId) (ownerSerial: int64) (fact: Fact) : Result<unit, Refusal> =
+      match Map.tryFind input admitted with
+      | _ when stopped -> Error Refusal.Retired
+      | Some last when ownerSerial < last -> Error Refusal.Older
+      | Some last when ownerSerial = last ->
+        let current = Map.tryFind input inputs |> Option.bind (fun token -> Map.tryFind token store)
+        if current = Some(Payload.Fact fact) then Error Refusal.Duplicate
+        else
+          faults <- faults + 1
+          Log.warn "[ui-bridge] %A republished serial %d with different content" input ownerSerial
+          Error Refusal.Conflict
+      | _ -> Ok()
+
+    let commitLocked (entries: (InputId * int64 * Fact) list) : unit =
+      for work in failed do apply (Action.Retry work)
+      failed <- Set.empty
+      let previousTokens =
+        entries |> List.choose (fun (input, _, _) -> Map.tryFind input inputs)
+      let updates =
+        entries
+        |> List.map (fun (input, ownerSerial, fact) ->
           match input = tickInput, fact with
           | true, Fact.Tick tick ->
             let daemonRss = tick.Record |> Option.map (fun h -> int64 h.MemoryMB * 1_048_576L) |> Option.defaultValue 0L
@@ -1291,14 +1304,22 @@ module Facts =
           admitted <- Map.add input ownerSerial admitted
           serial <- serial + 1UL
           let token = ValueToken serial
-          let previous = Map.tryFind input inputs
           store <- Map.add token (Payload.Fact fact) store
           inputs <- Map.add input token inputs
-          apply (Action.SetInputs [ { InputValue.Input = input; Stamp = InputStamp serial; Value = token } ])
-          previous |> Option.iter (fun old -> store <- Map.remove old store)
-          sets <- sets + 1
-          if sets >= recycleBound then recycle ()
-          Ok())
+          { InputValue.Input = input; Stamp = InputStamp serial; Value = token })
+      apply (Action.SetInputs updates)
+      for old in previousTokens do store <- Map.remove old store
+      sets <- sets + 1
+      if sets >= recycleBound then recycle ()
+
+    // Admission, before SetInputs and under the gate: the owner's serial
+    // orders its publications, since the core itself only refuses a reused
+    // stamp and treats an exact duplicate as a no-op. Every fact is a complete
+    // replacement snapshot, so an older serial is dropped whole.
+    let admit (input: InputId) (ownerSerial: int64) (fact: Fact) : Result<unit, Refusal> =
+      lock gate (fun () ->
+        validateAdmitLocked input ownerSerial fact
+        |> Result.map (fun () -> commitLocked [ input, ownerSerial, fact ]))
 
     /// The eligible value of each work, in wire order: Health, Leases, the board, the operations.
     let current () : Event list =
@@ -1307,7 +1328,8 @@ module Facts =
         yield boardWork
         yield operationsWork
         if localNode.IsSome then yield workBoard
-        yield retrievalWork ]
+        yield retrievalWork
+        yield fleetBalanceWork ]
       |> List.choose (fun work ->
         Core.tryResult work core
         |> Option.bind (fun handle ->
@@ -1362,7 +1384,7 @@ module Facts =
       | _ -> None
     let boundedReason (reason: string) = if reason.Length <= 512 then reason else reason.Substring(0, 512)
     let withinWorkBudget value =
-      try (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrameVersion ProtocolVersion (PeerWork value)).Length <= MaxWorkSnapshotBytes
+      try (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame (PeerWork value)).Length <= MaxWorkSnapshotBytes
       with :? InvalidOperationException -> false
     let tickResidentBytes (tick: Bozzetto.Server.HealthTick.Tick) =
       let daemonRss = tick.Record |> Option.map (fun h -> int64 h.MemoryMB * 1_048_576L) |> Option.defaultValue 0L
@@ -1397,6 +1419,74 @@ module Facts =
                   let floor = if firedAt <= armedAt then TimeSpan.FromMilliseconds 50.0 else TimeSpan.Zero
                   armDwellAt firedAt floor (Some expires))
           dwellTimer <- Some(new Timer(TimerCallback callback, null, due, Timeout.InfiniteTimeSpan))
+    let rec scheduleSilenceAt (armedAt: DateTime) =
+      let nextTransition =
+        if not (Map.containsKey activityInput inputs) then None
+        else
+          let pool =
+            match inputFact poolInput with
+            | Some(Fact.Pool p) -> p
+            | _ -> { Serial = 0L; Active = []; Queue = [] }
+          let context =
+            match inputFact fleetContextInput with
+            | Some(Fact.FleetContext ctx) -> ctx
+            | _ -> Bozzetto.FleetBalanceService.emptyCohortWorkFacts
+          let boardOpt =
+            if localNode.IsSome then
+              let nodes =
+                nodeInputs
+                |> Map.toArray
+                |> Array.choose (fun (_, input) ->
+                  match inputFact input with
+                  | Some(Fact.NodeWork node) -> Some node
+                  | _ -> None)
+              Some { Revision = 0L; Nodes = nodes }
+            else None
+          let localId = localNode |> Option.defaultWith Bozzetto.FleetBalanceService.localNodeId
+          let workCtx = Bozzetto.FleetBalanceService.computeWorkContext localId pool boardOpt context
+          let threshold = thresholdFn ()
+          (Bozzetto.FleetBalance.evaluateSilentAgents armedAt threshold context.Members workCtx).NextSilenceTransitionUtc
+      armSilenceAt armedAt TimeSpan.Zero nextTransition
+    and armSilenceAt (armedAt: DateTime) floor nextTransition =
+      silenceGeneration <- silenceGeneration + 1L
+      let run = silenceGeneration
+      silenceTimer |> Option.iter _.Dispose()
+      silenceTimer <- None
+      if not stopped then
+        match nextTransition with
+        | None -> ()
+        | Some expires ->
+          let delay = expires - armedAt + TimeSpan.FromMilliseconds 1.0
+          let due = min maxTimerDue (max floor delay)
+          let callback _ =
+            try
+              lock gate (fun () ->
+                if not stopped && silenceGeneration = run then
+                  let firedAt = nowFn ()
+                  if firedAt >= expires then
+                    silenceSerial <- silenceSerial + 1L
+                    admit silenceInput silenceSerial (Fact.Silence firedAt) |> ignore
+                    scheduleSilenceAt firedAt
+                  else
+                    let nextFloor = if firedAt <= armedAt then TimeSpan.FromMilliseconds 50.0 else TimeSpan.Zero
+                    armSilenceAt firedAt nextFloor (Some expires))
+            with error ->
+              Log.warn "[ui-bridge] silence timer callback failed: %s" error.Message
+          silenceTimer <- Some(new Timer(TimerCallback callback, null, due, Timeout.InfiniteTimeSpan))
+
+    let publishNodeWorkLocked (node: string) (work: NodeWork) : Result<unit, Refusal> =
+      let input = nodeInputs[node]
+      let nextSerial = (Map.tryFind input admitted |> Option.defaultValue -1L) + 1L
+      let fact = Fact.NodeWork work
+      validateAdmitLocked input nextSerial fact
+      |> Result.map (fun () ->
+        if Map.containsKey activityInput inputs then
+          let now = nowFn ()
+          silenceSerial <- silenceSerial + 1L
+          commitLocked [ input, nextSerial, fact; silenceInput, silenceSerial, Fact.Silence now ]
+          scheduleSilenceAt now
+        else
+          commitLocked [ input, nextSerial, fact ])
 
     do
       define ()
@@ -1461,8 +1551,8 @@ module Facts =
               try sink { Binding = binding; Sequence = None; Value = Error "Source connection was replaced; select the node again." } with _ -> ()
           sourceSlots <- Map.add source.Node (producer, input, work) sourceSlots
           publishStatus input (Fact.PeerObservation(retained, Error "Source has not published resources on this connection.")) |> ignore
-          publishStatus nodeInputs[source.Node] (Fact.NodeWork {
-            Source = source; Local = false; Status = "unavailable"; Note = "Source has not published work on this connection."; Value = value }) |> ignore
+          publishNodeWorkLocked source.Node {
+            Source = source; Local = false; Status = "unavailable"; Note = "Source has not published work on this connection."; Value = value } |> ignore
           producer)
 
     member _.Source(node: string) =
@@ -1474,29 +1564,36 @@ module Facts =
       lock gate (fun () ->
         producerSlot producer |> Result.bind (fun _ ->
           let previous = nodeValue producer.Source.Node
-          let normalized =
-            match value.Capacity with
-            | Some _ -> value
-            | None -> { value with Capacity = Some (Project.reconcileSnapshotCapacity value) }
           match previous |> Option.bind _.Value with
-          | Some old when normalized.Sequence < old.Sequence -> Error Refusal.Older
-          | Some old when normalized.Sequence = old.Sequence && normalized <> old -> Error Refusal.Conflict
-          | _ when not (withinWorkBudget normalized) ->
-            publishStatus nodeInputs[producer.Source.Node] (Fact.NodeWork {
+          | Some old when value.Sequence < old.Sequence -> Error Refusal.Older
+          | Some old when value.Sequence = old.Sequence && value <> old -> Error Refusal.Conflict
+          | _ when not (withinWorkBudget value) ->
+            publishNodeWorkLocked producer.Source.Node {
               Source = producer.Source; Local = localNode = Some producer.Source.Node; Status = "unavailable"
-              Note = "Work snapshot exceeds the encoded observation budget."; Value = previous |> Option.bind _.Value }) |> ignore
+              Note = "Work snapshot exceeds the encoded observation budget."; Value = previous |> Option.bind _.Value } |> ignore
             Error Refusal.Oversized
-          | Some old when normalized = old && (previous |> Option.exists (fun node -> node.Status = "available")) -> Error Refusal.Duplicate
-          | _ -> publishStatus nodeInputs[producer.Source.Node] (Fact.NodeWork {
+          | Some old when value = old && (previous |> Option.exists (fun node -> node.Status = "available")) -> Error Refusal.Duplicate
+          | _ -> publishNodeWorkLocked producer.Source.Node {
               Source = producer.Source; Local = localNode = Some producer.Source.Node
-              Status = "available"; Note = ""; Value = Some normalized })))
+              Status = "available"; Note = ""; Value = Some value }))
 
     member _.PeerUnavailable(producer: ObservationProducer, reason: string) =
       lock gate (fun () ->
         producerSlot producer |> Result.bind (fun _ ->
           let value = nodeValue producer.Source.Node |> Option.bind _.Value
-          publishStatus nodeInputs[producer.Source.Node] (Fact.NodeWork {
-            Source = producer.Source; Local = localNode = Some producer.Source.Node; Status = "unavailable"; Note = boundedReason reason; Value = value })))
+          publishNodeWorkLocked producer.Source.Node {
+            Source = producer.Source; Local = localNode = Some producer.Source.Node; Status = "unavailable"; Note = boundedReason reason; Value = value }))
+
+    member _.RetirePeer(producer: ObservationProducer, reason: string) =
+      lock gate (fun () ->
+        if localNode = Some producer.Source.Node then Error Refusal.ForeignProducer
+        else
+          producerSlot producer |> Result.bind (fun (input, work) ->
+            let value = nodeValue producer.Source.Node |> Option.bind _.Value
+            let retired = { Source = producer.Source; Correlation = Guid.Empty }
+            sourceSlots <- Map.add producer.Source.Node (retired, input, work) sourceSlots
+            publishNodeWorkLocked producer.Source.Node {
+              Source = producer.Source; Local = false; Status = "unavailable"; Note = boundedReason reason; Value = value }))
 
     member _.PeerConnectionUnavailable(node: string, reason: string) =
       lock gate (fun () ->
@@ -1504,8 +1601,8 @@ module Facts =
         | _ when stopped -> Error Refusal.Retired
         | None -> Error Refusal.UnknownSource
         | Some(producer, _, _) when producer.Correlation <> Guid.Empty -> Error Refusal.ForeignProducer
-        | Some(producer, _, _) -> publishStatus nodeInputs[node] (Fact.NodeWork {
-            Source = producer.Source; Local = false; Status = "unavailable"; Note = boundedReason reason; Value = None }))
+        | Some(producer, _, _) -> publishNodeWorkLocked node {
+            Source = producer.Source; Local = false; Status = "unavailable"; Note = boundedReason reason; Value = None })
 
     member _.PublishPeerResources(producer: ObservationProducer, value: HostResources) =
       lock gate (fun () ->
@@ -1580,6 +1677,10 @@ module Facts =
               activeGrants
               poolQueue
               pidStatuses
+          let localCheckoutSynced =
+            match inputFact retrievalInput with
+            | Some(Fact.Retrieval(_, checkoutSynced)) -> checkoutSynced
+            | _ -> None
           let localCapacity : NodeCapacity =
             { LeaseCap = reconciled.LeaseCap
               PidVerifiedLeases = reconciled.PidVerifiedLeases
@@ -1589,7 +1690,8 @@ module Facts =
               MachineAvailableBytes = tickOpt |> Option.map _.Machine.AvailableBytes |> Option.defaultValue 0L
               MachineTotalBytes = tickOpt |> Option.map _.Machine.TotalBytes |> Option.defaultValue 0L
               ResidentBytes = tickOpt |> Option.map tickResidentBytes |> Option.defaultValue 0L
-              PeakResidentBytes = peakResidentBytes }
+              PeakResidentBytes = peakResidentBytes
+              CheckoutSynced = localCheckoutSynced }
           this.PublishWork(producer, Project.workSummary {
             Sequence = (previous |> Option.map _.Sequence |> Option.defaultValue -1L) + 1L
             SampledAtMs = sampledAtMs; Snapshot = snapshot; Leases = leases; Operations = operations
@@ -1603,6 +1705,7 @@ module Facts =
           (Core.snapshot core).Works |> List.exists (fun view -> view.Work = work && view.Demanded)))
 
     member _.Current() : Event list = lock gate current
+    member _.LatestWorkBoard : WorkBoard option = Volatile.Read(&latestWorkBoard)
     /// Owner protocol faults seen: a serial republished with other content, a
     /// foreign incarnation or producer, a projection that threw.
     member _.Faults = lock gate (fun () -> faults)
@@ -1622,13 +1725,27 @@ module Facts =
           dwellGeneration <- dwellGeneration + 1L
           dwellTimer |> Option.iter _.Dispose()
           dwellTimer <- None
+          silenceGeneration <- silenceGeneration + 1L
+          silenceTimer |> Option.iter _.Dispose()
+          silenceTimer <- None
           handover <- true
           try apply Action.Retire finally handover <- false
           sinks.Clear()
           observers.Clear())
 
     member _.Tick(tick: Bozzetto.Server.HealthTick.Tick) = admit tickInput tick.Serial (Fact.Tick tick)
-    member _.Pool(pool: Bozzetto.Features.LeaseWatch.Pool) = admit poolInput pool.Serial (Fact.Pool pool)
+    member _.Pool(pool: Bozzetto.Features.LeaseWatch.Pool) =
+      lock gate (fun () ->
+        let fact = Fact.Pool pool
+        validateAdmitLocked poolInput pool.Serial fact
+        |> Result.map (fun () ->
+          if Map.containsKey activityInput inputs then
+            let now = nowFn ()
+            silenceSerial <- silenceSerial + 1L
+            commitLocked [ poolInput, pool.Serial, fact; silenceInput, silenceSerial, Fact.Silence now ]
+            scheduleSilenceAt now
+          else
+            commitLocked [ poolInput, pool.Serial, fact ]))
     member _.Agents(state: Bozzetto.AgentWork.State) =
       lock gate (fun () ->
         if state.Incarnation <> incarnation then
@@ -1636,49 +1753,105 @@ module Facts =
           Log.warn "[ui-bridge] agent work from incarnation %s refused; the plane is bound to %s" state.Incarnation incarnation
           Error Refusal.ForeignIncarnation
         else
-          match Map.tryFind agentsInput admitted with
-          | _ when stopped -> Error Refusal.Retired
-          | Some last when state.Sequence < last -> Error Refusal.Older
-          | Some last when state.Sequence = last ->
-            let current = Map.tryFind agentsInput inputs |> Option.bind (fun token -> Map.tryFind token store)
-            if current = Some(Payload.Fact(Fact.Agents state)) then Error Refusal.Duplicate
-            else
-              faults <- faults + 1
-              Log.warn "[ui-bridge] %A republished serial %d with different content" agentsInput state.Sequence
-              Error Refusal.Conflict
-          | _ ->
-            for work in failed do apply (Action.Retry work)
-            failed <- Set.empty
+          let fact = Fact.Agents state
+          validateAdmitLocked agentsInput state.Sequence fact
+          |> Result.map (fun () ->
             let now = nowFn ()
+            latestAgentsState <- Some state
             dwellSerial <- dwellSerial + 1L
-            admitted <- Map.add dwellInput dwellSerial (Map.add agentsInput state.Sequence admitted)
-            serial <- serial + 1UL
-            let dwellToken = ValueToken serial
-            let dwellStamp = InputStamp serial
-            serial <- serial + 1UL
-            let agentsToken = ValueToken serial
-            let agentsStamp = InputStamp serial
-            let prevDwell = Map.tryFind dwellInput inputs
-            let prevAgents = Map.tryFind agentsInput inputs
-            store <- store |> Map.add dwellToken (Payload.Fact(Fact.Dwell now)) |> Map.add agentsToken (Payload.Fact(Fact.Agents state))
-            inputs <- inputs |> Map.add dwellInput dwellToken |> Map.add agentsInput agentsToken
-            apply (Action.SetInputs [
-              { InputValue.Input = dwellInput; Stamp = dwellStamp; Value = dwellToken }
-              { InputValue.Input = agentsInput; Stamp = agentsStamp; Value = agentsToken }
-            ])
-            prevDwell |> Option.iter (fun old -> store <- Map.remove old store)
-            prevAgents |> Option.iter (fun old -> store <- Map.remove old store)
-            sets <- sets + 1
-            if sets >= recycleBound then recycle ()
+            let entries =
+              [ yield dwellInput, dwellSerial, Fact.Dwell now
+                yield agentsInput, state.Sequence, fact
+                if Map.containsKey activityInput inputs then
+                  let context = Bozzetto.FleetBalanceService.extractCohortWorkFacts latestCohortFrame latestAgentsState activityMapCache
+                  fleetContextSerial <- fleetContextSerial + 1L
+                  silenceSerial <- silenceSerial + 1L
+                  yield fleetContextInput, fleetContextSerial, Fact.FleetContext context
+                  yield silenceInput, silenceSerial, Fact.Silence now ]
+            commitLocked entries
             scheduleDwellAt now
-            Ok())
+            if Map.containsKey activityInput inputs then
+              scheduleSilenceAt now))
     member _.Membership(frame: Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTable.MemberId>) =
-      let membership = membershipOf frame
-      admit membershipInput membership.Version (Fact.Membership membership)
+      lock gate (fun () ->
+        let membership = membershipOf frame
+        let fact = Fact.Membership membership
+        validateAdmitLocked membershipInput membership.Version fact
+        |> Result.map (fun () ->
+          latestCohortFrame <- Some frame
+          if Map.containsKey activityInput inputs then
+            let now = nowFn ()
+            let context = Bozzetto.FleetBalanceService.extractCohortWorkFacts latestCohortFrame latestAgentsState activityMapCache
+            fleetContextSerial <- fleetContextSerial + 1L
+            silenceSerial <- silenceSerial + 1L
+            commitLocked [
+              membershipInput, membership.Version, fact
+              fleetContextInput, fleetContextSerial, Fact.FleetContext context
+              silenceInput, silenceSerial, Fact.Silence now
+            ]
+            scheduleSilenceAt now
+          else
+            commitLocked [ membershipInput, membership.Version, fact ]))
+    member _.PublishActivity(version: int64, activityMap: Map<string, DateTime>) =
+      lock gate (fun () ->
+        let fact = Fact.Activity activityMap
+        validateAdmitLocked activityInput version fact
+        |> Result.map (fun () ->
+          let now = nowFn ()
+          activityMapCache <- activityMap
+          let context = Bozzetto.FleetBalanceService.extractCohortWorkFacts latestCohortFrame latestAgentsState activityMap
+          fleetContextSerial <- fleetContextSerial + 1L
+          silenceSerial <- silenceSerial + 1L
+          commitLocked [
+            activityInput, version, fact
+            fleetContextInput, fleetContextSerial, Fact.FleetContext context
+            silenceInput, silenceSerial, Fact.Silence now
+          ]
+          scheduleSilenceAt now))
+    member this.StartFleetBalance(activityChanged: IObservable<int64 * Map<string, DateTime>>, readActivity: unit -> int64 * Map<string, DateTime>) : IDisposable =
+      let sub = activityChanged.Subscribe(fun (version, map) -> this.PublishActivity(version, map) |> ignore)
+      let ok =
+        lock gate (fun () ->
+          if stopped then false
+          else
+            let initialVersion, initialActivity = readActivity ()
+            let retrievalEntry =
+              if Map.containsKey retrievalInput inputs then []
+              else
+                let obs = Bozzetto.Server.RetrievalObservation.current ()
+                [ retrievalInput, 0L,
+                  Fact.Retrieval(
+                    Bozzetto.Server.RetrievalObservation.toWireStatus obs,
+                    Bozzetto.Server.RetrievalObservation.checkoutSynced obs) ]
+            let shouldAdmitInitial =
+              match Map.tryFind activityInput admitted with
+              | None -> true
+              | Some last -> initialVersion > last
+            if shouldAdmitInitial then
+              let now = nowFn ()
+              activityMapCache <- initialActivity
+              let context = Bozzetto.FleetBalanceService.extractCohortWorkFacts latestCohortFrame latestAgentsState initialActivity
+              fleetContextSerial <- fleetContextSerial + 1L
+              silenceSerial <- silenceSerial + 1L
+              commitLocked (
+                retrievalEntry @ [
+                  activityInput, initialVersion, Fact.Activity initialActivity
+                  fleetContextInput, fleetContextSerial, Fact.FleetContext context
+                  silenceInput, silenceSerial, Fact.Silence now
+                ])
+              scheduleSilenceAt now
+            elif not retrievalEntry.IsEmpty then
+              commitLocked retrievalEntry
+            true)
+      if not ok then sub.Dispose()
+      sub
     member _.Liveness(snapshot: LeasedLivenessSnapshot) =
       admit livenessInput snapshot.Serial (Fact.Liveness snapshot)
     member _.Retrieval(observation: Bozzetto.Server.RetrievalObservation.Observation) =
-      admit retrievalInput observation.Serial (Fact.Retrieval(Bozzetto.Server.RetrievalObservation.toWireStatus observation))
+      admit retrievalInput observation.Serial
+        (Fact.Retrieval(
+          Bozzetto.Server.RetrievalObservation.toWireStatus observation,
+          Bozzetto.Server.RetrievalObservation.checkoutSynced observation))
     /// The operations journal names its owner's incarnation; the plane binds to
     /// the one it started with and refuses any other.
     member _.Journal(journal: ComposerJournal.Journal) =
@@ -1925,8 +2098,10 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
   member _.PublishPeerWork(producer, value) = let graph, _ = graphAndOwner () in graph.PublishWork(producer, value)
   member _.PublishPeerResources(producer, value) = let graph, _ = graphAndOwner () in graph.PublishPeerResources(producer, value)
   member _.PeerUnavailable(producer, reason) = let graph, _ = graphAndOwner () in graph.PeerUnavailable(producer, reason)
+  member _.RetirePeer(producer, reason) = let graph, _ = graphAndOwner () in graph.RetirePeer(producer, reason)
   member _.PeerResourcesUnavailable(producer, reason) = let graph, _ = graphAndOwner () in graph.PeerResourcesUnavailable(producer, reason)
   member _.PeerConnectionUnavailable(node, reason) = let graph, _ = graphAndOwner () in graph.PeerConnectionUnavailable(node, reason)
+  member _.LatestWorkBoard : WorkBoard option = observation |> Option.bind (fun (graph, _, _) -> graph.LatestWorkBoard)
   member _.ObserveLocalResources(id, seconds, send) : Task = resources.Observe(id, seconds, send) |> Async.StartAsTask :> Task
   member _.RemoveLocalResources(id) : Task = resources.Remove id |> Async.StartAsTask :> Task
   member _.RegisterLocalWork(send: NodeWork -> unit) =
@@ -1952,7 +2127,7 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
     stopping.Register(fun () -> subscription.Dispose()) |> ignore
     observation |> Option.iter (fun (graph, _, _) ->
       let _, changed = graph.Register(fun kind _ ->
-        if kind = Push.Health || kind = Push.Leases || kind = Push.Operations then refreshLocalWork ())
+        if kind = Push.Health || kind = Push.Leases || kind = Push.Operations || kind = Push.Retrieval then refreshLocalWork ())
       stopping.Register(fun () -> changed.Dispose()) |> ignore
       refreshLocalWork ())
     Async.Start(snapshotPushes (), stopping)
@@ -2129,9 +2304,10 @@ let private processStartedAtMs () : int64 =
 /// when a cohort owner exists, the agent work publication and the cohort frame
 /// — and takes their current values in the same section. Without a cohort
 /// owner there is no agent board.
-let createObservedWithTranscripts (supervisor: ComposerSupervisor) (mcpPort: int) (getHealth: unit -> Bozzetto.Features.HealthSnapshot option) (stopping: CancellationToken) (owner: Bozzetto.Features.CohortOwner.Handle option) (localNode: string) (peerNodes: string list) (observePeer: string -> int -> (string -> unit) -> Async<IDisposable>)
+let private createObservedCore (supervisor: ComposerSupervisor) (mcpPort: int) (getHealth: unit -> Bozzetto.Features.HealthSnapshot option) (stopping: CancellationToken) (owner: Bozzetto.Features.CohortOwner.Handle option) (localNode: string) (peerNodes: string list) (observePeer: string -> int -> (string -> unit) -> Async<IDisposable>)
     (readLocalTranscript: TranscriptReadRequest -> TranscriptReadOutcome)
-    (readPeerTranscript: TranscriptReadRequest -> CancellationToken -> Async<TranscriptReadOutcome>) =
+    (readPeerTranscript: TranscriptReadRequest -> CancellationToken -> Async<TranscriptReadOutcome>)
+    (activityTracker: Bozzetto.AgentActivityTracker.Tracker option) =
   Bozzetto.Server.HealthTick.install getHealth
   let producer: Facts.ObservationProducer =
     { Source = { Node = localNode; Incarnation = Guid.NewGuid().ToString("N") }; Correlation = Guid.NewGuid() }
@@ -2150,7 +2326,15 @@ let createObservedWithTranscripts (supervisor: ComposerSupervisor) (mcpPort: int
         Journal = supervisor.JournalChanged, (fun () -> supervisor.Journal)
         Liveness = Some(supervisor.LivenessChanged, supervisor.CurrentLivenessSnapshot)
         Retrieval = Some(Bozzetto.Server.RetrievalObservation.Changed, Bozzetto.Server.RetrievalObservation.current) }
+  let workBoardReg =
+    Bozzetto.FleetBalanceService.installWorkBoardReader (fun () -> graph.LatestWorkBoard)
+  let fleetSub =
+    activityTracker
+    |> Option.map (fun tracker ->
+      graph.StartFleetBalance(tracker.Changed, fun () -> Bozzetto.AgentActivityTracker.snapshotWithVersion tracker))
   stopping.Register(fun () ->
+    fleetSub |> Option.iter _.Dispose()
+    workBoardReg.Dispose()
     subscriptions.Dispose()
     graph.Stop()) |> ignore
   // The first record: a page connecting later finds Health settled.
@@ -2163,6 +2347,17 @@ let createObservedWithTranscripts (supervisor: ComposerSupervisor) (mcpPort: int
     observation = (graph, producer, observePeer), localTranscript = readLocalTranscript, peerTranscript = readPeerTranscript)
   hub.Start()
   hub
+
+let createObservedWithTranscripts (supervisor: ComposerSupervisor) (mcpPort: int) (getHealth: unit -> Bozzetto.Features.HealthSnapshot option) (stopping: CancellationToken) (owner: Bozzetto.Features.CohortOwner.Handle option) (localNode: string) (peerNodes: string list) (observePeer: string -> int -> (string -> unit) -> Async<IDisposable>)
+    (readLocalTranscript: TranscriptReadRequest -> TranscriptReadOutcome)
+    (readPeerTranscript: TranscriptReadRequest -> CancellationToken -> Async<TranscriptReadOutcome>) =
+  createObservedCore supervisor mcpPort getHealth stopping owner localNode peerNodes observePeer readLocalTranscript readPeerTranscript None
+
+let createObservedWithActivity (supervisor: ComposerSupervisor) (mcpPort: int) (getHealth: unit -> Bozzetto.Features.HealthSnapshot option) (stopping: CancellationToken) (owner: Bozzetto.Features.CohortOwner.Handle option) (localNode: string) (peerNodes: string list) (observePeer: string -> int -> (string -> unit) -> Async<IDisposable>)
+    (readLocalTranscript: TranscriptReadRequest -> TranscriptReadOutcome)
+    (readPeerTranscript: TranscriptReadRequest -> CancellationToken -> Async<TranscriptReadOutcome>)
+    (activityTracker: Bozzetto.AgentActivityTracker.Tracker) =
+  createObservedCore supervisor mcpPort getHealth stopping owner localNode peerNodes observePeer readLocalTranscript readPeerTranscript (Some activityTracker)
 
 let createObserved supervisor mcpPort getHealth stopping owner localNode peerNodes observePeer =
   createObservedWithTranscripts supervisor mcpPort getHealth stopping owner localNode peerNodes observePeer

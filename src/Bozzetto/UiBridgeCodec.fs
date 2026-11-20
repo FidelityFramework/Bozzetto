@@ -8,5 +8,11 @@ let frameRefusal correlation code message =
   { CommandRefusal.Correlation = correlation; Target = noTarget; Code = code; Message = message }
 let decodeCommand bytes =
   Bozzetto.Web.Shared.BinaryCodec.decodeCommand bytes
-  |> Result.mapError (frameRefusal 0 "invalid_request")
+  |> Result.mapError (fun reason ->
+    let code =
+      if reason.Contains("unsupported version", System.StringComparison.OrdinalIgnoreCase) then
+        "protocol_mismatch"
+      else
+        "invalid_request"
+    frameRefusal 0 code reason)
 let encodeEvent = Bozzetto.Web.Shared.BinaryCodec.encodeEvent

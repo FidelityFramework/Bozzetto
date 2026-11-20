@@ -36,6 +36,7 @@ type BranchInfo = {
   BranchName: string
   OnMain: bool
   Repository: string option
+  HeadRevision: string option
 }
 
 type FreshState = {
@@ -179,25 +180,111 @@ let loadConfig (path: string option) : Result<Config option, string> =
       else Ok None
     with _ -> Ok None
 
-let private unknownBranch = { BranchName = ""; OnMain = false; Repository = None }
+let private isHexChar (c: char) =
+  (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 
-let private parseHeadContent (repository: string) (content: string) : BranchInfo =
+let internal tryNormalizeSha40 (value: string) : string option =
+  if isNull value then None
+  else
+    let trimmed = value.Trim()
+    if trimmed.Length = 40 && (trimmed |> Seq.forall isHexChar) then
+      Some(trimmed.ToLowerInvariant())
+    else None
+
+let private readSharedText (path: string) : string option =
+  try
+    if not (File.Exists path) then None
+    else
+      use fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
+      use reader = new StreamReader(fs, Encoding.UTF8)
+      Some(reader.ReadToEnd())
+  with _ -> None
+
+let private resolveCommonGitDir (gitDir: string) : string =
+  match readSharedText (Path.Combine(gitDir, "commondir")) with
+  | Some raw when not (String.IsNullOrWhiteSpace raw) ->
+    let rel = raw.Trim()
+    if Path.IsPathFullyQualified rel then Path.GetFullPath rel
+    else Path.GetFullPath(Path.Combine(gitDir, rel))
+  | _ -> gitDir
+
+let private isSafeGitRefPath (target: string) : bool =
+  not (String.IsNullOrWhiteSpace target)
+  && target.StartsWith("refs/", StringComparison.Ordinal)
+  && not (target.Contains('\\'))
+  && not (target.Contains(".."))
+  && not (Path.IsPathRooted target)
+
+let private tryResolvePackedRef (packedRefsPath: string) (targetRef: string) : string option =
+  match readSharedText packedRefsPath with
+  | None -> None
+  | Some content ->
+    content.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+    |> Array.tryPick (fun rawLine ->
+      let line = rawLine.Trim()
+      if line.Length = 0 || line[0] = '#' || line[0] = '^' then None
+      else
+        let sep = line.IndexOfAny([| ' '; '\t' |])
+        if sep <= 0 || sep + 1 >= line.Length then None
+        else
+          let shaPart = line.Substring(0, sep)
+          let refPart = line.Substring(sep + 1).Trim()
+          if refPart = targetRef then tryNormalizeSha40 shaPart else None)
+
+type private LooseRefRead =
+  | LoosePresent of string option
+  | LooseAbsent
+  | LooseUnreadable
+
+let private readLooseRefFile (path: string) : LooseRefRead =
+  try
+    use fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
+    use reader = new StreamReader(fs, Encoding.UTF8)
+    LoosePresent(tryNormalizeSha40 (reader.ReadToEnd()))
+  with
+  | :? FileNotFoundException
+  | :? DirectoryNotFoundException -> LooseAbsent
+  | _ -> LooseUnreadable
+
+let private resolveRefRevision (gitDir: string) (targetRef: string) : string option =
+  if not (isSafeGitRefPath targetRef) then None
+  else
+    let commonDir = resolveCommonGitDir gitDir
+    let parts = targetRef.Split('/')
+    let readLoose baseDir =
+      let refPath = Path.Combine([| yield baseDir; yield! parts |])
+      readLooseRefFile refPath
+    match readLoose gitDir with
+    | LoosePresent rev -> rev
+    | LooseUnreadable -> None
+    | LooseAbsent ->
+      match if commonDir <> gitDir then readLoose commonDir else LooseAbsent with
+      | LoosePresent rev -> rev
+      | LooseUnreadable -> None
+      | LooseAbsent ->
+        tryResolvePackedRef (Path.Combine(commonDir, "packed-refs")) targetRef
+        |> Option.orElseWith (fun () -> if commonDir <> gitDir then tryResolvePackedRef (Path.Combine(gitDir, "packed-refs")) targetRef else None)
+
+let private unknownBranch = { BranchName = ""; OnMain = false; Repository = None; HeadRevision = None }
+
+let private parseHeadContent (gitDir: string option) (repository: string) (content: string) : BranchInfo =
   let trimmed = if isNull content then "" else content.Trim()
   if trimmed.Length = 0 then
     unknownBranch
   elif trimmed.StartsWith("ref:", StringComparison.Ordinal) then
     let target = trimmed.Substring(4).Trim()
+    let headRev = gitDir |> Option.bind (fun dir -> resolveRefRevision dir target)
     if target.StartsWith("refs/heads/", StringComparison.Ordinal) then
       let name = target.Substring("refs/heads/".Length)
       if String.IsNullOrWhiteSpace name then unknownBranch
-      else { BranchName = name; OnMain = (name = "main" || name = "master"); Repository = Some repository }
+      else { BranchName = name; OnMain = (name = "main" || name = "master"); Repository = Some repository; HeadRevision = headRev }
     elif target.Length > 0 then
-      { BranchName = target; OnMain = false; Repository = Some repository }
+      { BranchName = target; OnMain = false; Repository = Some repository; HeadRevision = headRev }
     else
       unknownBranch
   else
     let shortSha = if trimmed.Length > 12 then trimmed.Substring(0, 12) else trimmed
-    { BranchName = "detached:" + shortSha; OnMain = false; Repository = Some repository }
+    { BranchName = "detached:" + shortSha; OnMain = false; Repository = Some repository; HeadRevision = tryNormalizeSha40 trimmed }
 
 let private normalizeWorkingDir (workingDir: string) : string =
   if String.IsNullOrWhiteSpace workingDir then ""
@@ -263,7 +350,7 @@ let private readBranchInCheckout (checkout: Checkout) : BranchInfo =
           Thread.Yield() |> ignore
           readAttempt (remaining - 1)
         else
-          parseHeadContent checkout.Repository content
+          parseHeadContent (Some checkout.GitDirectory) checkout.Repository content
       with
       | :? IOException when remaining > 0 ->
         Thread.Yield() |> ignore
@@ -555,6 +642,32 @@ let statusForWorkingDir (workingDir: string option) (obs: Observation) : Retriev
     toWireStatusForBranch (readCheckoutBranch wd) obs
   | _ -> toWireStatus obs
 
+let checkoutSyncedForBranch (branch: BranchInfo) (status: RetrievalStatus) : bool option =
+  if status.BranchStatus = "quarantined_branch"
+     || status.BranchStatus = "indexing_pending"
+     || status.State = "crossing_held"
+     || status.State = "indexing" then
+    Some false
+  elif status.BranchStatus = "on_main_indexed" && status.State = "fresh" then
+    match branch.Repository, branch.HeadRevision |> Option.bind tryNormalizeSha40 with
+    | Some repo, Some localSha ->
+      let matchingShas =
+        status.Revisions
+        |> Array.choose (fun r ->
+          if matchesSource repo r.Source then r.Revision |> Option.bind tryNormalizeSha40
+          else None)
+      if Array.isEmpty matchingShas then None
+      elif matchingShas |> Array.exists (fun indexedSha -> String.Equals(localSha, indexedSha, StringComparison.OrdinalIgnoreCase)) then
+        Some true
+      else
+        Some false
+    | _ -> None
+  else
+    None
+
+let checkoutSynced (obs: Observation) : bool option =
+  toWireStatus obs |> checkoutSyncedForBranch obs.Branch
+
 let statusToJson (status: RetrievalStatus) : JsonValue =
   let strings (arr: string array) = arr |> Array.map JsonValue.String |> Array.toList |> JsonValue.Array
   let optSigned = function Some v -> JsonValue.ofInt64 v | None -> JsonValue.Null
@@ -598,9 +711,6 @@ let daemonStatusJson (status: RetrievalStatus) : JsonValue =
     "queuedRetrievals", JsonValue.ofInt64 (int64 status.QueuedRetrievals)
     "note", JsonValue.String status.Note
   ]
-
-let private isHexChar (c: char) =
-  (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 
 type private ValidatedFilter = {
   MinGeneration: int64 option
@@ -810,7 +920,7 @@ type Controller private (
 
   let mutable activeWorkingDir = normalizeWorkingDir workingDir
   let mutable activeCheckout : Checkout option = None
-  let mutable headWatcher : FileSystemWatcher option = None
+  let mutable headWatchers : FileSystemWatcher list = []
   let mutable watcherEpoch = 0L
   let mutable currentObs : Observation = {
     Serial = 1L
@@ -838,12 +948,12 @@ type Controller private (
     for tcs in ready do
       tcs.TrySetResult() |> ignore
 
-  let disposeWatcher (watcherOpt: FileSystemWatcher option) =
-    watcherOpt |> Option.iter (fun w ->
+  let disposeWatchers (watchers: FileSystemWatcher list) =
+    for w in watchers do
       try
         w.EnableRaisingEvents <- false
         w.Dispose()
-      with _ -> ())
+      with _ -> ()
 
   // Checkout selection and HEAD reads share the observation commit gate.
   let readActiveBranchLocked () =
@@ -860,60 +970,117 @@ type Controller private (
       currentObs <- next
       Some next
 
-  let refreshBranchForEpoch (expectedEpoch: int64) =
-    let published =
-      lock gate (fun () ->
-        if closed || watcherEpoch <> expectedEpoch then None
-        else refreshBranchLocked ())
-    published |> Option.iter triggerChanged
+  let mutable watchingRefsDir = false
 
-  let createHeadWatcher (gitDir: string) (epoch: int64) : FileSystemWatcher option =
+  let isRelevantGitDirEntry (name: string) =
+    if String.IsNullOrWhiteSpace name then true
+    else
+      String.Equals(name, "HEAD", StringComparison.Ordinal)
+      || String.Equals(name, "HEAD.lock", StringComparison.Ordinal)
+      || String.Equals(name, "packed-refs", StringComparison.Ordinal)
+      || String.Equals(name, "packed-refs.lock", StringComparison.Ordinal)
+      || String.Equals(name, "commondir", StringComparison.Ordinal)
+      || String.Equals(name, "refs", StringComparison.Ordinal)
+
+  let rec createWatcher (dir: string) (filter: string) (includeSubdirs: bool) (nameFilter: (string -> bool) option) (epoch: int64) : FileSystemWatcher option =
     try
-      let watcher = new FileSystemWatcher(gitDir, "HEAD")
+      let watcher = new FileSystemWatcher(dir, filter)
+      watcher.IncludeSubdirectories <- includeSubdirs
       watcher.NotifyFilter <-
         NotifyFilters.FileName
+        ||| NotifyFilters.DirectoryName
         ||| NotifyFilters.LastWrite
         ||| NotifyFilters.CreationTime
         ||| NotifyFilters.Size
-      let scheduleRefresh () =
-        ThreadPool.QueueUserWorkItem(fun _ -> refreshBranchForEpoch epoch) |> ignore
-      watcher.Changed.Add(fun _ -> scheduleRefresh ())
-      watcher.Created.Add(fun _ -> scheduleRefresh ())
-      watcher.Deleted.Add(fun _ -> scheduleRefresh ())
-      watcher.Renamed.Add(fun _ -> scheduleRefresh ())
+      let scheduleRefresh (name: string) =
+        let relevant =
+          match nameFilter with
+          | None -> true
+          | Some pred -> pred name
+        if relevant then
+          let rebuildRefs =
+            String.IsNullOrWhiteSpace name
+            || String.Equals(name, "refs", StringComparison.Ordinal)
+          ThreadPool.QueueUserWorkItem(fun _ -> refreshBranchForEpoch epoch rebuildRefs) |> ignore
+      watcher.Changed.Add(fun e -> scheduleRefresh e.Name)
+      watcher.Created.Add(fun e -> scheduleRefresh e.Name)
+      watcher.Deleted.Add(fun e -> scheduleRefresh e.Name)
+      watcher.Renamed.Add(fun e -> scheduleRefresh e.Name; scheduleRefresh e.OldName)
       watcher.Error.Add(fun args ->
         let ex = args.GetException()
         if not (isNull ex) then
-          Log.warn "[retrieval-observation] HEAD watcher error for %s: %s" gitDir ex.Message
-        scheduleRefresh ())
+          Log.warn "[retrieval-observation] HEAD watcher error for %s: %s" dir ex.Message
+        scheduleRefresh "")
       try
         watcher.EnableRaisingEvents <- true
         Some watcher
       with _ ->
-        disposeWatcher (Some watcher)
+        disposeWatchers [ watcher ]
         reraise ()
     with ex ->
-      Log.warn "[retrieval-observation] could not watch HEAD in %s: %s" gitDir ex.Message
+      Log.warn "[retrieval-observation] could not watch HEAD in %s: %s" dir ex.Message
       None
 
-  let applyWorkingDir (resolveDirectory: unit -> string option) =
-    let oldWatcher, published =
+  and createCheckoutWatchers (gitDir: string) (epoch: int64) : FileSystemWatcher list * bool =
+    let commonDir = resolveCommonGitDir gitDir
+    let refsDir = Path.Combine(commonDir, "refs")
+    let refsWatcher =
+      if Directory.Exists refsDir then
+        createWatcher refsDir "*" true None epoch
+      else None
+    let watchers =
+      [ if Directory.Exists gitDir then
+          yield! createWatcher gitDir "*" false (Some isRelevantGitDirEntry) epoch |> Option.toList
+        if commonDir <> gitDir && Directory.Exists commonDir then
+          yield! createWatcher commonDir "*" false (Some isRelevantGitDirEntry) epoch |> Option.toList
+        yield! refsWatcher |> Option.toList ]
+    watchers, refsWatcher.IsSome
+
+  and refreshBranchForEpoch (expectedEpoch: int64) (rebuildRefs: bool) =
+    let oldWatchers, published =
       lock gate (fun () ->
-        if closed then None, None
+        if closed || watcherEpoch <> expectedEpoch then [], None
+        else
+          let oldWatchers =
+            match activeCheckout with
+            | Some checkout when rebuildRefs || not watchingRefsDir ->
+              let refsDir = Path.Combine(resolveCommonGitDir checkout.GitDirectory, "refs")
+              if rebuildRefs || Directory.Exists refsDir then
+                let prev = headWatchers
+                watcherEpoch <- watcherEpoch + 1L
+                let nextWatchers, hasRefs = createCheckoutWatchers checkout.GitDirectory watcherEpoch
+                headWatchers <- nextWatchers
+                watchingRefsDir <- hasRefs
+                prev
+              else []
+            | _ -> []
+          oldWatchers, refreshBranchLocked ())
+    disposeWatchers oldWatchers
+    published |> Option.iter triggerChanged
+
+  let applyWorkingDir (resolveDirectory: unit -> string option) =
+    let oldWatchers, published =
+      lock gate (fun () ->
+        if closed then [], None
         else
           let targetDir = normalizeWorkingDir (resolveDirectory () |> Option.defaultValue "")
           let checkout = resolveCheckout targetDir
-          let oldWatcher =
-            if checkout = activeCheckout && (checkout.IsNone || headWatcher.IsSome) then None
+          let oldWatchers =
+            if checkout = activeCheckout && (checkout.IsNone || not (List.isEmpty headWatchers)) then []
             else
-              let previous = headWatcher
+              let previous = headWatchers
               watcherEpoch <- watcherEpoch + 1L
-              headWatcher <- checkout |> Option.bind (fun value -> createHeadWatcher value.GitDirectory watcherEpoch)
+              let nextWatchers, hasRefs =
+                match checkout with
+                | Some value -> createCheckoutWatchers value.GitDirectory watcherEpoch
+                | None -> [], false
+              headWatchers <- nextWatchers
+              watchingRefsDir <- hasRefs
               previous
           activeWorkingDir <- targetDir
           activeCheckout <- checkout
-          oldWatcher, refreshBranchLocked ())
-    disposeWatcher oldWatcher
+          oldWatchers, refreshBranchLocked ())
+    disposeWatchers oldWatchers
     published |> Option.iter triggerChanged
 
   let publish (readiness: Readiness) =
@@ -951,10 +1118,10 @@ type Controller private (
     | None -> ()
     | Some(next, satisfied, readyWatchers) ->
       if not (List.isEmpty satisfied) then beforeCompletingFreshWaiters ()
+      triggerChanged next
       for tcs in satisfied do
         tcs.TrySetResult(AwaitOutcome.Fresh next) |> ignore
       notifyWaiterWatchers readyWatchers
-      triggerChanged next
 
   let openStream (cfg: Config) (ct: CancellationToken) = async {
     let token =
@@ -1159,8 +1326,8 @@ type Controller private (
         else
           closed <- true
           watcherEpoch <- watcherEpoch + 1L
-          let oldWatcher = headWatcher
-          headWatcher <- None
+          let oldWatchers = headWatchers
+          headWatchers <- []
           activeCheckout <- None
           let snap = currentObs
           let parked = waiters.Values |> Seq.map _.Tcs |> Seq.toList
@@ -1168,11 +1335,11 @@ type Controller private (
           let remainingWatchers = waiterWatchers |> List.map snd
           waiterWatchers <- []
           lifetime.Cancel()
-          Some(snap, parked, remainingWatchers, oldWatcher, watchJob))
+          Some(snap, parked, remainingWatchers, oldWatchers, watchJob))
     match pending with
     | None -> do! closedSignal.Task |> Async.AwaitTask
-    | Some(snap, parked, remainingWatchers, oldWatcher, job) ->
-      disposeWatcher oldWatcher
+    | Some(snap, parked, remainingWatchers, oldWatchers, job) ->
+      disposeWatchers oldWatchers
       for tcs in parked do
         tcs.TrySetResult(AwaitOutcome.Closed snap) |> ignore
       for w in remainingWatchers do

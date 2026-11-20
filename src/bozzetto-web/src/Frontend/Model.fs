@@ -108,6 +108,59 @@ type RetrievalView =
     reasons: string array
     note: string }
 
+type FleetBalanceCandidateView = {|
+  nodeId: string
+  freeSlots: int
+  activeLeases: int
+  leaseCap: int
+  queuedLeases: int
+  availableRamBytes: float
+  totalRamBytes: float
+  pressure: string
+|}
+
+type RebalanceAdvisoryView = {|
+  recommendedNode: string
+  reason: string
+  policy: string
+  throttled: bool
+  candidates: FleetBalanceCandidateView array
+|}
+
+type SilentAgentAlertView = {|
+  memberKey: string
+  displayName: string
+  agentFamily: string
+  role: string
+  kind: string
+  idleSeconds: float
+  lastActivity: float
+  reason: string
+|}
+
+type FleetBalanceView = {|
+  revision: float
+  policy: string
+  silentThresholdSeconds: int
+  localNodeId: string
+  localBusy: bool
+  hasAdvisory: bool
+  advisory: RebalanceAdvisoryView
+  silentAlerts: SilentAgentAlertView array
+  activeLeaseCount: int
+  openClaimCount: int
+  unauditedRunCount: int
+  dirtyTrancheCount: int
+|}
+
+let private noAdvisory : RebalanceAdvisoryView =
+  {| recommendedNode = ""; reason = ""; policy = ""; throttled = false; candidates = [||] |}
+
+let private noFleetBalance : FleetBalanceView =
+  {| revision = 0.0; policy = "advisory_only"; silentThresholdSeconds = 300; localNodeId = ""
+     localBusy = false; hasAdvisory = false; advisory = noAdvisory; silentAlerts = [||]
+     activeLeaseCount = 0; openClaimCount = 0; unauditedRunCount = 0; dirtyTrancheCount = 0 |}
+
 type LeaseView = {| id: string; kind: string; holder: string; grantedAt: float; expiresAt: float |}
 
 type WaitView = {| id: string; kind: string; holder: string; requestedAt: float |}
@@ -211,6 +264,8 @@ type Stores =
     Health: Signal<HealthView>
     RetrievalSeen: Signal<bool>
     Retrieval: Signal<RetrievalView>
+    FleetBalanceSeen: Signal<bool>
+    FleetBalance: Signal<FleetBalanceView>
     Leases: Signal<LeaseView array>
     Queue: Signal<WaitView array>
     // The lease board's stamp as last applied: a page keeps the newest.
@@ -302,6 +357,8 @@ let create () : Stores =
     Health = Api.createSignal (noHealth ())
     RetrievalSeen = Api.createSignal false
     Retrieval = Api.createSignal noRetrieval
+    FleetBalanceSeen = Api.createSignal false
+    FleetBalance = Api.createSignal noFleetBalance
     Leases = Api.createSignal Array.empty<LeaseView>
     Queue = Api.createSignal Array.empty<WaitView>
     LeaseRevision = Api.createSignal 0.0
@@ -487,6 +544,34 @@ let private retrievalView (status: RetrievalStatus) : RetrievalView =
     reasons = status.Reasons
     note = status.Note }
 
+let private fleetBalanceView (status: FleetBalanceStatus) : FleetBalanceView =
+  let candidateView (c: RebalanceCandidate) : FleetBalanceCandidateView =
+    {| nodeId = c.NodeId; freeSlots = c.FreeSlots; activeLeases = c.ActiveLeases; leaseCap = c.LeaseCap
+       queuedLeases = c.QueuedLeases; availableRamBytes = float c.AvailableRamBytes; totalRamBytes = float c.TotalRamBytes
+       pressure = c.Pressure |}
+  let adv =
+    match status.Advisory with
+    | Some a ->
+      {| recommendedNode = a.RecommendedNode; reason = a.Reason; policy = a.Policy; throttled = a.Throttled
+         candidates = a.Candidates |> Array.map candidateView |}
+    | None -> noAdvisory
+  {| revision = float status.Revision
+     policy = status.Policy
+     silentThresholdSeconds = status.SilentThresholdSeconds
+     localNodeId = status.LocalNodeId
+     localBusy = status.LocalBusy
+     hasAdvisory = status.Advisory.IsSome
+     advisory = adv
+     silentAlerts =
+       status.SilentAlerts
+       |> Array.map (fun s ->
+         {| memberKey = s.MemberKey; displayName = s.DisplayName; agentFamily = s.AgentFamily; role = s.Role
+            kind = s.Kind; idleSeconds = float s.IdleSeconds; lastActivity = float s.LastActivityMs; reason = s.Reason |})
+     activeLeaseCount = status.ActiveLeaseCount
+     openClaimCount = status.OpenClaimCount
+     unauditedRunCount = status.UnauditedRunCount
+     dirtyTrancheCount = status.DirtyTrancheCount |}
+
 let private leaseView (l: LeaseGrant) : LeaseView =
   {| id = l.Id; kind = l.Kind; holder = l.Holder; grantedAt = float l.GrantedAtMs; expiresAt = float l.ExpiresAtMs |}
 
@@ -611,11 +696,16 @@ let abandon (stores: Stores) (d: Dispatcher) (frame: CommandFrame) =
   | true, (key, label, _) ->
     d.InFlight.Remove frame.Correlation |> ignore
     setLocal stores.Pending key None
-    log stores [ key ] false (label + " not sent: the bridge is disconnected.")
+    let reason =
+      if stores.ProtocolMismatch.Value then label + " not sent: UI version changed — reload this page."
+      elif not stores.Welcomed.Value then label + " not sent: awaiting daemon handshake."
+      else label + " not sent: the bridge is disconnected."
+    log stores [ key ] false reason
   | _ -> ()
 
 // Every pending command is lost with the connection that carried it.
 let abandonAll (stores: Stores) (d: Dispatcher) =
+  set stores.Welcomed false
   for KeyValue(_, (key, label, _)) in d.InFlight |> Seq.toArray do
     setLocal stores.Pending key None
     log stores [ key ] false (label + ": connection lost before its outcome arrived; check the session status.")
@@ -666,6 +756,8 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       // and wait for the new daemon's health and retrieval facts.
       set stores.HealthSeen false
       set stores.RetrievalSeen false
+      set stores.FleetBalanceSeen false
+      set stores.FleetBalance noFleetBalance
       set stores.LeaseRevision 0.0
       set stores.OperationsRevision 0.0
       set stores.Operations Array.empty
@@ -823,6 +915,10 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       if not stores.RetrievalSeen.Value || float status.Revision >= stores.Retrieval.Value.revision then
         set stores.Retrieval (retrievalView status)
         set stores.RetrievalSeen true
+    | FleetBalance status ->
+      if not stores.FleetBalanceSeen.Value || float status.Revision >= stores.FleetBalance.Value.revision then
+        set stores.FleetBalance (fleetBalanceView status)
+        set stores.FleetBalanceSeen true
     | Leases board ->
       // Stamped per publication; an older board arriving after a newer one is kept out.
       if float board.Revision >= stores.LeaseRevision.Value then

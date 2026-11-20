@@ -140,6 +140,7 @@ let serializeWithStatus
       "leaseExpiresAt", (cmd.LeaseExpiresAt |> optional timestamp) ]))
     "anomalies", (anomalyValues |> array id)
     "retrieval", Bozzetto.Server.RetrievalObservation.daemonStatusJson retrieval
+    "fleetBalance", Bozzetto.FleetBalanceService.currentSummaryJson ()
     "available", (payload.available |> strings) ] |> render)
 
 let serializeWithLiveness

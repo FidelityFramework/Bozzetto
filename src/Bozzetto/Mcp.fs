@@ -1210,20 +1210,6 @@ module McpTools =
   let getDaemonStatus (ctx: McpContext) : Task<string> =
     Task.FromResult (DaemonStatusPayload.serialize ctx.McpPort (ctx.GetDaemonHealth ()) (ctx.GetProcessTelemetry ()))
 
-  let private leaseDecisionJson kind decision : string =
-    let kindName = Bozzetto.ExpensiveWorkLease.Kind.toToken kind
-    let fields =
-      match decision with
-      | Bozzetto.ExpensiveWorkLease.Decision.Granted(leaseId, expiresAt) ->
-        [ "decision", text "granted"
-          "leaseId", text (Bozzetto.ExpensiveWorkLease.LeaseId.value leaseId)
-          "expiresAt", timestamp expiresAt ]
-      | Bozzetto.ExpensiveWorkLease.Decision.Wait(retryAfter, reason) ->
-        ["decision", text "wait"; "retryAfterSeconds", real retryAfter.TotalSeconds; "reason", text reason]
-      | Bozzetto.ExpensiveWorkLease.Decision.Refused reason ->
-        ["decision", text "refused"; "reason", text reason]
-    object (("kind", text kindName) :: fields) |> render
-
   /// A caller re-polling for a lease is present (Bozzetto #24): it is
   /// waiting, not gone. Recorded as member activity, which the daemon's cohort
   /// reaper turns into a membership renewal, so a long lease wait never
@@ -1231,11 +1217,11 @@ module McpTools =
   let recordLeasePoll (tracker: AgentActivityTracker.Tracker) (who: MemberTable.MemberId) (kind: Bozzetto.ExpensiveWorkLease.Kind) (now: DateTime) : unit =
     AgentActivityTracker.recordMemberActivity tracker who "" None (Some (sprintf "lease poll: %s" (Bozzetto.ExpensiveWorkLease.Kind.toToken kind))) now
 
+  let acquireWorkLeaseWithPin (tracker: AgentActivityTracker.Tracker) (agent: string) (kind: Bozzetto.ExpensiveWorkLease.Kind) (pinnedToZ13: bool) : string =
+    Bozzetto.FleetBalanceService.acquireWorkLeaseWithPin tracker (memberIdFor agent) (resolvedKey agent) kind pinnedToZ13
+
   let acquireWorkLease (tracker: AgentActivityTracker.Tracker) (agent: string) (kind: Bozzetto.ExpensiveWorkLease.Kind) : string =
-    recordLeasePoll tracker (memberIdFor agent) kind DateTime.UtcNow
-    let holder = resolvedKey agent
-    let decision = (Bozzetto.Server.HealthTick.sample () |> ignore; Bozzetto.Features.LeaseWatch.request holder kind)
-    leaseDecisionJson kind decision
+    acquireWorkLeaseWithPin tracker agent kind false
 
   let releaseWorkLease (agent: string) (leaseId: string) : Result<string, BozzettoError> =
     if String.IsNullOrWhiteSpace leaseId then Error (BozzettoError.JsonParseError("release_work_lease", "lease_id is required"))

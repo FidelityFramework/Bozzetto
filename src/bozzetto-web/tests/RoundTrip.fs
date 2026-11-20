@@ -271,13 +271,13 @@ let private peerWork : WorkSnapshot = {
 let private nodeCapacity : NodeCapacity = {
   LeaseCap = Some 4; PidVerifiedLeases = 2; UnverifiedLeases = 1; StalePidLeases = 3
   MemoryPressure = "Normal"; MachineAvailableBytes = 11_982_958_756L; MachineTotalBytes = 66_571_993_088L
-  ResidentBytes = 186_000_000L; PeakResidentBytes = 240_000_000L
+  ResidentBytes = 186_000_000L; PeakResidentBytes = 240_000_000L; CheckoutSynced = Some true
 }
-let private criticalCapacity = { nodeCapacity with LeaseCap = Some 0; MemoryPressure = "Critical" }
+let private criticalCapacity = { nodeCapacity with LeaseCap = Some 0; MemoryPressure = "Critical"; CheckoutSynced = Some false }
 let private legacyCapacity : NodeCapacity = {
   LeaseCap = None; PidVerifiedLeases = 0; UnverifiedLeases = 0; StalePidLeases = 0
   MemoryPressure = ""; MachineAvailableBytes = 0L; MachineTotalBytes = 0L
-  ResidentBytes = 0L; PeakResidentBytes = 0L
+  ResidentBytes = 0L; PeakResidentBytes = 0L; CheckoutSynced = None
 }
 let private capacityBoard =
   WorkNodes { Revision = 5L; Nodes = [|
@@ -330,6 +330,61 @@ let private events = baseEvents @ [
                 Note = "Retrieval is unconfigured" }
   Retrieval { freshRetrieval with BranchStatus = "quarantined_branch"; BranchName = "fidelity/pi-checkout-coaching"; OnMain = false }
   Retrieval { freshRetrieval with BranchStatus = "branch_unknown"; BranchName = ""; OnMain = false }
+  FleetBalance {
+    Revision = 1L
+    Policy = "advisory_only"
+    SilentThresholdSeconds = 300
+    LocalNodeId = "controller"
+    LocalBusy = false
+    Advisory = None
+    SilentAlerts = [||]
+    ActiveLeaseCount = 0
+    OpenClaimCount = 0
+    UnauditedRunCount = 0
+    DirtyTrancheCount = 0
+  }
+  FleetBalance {
+    Revision = 9007199254740993L
+    Policy = "enforce_when_lan_idle"
+    SilentThresholdSeconds = 300
+    LocalNodeId = "z13"
+    LocalBusy = true
+    Advisory =
+      Some {
+        RecommendedNode = "one"
+        Reason = "Local node z13 is busy while LAN worker one has 3 free slots."
+        Policy = "enforce_when_lan_idle"
+        Throttled = true
+        Candidates = [|
+          { NodeId = "one"; FreeSlots = 3; ActiveLeases = 1; LeaseCap = 4; QueuedLeases = 0
+            AvailableRamBytes = 68719476736L; TotalRamBytes = 103079215104L; Pressure = "Normal" }
+          { NodeId = "two"; FreeSlots = 4; ActiveLeases = 0; LeaseCap = 4; QueuedLeases = 0
+            AvailableRamBytes = 34359738368L; TotalRamBytes = 68719476736L; Pressure = "Normal" }
+        |]
+      }
+    SilentAlerts = [|
+      { MemberKey = "mcp:auditor-pi"
+        DisplayName = "pi-auditor"
+        AgentFamily = "pi"
+        Role = "Verifier"
+        Kind = "silent_auditor"
+        IdleSeconds = 450L
+        LastActivityMs = 1759420350123L
+        Reason = "pi-auditor (pi, Verifier) silent for 450s while work accumulates." }
+      { MemberKey = "mcp:coder"
+        DisplayName = "claude-code-1"
+        AgentFamily = "claude-code"
+        Role = "Implementer"
+        Kind = "silent_implementer"
+        IdleSeconds = 360L
+        LastActivityMs = 1759420440123L
+        Reason = "claude-code-1 (claude-code, Implementer) silent for 360s." }
+    |]
+    ActiveLeaseCount = 2
+    OpenClaimCount = 1
+    UnauditedRunCount = 3
+    DirtyTrancheCount = 1
+  }
 ]
 
 let private badEvents = [
@@ -459,126 +514,60 @@ let private run () =
     check ("malformed event refused " + wire) (FrontendCodec.decodeEvent (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
   for wire in badCommands do
     check ("malformed command refused " + wire) (BackendCodec.decodeCommand (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
-  check "bridge vocabulary is v13" (ProtocolVersion = 13)
+  check "bridge vocabulary is v14" (ProtocolVersion = 14)
   let dwellFrame = BackendCodec.encodeEvent dwellBoard
-  check "AgentWork emits a v13 event envelope" (dwellFrame[4..5] = [|13uy; 2uy|])
+  check "AgentWork emits a v14 event envelope" (dwellFrame[4..5] = [|14uy; 2uy|])
   match FrontendCodec.decodeEvent dwellFrame with
   | Ok (AgentWork board) ->
-    check "v13 AgentWork preserves aged and still-dwelling terminal runs" ((board.Runs |> Array.map _.Aged) = [|true; false|])
-  | _ -> check "v13 AgentWork decodes" false
+    check "v14 AgentWork preserves aged and still-dwelling terminal runs" ((board.Runs |> Array.map _.Aged) = [|true; false|])
+  | _ -> check "v14 AgentWork decodes" false
   let capacityFrame = BackendCodec.encodeEvent capacityBoard
-  check "WorkNodes emits a v13 event envelope" (capacityFrame[4..5] = [|13uy; 2uy|])
+  check "WorkNodes emits a v14 event envelope" (capacityFrame[4..5] = [|14uy; 2uy|])
   match FrontendCodec.decodeEvent capacityFrame with
   | Ok (WorkNodes board) ->
     let capacities = board.Nodes |> Array.choose _.Value |> Array.map _.Capacity
-    check "v13 WorkNodes preserves unknown, normal and critical caps" (capacities = [|Some legacyCapacity; Some nodeCapacity; Some criticalCapacity|])
-  | _ -> check "v13 WorkNodes decodes" false
+    check "v14 WorkNodes preserves unknown, normal and critical caps" (capacities = [|Some legacyCapacity; Some nodeCapacity; Some criticalCapacity|])
+  | _ -> check "v14 WorkNodes decodes" false
   // The last node's peak RSS is the final field on the wire.
   check "WorkNodes refuses a truncated NodeCapacity field" (FrontendCodec.decodeEvent capacityFrame[..capacityFrame.Length - 2] |> Result.isError)
   let retrievalFrame = BackendCodec.encodeEvent (Retrieval freshRetrieval)
-  check "Retrieval emits the v13 event tag 14" (retrievalFrame[..6] = [| 66uy; 90uy; 87uy; 49uy; 13uy; 2uy; 14uy |])
-  let wrongTag = Array.copy retrievalFrame
-  wrongTag[6] <- 15uy
-  check "unknown retrieval event tag is refused" (FrontendCodec.decodeEvent wrongTag = Error "binary: unknown Event tag")
+  check "Retrieval emits the v14 event tag 14" (retrievalFrame[..6] = [| 66uy; 90uy; 87uy; 49uy; 14uy; 2uy; 14uy |])
+  let fleetBalanceFrame = BackendCodec.encodeEvent (events |> List.find (function FleetBalance _ -> true | _ -> false))
+  check "FleetBalance emits the v14 event tag 15" (fleetBalanceFrame[..6] = [| 66uy; 90uy; 87uy; 49uy; 14uy; 2uy; 15uy |])
+  let wrongTag = Array.copy fleetBalanceFrame
+  wrongTag[6] <- 16uy
+  check "unknown fleet balance event tag is refused" (FrontendCodec.decodeEvent wrongTag = Error "binary: unknown Event tag")
   let wrongVersion = Array.copy retrievalFrame
   wrongVersion[4] <- 11uy
   check "retrieval in a v11 event envelope is refused" (FrontendCodec.decodeEvent wrongVersion = Error "binary: unsupported version")
   check "truncated retrieval status is refused" (FrontendCodec.decodeEvent retrievalFrame[..retrievalFrame.Length - 2] = Error "binary: invalid string length")
-  let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 13uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+  let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 14uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
   let frame = { CommandFrame.Correlation = 1; Command = RequestSnapshot }
   check "independent binary golden" (FrontendCodec.encodeCommand frame = golden)
   check "golden decode" (BackendCodec.decodeCommand golden = Ok frame)
-  // Historical v9 AgentWork had a capacity int32 before its two arrays.
-  let oldAgent = [| 66uy; 90uy; 87uy; 49uy; 9uy; 2uy; 9uy; 1uy; 100uy
-                    1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 104uy
-                    0uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
-  let oldBoard = AgentWork { Incarnation = "d"; Sequence = 1L; ExecutionHost = "h"; Runs = [||]
-                             Presence = [||]; OmittedRuns = 0L; Refusal = "" }
-  check "deployed v9 agent board layout remains readable" (FrontendCodec.decodeEvent oldAgent = Ok oldBoard)
-  let ambiguous = Array.copy oldAgent
-  ambiguous[4] <- 10uy
-  check "ambiguous v10 agent board is refused" (FrontendCodec.decodeEvent ambiguous |> Result.isError)
-  let historicalRun id usage : AgentRun =
-    { Id = id; Member = "mcp:1"; Role = "Observer"; Name = "name"; Session = "session"; ReportSequence = 5L
-      Model = "model"; Endpoint = "endpoint"; Project = "project"; Focus = "focus"; Operation = "operation"
-      Status = "completed"; UpdatedAtMs = 100L; Activity = [|"new"; "old"|]; OmittedActivity = 3L; Usage = usage; Aged = false }
-  let historicalUsage = Some { AgentUsage.Input = 1L; Output = 2L; CacheRead = 3L; CacheWrite = 4L; Total = 10L; EstimateUsd = Some 0.5 }
-  let historicalExpected = AgentWork { Incarnation = "daemon"; Sequence = 42L; ExecutionHost = "host"
-                                       Runs = [|historicalRun "some" historicalUsage; historicalRun "none" None|]
-                                       Presence = [|{ Name = "pi"; Source = "lease"; Member = "mcp:1"; Project = "project"; Detail = "holding"; SinceMs = 123L }|]
-                                       OmittedRuns = 0L; Refusal = "" }
-  let historicalBytes = [|
-            66uy; 90uy; 87uy; 49uy; 9uy; 2uy; 9uy; 6uy; 100uy; 97uy; 101uy; 109uy; 111uy; 110uy; 42uy; 0uy;
-            0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 4uy; 104uy; 111uy; 115uy; 116uy; 0uy; 1uy; 0uy; 0uy; 2uy;
-            4uy; 115uy; 111uy; 109uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy; 8uy; 79uy; 98uy; 115uy; 101uy;
-            114uy; 118uy; 101uy; 114uy; 4uy; 110uy; 97uy; 109uy; 101uy; 7uy; 115uy; 101uy; 115uy; 115uy; 105uy; 111uy;
-            110uy; 5uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 5uy; 109uy; 111uy; 100uy; 101uy; 108uy; 8uy;
-            101uy; 110uy; 100uy; 112uy; 111uy; 105uy; 110uy; 116uy; 7uy; 112uy; 114uy; 111uy; 106uy; 101uy; 99uy; 116uy;
-            5uy; 102uy; 111uy; 99uy; 117uy; 115uy; 9uy; 111uy; 112uy; 101uy; 114uy; 97uy; 116uy; 105uy; 111uy; 110uy;
-            9uy; 99uy; 111uy; 109uy; 112uy; 108uy; 101uy; 116uy; 101uy; 100uy; 100uy; 0uy; 0uy; 0uy; 0uy; 0uy;
-            0uy; 0uy; 2uy; 3uy; 110uy; 101uy; 119uy; 3uy; 111uy; 108uy; 100uy; 3uy; 0uy; 0uy; 0uy; 0uy;
-            0uy; 0uy; 0uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 2uy; 0uy; 0uy; 0uy;
-            0uy; 0uy; 0uy; 0uy; 3uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 4uy; 0uy; 0uy; 0uy;
-            0uy; 0uy; 0uy; 0uy; 10uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 0uy; 0uy; 0uy;
-            0uy; 0uy; 0uy; 224uy; 63uy; 4uy; 110uy; 111uy; 110uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy;
-            8uy; 79uy; 98uy; 115uy; 101uy; 114uy; 118uy; 101uy; 114uy; 4uy; 110uy; 97uy; 109uy; 101uy; 7uy; 115uy;
-            101uy; 115uy; 115uy; 105uy; 111uy; 110uy; 5uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 5uy; 109uy;
-            111uy; 100uy; 101uy; 108uy; 8uy; 101uy; 110uy; 100uy; 112uy; 111uy; 105uy; 110uy; 116uy; 7uy; 112uy; 114uy;
-            111uy; 106uy; 101uy; 99uy; 116uy; 5uy; 102uy; 111uy; 99uy; 117uy; 115uy; 9uy; 111uy; 112uy; 101uy; 114uy;
-            97uy; 116uy; 105uy; 111uy; 110uy; 9uy; 99uy; 111uy; 109uy; 112uy; 108uy; 101uy; 116uy; 101uy; 100uy; 100uy;
-            0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 2uy; 3uy; 110uy; 101uy; 119uy; 3uy; 111uy; 108uy; 100uy;
-            3uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 2uy; 112uy; 105uy; 5uy; 108uy; 101uy;
-            97uy; 115uy; 101uy; 5uy; 109uy; 99uy; 112uy; 58uy; 49uy; 7uy; 112uy; 114uy; 111uy; 106uy; 101uy; 99uy;
-            116uy; 7uy; 104uy; 111uy; 108uy; 100uy; 105uy; 110uy; 103uy; 123uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy;
-            0uy
-          |]
-  check "populated v9 agent board preserves usage and presence" (FrontendCodec.decodeEvent historicalBytes = Ok historicalExpected)
-  let ambiguousPopulated = Array.copy historicalBytes
-  ambiguousPopulated[4] <- 10uy
-  check "populated ambiguous v10 agent board refuses" (FrontendCodec.decodeEvent ambiguousPopulated = Error "binary: unsupported version")
-  let oldCommand = Array.copy golden
-  oldCommand[4] <- 9uy
-  check "deployed v9 command remains readable" (BackendCodec.decodeCommand oldCommand = Ok frame)
+  for badVer in [ 9uy; 10uy; 11uy; 12uy; 13uy; 15uy ] do
+    let badCommand = Array.copy golden
+    badCommand[4] <- badVer
+    check (sprintf "command refuses mismatched version %d" badVer) (BackendCodec.decodeCommand badCommand = Error "binary: unsupported version")
+    let badEvent = Array.copy dwellFrame
+    badEvent[4] <- badVer
+    check (sprintf "event refuses mismatched version %d" badVer) (FrontendCodec.decodeEvent badEvent = Error "binary: unsupported version")
   check "trailing byte refused" (BackendCodec.decodeCommand (Array.append golden [|0uy|]) |> Result.isError)
   for length in 0 .. golden.Length - 1 do
     check "every truncated golden prefix refused" (BackendCodec.decodeCommand golden[..length-1] |> Result.isError)
   let peers = [ PeerHello source; PeerWork peerWork; PeerResources peerResources; PeerUnavailable "closed"; PeerHeartbeat { UptimeMs = 33L } ]
   for value in peers do
     let bytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value
-    check "peer frame emits the v11 envelope" (bytes[4..5] = [|11uy; 4uy|])
-    check "v13 codec reads the v11 peer frame" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame bytes = Ok value)
-    bytes[4] <- 12uy
-    check "v12 envelope preserves the same peer frame payload" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame bytes = Ok value)
+    check "peer frame emits the v14 envelope" (bytes[4..5] = [|byte ProtocolVersion; 4uy|])
+    check "v14 codec reads the v14 peer frame" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame bytes = Ok value)
+    for badVer in [ 9uy; 11uy; 12uy; 13uy; 15uy ] do
+      let bad = Array.copy bytes
+      bad[4] <- badVer
+      check (sprintf "peer frame refuses mismatched version %d" badVer) (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame bad = Error "binary: unsupported version")
   for capacity in [ nodeCapacity; criticalCapacity; legacyCapacity ] do
     let upgradedPeer = PeerWork { peerWork with Capacity = Some capacity }
-    let upgradedBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrameVersion ProtocolVersion upgradedPeer
-    check "v13 peer frame preserves capacity and cap presence" (upgradedBytes[4..5] = [|13uy; 4uy|] && Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame upgradedBytes = Ok upgradedPeer)
-  // Fixed deployed v9 Operations bytes: one real compiler run, no lease field.
-  let oldOperations = [|
-    66uy; 90uy; 87uy; 49uy; 9uy; 2uy; 10uy; 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 106uy; 1uy
-    7uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 8uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy
-    1uy; 99uy; 3uy; 114uy; 117uy; 110uy; 1uy; 115uy; 2uy; 47uy; 112uy; 1uy; 0uy; 0uy; 1uy
-    0uy; 0uy; 0uy; 0uy; 2uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 3uy; 115uy; 114uy; 99uy; 3uy; 111uy; 117uy; 116uy; 0uy; 0uy; 0uy |]
-  let oldEntry : OperationEntry = {
-    Sequence = 7L; AtMs = 8L; CallerLabel = "c"; Operation = "run"; Session = "s"; Project = "/p"
-    Ok = true; Code = ""; Message = ""; Lease = None
-    Run = Some { ExitCode = 0; Compiler = Some { Generation = 2L; SourceVersion = "src" }; StandardOutput = "out"; StandardError = ""; Dropped = false } }
-  let oldBoard = { Revision = 1L; Incarnation = "j"; Entries = [| oldEntry |]; StorageError = None }
-  check "v9 operation preserves compiler provenance without inventing lease context" (FrontendCodec.decodeEvent oldOperations = Ok(Operations oldBoard))
-  let oldPeer = Array.concat [
-    [| 66uy; 90uy; 87uy; 49uy; 9uy; 4uy; 1uy |]
-    [| 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 2uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy |]
-    Array.zeroCreate 8; [| 1uy; 0uy |]; Array.zeroCreate 8; [| 0uy; 0uy |]
-    oldOperations[7..]; [| 1uy |] ]
-  let oldSnapshot =
-    { peerWork with
-        Sequence = 1L
-        SampledAtMs = 2L
-        Snapshot = { Revision = 0L; Worker = Idle; Sessions = [||] }
-        Leases = { Revision = 0L; Active = [||]; Queued = [||] }
-        Operations = oldBoard
-        TranscriptsOmitted = true }
-  check "deployed v9 PeerWork remains readable" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame oldPeer = Ok(PeerWork oldSnapshot))
+    let upgradedBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame upgradedPeer
+    check "v14 peer frame preserves capacity and checkout sync" (upgradedBytes[4..5] = [|byte ProtocolVersion; 4uy|] && Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame upgradedBytes = Ok upgradedPeer)
   covers "PeerFrame" typeof<PeerFrame> (peers |> List.map (fun value -> caseName (box value) typeof<PeerFrame>))
   let commandReport : CommandObservationRequest = {
     Holder = "agent · /repo"; Project = "/repo"; Kind = "test_suite_run"; LeaseId = "private-capability"
@@ -588,44 +577,50 @@ let private run () =
                         OutputTruncated = true; ErrorTruncated = false }
   for report in [commandReport; {commandReport with Observation = CommandFinished commandResult}] do
     let bytes = Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationRequest report
+    check "private typed observation emits v14 envelope" (bytes[4..5] = [|byte ProtocolVersion; 7uy|])
     check "private typed observation preserves exact arguments and result" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest bytes = Ok report)
-    let legacy = Array.copy bytes
-    legacy[4] <- 9uy
-    check "new observation refuses a fabricated legacy envelope" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest legacy = Error "binary: unsupported version")
+    for badVer in [ 9uy; 11uy; 12uy; 13uy; 15uy ] do
+      let bad = Array.copy bytes
+      bad[4] <- badVer
+      check (sprintf "observation refuses mismatched version %d" badVer) (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest bad = Error "binary: unsupported version")
     check "private observation is not a browser command" (Bozzetto.Web.Shared.BinaryCodec.decodeCommand bytes = Error "binary: wrong message family")
     check "observation rejects trailing bytes" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest (Array.append bytes [|0uy|]) |> Result.isError)
-  let acceptedGolden = [|66uy;90uy;87uy;49uy;11uy;8uy;0uy;7uy;0uy;0uy;0uy;0uy;0uy;0uy;0uy|]
+  let acceptedGolden = [|66uy;90uy;87uy;49uy;byte ProtocolVersion;8uy;0uy;7uy;0uy;0uy;0uy;0uy;0uy;0uy;0uy|]
   check "observation accepted reply independent golden" (Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationReply (CommandObservationAccepted 7L) = acceptedGolden)
   check "observation accepted reply golden decode" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationReply acceptedGolden = Ok(CommandObservationAccepted 7L))
+  for badVer in [ 9uy; 11uy; 12uy; 13uy; 15uy ] do
+    let bad = Array.copy acceptedGolden
+    bad[4] <- badVer
+    check (sprintf "observation reply refuses mismatched version %d" badVer) (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationReply bad = Error "binary: unsupported version")
   let refused = CommandObservationRefused "lease_not_active"
   check "observation specific refusal survives" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationReply (Bozzetto.Web.Shared.BinaryCodec.encodeCommandObservationReply refused) = Ok refused)
   check "observation body bound" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest (Array.zeroCreate (MaxCommandObservationBytes + 1)) = Error "binary: frame too large")
   check "observation rejects JSON" (Bozzetto.Web.Shared.BinaryCodec.decodeCommandObservationRequest [|123uy;125uy|] |> Result.isError)
   let request = { PeerObserveRequest.ProtocolVersion = ProtocolVersion; Node = "three"; Topic = "resources"; Seconds = 120 }
-  check "peer request round trip" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest request) = Ok request)
-  let oldRequest = { request with ProtocolVersion = LegacyProtocolVersion }
-  let oldRequestBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest oldRequest
-  check "legacy retry uses unchanged v9 envelope and payload" (oldRequestBytes[4] = 9uy && Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest oldRequestBytes = Ok oldRequest)
+  let requestBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest request
+  check "peer request emits v14 envelope and round trips" (requestBytes[4..5] = [|byte ProtocolVersion; 3uy|] && Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest requestBytes = Ok request)
+  for badVer in [ 9uy; 11uy; 12uy; 13uy; 15uy ] do
+    let bad = Array.copy requestBytes
+    bad[4] <- badVer
+    check (sprintf "peer request refuses mismatched envelope version %d" badVer) (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest bad = Error "binary: unsupported version")
   check "request cap" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Array.zeroCreate 4097) = Error "binary: frame too large")
   let read = { PeerTranscriptRequest.ProtocolVersion = ProtocolVersion; Request = { Source = source; Journal = "journal"; Sequence = 7L; Stream = Stderr; Offset = 32768L; MaxBytes = MaxTranscriptPageBytes } }
-  check "typed transcript request" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest read) = Ok read)
-  let oldRead = { read with ProtocolVersion = LegacyProtocolVersion }
-  let oldReadBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest oldRead
-  check "v9 transcript request remains accepted" (oldReadBytes[4] = 9uy && Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest oldReadBytes = Ok oldRead)
-  let v11Request = { request with ProtocolVersion = 11 }
-  let v11RequestBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest v11Request
-  check "v11 observation request round trip" (v11RequestBytes[4..5] = [|11uy; 3uy|] && Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest v11RequestBytes = Ok v11Request)
-  let v11Read = { read with ProtocolVersion = 11 }
-  let v11ReadBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest v11Read
-  check "v11 transcript request round trip" (v11ReadBytes[4..5] = [|11uy; 5uy|] && Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest v11ReadBytes = Ok v11Read)
+  let readBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest read
+  check "typed transcript request emits v14 envelope and round trips" (readBytes[4..5] = [|byte ProtocolVersion; 5uy|] && Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest readBytes = Ok read)
+  for badVer in [ 9uy; 11uy; 12uy; 13uy; 15uy ] do
+    let bad = Array.copy readBytes
+    bad[4] <- badVer
+    check (sprintf "transcript request refuses mismatched envelope version %d" badVer) (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest bad = Error "binary: unsupported version")
   let page = { Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; NextOffset = Some 32768L; TotalBytes = 32770L; Bytes = Array.create MaxTranscriptPageBytes 255uy; Truncated = false }
   let reply = { PeerTranscriptReply.Source = source; Outcome = TranscriptPage page }
   let replyBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptReply reply
-  check "transcript reply emits the v11 envelope" (replyBytes[4..5] = [|11uy; 6uy|])
-  check "v13 codec reads a v11 maximum byte page" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply replyBytes = Ok reply)
-  replyBytes[4] <- 12uy
-  check "v12 envelope preserves the same transcript page" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply replyBytes = Ok reply)
-  check "read request cannot be an observation" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest read) = Error "binary: wrong message family")
+  check "transcript reply emits the v14 envelope" (replyBytes[4..5] = [|byte ProtocolVersion; 6uy|])
+  check "v14 codec reads a v14 maximum byte page" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply replyBytes = Ok reply)
+  for badVer in [ 9uy; 11uy; 12uy; 13uy; 15uy ] do
+    let bad = Array.copy replyBytes
+    bad[4] <- badVer
+    check (sprintf "transcript reply refuses mismatched envelope version %d" badVer) (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply bad = Error "binary: unsupported version")
+  check "read request cannot be an observation" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest readBytes = Error "binary: wrong message family")
   check "transcript read request cap" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest (Array.zeroCreate 4097) = Error "binary: frame too large")
 
   printfn "codec round trip: %d checks, %d failures (%d commands, %d events, %d malformed)" checks failures commands.Length events.Length (badEvents.Length + badCommands.Length)
