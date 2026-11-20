@@ -540,6 +540,15 @@
         <Compile Include="ProcessEnvironmentTests.fs" />
         <Compile Include="UpdateCheckTests.fs" />
         <Compile Include="UpdateCheckServiceTests.fs" />
+        <Compile Include="../../tools/audit/AuditPacketTypes.fs" Link="Audit/AuditPacketTypes.fs" />
+        <Compile Include="../../tools/audit/AuditPacketAuthority.fs" Link="Audit/AuditPacketAuthority.fs" />
+        <Compile Include="../../tools/audit/AuditPacketLex.fs" Link="Audit/AuditPacketLex.fs" />
+        <Compile Include="../../tools/audit/AuditPacketDiff.fs" Link="Audit/AuditPacketDiff.fs" />
+        <Compile Include="../../tools/audit/AuditPacketCanary.fs" Link="Audit/AuditPacketCanary.fs" />
+        <Compile Include="../../tools/audit/AuditPacketReceipts.fs" Link="Audit/AuditPacketReceipts.fs" />
+        <Compile Include="../../tools/audit/AuditPacketEval.fs" Link="Audit/AuditPacketEval.fs" />
+        <Compile Include="../../tools/audit/AuditPacketRender.fs" Link="Audit/AuditPacketRender.fs" />
+        <Compile Include="AuditPacketTests.fs" />
         <Compile Include="Program.fs" />
     </ItemGroup>
 
