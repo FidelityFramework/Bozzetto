@@ -129,6 +129,39 @@ module AgentWork =
       else run)
     if runs = state.Runs then state else { state with Sequence = state.Sequence + 1L; Runs = runs }
 
+  let greenDwellWindow = System.TimeSpan.FromMinutes 5.0
+  let troubledDwellWindow = System.TimeSpan.FromMinutes 30.0
+
+  type DwellBucket = Primary | RecentCompleted
+
+  let dwellDuration (status: string) : System.TimeSpan option =
+    match status with
+    | "completed" -> Some greenDwellWindow
+    | "failed" | "aborted" | "disconnected" -> Some troubledDwellWindow
+    | _ -> None
+
+  let dwellExpiry (run: Run) : System.DateTime option =
+    match dwellDuration run.Report.Status with
+    | None -> None
+    | Some window ->
+      if run.UpdatedAt > System.DateTime.MaxValue - window then Some System.DateTime.MaxValue
+      else Some (run.UpdatedAt + window)
+
+  let classifyDwell (now: System.DateTime) (run: Run) : DwellBucket =
+    match dwellExpiry run with
+    | Some exp when now >= exp -> RecentCompleted
+    | _ -> Primary
+
+  let nextDwellExpiry (now: System.DateTime) (state: State) : System.DateTime option =
+    state.Runs
+    |> Map.fold (fun earliest _ run ->
+      match dwellExpiry run with
+      | Some exp when exp > now ->
+        match earliest with
+        | None -> Some exp
+        | Some best -> Some (if exp < best then exp else best)
+      | _ -> earliest) None
+
   /// Injected read-model publication. Production settles through the shared
   /// incremental core; tests may supply a held publisher. No second writer.
   type Publication = {

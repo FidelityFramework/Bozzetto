@@ -135,18 +135,27 @@ let private completions = [
   SnapshotSent
 ]
 
+let private dwellBoard =
+  AgentWork {
+    OmittedRuns = 7L; Refusal = "explicit refusal"; Incarnation = "daemon-b"; Sequence = 9007199254740993L; ExecutionHost = "local"
+    Presence = [|
+      { Name = "pi ü"; Source = "lease"; Member = "pi ü · /repo/clef"; Project = "/repo/clef"; Detail = "holds full_build"; SinceMs = 9007199254740993L }
+      { Name = "mcp:two"; Source = "member"; Member = "mcp:two"; Project = ""; Detail = "Verifier member · no report yet"; SinceMs = -1L }
+    |]
+    Runs = [|
+      { Id = "run"; Member = "mcp:one"; Role = "Observer"; Name = "same"; Session = "pi"
+        ReportSequence = 2L; Model = "reported"; Endpoint = "LAN"; Project = "/repo"; Focus = "review"
+        Operation = "read"; Status = "disconnected"; UpdatedAtMs = 123L; Activity = [|"read"|]; OmittedActivity = 4L; Usage = None; Aged = true }
+      { Id = "run2"; Member = "mcp:two"; Role = "Verifier"; Name = "same"; Session = "pi2"
+        ReportSequence = 3L; Model = "reported2"; Endpoint = "paid"; Project = "/repo"; Focus = "audit"
+        Operation = "settled"; Status = "completed"; UpdatedAtMs = 124L; Activity = [|"settled"|]; OmittedActivity = 0L
+        Usage = Some { Input = 0L; Output = 0L; CacheRead = 0L; CacheWrite = 0L; Total = 0L; EstimateUsd = Some 0. }; Aged = false }
+    |]
+  }
+
 let private baseEvents = [
   AgentWork { OmittedRuns = 0L; Refusal = ""; Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Runs = [||]; Presence = [||] }
-  AgentWork { OmittedRuns = 7L; Refusal = "explicit refusal"; Incarnation = "daemon-b"; Sequence = 9007199254740993L; ExecutionHost = "local"
-              Presence = [| { Name = "pi ü"; Source = "lease"; Member = "pi ü · /repo/clef"; Project = "/repo/clef"; Detail = "holds full_build"; SinceMs = 9007199254740993L }
-                            { Name = "mcp:two"; Source = "member"; Member = "mcp:two"; Project = ""; Detail = "Verifier member · no report yet"; SinceMs = -1L } |]
-              Runs = [| { Id = "run"; Member = "mcp:one"; Role = "Observer"; Name = "same"; Session = "pi"
-                          ReportSequence = 2L; Model = "reported"; Endpoint = "LAN"; Project = "/repo"; Focus = "review"
-                          Operation = "read"; Status = "disconnected"; UpdatedAtMs = 123L; Activity = [|"read"|]; OmittedActivity = 4L; Usage = None }
-                        { Id = "run2"; Member = "mcp:two"; Role = "Verifier"; Name = "same"; Session = "pi2"
-                          ReportSequence = 3L; Model = "reported2"; Endpoint = "paid"; Project = "/repo"; Focus = "audit"
-                          Operation = "settled"; Status = "completed"; UpdatedAtMs = 124L; Activity = [|"settled"|]; OmittedActivity = 0L
-                          Usage = Some { Input = 0L; Output = 0L; CacheRead = 0L; CacheWrite = 0L; Total = 0L; EstimateUsd = Some 0. } } |] }
+  dwellBoard
   Resources {
     Sequence = 9007199254740993L; Status = "observing"; SampledAtMs = 1759420800123L; IntervalMs = 2000.; SampleCostMs = 12.5
     Metrics = [| { Name = "GPU unavailable"; Value = None; Unit = "percent" }; { Name = "RAM used"; Value = Some 4294967296.; Unit = "bytes" } |]
@@ -257,7 +266,27 @@ let private peerWork : WorkSnapshot = {
   Snapshot = { Revision = 1L; Worker = Idle; Sessions = [| fullSession |] }
   Leases = { Revision = 2L; Active = [||]; Queued = [||] }
   Operations = { Revision = 3L; Incarnation = "journal"; StorageError = None; Entries = [||] }
+  Capacity = None
 }
+let private nodeCapacity : NodeCapacity = {
+  LeaseCap = Some 4; PidVerifiedLeases = 2; UnverifiedLeases = 1; StalePidLeases = 3
+  MemoryPressure = "Normal"; MachineAvailableBytes = 11_982_958_756L; MachineTotalBytes = 66_571_993_088L
+  ResidentBytes = 186_000_000L; PeakResidentBytes = 240_000_000L
+}
+let private criticalCapacity = { nodeCapacity with LeaseCap = Some 0; MemoryPressure = "Critical" }
+let private legacyCapacity : NodeCapacity = {
+  LeaseCap = None; PidVerifiedLeases = 0; UnverifiedLeases = 0; StalePidLeases = 0
+  MemoryPressure = ""; MachineAvailableBytes = 0L; MachineTotalBytes = 0L
+  ResidentBytes = 0L; PeakResidentBytes = 0L
+}
+let private capacityBoard =
+  WorkNodes { Revision = 5L; Nodes = [|
+    { Source = { source with Node = "one" }; Local = false; Status = "unavailable"; Note = "never observed"; Value = None }
+    { Source = { source with Node = "two" }; Local = false; Status = "available"; Note = "legacy peer"; Value = Some { peerWork with Capacity = Some legacyCapacity } }
+    { Source = source; Local = false; Status = "unavailable"; Note = "disconnected"; Value = Some { peerWork with Capacity = Some nodeCapacity } }
+    { Source = { source with Node = "controller" }; Local = true; Status = "available"; Note = ""; Value = Some { peerWork with Capacity = Some criticalCapacity } }
+  |] }
+
 let private peerResources : HostResources = {
   Sequence = 8L; Status = "unavailable"; SampledAtMs = 0L; IntervalMs = 0.; SampleCostMs = 0.
   Metrics = [||]; Processes = [||]; ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = "not sampled"
@@ -282,10 +311,7 @@ let private freshRetrieval : RetrievalStatus =
     Note = "Snapshot published" }
 
 let private events = baseEvents @ [
-  WorkNodes { Revision = 5L; Nodes = [|
-    { Source = source; Local = false; Status = "unavailable"; Note = "disconnected"; Value = Some peerWork }
-    { Source = { source with Node = "one" }; Local = false; Status = "unavailable"; Note = "never observed"; Value = None }
-  |] }
+  capacityBoard
   NodeResources { Source = source; Correlation = 7; Value = peerResources }
   NodeTranscript { Source = source; Correlation = 8; Outcome = TranscriptPage { Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; NextOffset = None; TotalBytes = 3L; Bytes = [| 0uy; 128uy; 255uy |]; Truncated = true } }
   NodeTranscript { Source = source; Correlation = 9; Outcome = TranscriptRefused("missing_entry", "Unavailable") }
@@ -433,9 +459,24 @@ let private run () =
     check ("malformed event refused " + wire) (FrontendCodec.decodeEvent (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
   for wire in badCommands do
     check ("malformed command refused " + wire) (BackendCodec.decodeCommand (wire |> Seq.map (int >> byte) |> Seq.toArray) |> Result.isError)
-  check "bridge vocabulary is v12" (ProtocolVersion = 12)
+  check "bridge vocabulary is v13" (ProtocolVersion = 13)
+  let dwellFrame = BackendCodec.encodeEvent dwellBoard
+  check "AgentWork emits a v13 event envelope" (dwellFrame[4..5] = [|13uy; 2uy|])
+  match FrontendCodec.decodeEvent dwellFrame with
+  | Ok (AgentWork board) ->
+    check "v13 AgentWork preserves aged and still-dwelling terminal runs" ((board.Runs |> Array.map _.Aged) = [|true; false|])
+  | _ -> check "v13 AgentWork decodes" false
+  let capacityFrame = BackendCodec.encodeEvent capacityBoard
+  check "WorkNodes emits a v13 event envelope" (capacityFrame[4..5] = [|13uy; 2uy|])
+  match FrontendCodec.decodeEvent capacityFrame with
+  | Ok (WorkNodes board) ->
+    let capacities = board.Nodes |> Array.choose _.Value |> Array.map _.Capacity
+    check "v13 WorkNodes preserves unknown, normal and critical caps" (capacities = [|Some legacyCapacity; Some nodeCapacity; Some criticalCapacity|])
+  | _ -> check "v13 WorkNodes decodes" false
+  // The last node's peak RSS is the final field on the wire.
+  check "WorkNodes refuses a truncated NodeCapacity field" (FrontendCodec.decodeEvent capacityFrame[..capacityFrame.Length - 2] |> Result.isError)
   let retrievalFrame = BackendCodec.encodeEvent (Retrieval freshRetrieval)
-  check "Retrieval emits the v12 event tag 14" (retrievalFrame[..6] = [| 66uy; 90uy; 87uy; 49uy; 12uy; 2uy; 14uy |])
+  check "Retrieval emits the v13 event tag 14" (retrievalFrame[..6] = [| 66uy; 90uy; 87uy; 49uy; 13uy; 2uy; 14uy |])
   let wrongTag = Array.copy retrievalFrame
   wrongTag[6] <- 15uy
   check "unknown retrieval event tag is refused" (FrontendCodec.decodeEvent wrongTag = Error "binary: unknown Event tag")
@@ -443,7 +484,7 @@ let private run () =
   wrongVersion[4] <- 11uy
   check "retrieval in a v11 event envelope is refused" (FrontendCodec.decodeEvent wrongVersion = Error "binary: unsupported version")
   check "truncated retrieval status is refused" (FrontendCodec.decodeEvent retrievalFrame[..retrievalFrame.Length - 2] = Error "binary: invalid string length")
-  let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 12uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+  let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 13uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
   let frame = { CommandFrame.Correlation = 1; Command = RequestSnapshot }
   check "independent binary golden" (FrontendCodec.encodeCommand frame = golden)
   check "golden decode" (BackendCodec.decodeCommand golden = Ok frame)
@@ -460,7 +501,7 @@ let private run () =
   let historicalRun id usage : AgentRun =
     { Id = id; Member = "mcp:1"; Role = "Observer"; Name = "name"; Session = "session"; ReportSequence = 5L
       Model = "model"; Endpoint = "endpoint"; Project = "project"; Focus = "focus"; Operation = "operation"
-      Status = "completed"; UpdatedAtMs = 100L; Activity = [|"new"; "old"|]; OmittedActivity = 3L; Usage = usage }
+      Status = "completed"; UpdatedAtMs = 100L; Activity = [|"new"; "old"|]; OmittedActivity = 3L; Usage = usage; Aged = false }
   let historicalUsage = Some { AgentUsage.Input = 1L; Output = 2L; CacheRead = 3L; CacheWrite = 4L; Total = 10L; EstimateUsd = Some 0.5 }
   let historicalExpected = AgentWork { Incarnation = "daemon"; Sequence = 42L; ExecutionHost = "host"
                                        Runs = [|historicalRun "some" historicalUsage; historicalRun "none" None|]
@@ -505,9 +546,13 @@ let private run () =
   for value in peers do
     let bytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value
     check "peer frame emits the v11 envelope" (bytes[4..5] = [|11uy; 4uy|])
-    check "v12 codec reads the v11 peer frame" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame bytes = Ok value)
+    check "v13 codec reads the v11 peer frame" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame bytes = Ok value)
     bytes[4] <- 12uy
     check "v12 envelope preserves the same peer frame payload" (Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame bytes = Ok value)
+  for capacity in [ nodeCapacity; criticalCapacity; legacyCapacity ] do
+    let upgradedPeer = PeerWork { peerWork with Capacity = Some capacity }
+    let upgradedBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrameVersion ProtocolVersion upgradedPeer
+    check "v13 peer frame preserves capacity and cap presence" (upgradedBytes[4..5] = [|13uy; 4uy|] && Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame upgradedBytes = Ok upgradedPeer)
   // Fixed deployed v9 Operations bytes: one real compiler run, no lease field.
   let oldOperations = [|
     66uy; 90uy; 87uy; 49uy; 9uy; 2uy; 10uy; 1uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 0uy; 1uy; 106uy; 1uy
@@ -560,7 +605,7 @@ let private run () =
   check "peer request round trip" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest request) = Ok request)
   let oldRequest = { request with ProtocolVersion = LegacyProtocolVersion }
   let oldRequestBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest oldRequest
-  check "controller request uses unchanged v9 envelope and payload" (oldRequestBytes[4] = 9uy && Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest oldRequestBytes = Ok oldRequest)
+  check "legacy retry uses unchanged v9 envelope and payload" (oldRequestBytes[4] = 9uy && Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest oldRequestBytes = Ok oldRequest)
   check "request cap" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Array.zeroCreate 4097) = Error "binary: frame too large")
   let read = { PeerTranscriptRequest.ProtocolVersion = ProtocolVersion; Request = { Source = source; Journal = "journal"; Sequence = 7L; Stream = Stderr; Offset = 32768L; MaxBytes = MaxTranscriptPageBytes } }
   check "typed transcript request" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest read) = Ok read)
@@ -577,7 +622,7 @@ let private run () =
   let reply = { PeerTranscriptReply.Source = source; Outcome = TranscriptPage page }
   let replyBytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptReply reply
   check "transcript reply emits the v11 envelope" (replyBytes[4..5] = [|11uy; 6uy|])
-  check "v12 codec reads a v11 maximum byte page" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply replyBytes = Ok reply)
+  check "v13 codec reads a v11 maximum byte page" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply replyBytes = Ok reply)
   replyBytes[4] <- 12uy
   check "v12 envelope preserves the same transcript page" (Bozzetto.Web.Shared.BinaryCodec.decodePeerTranscriptReply replyBytes = Ok reply)
   check "read request cannot be an observation" (Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerTranscriptRequest read) = Error "binary: wrong message family")

@@ -19,7 +19,7 @@ let private MaxItems = 65536
 let private MaxStringBytes = 1024 * 1024
 
 type private Reader = { Bytes: byte array; mutable Offset: int; mutable Version: int }
-type private Writer = { Bytes: ResizeArray<byte>; Limit: int }
+type private Writer = { Bytes: ResizeArray<byte>; Limit: int; Version: int }
 type private Codec<'T> = { Read: Reader -> 'T; Write: Writer -> 'T -> unit }
 
 let private fail message = invalidOp ("binary: " + message)
@@ -750,6 +750,7 @@ let private agentRun : Codec<AgentRun> = {
     (array text).Write w value.Activity
     wide.Write w value.OmittedActivity
     (optional agentUsage).Write w value.Usage
+    if w.Version >= 13 then flag.Write w value.Aged
   Read = fun r ->
     let f0 = text.Read r
     let f1 = text.Read r
@@ -767,7 +768,8 @@ let private agentRun : Codec<AgentRun> = {
     let f13 = (array text).Read r
     let f14 = wide.Read r
     let f15 = (optional agentUsage).Read r
-    { AgentRun.Id = f0; Member = f1; Role = f2; Name = f3; Session = f4; ReportSequence = f5; Model = f6; Endpoint = f7; Project = f8; Focus = f9; Operation = f10; Status = f11; UpdatedAtMs = f12; Activity = f13; OmittedActivity = f14; Usage = f15 }
+    let f16 = if r.Version >= 13 then flag.Read r else false
+    { AgentRun.Id = f0; Member = f1; Role = f2; Name = f3; Session = f4; ReportSequence = f5; Model = f6; Endpoint = f7; Project = f8; Focus = f9; Operation = f10; Status = f11; UpdatedAtMs = f12; Activity = f13; OmittedActivity = f14; Usage = f15; Aged = f16 }
 }
 
 let private agentPresence : Codec<AgentPresence> = {
@@ -897,6 +899,32 @@ let private operationsBoard : Codec<OperationsBoard> = {
     { OperationsBoard.Revision = f0; Incarnation = f1; Entries = f2; StorageError = (optional text).Read r }
 }
 
+let private nodeCapacity : Codec<NodeCapacity> = {
+  Write = fun w value ->
+    (optional whole).Write w value.LeaseCap
+    whole.Write w value.PidVerifiedLeases
+    whole.Write w value.UnverifiedLeases
+    whole.Write w value.StalePidLeases
+    text.Write w value.MemoryPressure
+    wide.Write w value.MachineAvailableBytes
+    wide.Write w value.MachineTotalBytes
+    wide.Write w value.ResidentBytes
+    wide.Write w value.PeakResidentBytes
+  Read = fun r ->
+    let f0 = (optional whole).Read r
+    let f1 = whole.Read r
+    let f2 = whole.Read r
+    let f3 = whole.Read r
+    let f4 = text.Read r
+    let f5 = wide.Read r
+    let f6 = wide.Read r
+    let f7 = wide.Read r
+    let f8 = wide.Read r
+    { NodeCapacity.LeaseCap = f0; PidVerifiedLeases = f1; UnverifiedLeases = f2; StalePidLeases = f3
+      MemoryPressure = f4; MachineAvailableBytes = f5; MachineTotalBytes = f6
+      ResidentBytes = f7; PeakResidentBytes = f8 }
+}
+
 let private workSnapshot : Codec<WorkSnapshot> = {
   Write = fun w value ->
     wide.Write w value.Sequence
@@ -905,13 +933,16 @@ let private workSnapshot : Codec<WorkSnapshot> = {
     leaseBoard.Write w value.Leases
     operationsBoard.Write w value.Operations
     flag.Write w value.TranscriptsOmitted
+    if w.Version >= 13 then (optional nodeCapacity).Write w value.Capacity
   Read = fun r ->
     let f0 = wide.Read r
     let f1 = wide.Read r
     let f2 = composerSnapshot.Read r
     let f3 = leaseBoard.Read r
     let f4 = operationsBoard.Read r
-    { WorkSnapshot.Sequence = f0; SampledAtMs = f1; Snapshot = f2; Leases = f3; Operations = f4; TranscriptsOmitted = flag.Read r }
+    let f5 = flag.Read r
+    let f6 = if r.Version >= 13 then (optional nodeCapacity).Read r else None
+    { WorkSnapshot.Sequence = f0; SampledAtMs = f1; Snapshot = f2; Leases = f3; Operations = f4; TranscriptsOmitted = f5; Capacity = f6 }
 }
 
 let private nodeWork : Codec<NodeWork> = {
@@ -1140,7 +1171,7 @@ let private commandObservationReply : Codec<CommandObservationReply> = {
 }
 
 let private encodeVersion version family limit codec value =
-  let writer = { Writer.Bytes = ResizeArray<byte>(); Limit = limit }
+  let writer = { Writer.Bytes = ResizeArray<byte>(); Limit = limit; Version = version }
   for b in [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy |] do put writer b
   uint.Write writer version
   uint.Write writer family
@@ -1150,7 +1181,7 @@ let private encodeVersion version family limit codec value =
 let private encode family limit codec value = encodeVersion ProtocolVersion family limit codec value
 
 let isPeerProtocolVersion version =
-  version = ProtocolVersion || version = PeerCompatProtocolVersion || version = LegacyProtocolVersion
+  version = ProtocolVersion || version = 12 || version = PeerCompatProtocolVersion || version = LegacyProtocolVersion
 
 let private decode family limit codec (bytes: byte array) =
   try
@@ -1164,7 +1195,7 @@ let private decode family limit codec (bytes: byte array) =
       match family with
       | 3 | 4 | 5 | 6 -> isPeerProtocolVersion reader.Version
       | 1 | 2 -> reader.Version = ProtocolVersion || reader.Version = LegacyProtocolVersion
-      | 7 | 8 -> reader.Version = ProtocolVersion || reader.Version = 11
+      | 7 | 8 -> reader.Version = ProtocolVersion || reader.Version = 12 || reader.Version = 11
       | _ -> false
     if not supported then fail "unsupported version"
     let value = codec.Read reader
@@ -1203,6 +1234,7 @@ let decodeEvent bytes = decode 2 MaxFrameBytes event bytes
 let encodePeerObserveRequest (value: PeerObserveRequest) = encodeVersion value.ProtocolVersion 3 MaxRequestBytes peerObserveRequest (validatePeer value |> require)
 let decodePeerObserveRequest bytes = decode 3 MaxRequestBytes peerObserveRequest bytes |> Result.bind validatePeer
 let encodePeerFrame value = encodeVersion PeerCompatProtocolVersion 4 MaxFrameBytes peerFrame value
+let encodePeerFrameVersion version value = encodeVersion version 4 MaxFrameBytes peerFrame value
 let decodePeerFrame bytes = decode 4 MaxFrameBytes peerFrame bytes
 
 let private validatePeerTranscript (request: PeerTranscriptRequest) =

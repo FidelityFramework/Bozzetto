@@ -99,7 +99,7 @@ module Project =
                SinceMs = DateTimeOffset(DateTime.SpecifyKind(renewal, DateTimeKind.Utc)).ToUnixTimeMilliseconds() } |]
     Array.append leases membersHere
 
-  let private agentWorkRuns (state: Bozzetto.AgentWork.State) : AgentRun array =
+  let private agentWorkRunsAt (now: DateTime) (state: Bozzetto.AgentWork.State) : AgentRun array =
     state.Runs |> Map.toArray |> Array.map (fun (key, run) ->
       let r = run.Report
       { Id = key; Member = Bozzetto.MemberTable.MemberId.display run.Member; Role = string run.Role
@@ -107,18 +107,18 @@ module Project =
         Project = r.Project; Focus = r.Focus; Operation = r.Operation; Status = r.Status
         UpdatedAtMs = DateTimeOffset(run.UpdatedAt).ToUnixTimeMilliseconds()
         Activity = List.toArray run.Activity; OmittedActivity = run.OmittedActivity
-        Usage = r.Usage |> Option.map (fun u -> { Input = u.Input; Output = u.Output; CacheRead = u.CacheRead; CacheWrite = u.CacheWrite; Total = u.Total; EstimateUsd = u.EstimateUsd }) })
+        Usage = r.Usage |> Option.map (fun u -> { Input = u.Input; Output = u.Output; CacheRead = u.CacheRead; CacheWrite = u.CacheWrite; Total = u.Total; EstimateUsd = u.EstimateUsd })
+        Aged = (Bozzetto.AgentWork.classifyDwell now run = Bozzetto.AgentWork.RecentCompleted) })
 
-  /// The board a page receives: the reports with their presence, sequenced by
-  /// the publication that produced it, not by the owner's report count,
-  /// because presence moves without a report.
-  let agentBoard (revision: int64) (state: Bozzetto.AgentWork.State) (presence: AgentPresence array) : AgentWorkBoard =
+  // The board a page receives at `now`: full daemon history remains in AgentWork.State;
+  // dwell aging only sets `Aged` on projected terminal runs whose dwell window elapsed.
+  let agentBoardAt (now: DateTime) (revision: int64) (state: Bozzetto.AgentWork.State) (presence: AgentPresence array) : AgentWorkBoard =
     let initial =
       { Incarnation = state.Incarnation; Sequence = revision; ExecutionHost = Environment.MachineName
-        Presence = presence; Runs = agentWorkRuns state; OmittedRuns = 0L; Refusal = "" }
+        Presence = presence; Runs = agentWorkRunsAt now state; OmittedRuns = 0L; Refusal = "" }
     // A terminal row is shed whole; unknown stays visible as potentially active.
     let terminal (run: AgentRun) = List.contains run.Status [ "completed"; "failed"; "aborted"; "disconnected" ]
-    let oldest = initial.Runs |> Array.filter terminal |> Array.sortBy (fun run -> run.UpdatedAtMs, run.Id)
+    let shedOrder = initial.Runs |> Array.filter terminal |> Array.sortBy (fun run -> not run.Aged, run.UpdatedAtMs, run.Id)
     let measure board =
       try
         Bozzetto.Web.Shared.BinaryCodec.encodeEvent (AgentWork board) |> ignore
@@ -132,17 +132,17 @@ module Project =
     | Ok () -> initial
     | Error error when not (wireLimit error) -> refuse error
     | Error _ ->
-      // Binary search the smallest oldest prefix that fits. Every candidate is
+      // Binary search the smallest terminal prefix that fits. Every candidate is
       // measured using the actual codec, including its envelope and array sizes.
       let candidate count =
-        let omitted = oldest |> Array.take count |> Array.map _.Id |> Set.ofArray
+        let omitted = shedOrder |> Array.take count |> Array.map _.Id |> Set.ofArray
         { initial with Runs = initial.Runs |> Array.filter (fun run -> not (Set.contains run.Id omitted))
                        OmittedRuns = int64 count }
-      match measure (candidate oldest.Length) with
+      match measure (candidate shedOrder.Length) with
       | Error error -> refuse error
       | Ok () ->
         let mutable low = 0
-        let mutable high = oldest.Length
+        let mutable high = shedOrder.Length
         let mutable problem = None
         while low < high && Option.isNone problem do
           let middle = low + (high - low) / 2
@@ -151,6 +151,11 @@ module Project =
           | Error error when wireLimit error -> low <- middle + 1
           | Error error -> problem <- Some error
         match problem with Some error -> refuse error | None -> candidate low
+
+  // The board a page receives: the reports with their presence, sequenced by
+  // the publication that produced it, because presence moves without a report.
+  let agentBoard (revision: int64) (state: Bozzetto.AgentWork.State) (presence: AgentPresence array) : AgentWorkBoard =
+    agentBoardAt DateTime.UtcNow revision state presence
 
   /// The reports alone, sequenced by the owner's own count.
   let agentWork (state: Bozzetto.AgentWork.State) : AgentWorkBoard =
@@ -244,7 +249,7 @@ module Project =
     let rec fit entries =
       let summary = { value with Operations = { value.Operations with Entries = entries }; TranscriptsOmitted = true }
       let fits =
-        try Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame(PeerWork summary).Length <= MaxWorkSnapshotBytes
+        try (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrameVersion ProtocolVersion (PeerWork summary)).Length <= MaxWorkSnapshotBytes
         with :? InvalidOperationException -> false
       if fits then summary
       else
@@ -465,8 +470,69 @@ module Project =
   /// A stable, non-secret identity for one grant, derived only from what the
   /// board already shows (a holder holds at most one lease at a time).
   let leaseDisplayId (holder: string) (kind: string) (grantedAt: DateTimeOffset) =
-    let identity = holder + "\n" + kind + "\n" + grantedAt.UtcTicks.ToString(CultureInfo.InvariantCulture)
-    "lease-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes identity), 0, 4).ToLowerInvariant()
+    Bozzetto.ExpensiveWorkLease.displayId holder kind grantedAt
+
+  let internal mkPidStatus leaseId holder kind pid verified alive : Bozzetto.ExpensiveWorkLease.LeasedPidStatus =
+    { Bozzetto.ExpensiveWorkLease.LeasedPidStatus.LeaseId = leaseId
+      Bozzetto.ExpensiveWorkLease.LeasedPidStatus.Holder = holder
+      Bozzetto.ExpensiveWorkLease.LeasedPidStatus.Kind = kind
+      Bozzetto.ExpensiveWorkLease.LeasedPidStatus.ProcessId = pid
+      Bozzetto.ExpensiveWorkLease.LeasedPidStatus.LivenessVerified = verified
+      Bozzetto.ExpensiveWorkLease.LeasedPidStatus.Alive = alive }
+
+  // Reconcile lease/PID counts from a remote peer's WorkSnapshot when Capacity was omitted (v11 peer).
+  let reconcileSnapshotCapacity (snapshot: WorkSnapshot) : NodeCapacity =
+    let activeGrants : Bozzetto.ExpensiveWorkLease.ReconciledGrant list =
+      snapshot.Leases.Active
+      |> Array.map (fun g ->
+        { Bozzetto.ExpensiveWorkLease.ReconciledGrant.DisplayId = g.Id
+          Bozzetto.ExpensiveWorkLease.ReconciledGrant.Grant =
+            { Bozzetto.ExpensiveWorkLease.GrantView.Holder = g.Holder
+              Bozzetto.ExpensiveWorkLease.GrantView.Kind = g.Kind
+              Bozzetto.ExpensiveWorkLease.GrantView.GrantedAt = DateTimeOffset.FromUnixTimeMilliseconds g.GrantedAtMs
+              Bozzetto.ExpensiveWorkLease.GrantView.ExpiresAt = DateTimeOffset.FromUnixTimeMilliseconds g.ExpiresAtMs } })
+      |> Array.toList
+    let queueViews : Bozzetto.ExpensiveWorkLease.QueueView list =
+      snapshot.Leases.Queued
+      |> Array.map (fun q ->
+        { Bozzetto.ExpensiveWorkLease.QueueView.Holder = q.Holder
+          Bozzetto.ExpensiveWorkLease.QueueView.Kind = q.Kind
+          Bozzetto.ExpensiveWorkLease.QueueView.RequestedAt = DateTimeOffset.FromUnixTimeMilliseconds q.RequestedAtMs })
+      |> Array.toList
+    let activeById = activeGrants |> List.map (fun g -> g.DisplayId, g.Grant) |> Map.ofList
+    let pidStatuses : Bozzetto.ExpensiveWorkLease.LeasedPidStatus list =
+      snapshot.Operations.Entries
+      |> Array.sortByDescending _.Sequence
+      |> Array.choose (fun entry -> entry.Lease |> Option.map (fun cmd -> entry, cmd))
+      |> Array.distinctBy (fun (_, cmd) -> cmd.LeaseId)
+      |> Array.choose (fun (entry, cmd) ->
+        Map.tryFind cmd.LeaseId activeById
+        |> Option.map (fun grant ->
+          let verified, alive =
+            if entry.Code = "running" then
+              entry.Message.StartsWith("owner liveness verified ", StringComparison.Ordinal), true
+            elif entry.Code = "unknown" then
+              false, true
+            else
+              true, false
+          mkPidStatus cmd.LeaseId grant.Holder grant.Kind cmd.ProcessId verified alive))
+      |> Array.toList
+    let reconciled =
+      Bozzetto.ExpensiveWorkLease.reconcileCapacity
+        (DateTimeOffset.FromUnixTimeMilliseconds snapshot.SampledAtMs)
+        None
+        activeGrants
+        queueViews
+        pidStatuses
+    { NodeCapacity.LeaseCap = reconciled.LeaseCap
+      PidVerifiedLeases = reconciled.PidVerifiedLeases
+      UnverifiedLeases = reconciled.UnverifiedLeases
+      StalePidLeases = reconciled.StalePidLeases
+      MemoryPressure = ""
+      MachineAvailableBytes = 0L
+      MachineTotalBytes = 0L
+      ResidentBytes = 0L
+      PeakResidentBytes = 0L }
 
   /// The pool as `ExpensiveWorkLease.snapshot` reports it, which carries no
   /// LeaseId, stamped by the publication that produced it.
@@ -949,6 +1015,7 @@ module Facts =
     | Journal of ComposerJournal.Journal
     | Liveness of LeasedLivenessSnapshot
     | Retrieval of RetrievalStatus
+    | Dwell of DateTime
     | Observation of int64 * Result<HostResources, string>
     | PeerObservation of HostResources option * Result<HostResources, string>
     | NodeWork of NodeWork
@@ -960,8 +1027,8 @@ module Facts =
     | Value of Event
     | Observation of int64 option * Result<HostResources, string>
 
-  let private tickInput, poolInput, agentsInput, membershipInput, journalInput, livenessInput, retrievalInput =
-    InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL, InputId 5UL, InputId 6UL, InputId 7UL
+  let private tickInput, poolInput, agentsInput, membershipInput, journalInput, livenessInput, retrievalInput, dwellInput =
+    InputId 1UL, InputId 2UL, InputId 3UL, InputId 4UL, InputId 5UL, InputId 6UL, InputId 7UL, InputId 8UL
   let private healthWork, leasesWork, boardWork, operationsWork = WorkId 1UL, WorkId 2UL, WorkId 3UL, WorkId 4UL
   let private workBoard, retrievalWork = WorkId 5UL, WorkId 6UL
   let private scope = ScopeId 1UL
@@ -973,7 +1040,8 @@ module Facts =
   /// The plane of one daemon. `incarnation` is the agent board owner's, bound
   /// at start: a publication from any other incarnation is refused, so a
   /// retired owner can never roll the board back.
-  type Graph(constants: Constants, incarnation: string, journalIncarnation: string, ?observationOwners: ObservationProducer list, ?localNode: string, ?peerNodes: string list) =
+  type Graph(constants: Constants, incarnation: string, journalIncarnation: string, ?observationOwners: ObservationProducer list, ?localNode: string, ?peerNodes: string list, ?utcNow: unit -> DateTime) =
+    let nowFn = defaultArg utcNow (fun () -> DateTime.UtcNow)
     let owners = defaultArg observationOwners []
     let peers = defaultArg peerNodes []
     do
@@ -997,7 +1065,7 @@ module Facts =
     // changes; no transport registry or duplicate fact store lives here.
     let mutable sourceSlots =
       owners @ (peers |> List.map (fun node -> { Source = { Node = node; Incarnation = "" }; Correlation = Guid.Empty }))
-      |> List.mapi (fun index owner -> owner.Source.Node, (owner, InputId(uint64 index * 2UL + 8UL), WorkId(uint64 index + 7UL)))
+      |> List.mapi (fun index owner -> owner.Source.Node, (owner, InputId(uint64 index * 2UL + 9UL), WorkId(uint64 index + 7UL)))
       |> Map.ofList
     let observationWorks = sourceSlots |> Map.toList |> List.map (fun (_, (_, input, work)) -> work, input) |> Map.ofList
     let nodeInputs = sourceSlots |> Map.toList |> List.map (fun (node, (_, InputId input, _)) -> node, InputId(input + 1UL)) |> Map.ofList
@@ -1016,6 +1084,10 @@ module Facts =
     let mutable handover = false
     let mutable stopped = false
     let mutable faults = 0
+    let mutable peakResidentBytes = 0L
+    let mutable dwellSerial = 0L
+    let mutable dwellTimer : Timer option = None
+    let mutable dwellGeneration = 0L
     let sinks = System.Collections.Generic.Dictionary<int64, Push -> Event -> unit>()
     let mutable nextSink = 0L
     let observers = System.Collections.Generic.Dictionary<Guid, ObservationBinding * DemandId * (Observation -> unit)>()
@@ -1066,9 +1138,9 @@ module Facts =
         | Some(Fact.Retrieval status) -> Payload.Value(Retrieval { status with Revision = stamp })
         | other -> invalidOp (sprintf "Bridge facts: Retrieval read %A" other)
       else
-        match fact 1UL, fact 2UL, fact 3UL with
-        | Some(Fact.Agents state), Some(Fact.Pool pool), Some(Fact.Membership membership) ->
-          Payload.Value(AgentWork(Project.agentBoard stamp state (Project.presence pool.Active pool.Queue membership.Members state.Runs)))
+        match fact 1UL, fact 2UL, fact 3UL, fact 4UL with
+        | Some(Fact.Agents state), Some(Fact.Pool pool), Some(Fact.Membership membership), Some(Fact.Dwell now) ->
+          Payload.Value(AgentWork(Project.agentBoardAt now stamp state (Project.presence pool.Active pool.Queue membership.Members state.Runs)))
         | other -> invalidOp (sprintf "Bridge facts: Board read %A" other)
 
     let deliver (work: WorkId) (token: ValueToken) (payload: Payload) =
@@ -1147,7 +1219,8 @@ module Facts =
           Work = boardWork; Stamp = DefinitionStamp 1UL
           Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input agentsInput }
                     { Slot = ReadSlotId 2UL; Source = ReadSource.Input poolInput }
-                    { Slot = ReadSlotId 3UL; Source = ReadSource.Input membershipInput } ] }
+                    { Slot = ReadSlotId 3UL; Source = ReadSource.Input membershipInput }
+                    { Slot = ReadSlotId 4UL; Source = ReadSource.Input dwellInput } ] }
         ScopeEntry.Define {
           Work = operationsWork; Stamp = DefinitionStamp 1UL
           Reads = [ { Slot = ReadSlotId 1UL; Source = ReadSource.Input journalInput }
@@ -1209,6 +1282,12 @@ module Facts =
         | _ ->
           for work in failed do apply (Action.Retry work)
           failed <- Set.empty
+          match input = tickInput, fact with
+          | true, Fact.Tick tick ->
+            let daemonRss = tick.Record |> Option.map (fun h -> int64 h.MemoryMB * 1_048_576L) |> Option.defaultValue 0L
+            let aggregateRss = tick.Telemetry |> Option.map _.AggregateResidentBytes |> Option.defaultValue 0L
+            peakResidentBytes <- max peakResidentBytes (max daemonRss aggregateRss)
+          | _ -> ()
           admitted <- Map.add input ownerSerial admitted
           serial <- serial + 1UL
           let token = ValueToken serial
@@ -1283,11 +1362,45 @@ module Facts =
       | _ -> None
     let boundedReason (reason: string) = if reason.Length <= 512 then reason else reason.Substring(0, 512)
     let withinWorkBudget value =
-      try Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame(PeerWork value).Length <= MaxWorkSnapshotBytes
+      try (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrameVersion ProtocolVersion (PeerWork value)).Length <= MaxWorkSnapshotBytes
       with :? InvalidOperationException -> false
+    let tickResidentBytes (tick: Bozzetto.Server.HealthTick.Tick) =
+      let daemonRss = tick.Record |> Option.map (fun h -> int64 h.MemoryMB * 1_048_576L) |> Option.defaultValue 0L
+      let aggregateRss = tick.Telemetry |> Option.map _.AggregateResidentBytes |> Option.defaultValue 0L
+      max daemonRss aggregateRss
+    let maxTimerDue = TimeSpan.FromDays 45.0
+    let rec scheduleDwellAt (armedAt: DateTime) =
+      let nextExpiry =
+        inputFact agentsInput
+        |> Option.bind (function Fact.Agents state -> Bozzetto.AgentWork.nextDwellExpiry armedAt state | _ -> None)
+      armDwellAt armedAt TimeSpan.Zero nextExpiry
+    and armDwellAt (armedAt: DateTime) floor nextExpiry =
+      dwellGeneration <- dwellGeneration + 1L
+      let run = dwellGeneration
+      dwellTimer |> Option.iter _.Dispose()
+      dwellTimer <- None
+      if not stopped then
+        match nextExpiry with
+        | None -> ()
+        | Some expires ->
+          let delay = expires - armedAt + TimeSpan.FromMilliseconds 1.0
+          let due = min maxTimerDue (max floor delay)
+          let callback _ =
+            lock gate (fun () ->
+              if not stopped && dwellGeneration = run then
+                let firedAt = nowFn ()
+                if firedAt >= expires then
+                  dwellSerial <- dwellSerial + 1L
+                  admit dwellInput dwellSerial (Fact.Dwell firedAt) |> ignore
+                  scheduleDwellAt firedAt
+                else
+                  let floor = if firedAt <= armedAt then TimeSpan.FromMilliseconds 50.0 else TimeSpan.Zero
+                  armDwellAt firedAt floor (Some expires))
+          dwellTimer <- Some(new Timer(TimerCallback callback, null, due, Timeout.InfiniteTimeSpan))
 
     do
       define ()
+      admit dwellInput 0L (Fact.Dwell (nowFn ())) |> ignore
       if localNode.IsSome then
         for KeyValue(node, (producer, _, _)) in sourceSlots do
           publishStatus nodeInputs[node] (Fact.NodeWork {
@@ -1361,18 +1474,22 @@ module Facts =
       lock gate (fun () ->
         producerSlot producer |> Result.bind (fun _ ->
           let previous = nodeValue producer.Source.Node
+          let normalized =
+            match value.Capacity with
+            | Some _ -> value
+            | None -> { value with Capacity = Some (Project.reconcileSnapshotCapacity value) }
           match previous |> Option.bind _.Value with
-          | Some old when value.Sequence < old.Sequence -> Error Refusal.Older
-          | Some old when value.Sequence = old.Sequence && value <> old -> Error Refusal.Conflict
-          | _ when not (withinWorkBudget value) ->
+          | Some old when normalized.Sequence < old.Sequence -> Error Refusal.Older
+          | Some old when normalized.Sequence = old.Sequence && normalized <> old -> Error Refusal.Conflict
+          | _ when not (withinWorkBudget normalized) ->
             publishStatus nodeInputs[producer.Source.Node] (Fact.NodeWork {
               Source = producer.Source; Local = localNode = Some producer.Source.Node; Status = "unavailable"
               Note = "Work snapshot exceeds the encoded observation budget."; Value = previous |> Option.bind _.Value }) |> ignore
             Error Refusal.Oversized
-          | Some old when value = old && (previous |> Option.exists (fun node -> node.Status = "available")) -> Error Refusal.Duplicate
+          | Some old when normalized = old && (previous |> Option.exists (fun node -> node.Status = "available")) -> Error Refusal.Duplicate
           | _ -> publishStatus nodeInputs[producer.Source.Node] (Fact.NodeWork {
               Source = producer.Source; Local = localNode = Some producer.Source.Node
-              Status = "available"; Note = ""; Value = Some value })))
+              Status = "available"; Note = ""; Value = Some normalized })))
 
     member _.PeerUnavailable(producer: ObservationProducer, reason: string) =
       lock gate (fun () ->
@@ -1416,9 +1533,67 @@ module Facts =
         match leases, operations with
         | Some leases, Some operations when previous |> Option.exists (fun old -> snapshot.Revision < old.Snapshot.Revision) -> Error Refusal.Older
         | Some leases, Some operations ->
+          let poolGrants, poolQueue =
+            match inputFact poolInput with
+            | Some(Fact.Pool pool) -> pool.Active, pool.Queue
+            | _ -> [], []
+          let journalEntries =
+            match inputFact journalInput with
+            | Some(Fact.Journal journal) -> journal.Entries
+            | _ -> []
+          let verifiedAtMs =
+            match inputFact livenessInput with
+            | Some(Fact.Liveness liveness) -> liveness.VerifiedAtMs
+            | _ -> Map.empty
+          let activeGrants = poolGrants |> List.map Bozzetto.ExpensiveWorkLease.reconciledGrant
+          let activeByDisplayId = activeGrants |> List.map (fun g -> g.DisplayId, g.Grant) |> Map.ofList
+          let pidStatuses =
+            journalEntries
+            |> List.sortByDescending _.Sequence
+            |> List.choose (fun entry ->
+              match entry.Outcome, entry.Context with
+              | (ComposerJournal.Outcome.Running
+                | ComposerJournal.Outcome.Unknown _
+                | ComposerJournal.Outcome.Abandoned _
+                | ComposerJournal.Outcome.Failed _
+                | ComposerJournal.Outcome.Succeeded), ComposerJournal.Context.LeasedCommand cmd -> Some(entry, cmd)
+              | _ -> None)
+            |> List.distinctBy (fun (_, cmd) -> cmd.LeaseDisplayId)
+            |> List.choose (fun (entry, cmd) ->
+              Map.tryFind cmd.LeaseDisplayId activeByDisplayId
+              |> Option.map (fun grant ->
+                let verified, alive =
+                  match entry.Outcome with
+                  | ComposerJournal.Outcome.Running -> Map.containsKey cmd.RunId verifiedAtMs, true
+                  | ComposerJournal.Outcome.Unknown _ -> false, true
+                  | _ -> true, false
+                Project.mkPidStatus cmd.LeaseDisplayId grant.Holder grant.Kind cmd.ProcessId verified alive))
+          let tickOpt =
+            match inputFact tickInput with
+            | Some(Fact.Tick tick) -> Some tick
+            | _ -> None
+          let pressure = tickOpt |> Option.map _.Level
+          let reconciled =
+            Bozzetto.ExpensiveWorkLease.reconcileCapacity
+              (DateTimeOffset.FromUnixTimeMilliseconds sampledAtMs)
+              pressure
+              activeGrants
+              poolQueue
+              pidStatuses
+          let localCapacity : NodeCapacity =
+            { LeaseCap = reconciled.LeaseCap
+              PidVerifiedLeases = reconciled.PidVerifiedLeases
+              UnverifiedLeases = reconciled.UnverifiedLeases
+              StalePidLeases = reconciled.StalePidLeases
+              MemoryPressure = tickOpt |> Option.map (fun t -> Project.pressureName t.Level) |> Option.defaultValue ""
+              MachineAvailableBytes = tickOpt |> Option.map _.Machine.AvailableBytes |> Option.defaultValue 0L
+              MachineTotalBytes = tickOpt |> Option.map _.Machine.TotalBytes |> Option.defaultValue 0L
+              ResidentBytes = tickOpt |> Option.map tickResidentBytes |> Option.defaultValue 0L
+              PeakResidentBytes = peakResidentBytes }
           this.PublishWork(producer, Project.workSummary {
             Sequence = (previous |> Option.map _.Sequence |> Option.defaultValue -1L) + 1L
-            SampledAtMs = sampledAtMs; Snapshot = snapshot; Leases = leases; Operations = operations; TranscriptsOmitted = false })
+            SampledAtMs = sampledAtMs; Snapshot = snapshot; Leases = leases; Operations = operations
+            TranscriptsOmitted = false; Capacity = Some localCapacity })
         | _ -> Error Refusal.UnknownSource)
 
     /// Effective demand is Foundation-owned and differs from retained cache.
@@ -1444,6 +1619,9 @@ module Facts =
       lock gate (fun () ->
         if not stopped then
           stopped <- true
+          dwellGeneration <- dwellGeneration + 1L
+          dwellTimer |> Option.iter _.Dispose()
+          dwellTimer <- None
           handover <- true
           try apply Action.Retire finally handover <- false
           sinks.Clear()
@@ -1452,11 +1630,48 @@ module Facts =
     member _.Tick(tick: Bozzetto.Server.HealthTick.Tick) = admit tickInput tick.Serial (Fact.Tick tick)
     member _.Pool(pool: Bozzetto.Features.LeaseWatch.Pool) = admit poolInput pool.Serial (Fact.Pool pool)
     member _.Agents(state: Bozzetto.AgentWork.State) =
-      if state.Incarnation <> incarnation then
-        lock gate (fun () -> faults <- faults + 1)
-        Log.warn "[ui-bridge] agent work from incarnation %s refused; the plane is bound to %s" state.Incarnation incarnation
-        Error Refusal.ForeignIncarnation
-      else admit agentsInput state.Sequence (Fact.Agents state)
+      lock gate (fun () ->
+        if state.Incarnation <> incarnation then
+          faults <- faults + 1
+          Log.warn "[ui-bridge] agent work from incarnation %s refused; the plane is bound to %s" state.Incarnation incarnation
+          Error Refusal.ForeignIncarnation
+        else
+          match Map.tryFind agentsInput admitted with
+          | _ when stopped -> Error Refusal.Retired
+          | Some last when state.Sequence < last -> Error Refusal.Older
+          | Some last when state.Sequence = last ->
+            let current = Map.tryFind agentsInput inputs |> Option.bind (fun token -> Map.tryFind token store)
+            if current = Some(Payload.Fact(Fact.Agents state)) then Error Refusal.Duplicate
+            else
+              faults <- faults + 1
+              Log.warn "[ui-bridge] %A republished serial %d with different content" agentsInput state.Sequence
+              Error Refusal.Conflict
+          | _ ->
+            for work in failed do apply (Action.Retry work)
+            failed <- Set.empty
+            let now = nowFn ()
+            dwellSerial <- dwellSerial + 1L
+            admitted <- Map.add dwellInput dwellSerial (Map.add agentsInput state.Sequence admitted)
+            serial <- serial + 1UL
+            let dwellToken = ValueToken serial
+            let dwellStamp = InputStamp serial
+            serial <- serial + 1UL
+            let agentsToken = ValueToken serial
+            let agentsStamp = InputStamp serial
+            let prevDwell = Map.tryFind dwellInput inputs
+            let prevAgents = Map.tryFind agentsInput inputs
+            store <- store |> Map.add dwellToken (Payload.Fact(Fact.Dwell now)) |> Map.add agentsToken (Payload.Fact(Fact.Agents state))
+            inputs <- inputs |> Map.add dwellInput dwellToken |> Map.add agentsInput agentsToken
+            apply (Action.SetInputs [
+              { InputValue.Input = dwellInput; Stamp = dwellStamp; Value = dwellToken }
+              { InputValue.Input = agentsInput; Stamp = agentsStamp; Value = agentsToken }
+            ])
+            prevDwell |> Option.iter (fun old -> store <- Map.remove old store)
+            prevAgents |> Option.iter (fun old -> store <- Map.remove old store)
+            sets <- sets + 1
+            if sets >= recycleBound then recycle ()
+            scheduleDwellAt now
+            Ok())
     member _.Membership(frame: Bozzetto.Cohort.CohortFrame<Bozzetto.MemberTable.MemberId>) =
       let membership = membershipOf frame
       admit membershipInput membership.Version (Fact.Membership membership)
@@ -1737,7 +1952,7 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
     stopping.Register(fun () -> subscription.Dispose()) |> ignore
     observation |> Option.iter (fun (graph, _, _) ->
       let _, changed = graph.Register(fun kind _ ->
-        if kind = Push.Leases || kind = Push.Operations then refreshLocalWork ())
+        if kind = Push.Health || kind = Push.Leases || kind = Push.Operations then refreshLocalWork ())
       stopping.Register(fun () -> changed.Dispose()) |> ignore
       refreshLocalWork ())
     Async.Start(snapshotPushes (), stopping)

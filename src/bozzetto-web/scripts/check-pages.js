@@ -89,8 +89,8 @@ async function tab(origin, route, width) {
   await call('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
   await call('Page.navigate', { url: origin + route }, sessionId);
   const facts = route.startsWith('/dashboard')
-    ? "document.querySelector('.daemon-health')?.innerText.includes('Healthy') && document.body.innerText.includes('Mock implementer') && document.body.innerText.includes('Earlier passes (2)')"
-    : "document.body.innerText.includes('Work across nodes')";
+    ? "document.querySelector('.daemon-health')?.innerText.includes('Healthy') && document.body.innerText.includes('Mock implementer') && document.body.innerText.includes('Recent completed (2)')"
+    : "document.body.innerText.includes('Work across nodes') && document.querySelectorAll('.fleet-node-card').length === 4";
   await waitFor(sessionId, `[...document.querySelectorAll('span')].some(s => s.innerText === 'connected') && (${facts})`);
   return sessionId;
 }
@@ -135,6 +135,10 @@ async function check() {
     links: [...document.querySelectorAll('a')].map(a => ({path: a.getAttribute('href'), title: a.getAttribute('title'), active: a.classList.contains('btn-active')})),
     overflow: document.documentElement.scrollWidth > innerWidth
   })`);
+  const pageTraffic = session => ({
+    fetches: pageRequests.filter(r => r.session === session).length,
+    commands: pageFrames.filter(f => f.session === session).length
+  });
   const d = await inspect(dashboard);
   const c = await inspect(work);
   await writeFile(join(evidence, 'views.json'), JSON.stringify({dashboard: d, work: c}, null, 2));
@@ -153,6 +157,46 @@ async function check() {
   assert.equal(knownAge.split(' · ')[0], firstWorkAges.one.split(' · ')[0], 'clock push changes age without changing the retained sample timestamp');
   assert.match(knownAge, / · .*\d+s ago$/, 'known pushed clock supplies the relative age');
   assert.equal(pageFrames.filter(f=>f.command === 2).length, 0, 'initial node selection does not silently start observation');
+  const fleet = "document.querySelector('.fleet-capacity-grid')";
+  const fleetCard = name => `${fleet}.querySelector('.fleet-node-card[data-node="${name}"]')`;
+  const fleetText = (name, region) => `${fleetCard(name)}.querySelector('.fleet-${region}')?.innerText`;
+  const fleetFits = `(() => { const grid = ${fleet}; return grid.clientWidth > 0 && grid.scrollWidth <= grid.clientWidth; })()`;
+  const fleetOrderIn = root => evaluate(work, `[...${root}.querySelectorAll('.fleet-node-card')].map(card => card.dataset.node)`);
+  const assertFleetOrder = order => assert.deepEqual(order, ['controller', 'one', 'two', 'three'], 'fleet lists the controller first, then ONE, TWO and THREE');
+  assertFleetOrder(await fleetOrderIn(fleet));
+  // Mutate a detached copy so the keyed renderer keeps ownership of live rows.
+  const swappedFleet = `(() => {
+    const copy = ${fleet}.cloneNode(true);
+    const [controller, one] = copy.querySelectorAll('.fleet-node-card');
+    controller.before(one);
+    return copy;
+  })()`;
+  const swappedOrder = await fleetOrderIn(swappedFleet);
+  assert.deepEqual(swappedOrder, ['one', 'controller', 'two', 'three'], 'the fault injects the swapped fleet order');
+  assert.throws(() => assertFleetOrder(swappedOrder), {code:'ERR_ASSERTION'}, 'fleet assertion catches swapped controller and ONE');
+  assert.deepEqual(await evaluate(work, `[...${fleet}.querySelectorAll('h3')].map(h => h.textContent)`), ['CONTROLLER', 'ONE', 'TWO', 'THREE'], 'fleet labels use the published node identities');
+  const assertFleetMetrics = async (name, expected) => {
+    for (const [region, snippets] of Object.entries(expected)) {
+      const actual = await evaluate(work, fleetText(name, region));
+      for (const snippet of snippets) assert.ok(actual?.includes(snippet), `${name} ${region} shows ${snippet}: ${actual}`);
+    }
+  };
+  await assertFleetMetrics('controller', {
+    leases: ['0 / 4', '0 PID-verified'], queue: ['0 queued'], ram: ['avail /', 'peak', 'memory Normal'],
+    'active-op': ['Idle'], 'compiler-sep': ['Composer sessions: 0 open']
+  });
+  await assertFleetMetrics('one', {
+    leases: ['1 / 4', '1 PID-verified'], queue: ['1 queued', 'oldest'], ram: ['avail /', 'peak'],
+    'active-op': ['clef', 'test_suite_run', 'PID 6543', 'elapsed '], 'compiler-sep': ['Composer sessions: 0 open']
+  });
+  await assertFleetMetrics('two', {
+    leases: ['0 / ?', '0 PID-verified'], queue: ['0 queued'], ram: ['RAM telemetry unavailable'], 'active-op': ['Idle']
+  });
+  assert.doesNotMatch(await evaluate(work, `${fleetCard('two')}.innerText`), /0 \/ 4|\b0(?:\.0)? B\b|\bNormal\b/, 'legacy cap, RAM and pressure stay unavailable');
+  const unavailableFleet = await evaluate(work, `${fleetCard('three')}.innerText`);
+  assert.ok(unavailableFleet.includes('Capacity unavailable — no idle state inferred.'), 'unobserved node reports unavailable capacity');
+  assert.doesNotMatch(unavailableFleet, /0 \/ [\d?]|0 queued|\b0(?:\.0)? B\b|\bIdle\b/, 'unobserved capacity has no fabricated counts or idle status');
+  assert.equal(await evaluate(work, fleetFits), true, 'fleet capacity fits the 900px viewport');
   const resourcePicker = "document.querySelector('select[aria-label=\"Resource node\"]')";
   assert.equal(await evaluate(work, `${resourcePicker} === null`), true, 'Work has no resource selector');
   for (const page of [dashboard]) {
@@ -166,14 +210,14 @@ async function check() {
   const currentNames = () => evaluate(dashboard, `[...${agentPanel}.querySelectorAll(':scope > div.border-t:not(.presence) > .font-semibold')].map(s => s.textContent.split(' · ')[0])`);
   const presenceRows = () => evaluate(dashboard, `[...${agentPanel}.querySelectorAll(':scope > div.presence > .font-semibold')].map(s => s.textContent)`);
   const trafficBeforeExpansion = {fetches: pageRequests.length, commands: pageFrames.length};
-  for (const text of ['Mock implementer', 'Implementer · reported running', 'Mock uncertain', 'Observer · reported unknown', 'Updated ', 'Earlier passes (2)']) assert.ok(d.text.includes(text), `current work: ${text}`);
+  for (const text of ['Mock implementer', 'Implementer · reported running', 'Mock uncertain', 'Observer · reported unknown', 'Mock dwelling', 'Verifier · reported completed', 'dwelling green pass', 'Updated ', 'Recent completed (2)']) assert.ok(d.text.includes(text), `current work: ${text}`);
   for (const text of ['Mock verifier', 'Mock observer', '250 tokens (cumulative)', '$0.125 Pi estimate']) assert.ok(!d.text.includes(text), `details start hidden: ${text}`);
-  assert.deepEqual(await currentNames(), ['Mock uncertain', 'Mock implementer'], 'current and uncertain work stay visible, newest first');
+  assert.deepEqual(await currentNames(), ['Mock uncertain', 'Mock dwelling', 'Mock implementer'], 'running, uncertain and still-dwelling work stay visible, newest first');
   // Presence is derived from leases and membership the daemon owns: shown without a report, newest first.
   assert.deepEqual(await presenceRows(), ['Mock builder · holds full_build', 'mcp:quiet · Observer member · no report yet'], 'derived presence rows follow the reported work, newest first');
   for (const text of ['lease since', 'member renewed']) assert.ok(d.text.includes(text), `presence source: ${text}`);
-  assert.deepEqual(await historyNames(), ['Mock observer', 'Mock verifier'], 'earlier passes are newest first, not input/id order');
-  assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'earlier passes start collapsed');
+  assert.deepEqual(await historyNames(), ['Mock observer', 'Mock verifier'], 'daemon-aged runs are newest first');
+  assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'Recent completed starts collapsed');
   assert.equal(await evaluate(dashboard, `${agentPanel}.querySelectorAll('details[open]').length`), 0, 'per-pass details start collapsed too');
   assert.equal(await evaluate(dashboard, `(() => { const cards = [...document.querySelectorAll('h2')].map(h => h.textContent); return cards.indexOf('Agent work') < cards.indexOf('Whole-machine resources'); })()`), true, 'agent work precedes resources');
   // Each node groups its actual worker, leases and active runs ahead of recent project summaries and collapsed history.
@@ -196,7 +240,7 @@ async function check() {
   // The reversal is applied to a detached copy: the live rows belong to the
   // keyed renderer, whose row ranges a foreign DOM move would corrupt.
   const historyNamesIn = root => evaluate(dashboard, `[...${root}.querySelectorAll(':scope > details > summary')].map(s => s.textContent.split(' · ')[0])`);
-  const assertHistoryOrderIn = root => historyNamesIn(root).then(names => assert.deepEqual(names, ['Mock observer', 'Mock verifier'], 'earlier passes must be newest first'));
+  const assertHistoryOrderIn = root => historyNamesIn(root).then(names => assert.deepEqual(names, ['Mock observer', 'Mock verifier'], 'Recent completed must be newest first'));
   const reversedHistory = `(() => { const d = ${historyDetails}.cloneNode(true); d.append(...[...d.querySelectorAll(':scope > details')].reverse()); return d; })()`;
   await assert.rejects(() => assertHistoryOrderIn(reversedHistory), {code:'ERR_ASSERTION'}, 'latest-first assertion catches reversed history');
   await assertHistoryOrderIn(historyDetails);
@@ -207,7 +251,9 @@ async function check() {
     }
   };
   assertDashboardHeadings(d);
+  assert.ok(c.headings.includes('Fleet capacity'), 'Work exposes the fleet capacity heading');
   for (const text of ['Work across nodes', 'Controller compiler controls']) assert.ok(c.text.includes(text), text);
+  assert.equal(await evaluate(work, `!!(${fleet}.compareDocumentPosition(document.querySelector('.controller-compiler')) & Node.DOCUMENT_POSITION_FOLLOWING)`), true, 'fleet capacity precedes compiler controls');
   assert.ok(c.text.includes('No open projects.'), 'visible controller sessions report their actual empty state');
   for (const text of ['Controller projects', 'No runs yet:']) assert.ok(!c.text.includes(text), `empty controller state does not replace cross-node work: ${text}`);
   assert.equal(await evaluate(work, "document.querySelector('.controller-compiler').open"), true, 'controller sessions and worker start visible');
@@ -358,6 +404,7 @@ async function check() {
   assert.equal(initialCollapsed.open, false, 'daemon details start collapsed');
   assert.deepEqual(initialCollapsed.rows, ['daemon'], 'initial collapsed snapshot has no worker');
   const trafficBeforePush = {fetches: pageRequests.length, commands: pageFrames.length};
+  const workTrafficBeforePush = pageTraffic(work);
   // An independent client opens two projects against the shared mock owner.
   // The human page issues no command: both projects must arrive by push.
   // This is a bridge regression, not a claim of live MCP/compiler execution.
@@ -393,18 +440,24 @@ async function check() {
     })()`);
     const activeLivenessUpdated = await evaluate(work, `${initialNode('one')}.querySelector('.node-active .node-operation-liveness')?.textContent ?? ''`);
     assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(activeLivenessUpdated), `updated liveness keeps unified local time format: ${activeLivenessUpdated}`);
-    assert.deepEqual(await currentNames(), ['Mock implementer', 'Mock uncertain'], 'a pushed update moves current work to the top');
+    assert.deepEqual(await currentNames(), ['Mock implementer', 'Mock uncertain', 'Mock dwelling'], 'a pushed update moves current work to the top and keeps the dwelling run');
     assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'progress does not expand history');
     // Preserve a chosen per-pass expansion even when new completed work enters
     // ahead of it. The outer history disclosure stays closed throughout.
     await evaluate(dashboard, `${historyDetails}.querySelector(':scope > details').open = true`);
+    await evaluate(work, `(() => { window.__fleetOneCard = ${fleetCard('one')}; })()`);
     await openProject('SecondAgentProject', 102);
     await waitFor(work, "document.body.innerText.includes('SideBySide.fidproj') && document.body.innerText.includes('SecondAgentProject.fidproj')");
-    await waitFor(dashboard, "document.body.innerText.includes('Earlier passes (3)')");
-    assert.deepEqual(await currentNames(), ['Mock uncertain'], 'completion removes the pass from current work');
-    assert.deepEqual(await historyNames(), ['Mock implementer', 'Mock observer', 'Mock verifier'], 'completed work enters history newest first');
+    await waitFor(work, `${fleetText('one', 'active-op')}?.includes('Idle') && ${fleetText('controller', 'compiler-sep')}?.includes('Composer sessions: 2 open')`);
+    await assertFleetMetrics('one', {leases: ['0 / 4', '0 PID-verified'], queue: ['0 queued'], 'active-op': ['Idle']});
+    assert.equal(await evaluate(work, `window.__fleetOneCard === ${fleetCard('one')}`), true, 'ONE settles on the same fleet card and document');
+    assert.deepEqual(pageTraffic(work), workTrafficBeforePush, 'fleet updates require no Work fetch, XHR or bridge command');
+    await waitFor(dashboard, "document.body.innerText.includes('Recent completed (4)')");
+    assert.deepEqual(await currentNames(), ['Mock uncertain'], 'the daemon ages both settled runs off the primary board');
+    assert.deepEqual(await historyNames(), ['Mock implementer', 'Mock dwelling', 'Mock observer', 'Mock verifier'], 'daemon-aged runs enter history newest first');
     assert.equal(await evaluate(dashboard, `${historyDetails}.open`), false, 'completion does not expand history');
-    assert.equal(await evaluate(dashboard, `${historyDetails}.querySelectorAll(':scope > details')[1].open`), true, 'existing per-pass disclosure state survives reorder');
+    const historyOpen = await evaluate(dashboard, `[...${historyDetails}.querySelectorAll(':scope > details')].map(row => row.open)`);
+    assert.deepEqual(historyOpen, [false, false, true, false], 'the observer disclosure stays open after moving to the third row');
     assert.ok(!(await inspect(dashboard)).text.includes('Mock implementer'), 'completed work no longer fills the current view');
     await evaluate(dashboard, `${historyDetails}.querySelector(':scope > summary').click(); ${historyDetails}.querySelector(':scope > details > summary').click()`);
     assert.ok((await inspect(dashboard)).text.includes('mock read completed'), 'expansion immediately exposes the pushed final result');
@@ -427,14 +480,17 @@ async function check() {
       window.__pressureBadge = [...${strip}.querySelectorAll('.badge')].find(b => b.textContent.startsWith('memory '));
       new MutationObserver(record).observe(${strip}, {subtree:true, childList:true, characterData:true, attributes:true});
     })()`);
-    const liveTraffic = () => ({fetches: pageRequests.filter(r => r.session === dashboard).length, commands: pageFrames.filter(f => f.session === dashboard).length});
+    const liveTraffic = () => pageTraffic(dashboard);
     const trafficBeforeHealth = liveTraffic();
     const strained = await openProject('LivePressure', 103);
     await waitFor(dashboard, `${healthState} === 'Degraded|memory Tight'`);
+    await waitFor(work, `${fleetText('controller', 'leases')}?.includes('0 / 1')`);
+    await assertFleetMetrics('controller', {leases: ['0 / 1', '0 PID-verified'], ram: ['memory Tight']});
     const strainedClass = await evaluate(dashboard, 'window.__pressureBadge.className');
     assert.ok(strainedClass.includes('badge-warning'), `tight pressure restyles the same badge: ${strainedClass}`);
     await closeProject(strained, 104);
     await waitFor(dashboard, `${healthState} === 'Healthy|memory Normal'`);
+    await waitFor(work, `${fleetText('controller', 'leases')}?.includes('0 / 4')`);
     const live = await evaluate(dashboard, `({
       states: window.__healthStates,
       sameDocument: window.__sameDocument,
@@ -480,10 +536,7 @@ async function check() {
         retrievalStates[name].push(state);
       }
     };
-    const retrievalTraffic = () => Object.fromEntries(retrievalTabs.map(([name, page]) => [name, {
-      fetches: pageRequests.filter(r => r.session === page).length,
-      commands: pageFrames.filter(f => f.session === page).length,
-    }]));
+    const retrievalTraffic = () => Object.fromEntries(retrievalTabs.map(([name, page]) => [name, pageTraffic(page)]));
     const trafficBeforeRetrieval = retrievalTraffic();
     await assertRetrieval('On main · Index gen 12 · Fresh', 'badge-success', ['Snapshot snap-gen-12', 'Published ', 'Mock index publication']);
     const indexTarget = await openProject('retrieval-index', 105);
@@ -628,15 +681,16 @@ async function check() {
   await writeFile(join(evidence, 'node-controls.json'), JSON.stringify({remoteReadOnly:true, knownZeroSeparateFromUnavailable:true, activeLeaseShown:true, focusSwitched:true, resourceNodePicker:true, resourcesDashboardOnly:true, navigationStartsNoResources:true, stopsPreviousSelection:true, unavailableSelectionExplicit:true, bootAgeUnknown:true, pushedClockUpdatesAge:true, foreignNodeIncarnationAndOlderSequenceRejected:true, previousSameSourceCorrelationRejected:true, stoppedObservationAccepted:true, browserCommandsBinary:true, selectedTranscriptReadback:true, exactSplitUtf8Bytes:true, explicitSourceTruncation:true, foreignTranscriptIncarnationRejected:true, storageRefusalVisible:true},null,2));
   // Reload and trailing-slash bookmarks select the right view as well.
   await call('Page.navigate', { url: origin + '/work/' }, work);
-  await waitFor(work, "document.title === 'Work · Bozzetto' && document.body.innerText.includes('SideBySide.fidproj')");
+  await waitFor(work, "document.title === 'Work · Bozzetto' && document.body.innerText.includes('SideBySide.fidproj') && document.querySelectorAll('.fleet-node-card').length === 4");
   for (const [name, session] of [['dashboard', dashboard], ['work', work]]) {
     const { data } = await call('Page.captureScreenshot', { format: 'png' }, session);
     await writeFile(join(evidence, name + '.png'), Buffer.from(data, 'base64'));
     await call('Emulation.setDeviceMetricsOverride', { width: 480, height: 900, deviceScaleFactor: 1, mobile: false }, session);
     assert.equal((await inspect(session)).overflow, false, `${name} fits a narrow viewport`);
+    if (session === work) assert.equal(await evaluate(work, fleetFits), true, 'fleet capacity fits the 480px viewport');
   }
   assert.deepEqual(browserErrors, [], 'no browser runtime errors');
-  console.log(`Page checks passed: live retrieval on both pages (#43), live pushed health transition (#36), short local dates (#14), latest-first agent accordions, pushed progress/completion, retained disclosure state, isolated views, live collapsed store, native information controls, navigation, shared-owner command, reload, 900/480 px layouts. Evidence: ${evidence}`);
+  console.log(`Page checks passed: live retrieval on both pages (#43), live pushed health transition (#36), short local dates (#14), Dashboard dwell and live fleet capacity (#40), retained disclosure state, isolated views, live collapsed store, native information controls, navigation, shared-owner command, reload, 900/480 px layouts. Evidence: ${evidence}`);
 }
 let timeout;
 try {

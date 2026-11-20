@@ -37,6 +37,7 @@
         <Compile Include="WorkObservationTests.fs" />
         <Compile Include="RetrievalObservationTests.fs" />
         <Compile Include="BridgeFactsTests.fs" />
+        <Compile Include="FleetCapacityGridTests.fs" />
         <Compile Include="ComposerJournalTests.fs" />
         <Compile Include="ResourceMonitoringTests.fs" />
         <Compile Include="TestCountBadge.fs" />

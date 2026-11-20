@@ -146,34 +146,35 @@ let mutable private retrieval = freshRetrieval 12L (int64 startedAt)
 /// Explicitly synthetic reports cover populated rows, unknown usage and known
 /// zero. They are never model-worker, compiler or installed-delivery evidence.
 let private agentWork () =
-  // Existing project-open controls advance a synthetic pass: progress, then
-  // completion. No timer, extra command or live-daemon activity is invented.
+  // Project opens advance the synthetic reports and their dwell flags.
   let stage = min 2 sessions.Count
-  let run id memberId name role usage status offset : AgentRun = {
+  let run id memberId name role usage status aged offset : AgentRun = {
     Id = id; Member = memberId; Role = role; Name = name; Session = "mock-session"
     ReportSequence = 1L; Model = "mock-model"; Endpoint = "mock inference"
     Project = "/mock/Visibility.fidproj"; Focus = "mock visibility check"; Operation = "read"
     Status = status; UpdatedAtMs = int64 startedAt + offset; Activity = [| "read" |]
-    OmittedActivity = 0L; Usage = usage
+    OmittedActivity = 0L; Usage = usage; Aged = aged
   }
   let implementation =
     run "mock-implementation" "mock:impl" "Mock implementer" "Implementer"
-      (Some { Input = 100L; Output = 50L; CacheRead = 100L; CacheWrite = 0L; Total = 250L; EstimateUsd = Some 0.125 }) "running" -3000L
+      (Some { Input = 100L; Output = 50L; CacheRead = 100L; CacheWrite = 0L; Total = 250L; EstimateUsd = Some 0.125 }) "running" false -3000L
   let implementation =
     if stage = 0 then implementation
     else
       let operation = if stage = 1 then "mock read progressed" else "mock read completed"
       { implementation with Status = (if stage = 1 then "running" else "completed")
                             ReportSequence = int64 stage + 1L; UpdatedAtMs = int64 startedAt + int64 stage
-                            Operation = operation; Activity = [| operation; "read" |] }
+                            Operation = operation; Activity = [| operation; "read" |]; Aged = (stage = 2) }
+  let dwelling = run "mock-dwelling" "mock:dwelling" "Mock dwelling" "Verifier" None "completed" (stage = 2) -1500L
   AgentWork {
     OmittedRuns = 0L; Refusal = ""; Incarnation = "mock-incarnation"; Sequence = 4L + int64 stage; ExecutionHost = "mock-host"
     Runs = [|
       implementation
-      run "mock-audit" "mock:verifier" "Mock verifier" "Verifier" None "completed" -2000L
+      run "mock-audit" "mock:verifier" "Mock verifier" "Verifier" None "completed" true -2000000L
       run "mock-zero" "mock:observer" "Mock observer" "Observer"
-        (Some { Input = 0L; Output = 0L; CacheRead = 0L; CacheWrite = 0L; Total = 0L; EstimateUsd = None }) "disconnected" -1000L
-      run "mock-uncertain" "mock:uncertain" "Mock uncertain" "Observer" None "unknown" -1000L
+        (Some { Input = 0L; Output = 0L; CacheRead = 0L; CacheWrite = 0L; Total = 0L; EstimateUsd = None }) "disconnected" true -1850000L
+      run "mock-uncertain" "mock:uncertain" "Mock uncertain" "Observer" None "unknown" false -1000L
+      { dwelling with Operation = "dwelling green pass" }
     |]
     // Derived presence: a lease the mock implementer holds and a member that
     // has made no report, so the panel shows both shapes.
@@ -202,14 +203,30 @@ let private leases () =
 let mutable private workRevision = 0L
 let private workNodes () =
   workRevision <- workRevision + 1L
+  let open' = sessions |> Seq.filter (fun s -> not s.Status.Closed) |> Seq.length
   let snapshot : WorkSnapshot = {
     TranscriptsOmitted = true
     Sequence = workRevision; SampledAtMs = int64 (nowMs ())
     Snapshot = { Revision = revision; Worker = worker; Sessions = sessions |> Seq.map _.Status |> Seq.toArray }
     Leases = { Revision = leaseRevision; Active = active.ToArray(); Queued = queued |> Seq.map (fun (wait, _, _) -> wait) |> Seq.toArray }
     Operations = { Revision = 0L; Incarnation = "mock-journal"; StorageError = None; Entries = [||] }
+    Capacity = Some {
+      LeaseCap = Some (if open' >= 3 then 1 else 4); PidVerifiedLeases = active.Count
+      UnverifiedLeases = 0; StalePidLeases = 0
+      MemoryPressure = (if open' >= 3 then "Tight" else "Normal")
+      MachineAvailableBytes = (if open' >= 3 then 11_982_958_756L else 38_500_000_000L)
+      MachineTotalBytes = 66_571_993_088L; ResidentBytes = 186_000_000L; PeakResidentBytes = 240_000_000L
+    }
   }
-  let remote = { snapshot with Snapshot = { Revision = 0L; Worker = Idle; Sessions = [||] }; Leases = { Revision = 0L; Active = [||]; Queued = [||] } }
+  let remote = {
+    snapshot with
+      Snapshot = { Revision = 0L; Worker = Idle; Sessions = [||] }
+      Leases = { Revision = 0L; Active = [||]; Queued = [||] }
+      Capacity = Some {
+        LeaseCap = None; PidVerifiedLeases = 0; UnverifiedLeases = 0; StalePidLeases = 0; MemoryPressure = ""
+        MachineAvailableBytes = 0L; MachineTotalBytes = 0L; ResidentBytes = 0L; PeakResidentBytes = 0L
+      }
+  }
   let finished = sessions.Count >= 2
   let progressed = sessions.Count = 1
   let livenessAt = if progressed then startedAt + 45000. else startedAt - 2000.
@@ -247,12 +264,19 @@ let private workNodes () =
       Lease = Some { Kind = "full_build"; LeaseId = "older-abandoned-lease"; RunId = "older-abandoned-run"; Executable = "/mock/dotnet"
                      Arguments = [| "build"; "/mock/older-abandoned" |]; ProcessId = 33574; StartedAtMs = int64 startedAt - 172860000L }
       Run = None }
-  let busy = { remote with
-                Snapshot = { remote.Snapshot with Worker = Running { Target = { Host = "fixture-host"; Epoch = "fixture-epoch" }; CompilerVersion = "fixture-compiler"; ProcessId = Some 7654 } }
-                Operations = { remote.Operations with Entries = Array.concat [ [| run |]; history; [| old; expired |] ] }
-                Leases = { remote.Leases with
-                             Active = if finished then [||] else [| { Id = "fixture-lease"; Kind = "test_suite_run"; Holder = "fixture ONE test · /mock/clef"; GrantedAtMs = int64 startedAt; ExpiresAtMs = leaseExpiresAt } |]
-                             Queued = if finished then [||] else [| { Kind = "full_build"; Holder = "fixture queued build · /mock/Farscape"; RequestedAtMs = int64 startedAt } |] } }
+  let busy = {
+    remote with
+      Snapshot = { remote.Snapshot with Worker = Running { Target = { Host = "fixture-host"; Epoch = "fixture-epoch" }; CompilerVersion = "fixture-compiler"; ProcessId = Some 7654 } }
+      Operations = { remote.Operations with Entries = Array.concat [ [| run |]; history; [| old; expired |] ] }
+      Leases = { remote.Leases with
+                   Active = if finished then [||] else [| { Id = "fixture-lease"; Kind = "test_suite_run"; Holder = "fixture ONE test · /mock/clef"; GrantedAtMs = int64 startedAt; ExpiresAtMs = leaseExpiresAt } |]
+                   Queued = if finished then [||] else [| { Kind = "full_build"; Holder = "fixture queued build · /mock/Farscape"; RequestedAtMs = int64 startedAt } |] }
+      Capacity = Some {
+        LeaseCap = Some 4; PidVerifiedLeases = (if finished then 0 else 1); UnverifiedLeases = 0; StalePidLeases = 0
+        MemoryPressure = "Normal"; MachineAvailableBytes = 48_000_000_000L; MachineTotalBytes = 64_000_000_000L
+        ResidentBytes = 512_000_000L; PeakResidentBytes = 768_000_000L
+      }
+  }
   WorkNodes { Revision = workRevision; Nodes = [|
     { Source = { Node = "controller"; Incarnation = "mock-controller" }; Local = true; Status = "available"; Note = "Synthetic controller fixture"; Value = Some snapshot }
     { Source = { Node = "one"; Incarnation = "mock-one" }; Local = false; Status = "available"; Note = "Synthetic remote build fixture"; Value = Some busy }

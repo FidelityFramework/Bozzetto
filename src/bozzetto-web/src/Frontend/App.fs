@@ -632,8 +632,7 @@ let private workerPanel (stores: Stores) (connected: unit -> bool) (dispatch: Co
       |]
     |])
 
-let private currentAgent (agent: AgentView) =
-  agent.status = "running" || agent.status = "unknown"
+let private primaryAgent (agent: AgentView) = not agent.aged
 
 let private agentDetails (agent: unit -> AgentView) =
   div [| cls "flex flex-col gap-1 py-2 text-xs break-words" |] [|
@@ -664,7 +663,7 @@ let private agentsPanel (stores: Stores) =
       div [| cls "flex items-center gap-2" |] [|
         h2 [| cls "text-sm font-bold uppercase tracking-wider opacity-80 flex-1" |] [| text "Agent work" |]
         information "Agent accounting" (fun () -> [|
-          "Current reporting activity stays visible. Earlier passes are expandable, newest first. Missing reports do not establish that no work is happening."
+          "Active and recently settled runs stay visible until their dwell window expires, then collapse into Recent completed, newest first. Missing reports do not establish that no work is happening."
           "Presence rows derive from facts the daemon owns, a lease held or queued and cohort membership, so an agent that never reports is still seen."
           "Identity, progress and usage are participant-reported; unknown usage and cost are not zero."
           "Execution host: " + stores.ExecutionHost.Value + " · publication " + stores.AgentSequence.Value
@@ -675,12 +674,18 @@ let private agentsPanel (stores: Stores) =
         para [| cls "text-xs opacity-70" |] [| rx (fun () -> stores.AgentOmittedRuns.Value + " older terminal runs omitted from this board.") |])
       show (fun () -> stores.AgentRefusal.Value <> "") (fun () ->
         para [| cls "text-xs text-error" |] [| rx (fun () -> stores.AgentRefusal.Value) |])
-      showElse (fun () -> agents () |> Array.exists currentAgent || stores.Presence.Value.Length > 0)
+      showElse (fun () -> (agents () |> Array.exists primaryAgent) || stores.Presence.Value.Length > 0)
         (fun () ->
           fragment [|
-            each (fun (agent: AgentView) -> agent.id) (fun () -> agents () |> Array.filter currentAgent |> newestFirst) (fun agent ->
+            each (fun (agent: AgentView) -> agent.id) (fun () -> agents () |> Array.filter primaryAgent |> newestFirst) (fun agent ->
               div [| cls "border-t border-base-content/10 pt-2 text-xs break-words" |] [|
-                div [| cls "font-semibold" |] [| rx (fun () -> (agent ()).name + " · " + (agent ()).role + " · reported " + (agent ()).status) |]
+                div [| cls "font-semibold" |] [|
+                  rx (fun () -> (agent ()).name + " · " + (agent ()).role + " · reported " + (agent ()).status)
+                  show (fun () ->
+                    let a = agent ()
+                    not a.aged && a.status <> "running" && a.status <> "unknown") (fun () ->
+                    span [| cls "badge badge-xs badge-ghost ml-1" |] [| text "dwelling" |])
+                |]
                 div [| cls "opacity-60" |] [| rx (fun () -> "Updated " + clockTime (agent ()).updatedAt + " · " + (agent ()).model + " · " + (agent ()).endpoint) |]
                 div [||] [| rx (fun () -> (agent ()).project + " · " + (agent ()).operation) |]
                 details [||] [|
@@ -710,12 +715,12 @@ let private agentsPanel (stores: Stores) =
               elif stores.AgentIncarnation.Value = "" then "No agent board received from the daemon yet."
               else "No agents present: no lease held or queued, no cohort member, no running report.")
           |])
-      show (fun () -> agents () |> Array.exists (currentAgent >> not)) (fun () ->
-        details [| cls "border-t border-base-content/10 pt-2" |] [|
+      show (fun () -> agents () |> Array.exists _.aged) (fun () ->
+        details [| flag "open" false; cls "border-t border-base-content/10 pt-2" |] [|
           summary [| cls "cursor-pointer text-xs opacity-60" |] [|
-            rx (fun () -> "Earlier passes (" + string (agents () |> Array.filter (currentAgent >> not) |> Array.length) + ")")
+            rx (fun () -> "Recent completed (" + string (agents () |> Array.filter _.aged |> Array.length) + ")")
           |]
-          each (fun (agent: AgentView) -> agent.id) (fun () -> agents () |> Array.filter (currentAgent >> not) |> newestFirst) (fun agent ->
+          each (fun (agent: AgentView) -> agent.id) (fun () -> agents () |> Array.filter _.aged |> newestFirst) (fun agent ->
             details [| cls "border-t border-base-content/10 mt-2 pt-2 text-xs break-words" |] [|
               summary [| cls "cursor-pointer font-semibold" |] [|
                 rx (fun () -> (agent ()).name + " · " + (agent ()).role + " · reported " + (agent ()).status + " · " + clockTime (agent ()).updatedAt)
@@ -837,6 +842,15 @@ let private runningOperation (node: NodeWorkView) (operation: NodeOperationView)
   || operation.outcome.StartsWith("unknown:", System.StringComparison.Ordinal)
   || (operation.hasLease && (node.leases |> Array.exists (fun lease -> lease.id = operation.leaseId)))
 
+let private activeOperations (node: NodeWorkView) =
+  node.operations |> Array.filter (runningOperation node)
+
+let private operationStartedAt (operation: NodeOperationView) =
+  if operation.startedAt > 0. then operation.startedAt else operation.at
+
+let private openNodeSessions (node: NodeWorkView) =
+  node.sessions |> Array.filter (fun session -> not session.closed)
+
 let private operationKey (node: NodeWorkView) (operation: NodeOperationView) =
   node.id + ":" + node.journal + ":" + operation.sequence
 
@@ -868,6 +882,123 @@ let private formatLivenessMessage (message: string) =
 let private elapsedText (startMs: float) (endMs: float) =
   if startMs > 0. && endMs >= startMs then " · elapsed " + duration (endMs - startMs)
   else ""
+
+let private hasRamTelemetry (capacity: NodeCapacityView) =
+  capacity.machineTotal > 0. || capacity.resident > 0. || capacity.peakResident > 0. || capacity.memoryPressure <> ""
+
+let private fleetCapacityGrid (stores: Stores) (connected: unit -> bool) =
+  comp (fun () ->
+    let nodeRank (node: NodeWorkView) =
+      if node.local then 0
+      else
+        match node.id.ToLowerInvariant() with
+        | "one" -> 1
+        | "two" -> 2
+        | "three" -> 3
+        | _ -> 4
+    let nodes = Api.createMemo (fun _ -> stores.Nodes.Value |> Array.sortBy (fun node -> nodeRank node, node.id))
+    let queueText (node: NodeWorkView) =
+      if Array.isEmpty node.queue then "0 queued"
+      else
+        let earliest = (node.queue |> Array.minBy _.requestedAt).requestedAt
+        let uptime = stores.Uptime.Value
+        let now = if uptime < 0. then node.sampledAt else stores.StartedAt.Value + uptime
+        let age = if uptime < 0. && earliest > node.sampledAt then "awaiting clock" else duration (max 0. (now - earliest))
+        string node.queue.Length + " queued · oldest " + age
+    let operationText (node: NodeWorkView) (active: NodeOperationView array) =
+      match Array.tryHead active with
+      | Some op ->
+        let uptime = stores.Uptime.Value
+        let elapsed =
+          if uptime < 0. then " · awaiting clock"
+          else elapsedText (operationStartedAt op) (stores.StartedAt.Value + uptime)
+        let more = if active.Length > 1 then " · +" + string (active.Length - 1) + " more" else ""
+        fileName op.project + " · " + op.operation + " · PID " + string op.pid + elapsed + more
+      | None ->
+        match Array.tryHead node.leases with
+        | Some lease -> lease.kind + " · " + lease.holder + " · process details unreported"
+        | None -> if node.status = "available" then "Idle" else "Retained observation"
+    let tile (node: unit -> NodeWorkView) =
+      comp (fun () ->
+        let active = Api.createMemo (fun _ -> activeOperations (node ()))
+        let capacity () = (node ()).capacity
+        let availability () = if connected () then (node ()).status else "controller disconnected"
+        div [| cls "fleet-node-card card card-compact panel min-w-0"; attrRx "data-node" (fun () -> (node ()).id) |] [|
+          div [| cls "card-body min-w-0 gap-3 break-words" |] [|
+            div [| cls "flex flex-col items-start gap-1" |] [|
+              h3 [| cls "max-w-full font-bold" |] [| rx (fun () -> (node ()).id.ToUpperInvariant()) |]
+              div [| cls "flex flex-wrap gap-1" |] [|
+                span [| cls "badge badge-sm badge-ghost" |] [| rx (fun () -> if (node ()).local then "controller" else "worker") |]
+                span [| clsRx (fun () -> if availability () = "available" then "badge badge-sm badge-success" else "badge badge-sm badge-warning") |] [|
+                  rx availability
+                |]
+              |]
+            |]
+            showElse (fun () -> (node ()).hasValue)
+              (fun () ->
+                fragment [|
+                  div [| cls "fleet-leases" |] [|
+                    h4 [| cls "text-xs font-semibold opacity-70" |] [| text "Live leases / cap" |]
+                    para [| cls "font-semibold" |] [|
+                      rx (fun () ->
+                        let n = node ()
+                        let cap = if n.hasCapacity && n.capacity.hasLeaseCap then string n.capacity.leaseCap else "?"
+                        string n.leases.Length + " / " + cap)
+                    |]
+                    show (fun () -> (node ()).hasCapacity) (fun () ->
+                      div [| cls "flex flex-wrap items-center gap-1 text-xs" |] [|
+                        span [||] [| rx (fun () -> string (capacity ()).pidVerifiedLeases + " PID-verified") |]
+                        show (fun () -> (capacity ()).unverifiedLeases > 0) (fun () ->
+                          span [| cls "badge badge-sm badge-warning" |] [| rx (fun () -> string (capacity ()).unverifiedLeases + " unverified") |])
+                        show (fun () -> (capacity ()).stalePidLeases > 0) (fun () ->
+                          span [| cls "badge badge-sm badge-error" |] [| rx (fun () -> string (capacity ()).stalePidLeases + " stale PID") |])
+                      |])
+                  |]
+                  div [| cls "fleet-queue" |] [|
+                    h4 [| cls "text-xs font-semibold opacity-70" |] [| text "Queue waiters" |]
+                    para [||] [| rx (fun () -> queueText (node ())) |]
+                  |]
+                  div [| cls "fleet-ram" |] [|
+                    h4 [| cls "text-xs font-semibold opacity-70" |] [| text "RAM / Peak RSS" |]
+                    showElse (fun () -> (node ()).hasCapacity && hasRamTelemetry (capacity ()))
+                      (fun () ->
+                        fragment [|
+                          show (fun () -> (capacity ()).machineTotal > 0.) (fun () ->
+                            para [||] [| rx (fun () -> bytes (capacity ()).machineAvailable + " avail / " + bytes (capacity ()).machineTotal) |])
+                          show (fun () -> (capacity ()).resident > 0. || (capacity ()).peakResident > 0.) (fun () ->
+                            para [| cls "text-xs" |] [| rx (fun () -> "RSS " + bytes (capacity ()).resident + " · peak " + bytes (capacity ()).peakResident) |])
+                          show (fun () -> (capacity ()).memoryPressure <> "") (fun () ->
+                            span [| clsRx (fun () -> pressureBadge (capacity ()).memoryPressure) |] [| rx (fun () -> "memory " + (capacity ()).memoryPressure) |])
+                        |])
+                      (fun () -> para [| cls "text-xs opacity-70" |] [| text "RAM telemetry unavailable" |])
+                  |]
+                  div [| cls "fleet-active-op" |] [|
+                    h4 [| cls "text-xs font-semibold opacity-70" |] [| text "Active operation" |]
+                    para [||] [| rx (fun () -> operationText (node ()) active.Value) |]
+                  |]
+                  para [| cls "fleet-compiler-sep mt-auto border-t border-base-content/10 pt-2 text-xs opacity-70" |] [|
+                    rx (fun () -> "Composer sessions: " + string (openNodeSessions (node ())).Length + " open · worker " + (node ()).worker.state)
+                  |]
+                |])
+              (fun () ->
+                div [| cls "text-sm opacity-70" |] [|
+                  para [||] [| text "Capacity unavailable — no idle state inferred." |]
+                  show (fun () -> (node ()).note <> "") (fun () ->
+                    para [| cls "text-xs" |] [| rx (fun () -> (node ()).note) |])
+                |])
+          |]
+        |])
+    el "section" [| cls "fleet-capacity-grid flex flex-col gap-3"; aria "labelledby" "fleet-capacity-heading" |] [|
+      div [||] [|
+        h2 [| cls "text-lg font-bold"; attr "id" "fleet-capacity-heading" |] [| text "Fleet capacity" |]
+        para [| cls "text-xs opacity-70" |] [|
+          text "Reconciled node leases, queue waiters, RAM and peak RSS, and active operations. Composer sessions and daemon-aged completed history are shown separately."
+        |]
+      |]
+      div [| cls "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3" |] [|
+        each (fun (node: NodeWorkView) -> node.id) (fun () -> nodes.Value) tile
+      |]
+    |])
 
 let private stateBadge (operation: unit -> NodeOperationView) =
   span [| clsRx (fun () -> operationStateBadge (operation ())) |] [| rx (fun () -> operationStateLabel (operation ())) |]
@@ -904,10 +1035,9 @@ let private workNodesPanel (stores: Stores) (connected: unit -> bool) (read: Nod
       Interop.saveRetiredWork next
       retired.Value <- next
       if (older node).Length = 0 then setNodeOlderOpen node.id false
-    let active (node: NodeWorkView) = node.operations |> Array.filter (runningOperation node)
     let operationRowKey (operation: NodeOperationView) = operation.id
     let historyRow (node: unit -> NodeWorkView) (operation: unit -> NodeOperationView) =
-      let startMs () = let o = operation () in if o.startedAt > 0. then o.startedAt else o.at
+      let startMs () = operationStartedAt (operation ())
       let elapsed () = if (operation ()).hasLease then elapsedText (startMs ()) (operation ()).at else ""
       details [| cls "node-operation py-2 border-t border-base-300" |] [|
         summary [| cls "cursor-pointer text-xs font-mono break-words" |] [|
@@ -940,7 +1070,7 @@ let private workNodesPanel (stores: Stores) (connected: unit -> bool) (read: Nod
       |]
     let activeRow (node: unit -> NodeWorkView) (operation: unit -> NodeOperationView) =
       let matchedLease () = (node ()).leases |> Array.tryFind (fun lease -> lease.id = (operation ()).leaseId)
-      let startMs () = let o = operation () in if o.startedAt > 0. then o.startedAt else o.at
+      let startMs () = operationStartedAt (operation ())
       let livenessText () =
         let o = operation ()
         if o.outcome = "running" then
@@ -976,7 +1106,7 @@ let private workNodesPanel (stores: Stores) (connected: unit -> bool) (read: Nod
         para [| cls "node-operation-lease text-xs opacity-60 break-words" |] [| rx (fun () -> "Lease " + (operation ()).leaseId + " · run " + (operation ()).runId + leaseHeartbeatText ()) |]
       |]
     let nodeCard (node: unit -> NodeWorkView) =
-      let openSessions () = (node ()).sessions |> Array.filter (fun session -> not session.closed)
+      let openSessions () = openNodeSessions (node ())
       let olderOpen () = olderOpenNodes.Value |> Array.contains (node ()).id
       div [| cls "card card-compact panel" |] [|
         div [| cls "card-body gap-2" |] [|
@@ -1028,7 +1158,7 @@ let private workNodesPanel (stores: Stores) (connected: unit -> bool) (read: Nod
                   para [| cls "text-xs font-mono break-words opacity-70" |] [| rx (fun () -> (ask ()).holder + " · " + (ask ()).kind + " · queued since " + clockTime (ask ()).requestedAt) |])
                 show (fun () -> connected () && (node ()).status = "available" && (node ()).leases.Length = 0 && (node ()).queue.Length = 0) (fun () ->
                   para [| cls "text-xs opacity-70" |] [| text "No active or queued leases in this observation." |])
-                each operationRowKey (fun () -> active (node ())) (fun operation -> activeRow node operation)
+                each operationRowKey (fun () -> activeOperations (node ())) (fun operation -> activeRow node operation)
                 show (fun () -> (recent (node ())).Length > 0) (fun () ->
                   div [| cls "node-recent-projects flex flex-col gap-1" |] [|
                     h4 [| cls "text-sm font-semibold" |] [| text "Recent project activity" |]
@@ -1225,6 +1355,7 @@ let app () : V =
       div [| clsRx (fun () -> if connected () then "flex-1 min-h-0 overflow-auto" else "flex-1 min-h-0 overflow-auto opacity-70") |] [|
         if workPage then
           div [| cls "grid grid-cols-1 xl:grid-cols-3 gap-4 p-4" |] [|
+            div [| cls "xl:col-span-3" |] [| fleetCapacityGrid stores connected |]
             details [| flag "open" true; cls "xl:col-span-3 controller-compiler" |] [|
               summary [| cls "cursor-pointer text-sm font-semibold" |] [| text "Controller compiler controls" |]
               div [| cls "grid grid-cols-1 xl:grid-cols-3 gap-4 mt-3" |] [|

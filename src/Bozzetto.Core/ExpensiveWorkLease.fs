@@ -1,6 +1,9 @@
 namespace Bozzetto
 
 open System
+open System.Globalization
+open System.Security.Cryptography
+open System.Text
 
 /// The daemon's coordination point for expensive, memory-costly work:
 /// session create/warmup, a hard-reset rebuild, a full `dotnet build`, a
@@ -409,3 +412,69 @@ module ExpensiveWorkLease =
             QueueView.Kind = Kind.toToken request.Kind
             QueueView.RequestedAt = request.FirstAskedAt })
     |}
+
+  // Stable non-secret display identity derived from public grant attributes.
+  let displayId (holder: string) (kind: string) (grantedAt: DateTimeOffset) : string =
+    let identity = holder + "\n" + kind + "\n" + grantedAt.UtcTicks.ToString(CultureInfo.InvariantCulture)
+    "lease-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes identity), 0, 4).ToLowerInvariant()
+
+  type ReconciledGrant = {
+    DisplayId: string
+    Grant: GrantView
+  }
+
+  let reconciledGrant (grant: GrantView) =
+    { DisplayId = displayId grant.Holder grant.Kind grant.GrantedAt; Grant = grant }
+
+  type LeasedPidStatus = {
+    LeaseId: string
+    Holder: string
+    Kind: string
+    ProcessId: int32
+    LivenessVerified: bool
+    Alive: bool
+  }
+
+  type ReconciledCapacity = {
+    LeaseCap: int32 option
+    ActiveLeaseCount: int32
+    PidVerifiedLeases: int32
+    UnverifiedLeases: int32
+    StalePidLeases: int32
+    QueueWaiterCount: int32
+    OldestWaitMs: int64 option
+  }
+
+  let reconcileCapacity
+      (now: DateTimeOffset)
+      (pressure: MemoryPressure option)
+      (active: ReconciledGrant list)
+      (queue: QueueView list)
+      (pidStatuses: LeasedPidStatus list)
+      : ReconciledCapacity =
+    let matchesGrant (grant: ReconciledGrant) (status: LeasedPidStatus) =
+      if String.IsNullOrEmpty status.LeaseId then
+        status.Holder = grant.Grant.Holder && status.Kind = grant.Grant.Kind
+      else status.LeaseId = grant.DisplayId
+    let verified, stale, unverified =
+      ((0, 0, 0), active)
+      ||> List.fold (fun (v, s, u) grant ->
+        let matching = pidStatuses |> List.filter (matchesGrant grant)
+        if matching |> List.exists (fun p -> p.LivenessVerified && p.Alive) then (v + 1, s, u)
+        elif matching |> List.exists (fun p -> not p.Alive) then (v, s + 1, u)
+        else (v, s, u + 1))
+    let oldestWaitMs =
+      match queue with
+      | [] -> None
+      | _ ->
+        let earliest = queue |> List.map _.RequestedAt |> List.min
+        Some (max 0L (int64 (now - earliest).TotalMilliseconds))
+    {
+      LeaseCap = pressure |> Option.map maxConcurrentFor
+      ActiveLeaseCount = List.length active
+      PidVerifiedLeases = verified
+      UnverifiedLeases = unverified
+      StalePidLeases = stale
+      QueueWaiterCount = List.length queue
+      OldestWaitMs = oldestWaitMs
+    }

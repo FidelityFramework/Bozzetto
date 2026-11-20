@@ -64,7 +64,7 @@ let private noResources () : ResourcesView =
      note = "No measurements yet. Start an explicit two-minute observation window." |}
 
 type AgentView = {| id: string; memberId: string; name: string; role: string; model: string; endpoint: string; session: string
-                    project: string; focus: string; operation: string; status: string; updatedAt: float; reportSequence: string
+                    project: string; focus: string; operation: string; status: string; aged: bool; updatedAt: float; reportSequence: string
                     usage: string; cost: string; activity: string; omitted: string |}
 
 // An agent the daemon derives from a fact it owns (a lease, a membership),
@@ -126,10 +126,28 @@ let private noTranscript () : TranscriptView =
   {| node = ""; incarnation = ""; journal = ""; sequence = ""; stream = Stdout; correlation = 0
      bytes = [||]; text = ""; next = ""; total = ""; truncated = false; status = "not loaded" |}
 
+type NodeCapacityView = {|
+  hasLeaseCap: bool
+  leaseCap: int
+  pidVerifiedLeases: int
+  unverifiedLeases: int
+  stalePidLeases: int
+  memoryPressure: string
+  machineAvailable: float
+  machineTotal: float
+  resident: float
+  peakResident: float
+|}
+
+let private noCapacity () : NodeCapacityView =
+  {| hasLeaseCap = false; leaseCap = 0; pidVerifiedLeases = 0; unverifiedLeases = 0; stalePidLeases = 0; memoryPressure = ""
+     machineAvailable = 0.; machineTotal = 0.; resident = 0.; peakResident = 0. |}
+
 // Controller-admitted node facts. Availability is separate from a retained sample.
 type NodeWorkView = {|
   id: string; incarnation: string; local: bool; status: string; note: string
   hasValue: bool; sequence: string; sampledAt: float
+  hasCapacity: bool; capacity: NodeCapacityView
   worker: WorkerView; sessions: SessionView array; leases: LeaseView array; queue: WaitView array
   journal: string; storageError: string; transcriptsOmitted: bool; operations: NodeOperationView array
 |}
@@ -476,10 +494,18 @@ let private waitView (w: LeaseWait) : WaitView =
   {| id = w.Holder + "|" + w.Kind; kind = w.Kind; holder = w.Holder; requestedAt = float w.RequestedAtMs |}
 
 let private nodeView (node: NodeWork) : NodeWorkView =
+  let capacity = node.Value |> Option.bind _.Capacity
   {| id = node.Source.Node; incarnation = node.Source.Incarnation; local = node.Local
      status = node.Status; note = node.Note; hasValue = node.Value.IsSome
      sequence = node.Value |> Option.map (fun v -> string v.Sequence) |> Option.defaultValue ""
      sampledAt = node.Value |> Option.map (fun v -> float v.SampledAtMs) |> Option.defaultValue 0.
+     hasCapacity = capacity.IsSome
+     capacity = capacity |> Option.map (fun c ->
+       {| hasLeaseCap = c.LeaseCap.IsSome; leaseCap = Option.defaultValue 0 c.LeaseCap
+          pidVerifiedLeases = c.PidVerifiedLeases; unverifiedLeases = c.UnverifiedLeases
+          stalePidLeases = c.StalePidLeases; memoryPressure = c.MemoryPressure
+          machineAvailable = float c.MachineAvailableBytes; machineTotal = float c.MachineTotalBytes
+          resident = float c.ResidentBytes; peakResident = float c.PeakResidentBytes |}) |> Option.defaultWith noCapacity
      worker = node.Value |> Option.map (fun v -> workerView v.Snapshot.Worker) |> Option.defaultWith noWorker
      sessions = node.Value |> Option.map (fun v -> Array.map sessionView v.Snapshot.Sessions) |> Option.defaultValue [||]
      leases = node.Value |> Option.map (fun v -> Array.map leaseView v.Leases.Active) |> Option.defaultValue [||]
@@ -727,7 +753,7 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
         set stores.AgentRefusal board.Refusal
         set stores.Agents (board.Runs |> Array.map (fun r ->
           {| id = r.Id; memberId = r.Member; name = r.Name; role = r.Role; model = r.Model; endpoint = r.Endpoint; session = r.Session
-             project = r.Project; focus = r.Focus; operation = r.Operation; status = r.Status
+             project = r.Project; focus = r.Focus; operation = r.Operation; status = r.Status; aged = r.Aged
              updatedAt = float r.UpdatedAtMs; reportSequence = string r.ReportSequence
              usage = r.Usage |> Option.map (fun u -> string u.Total + " tokens (cumulative)") |> Option.defaultValue "usage unavailable"
              cost = r.Usage |> Option.bind _.EstimateUsd |> Option.map (fun c -> "$" + string c + " Pi estimate") |> Option.defaultValue "price unavailable"

@@ -530,6 +530,7 @@ PRAGMA user_version=1;"
             Leases = { Revision = 0L; Active = [||]; Queued = [||] }
             Operations = ops
             TranscriptsOmitted = false
+            Capacity = None
           }
           let summary = Bozzetto.Server.UiBridge.Project.workSummary snap
           let abandonedIds =
@@ -841,7 +842,8 @@ PRAGMA user_version=1;"
                      for seq in 20L .. -1L .. 12L do yield mkEntry seq (5_000L + seq) ""
                      // Sequence 1 is a freshly abandoned low-Sequence entry (AtMs = 99_000L)
                      yield mkEntry 1L 99_000L "abandoned" |] }
-            TranscriptsOmitted = false }
+            TranscriptsOmitted = false
+            Capacity = None }
         let fitted = Bozzetto.Server.UiBridge.Project.workSummary oversized
         (fitted.Operations.Entries.Length < oversized.Operations.Entries.Length)
         |> Expect.isTrue "oversized snapshot required fit eviction"

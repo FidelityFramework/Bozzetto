@@ -4,6 +4,7 @@ module Bozzetto.Server.WorkObservation
 
 open System
 open System.IO
+open System.Net
 open System.Net.Http
 open System.Net.Http.Headers
 open System.Threading
@@ -136,10 +137,11 @@ let private requestBody (ctx: HttpContext) = async {
     let bytes = buffer[..size - 1]
     match decodePeerObserveRequest bytes with
     | Ok request -> return Ok(Observe request)
-    | Error _ -> return decodePeerTranscriptRequest bytes |> Result.map Transcript
+    | Error "binary: wrong message family" -> return decodePeerTranscriptRequest bytes |> Result.map Transcript
+    | Error reason -> return Error reason
 }
 
-let private sendFrame stream ct frame = Frames.write stream (encodePeerFrame frame) ct
+let private sendFrame version stream ct frame = Frames.write stream (encodePeerFrameVersion version frame) ct
 
 /// This route is present on headless nodes. The daemon remains loopback-only;
 /// the native Pi gateway authenticates before relaying this one fixed route.
@@ -164,11 +166,12 @@ let mapRoutes (app: WebApplication) (hub: UiBridge.Hub) =
       match accepted with
       | Error reason ->
         ctx.Response.StatusCode <- 400
-        do! sendFrame ctx.Response.Body ctx.RequestAborted (PeerUnavailable reason)
+        do! sendFrame PeerCompatProtocolVersion ctx.Response.Body ctx.RequestAborted (PeerUnavailable reason)
       | Ok(Transcript request) ->
         let reply = { PeerTranscriptReply.Source = hub.LocalNode; Outcome = hub.ReadLocalTranscript request.Request }
         do! Frames.write ctx.Response.Body (encodePeerTranscriptReply reply) ctx.RequestAborted
       | Ok(Observe request) ->
+        let replyVersion = if request.ProtocolVersion >= ProtocolVersion then ProtocolVersion else PeerCompatProtocolVersion
         use lifetime = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, app.Lifetime.ApplicationStopping)
         let options = BoundedChannelOptions(16, SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait)
         let channel = Channel.CreateBounded<PeerFrame>(options)
@@ -176,7 +179,7 @@ let mapRoutes (app: WebApplication) (hub: UiBridge.Hub) =
           if not (channel.Writer.TryWrite frame) then
             channel.Writer.TryComplete(InvalidDataException "Observation consumer is too slow.") |> ignore
             lifetime.Cancel()
-        do! sendFrame ctx.Response.Body lifetime.Token (PeerHello hub.LocalNode)
+        do! sendFrame replyVersion ctx.Response.Body lifetime.Token (PeerHello hub.LocalNode)
         let mutable subscription: IDisposable option = None
         let mutable resource: int64 option = None
         try
@@ -188,8 +191,8 @@ let mapRoutes (app: WebApplication) (hub: UiBridge.Hub) =
             let current, joined = hub.RegisterLocalWork(frameOf >> enqueue)
             subscription <- Some joined
             match current with
-            | Some state -> do! sendFrame ctx.Response.Body lifetime.Token (frameOf state)
-            | None -> do! sendFrame ctx.Response.Body lifetime.Token (PeerUnavailable "Local work has not published.")
+            | Some state -> do! sendFrame replyVersion ctx.Response.Body lifetime.Token (frameOf state)
+            | None -> do! sendFrame replyVersion ctx.Response.Body lifetime.Token (PeerUnavailable "Local work has not published.")
           else
             let id = Interlocked.Decrement(&nextResource)
             resource <- Some id
@@ -204,7 +207,7 @@ let mapRoutes (app: WebApplication) (hub: UiBridge.Hub) =
             else
               let mutable next = Unchecked.defaultof<PeerFrame>
               while channel.Reader.TryRead(&next) do
-                do! sendFrame ctx.Response.Body lifetime.Token next
+                do! sendFrame replyVersion ctx.Response.Body lifetime.Token next
         finally
           subscription |> Option.iter _.Dispose()
           // Remove only this observer. It has no compiler/work cancellation authority.
@@ -238,17 +241,60 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
       request.Content.Headers.ContentType <- MediaTypeHeaderValue MediaType
       use headerDeadline = CancellationTokenSource.CreateLinkedTokenSource ct
       headerDeadline.CancelAfter(TimeSpan.FromSeconds 15.)
-      let! response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, headerDeadline.Token) |> Async.AwaitTask
-      if not response.IsSuccessStatusCode || isNull response.Content.Headers.ContentType || response.Content.Headers.ContentType.MediaType <> MediaType then
-        let code = int response.StatusCode
-        response.Dispose()
-        return raise (InvalidDataException(sprintf "Observation endpoint refused HTTP %d." code))
-      else return response
+      return! client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, headerDeadline.Token) |> Async.AwaitTask
   }
 
-  let openStream peer topic seconds ct =
-    // Requests keep the unchanged v9 layout while responses admit v9 and v10.
-    openPayload peer (encodePeerObserveRequest { ProtocolVersion = LegacyProtocolVersion; Node = peer.Node; Topic = topic; Seconds = seconds }) ct
+  let isObservationResponse (response: HttpResponseMessage) =
+    let contentType = response.Content.Headers.ContentType
+    not (isNull contentType) && contentType.MediaType = MediaType
+
+  let refuseResponse status reason =
+    let message =
+      match reason with
+      | Some reason -> sprintf "Observation endpoint refused HTTP %d: %s" status reason
+      | None -> sprintf "Observation endpoint refused HTTP %d." status
+    raise (InvalidDataException message)
+
+  let acceptResponse (response: HttpResponseMessage) =
+    if response.IsSuccessStatusCode && isObservationResponse response then response
+    else
+      use refused = response
+      refuseResponse (int refused.StatusCode) None
+
+  let readRefusal (response: HttpResponseMessage) (ct: CancellationToken) = async {
+    use refused = response
+    use deadline = CancellationTokenSource.CreateLinkedTokenSource ct
+    deadline.CancelAfter(TimeSpan.FromSeconds 2.)
+    try
+      use! stream = refused.Content.ReadAsStreamAsync(deadline.Token) |> Async.AwaitTask
+      let! bytes = Frames.read stream deadline.Token
+      match bytes |> Option.map decodePeerFrame with
+      | Some(Ok(PeerUnavailable reason)) -> return Some reason
+      | _ -> return None
+    with error when not ct.IsCancellationRequested ->
+      match error.GetBaseException() with
+      | :? OperationCanceledException | :? IOException | :? HttpRequestException | :? InvalidDataException -> return None
+      | _ -> return raise error
+  }
+
+  let openObserveStream (peer: Peer) topic seconds (ct: CancellationToken) =
+    let rec openVersion version = async {
+      let payload = encodePeerObserveRequest { ProtocolVersion = version; Node = peer.Node; Topic = topic; Seconds = seconds }
+      let! response = openPayload peer payload ct
+      if response.StatusCode = HttpStatusCode.BadRequest && isObservationResponse response then
+        let! reason = readRefusal response ct
+        match reason with
+        // Pre-v13 peers fall through from decodePeerObserveRequest's version refusal into
+        // decodePeerTranscriptRequest, masking unsupported version as "binary: wrong message family".
+        | Some reason when version = ProtocolVersion &&
+            (reason = "protocol_mismatch"
+             || reason.Contains("unsupported version", StringComparison.OrdinalIgnoreCase)
+             || reason = "binary: wrong message family") ->
+          return! openVersion LegacyProtocolVersion
+        | _ -> return refuseResponse (int HttpStatusCode.BadRequest) reason
+      else return acceptResponse response
+    }
+    openVersion ProtocolVersion
 
   let nextFrame (stream: Stream) (ct: CancellationToken) = async {
     use deadline = CancellationTokenSource.CreateLinkedTokenSource ct
@@ -276,7 +322,7 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
     while not lifetime.IsCancellationRequested do
       let mutable admitted = None
       try
-        use! response = openStream peer "work" 0 controllerCancellation
+        use! response = openObserveStream peer "work" 0 controllerCancellation
         use! stream = response.Content.ReadAsStreamAsync(controllerCancellation) |> Async.AwaitTask
         let! identity = hello peer stream controllerCancellation
         let producer = hub.BindPeer identity
@@ -325,7 +371,7 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
       let cancellation = CancellationTokenSource.CreateLinkedTokenSource controllerCancellation
       let run = async {
         try
-          use! response = openStream peer "resources" request.Seconds cancellation.Token
+          use! response = openObserveStream peer "resources" request.Seconds cancellation.Token
           use! stream = response.Content.ReadAsStreamAsync(cancellation.Token) |> Async.AwaitTask
           let! identity = hello peer stream cancellation.Token
           if identity.Node <> producer.Source.Node || identity.Incarnation <> producer.Source.Incarnation then
@@ -400,7 +446,8 @@ type Controller(hub: UiBridge.Hub, peers: Peer list, stopping: CancellationToken
       else
         try
           try
-            use! response = openPayload peer (encodePeerTranscriptRequest { ProtocolVersion = LegacyProtocolVersion; Request = request }) cancellation.Token
+            let! response = openPayload peer (encodePeerTranscriptRequest { ProtocolVersion = LegacyProtocolVersion; Request = request }) cancellation.Token
+            use response = acceptResponse response
             use! stream = response.Content.ReadAsStreamAsync(cancellation.Token) |> Async.AwaitTask
             let! frame = Frames.read stream cancellation.Token
             match frame |> Option.map decodePeerTranscriptReply with

@@ -208,7 +208,15 @@ let private events = [
     Sequence = 1L; Status = "complete"; SampledAtMs = 123L; IntervalMs = 2000.; SampleCostMs = 12.5
     Metrics = [||]; Processes = [||]; ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = "test" }
   AgentWork { OmittedRuns = 0L; Refusal = ""; Incarnation = "daemon-a"; Sequence = 1L; ExecutionHost = "local"; Runs = [||]; Presence = [||] }
-  AgentWork { OmittedRuns = 0L; Refusal = ""; Incarnation = "daemon-b"; Sequence = 2L; ExecutionHost = "local"; Runs = [||]
+  AgentWork { OmittedRuns = 0L; Refusal = ""; Incarnation = "daemon-b"; Sequence = 2L; ExecutionHost = "local"
+              Runs = [| { Id = "r-active"; Member = "mcp:1"; Role = "Implementer"; Name = "a"; Session = "s"
+                          ReportSequence = 1L; Model = "m"; Endpoint = "e"; Project = "/p"; Focus = "f"
+                          Operation = "op"; Status = "running"; UpdatedAtMs = 1759420800000L
+                          Activity = [| "op" |]; OmittedActivity = 0L; Usage = None; Aged = false }
+                        { Id = "r-aged"; Member = "mcp:2"; Role = "Observer"; Name = "b"; Session = "s2"
+                          ReportSequence = 2L; Model = "m"; Endpoint = "e"; Project = "/p"; Focus = "f"
+                          Operation = "done"; Status = "completed"; UpdatedAtMs = 1759420000000L
+                          Activity = [| "done" |]; OmittedActivity = 0L; Usage = None; Aged = true } |]
               Presence = [| { Name = "pi"; Source = "lease"; Member = "pi · /repo/clef"; Project = "/repo/clef"; Detail = "holds full_build"; SinceMs = 1759420800000L } |] }
   Retrieval {
     Revision = 1L; State = "fresh"; BranchStatus = "on_main_indexed"; BranchName = "main"; OnMain = true
@@ -527,7 +535,7 @@ let private clefIcons = [
 
 /// A loopback Kestrel host on an ephemeral port, running only the routes
 /// `map` adds.
-module private Hosting =
+module internal Hosting =
   open Microsoft.AspNetCore.Builder
   open Microsoft.AspNetCore.Hosting
   open Microsoft.AspNetCore.Hosting.Server
@@ -555,6 +563,13 @@ module private Hosting =
     let! body = response.Content.ReadAsByteArrayAsync()
     return int response.StatusCode, string response.Content.Headers.ContentType, body
   }
+
+let internal observationHub (graph: Facts.Graph) owner (stopping: CancellationToken) readTranscript =
+  let composer = FakeComposer()
+  let sources = { composer.Sources with Facts = { Register = graph.Register; Current = graph.Current; Refresh = ignore } }
+  let noResources _ _ _ = async { return invalidOp "This control does not request resource acquisition." }
+  Hub(sources, quiet, stopping, unpaused, (ClockGate()).Tick,
+    observation = (graph, owner, noResources), ?localTranscript = readTranscript)
 
 let private frame correlation (command: Command) =
   Ui.encodeCommand { CommandFrame.Correlation = correlation; Command = command }
@@ -591,7 +606,7 @@ let tests =
     testList "binary codec" [
       test "fixed command golden binds envelope and primitive byte order" {
         let frame = { CommandFrame.Correlation = 1; Command = RequestSnapshot }
-        let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; 12uy; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
+        let golden = [| 0x42uy; 0x5Auy; 0x57uy; 0x31uy; byte ProtocolVersion; 1uy; 1uy; 0uy; 0uy; 0uy; 0uy |]
         Ui.encodeCommand frame |> Expect.equal "exact independently specified bytes" golden
         Codec.decodeCommand golden |> Expect.equal "golden decoded" (Ok frame)
       }
@@ -600,7 +615,7 @@ let tests =
         retrievalEvents.Length |> Expect.equal "all five retrieval states covered" 5
         for ev in retrievalEvents do
           let encoded = Codec.encodeEvent ev
-          encoded[4] |> Expect.equal "envelope carries ProtocolVersion 12" (byte ProtocolVersion)
+          encoded[4] |> Expect.equal "envelope carries ProtocolVersion 13" (byte ProtocolVersion)
           encoded[5] |> Expect.equal "event family is 2" 2uy
           encoded[6] |> Expect.equal "Retrieval tag is 14" 14uy
           Ui.decodeEvent encoded |> Expect.equal "round-trip preserves every field" (Ok ev)
@@ -627,7 +642,7 @@ let tests =
         let historicalRun id usage : AgentRun =
           { Id = id; Member = "mcp:1"; Role = "Observer"; Name = "name"; Session = "session"; ReportSequence = 5L
             Model = "model"; Endpoint = "endpoint"; Project = "project"; Focus = "focus"; Operation = "operation"
-            Status = "completed"; UpdatedAtMs = 100L; Activity = [|"new"; "old"|]; OmittedActivity = 3L; Usage = usage }
+            Status = "completed"; UpdatedAtMs = 100L; Activity = [|"new"; "old"|]; OmittedActivity = 3L; Usage = usage; Aged = false }
         let historicalUsage = Some { AgentUsage.Input = 1L; Output = 2L; CacheRead = 3L; CacheWrite = 4L; Total = 10L; EstimateUsd = Some 0.5 }
         let historicalExpected = AgentWork { Incarnation = "daemon"; Sequence = 42L; ExecutionHost = "host"
                                              Runs = [|historicalRun "some" historicalUsage; historicalRun "none" None|]
@@ -712,13 +727,23 @@ let tests =
           Snapshot = { Revision = 2L; Worker = Idle; Sessions = [||] }
           Leases = { Revision = 3L; Active = [||]; Queued = [||] }
           Operations = { Revision = 4L; Incarnation = "j"; StorageError = None; Entries = [||] }
+          Capacity = None
         }
+        let capacity = {
+          LeaseCap = Some 4; PidVerifiedLeases = 1; UnverifiedLeases = 1; StalePidLeases = 0
+          MemoryPressure = "Normal"; MachineAvailableBytes = 32_000_000_000L; MachineTotalBytes = 64_000_000_000L
+          ResidentBytes = 128_000_000L; PeakResidentBytes = 256_000_000L
+        }
+        let workWithCap = { work with Capacity = Some capacity }
         let resources = { Sequence = 5L; Status = "unavailable"; SampledAtMs = 123L; IntervalMs = 0.; SampleCostMs = 0.
                           Metrics = [||]; Processes = [||]; ProcessCount = 0; UnreadableCount = 0; OmittedCount = 0; Note = "unsupported" }
         for value in [ PeerHello source; PeerWork work; PeerResources resources; PeerUnavailable "disconnected"; PeerHeartbeat { UptimeMs = 77L } ] do
           Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame (Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame value)
           |> Expect.equal "peer case preserved" (Ok value)
-        for value in [ WorkNodes { Revision = 8L; Nodes = [| { Source = source; Local = false; Status = "unavailable"; Note = "last observed"; Value = Some work } |] }; NodeResources { Source = source; Correlation = 7; Value = resources } ] do
+        for value in [
+          WorkNodes { Revision = 8L; Nodes = [| { Source = source; Local = false; Status = "unavailable"; Note = "last observed"; Value = Some work } |] }
+          WorkNodes { Revision = 9L; Nodes = [| { Source = source; Local = true; Status = "available"; Note = ""; Value = Some workWithCap } |] }
+          NodeResources { Source = source; Correlation = 7; Value = resources } ] do
           Ui.decodeEvent (Codec.encodeEvent value) |> Expect.equal "scoped browser event" (Ok value)
         let request = { PeerObserveRequest.ProtocolVersion = ProtocolVersion; Node = "one"; Topic = "work"; Seconds = 0 }
         Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Bozzetto.Web.Shared.BinaryCodec.encodePeerObserveRequest request)
@@ -726,7 +751,7 @@ let tests =
         Bozzetto.Web.Shared.BinaryCodec.decodePeerObserveRequest (Array.zeroCreate 4097)
         |> Expect.equal "request cap before parsing" (Error "binary: frame too large")
       }
-      test "v11 and v12 peer envelopes share the observation and transcript payloads" {
+      test "v11, v12, and v13 peer envelopes share the observation and transcript payloads" {
         let source = { NodeIdentity.Node = "one"; Incarnation = "epoch-1" }
         let observation = { PeerObserveRequest.ProtocolVersion = 11; Node = source.Node; Topic = "work"; Seconds = 0 }
         let transcript =
@@ -739,14 +764,16 @@ let tests =
         let checkReply encode decode family value =
           let bytes: byte array = encode value
           bytes[..5] |> Expect.equal "v11 peer can read the reply envelope" [|66uy; 90uy; 87uy; 49uy; 11uy; family|]
-          decode bytes |> Expect.equal "v12 peer reads the v11 reply losslessly" (Ok value)
+          decode bytes |> Expect.equal "v13 peer reads the v11 reply losslessly" (Ok value)
           bytes[4] <- 12uy
           decode bytes |> Expect.equal "v12 envelope carries the same reply payload" (Ok value)
+          bytes[4] <- 13uy
+          decode bytes |> Expect.equal "v13 envelope carries the same reply payload" (Ok value)
           bytes[4] <- 10uy
           decode bytes |> Expect.equal "unknown peer envelope refused" (Error "binary: unsupported version")
         checkReply PeerCodec.encodePeerFrame PeerCodec.decodePeerFrame 4uy (PeerHello source)
         checkReply PeerCodec.encodePeerTranscriptReply PeerCodec.decodePeerTranscriptReply 6uy reply
-        for version in [11; 12] do
+        for version in [11; 12; 13] do
           let observation = { observation with ProtocolVersion = version }
           let transcript = { transcript with ProtocolVersion = version }
           let observationBytes = PeerCodec.encodePeerObserveRequest observation
@@ -760,8 +787,10 @@ let tests =
           PeerCodec.decodePeerObserveRequest observationBytes |> Expect.equal "unsupported observation payload version refused" (Error "unsupported peer version")
           PeerCodec.decodePeerTranscriptRequest transcriptBytes |> Expect.equal "unsupported transcript payload version refused" (Error "unsupported peer version")
         let browser = Codec.encodeEvent (List.head events)
-        browser[4] <- 11uy
-        PeerCodec.decodeEvent browser |> Expect.equal "v11 browser envelopes remain unsupported" (Error "binary: unsupported version")
+        for unsupportedVersion in [11uy; 12uy] do
+          let bad = Array.copy browser
+          bad[4] <- unsupportedVersion
+          PeerCodec.decodeEvent bad |> Expect.equal "stale browser envelopes remain unsupported" (Error "binary: unsupported version")
       }
     ]
 
@@ -1590,18 +1619,21 @@ let boardSequenceTests =
       let over = Project.agentBoard 3L (make (delta + 1)) [||]
       over.OmittedRuns |> Expect.equal "one byte over omits terminal" 1L
       over.Refusal |> Expect.equal "protected row still fits" ""
-    testCase "oldest terminal rows alone are omitted and active activity and history are retained" <| fun () ->
+    testCase "wire pressure sheds the oldest aged terminal row before a still-dwelling row" <| fun () ->
       let active = makeRun "active" "running" 5 [large; "active earlier"]
       let uncertain = makeRun "unknown" "unknown" 6 ["uncertain activity"]
       let runs = [ "active", active; "unknown", uncertain
                    for i in 0..4 do
                      let id = "terminal-" + string i
-                     id, makeRun id "completed" i [large] ]
+                     let status = if i = 0 then "failed" else "completed"
+                     id, makeRun id status i [large] ]
       let owner = state runs
-      let board = Project.agentBoard 7L owner [||]
+      let now = DateTime(2026, 11, 3, 0, 10, 0, DateTimeKind.Utc)
+      let board = Project.agentBoardAt now 7L owner [||]
       board.Refusal |> Expect.equal "board published" ""
-      board.OmittedRuns |> Expect.equal "only the oldest necessary rows" 1L
-      board.Runs |> Array.map _.Id |> Array.contains "terminal-0" |> Expect.isFalse "oldest terminal omitted"
+      board.OmittedRuns |> Expect.equal "only one aged row is needed to fit" 1L
+      board.Runs |> Array.exists (fun row -> row.Id = "terminal-1") |> Expect.isFalse "oldest aged terminal row is omitted"
+      board.Runs |> Array.exists (fun row -> row.Id = "terminal-0" && not row.Aged) |> Expect.isTrue "the earlier failed row keeps its longer dwell"
       board.Runs |> Array.find (fun r -> r.Id = "active") |> fun row -> row.Activity |> Expect.equal "all active activity retained" [|large; "active earlier"|]
       board.Runs |> Array.exists (fun r -> r.Id = "unknown") |> Expect.isTrue "unknown is protected"
       owner.Runs.Count |> Expect.equal "authoritative history untouched" 7
@@ -1711,7 +1743,13 @@ let observationTests =
       Sequence = sequence; SampledAtMs = sequence * 1000L
       Snapshot = { Revision = sequence; Worker = Unconfigured; Sessions = [||] }
       Leases = { Revision = sequence; Active = [||]; Queued = [||] }
-      Operations = { Revision = sequence; Incarnation = "journal"; StorageError = None; Entries = [||] } }
+      Operations = { Revision = sequence; Incarnation = "journal"; StorageError = None; Entries = [||] }
+      Capacity = None }
+  let emptyReconciledCapacity : NodeCapacity =
+    { LeaseCap = None; PidVerifiedLeases = 0; UnverifiedLeases = 0; StalePidLeases = 0
+      MemoryPressure = ""; MachineAvailableBytes = 0L; MachineTotalBytes = 0L
+      ResidentBytes = 0L; PeakResidentBytes = 0L }
+  let withEmptyCapacity (value: WorkSnapshot) = { value with Capacity = Some emptyReconciledCapacity }
   let workNode (graph: Facts.Graph) node =
     graph.Current() |> List.pick (function WorkNodes board -> board.Nodes |> Array.tryFind (fun value -> value.Source.Node = node) | _ -> None)
   testList "UiBridge.Facts scoped observation" [
@@ -1728,7 +1766,7 @@ let observationTests =
       graph.PeerConnectionUnavailable(b.Node, "late Hello failure") |> Expect.equal "unbound report cannot overwrite a bound connection" (Error Facts.Refusal.ForeignProducer)
       graph.PublishWork(peer, workValue 5L) |> Expect.equal "authenticated source is admitted" (Ok())
       graph.PublishWork({ peer with Correlation = Guid.NewGuid() }, workValue 6L) |> Expect.equal "identity alone grants no publication" (Error Facts.Refusal.ForeignProducer)
-      (workNode graph b.Node).Value |> Expect.equal "the current snapshot names its real observation time" (Some(workValue 5L))
+      (workNode graph b.Node).Value |> Expect.equal "the current snapshot names its real observation time" (Some(withEmptyCapacity (workValue 5L)))
       graph.Stop()
 
     testCase "work sequence and unavailable status cannot overwrite or freshen a retained snapshot" <| fun () ->
@@ -1741,7 +1779,7 @@ let observationTests =
       graph.PublishWork(peer, workValue 4L) |> Expect.equal "older snapshot refused" (Error Facts.Refusal.Older)
       for _ in 1 .. 7 do graph.PeerUnavailable(peer, "disconnected") |> Expect.equal "connection status has its own publication order" (Ok())
       let unavailable = workNode graph b.Node
-      (unavailable.Status, unavailable.Value) |> Expect.equal "disconnect retains the exact old timestamp and facts" ("unavailable", Some value)
+      (unavailable.Status, unavailable.Value) |> Expect.equal "disconnect retains the exact old timestamp and facts" ("unavailable", Some(withEmptyCapacity value))
       graph.PublishWork(peer, value) |> Expect.equal "same-incarnation retained snapshot can recover without inventing sequence" (Ok())
       (workNode graph b.Node).Status |> Expect.equal "source is available again" "available"
       graph.Stop()
@@ -1825,18 +1863,28 @@ let observationTests =
       graph.Stop()
 
     testCase "work history shrinks oldest settled rows to the encoded byte budget and never hides oversized current work" <| fun () ->
-      let original = workValue 1L
+      let original = withEmptyCapacity (workValue 1L)
       let entry sequence : OperationEntry =
         { Sequence = sequence; AtMs = sequence; CallerLabel = "caller"; Operation = "full_build"
           Session = ""; Project = "/repo"; Lease = None; Ok = true; Code = ""; Message = String.replicate 9000 "x"; Run = None }
       let original = { original with Operations = { original.Operations with Entries = [| for sequence in 20L .. -1L .. 1L -> entry sequence |] } }
       let summary = Project.workSummary original
-      let bytes = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame(PeerWork summary)
+      let bytes = PeerCodec.encodePeerFrameVersion ProtocolVersion (PeerWork summary)
       (bytes.Length <= MaxWorkSnapshotBytes) |> Expect.isTrue "actual envelope fits its wire budget"
       (summary.Operations.Entries.Length < 20 && summary.Operations.Entries.Length > 0) |> Expect.isTrue "byte bound removes settled history beyond the count bound"
       summary.Operations.Entries |> Array.map _.Sequence
       |> Expect.equal "the newest outcomes survive byte pressure" [| 20L .. -1L .. 21L - int64 summary.Operations.Entries.Length |]
       Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame bytes |> Expect.equal "bounded summary round trips" (Ok(PeerWork summary))
+      let withMessage length =
+        let terminal = { entry 1L with Message = String.replicate length "x" }
+        { original with Operations = { original.Operations with Entries = [|terminal|] } }
+      let probeLength = MaxWorkSnapshotBytes - 1024
+      let encoded = PeerCodec.encodePeerFrameVersion ProtocolVersion (PeerWork (withMessage probeLength)) |> Array.length
+      let overWithCapacity = withMessage (probeLength + MaxWorkSnapshotBytes - encoded + 1)
+      (PeerCodec.encodePeerFrame (PeerWork overWithCapacity)).Length
+      |> fun length -> (length <= MaxWorkSnapshotBytes) |> Expect.isTrue "the history row fits when the old envelope omits capacity"
+      (Project.workSummary overWithCapacity).Operations.Entries
+      |> Expect.isEmpty "the capacity-bearing v13 envelope requires dropping the settled row"
       let current = { entry 21L with Code = "running"; Ok = false; Message = String.replicate MaxWorkSnapshotBytes "x" }
       let oversized = { original with Operations = { original.Operations with Entries = Array.append [| current |] original.Operations.Entries } }
       let refused = Project.workSummary oversized
@@ -1855,16 +1903,17 @@ let observationTests =
         { value with Snapshot = { value.Snapshot with Sessions = [| { bareSession with Project = String.replicate length "x" } |] } }
       let initialLength = MaxWorkSnapshotBytes - 1024
       let initial = withProject initialLength
-      let initialSize = Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame(PeerWork initial) |> Array.length
+      let encodedSize value = PeerCodec.encodePeerFrameVersion ProtocolVersion (PeerWork (withEmptyCapacity value)) |> Array.length
+      let initialSize = encodedSize initial
       let edge = withProject (initialLength + MaxWorkSnapshotBytes - initialSize)
-      Bozzetto.Web.Shared.BinaryCodec.encodePeerFrame(PeerWork edge) |> Array.length |> Expect.equal "real encoded edge, including the peer envelope" MaxWorkSnapshotBytes
+      encodedSize edge |> Expect.equal "real encoded edge includes the v13 envelope and reconciled capacity" MaxWorkSnapshotBytes
       graph.PublishWork(peer, edge) |> Expect.equal "exact budget admitted" (Ok())
       let oversized = { withProject (initialLength + MaxWorkSnapshotBytes - initialSize + 1) with Sequence = 2L }
       graph.PublishWork(peer, oversized) |> Expect.equal "one byte over refused specifically" (Error Facts.Refusal.Oversized)
       let current = workNode graph b.Node
       (current.Status, current.Note, current.Value)
       |> Expect.equal "oversize is visible and preserves the earlier timestamp and busy/lease facts"
-        ("unavailable", "Work snapshot exceeds the encoded observation budget.", Some edge)
+        ("unavailable", "Work snapshot exceeds the encoded observation budget.", Some(withEmptyCapacity edge))
       graph.PublishWork(peer, edge) |> Expect.equal "a valid source can recover from the refused update" (Ok())
       graph.PublishWork(peer, { oversized with Sequence = 0L }) |> Expect.equal "an older oversized payload stays an ordering refusal" (Error Facts.Refusal.Older)
       (workNode graph b.Node).Status |> Expect.equal "late bad payload cannot invalidate the current source" "available"
@@ -1932,7 +1981,6 @@ let observationTests =
     testTask "headless HTTP work and transcript reads bind their node and join active streams on close" {
       do! task {
         use stopping = new CancellationTokenSource()
-        let composer = FakeComposer()
         let workerGraph = Facts.Graph({ McpPort = 47759; Version = "test"; ProcessId = 99 }, "daemon-o", "", observationOwners = [pb], localNode = b.Node)
         workerGraph.PublishWork(pb, workValue 7L) |> Expect.equal "worker has source-owned work before a subscriber" (Ok())
         let transcriptReads = ResizeArray<TranscriptReadRequest>()
@@ -1941,14 +1989,9 @@ let observationTests =
           TranscriptPage { Journal = (if request.Sequence = 8L then "wrong-journal" else request.Journal)
                            Sequence = request.Sequence; Stream = request.Stream; Offset = request.Offset
                            NextOffset = None; TotalBytes = 3L; Bytes = [|0uy;128uy;255uy|]; Truncated = false }
-        let makeHub (graph: Facts.Graph) (owner: Facts.ObservationProducer) (peers: string -> int -> (string -> unit) -> Async<IDisposable>) =
-          let sources = { composer.Sources with Facts = { Register = graph.Register; Current = graph.Current; Refresh = ignore } }
-          Hub(sources, quiet, stopping.Token, unpaused, (ClockGate()).Tick,
-            observation = (graph, owner, peers), localTranscript = readTranscript)
-        let noResources _ _ _ = async { return invalidOp "This control does not request resource acquisition." }
-        let workerHub = makeHub workerGraph pb noResources
+        let workerHub = observationHub workerGraph pb stopping.Token (Some readTranscript)
         let aborted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
-        let requestVersions = System.Collections.Concurrent.ConcurrentQueue<byte>()
+        let requestEnvelopes = ConcurrentQueue<byte * byte>()
         let! server, url = Hosting.start (fun app ->
           Bozzetto.Server.McpServer.useOriginGuard
             (Bozzetto.Server.HttpOriginGuard.OwnOrigins.ofPorts [47749; 47750]) app
@@ -1962,7 +2005,7 @@ let observationTests =
                 use buffered = new System.IO.MemoryStream()
                 do! ctx.Request.Body.CopyToAsync buffered
                 let payload = buffered.ToArray()
-                if payload.Length > 4 then requestVersions.Enqueue payload[4]
+                if payload.Length > 5 then requestEnvelopes.Enqueue((payload[4], payload[5]))
                 buffered.Position <- 0L
                 let original = ctx.Request.Body
                 ctx.Request.Body <- buffered
@@ -1973,7 +2016,7 @@ let observationTests =
             })) |> ignore
           mapRoutes true app (fun () -> failwith "headless must not map browser routes")
           Observe.mapRoutes app workerHub)
-        let directory = System.IO.Path.GetFullPath(System.IO.Path.Combine(__SOURCE_DIRECTORY__, "../../nupkg/work-observation-controls", Guid.NewGuid().ToString("N")))
+        let directory = System.IO.Path.GetFullPath(System.IO.Path.Combine(__SOURCE_DIRECTORY__, "../../test-results/scratch/work-observation", Guid.NewGuid().ToString("N")))
         System.IO.Directory.CreateDirectory directory |> ignore
         let tokenFile = System.IO.Path.Combine(directory, "test.token")
         System.IO.File.WriteAllText(tokenFile, "fixture-token")
@@ -1990,7 +2033,7 @@ let observationTests =
               elif node.Note = "Disconnected; retained work is not current." then disconnected.TrySetResult() |> ignore)
           | _ -> ())
         use _registration = registration
-        let hub = makeHub graph pa noResources
+        let hub = observationHub graph pa stopping.Token None
         let controller = new Observe.Controller(hub, [ { Node = b.Node; Endpoint = Uri(url + "/api/work/observe"); TokenFile = tokenFile } ], stopping.Token)
         try
           use client = new Net.Http.HttpClient(Timeout = TimeSpan.FromSeconds 5.)
@@ -2010,6 +2053,7 @@ let observationTests =
           string admittedResponse.Content.Headers.ContentType |> Expect.equal "successful observation stays binary" Observe.MediaType
           use! admittedBody = admittedResponse.Content.ReadAsStreamAsync()
           let! hello = Observe.Frames.read admittedBody CancellationToken.None |> Async.StartAsTask
+          hello |> Option.map (fun bytes -> bytes[4]) |> Expect.equal "v13 requests negotiate v13 stream frames" (Some (byte ProtocolVersion))
           hello |> Option.map Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame
           |> Expect.equal "headless handler returns its actual node after origin admission" (Some(Ok(PeerHello b)))
           admittedResponse.Dispose()
@@ -2036,12 +2080,13 @@ let observationTests =
           string oversizedResponse.Content.Headers.ContentType |> Expect.equal "handler refusal stays binary" Observe.MediaType
           use! oversizedBody = oversizedResponse.Content.ReadAsStreamAsync()
           let! oversize = Observe.Frames.read oversizedBody CancellationToken.None |> Async.StartAsTask
+          oversize |> Option.map (fun bytes -> bytes[4]) |> Expect.equal "HTTP refusals use the compatibility envelope" (Some (byte PeerCodec.PeerCompatProtocolVersion))
           oversize |> Option.map Bozzetto.Web.Shared.BinaryCodec.decodePeerFrame
           |> Expect.equal "the route owns its exact bounded-body refusal" (Some(Ok(PeerUnavailable "request_too_large")))
           use! page = client.GetAsync(url + "/work")
           int page.StatusCode |> Expect.equal "headless HTTP does not expose the browser" 404
           let! (initial: NodeWork) = available.Task.WaitAsync(TimeSpan.FromSeconds 5.)
-          (initial.Source, initial.Local, initial.Value) |> Expect.equal "binary Hello and atomic current work identify the actual worker" (b, false, Some(workValue 7L))
+          (initial.Source, initial.Local, initial.Value) |> Expect.equal "binary Hello and atomic current work identify the actual worker" (b, false, Some(withEmptyCapacity (workValue 7L)))
           let read = { Source = b; Journal = "persisted-journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; MaxBytes = 3 }
           let! transcript = controller.ReadTranscript(read, CancellationToken.None) |> Async.StartAsTask
           transcript |> Expect.equal "selected output arrives as exact binary bytes from the named journal"
@@ -2059,13 +2104,12 @@ let observationTests =
           use! rejected = client.PostAsync(url + "/api/work/observe", forged)
           int rejected.StatusCode |> Expect.equal "worker also rejects a crossed identity" 400
           transcriptReads.Count |> Expect.equal "worker identity checked before storage" 2
-          let versions = requestVersions.ToArray()
-          versions.Length >= 3 |> Expect.isTrue "work and readback went through the actual controller HTTP client"
-          versions |> Array.forall ((=) (byte LegacyProtocolVersion))
-          |> Expect.isTrue "unchanged requests retain v9 envelopes for deployed workers"
+          requestEnvelopes.ToArray()
+          |> Expect.equal "work negotiates v13 while transcript readback keeps its deployed v9 request layout"
+            [| byte ProtocolVersion, 3uy; byte LegacyProtocolVersion, 5uy; byte LegacyProtocolVersion, 5uy |]
           workerGraph.PeerUnavailable(pb, "Worker snapshot is unavailable.") |> Expect.equal "source publishes unavailable without inventing work" (Ok())
           let! (lost: NodeWork) = unavailable.Task.WaitAsync(TimeSpan.FromSeconds 5.)
-          lost.Value |> Expect.equal "HTTP status propagation retains the old snapshot and timestamp" (Some(workValue 7L))
+          lost.Value |> Expect.equal "HTTP status propagation retains the old snapshot and timestamp" (Some(withEmptyCapacity (workValue 7L)))
           do! (controller.Close() |> Async.StartAsTask).WaitAsync(TimeSpan.FromSeconds 5.)
           do! disconnected.Task.WaitAsync(TimeSpan.FromSeconds 5.)
           do! aborted.Task.WaitAsync(TimeSpan.FromSeconds 5.)

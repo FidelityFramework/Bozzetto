@@ -5,7 +5,7 @@ module Bozzetto.Web.Shared.Protocol
 
 /// Binary envelope and vocabulary version, also carried in Welcome.
 [<Literal>]
-let ProtocolVersion = 12
+let ProtocolVersion = 13
 
 /// Existing observation requests are unchanged; deployed v9 peers remain readable.
 [<Literal>]
@@ -317,6 +317,7 @@ type AgentRun = {
   ReportSequence: int64; Model: string; Endpoint: string; Project: string
   Focus: string; Operation: string; Status: string; UpdatedAtMs: int64
   Activity: string array; OmittedActivity: int64; Usage: AgentUsage option
+  Aged: bool
 }
 /// An agent the daemon knows to be here from a fact it owns: a lease it holds
 /// or waits for (`Source = "lease"`), or a cohort membership (`Source =
@@ -391,6 +392,18 @@ type OperationEntry = {
 /// daemon; stamped per publication, a page keeps the newest.
 type OperationsBoard = { Revision: int64; Incarnation: string; Entries: OperationEntry array; StorageError: string option }
 
+type NodeCapacity = {
+  LeaseCap: int32 option
+  PidVerifiedLeases: int32
+  UnverifiedLeases: int32
+  StalePidLeases: int32
+  MemoryPressure: string
+  MachineAvailableBytes: int64
+  MachineTotalBytes: int64
+  ResidentBytes: int64
+  PeakResidentBytes: int64
+}
+
 /// The peer's own complete work observation. It carries no admission capability.
 type WorkSnapshot = {
   Sequence: int64
@@ -399,6 +412,7 @@ type WorkSnapshot = {
   Leases: LeaseBoard
   Operations: OperationsBoard
   TranscriptsOmitted: bool
+  Capacity: NodeCapacity option
 }
 /// Local is assigned by the controller, never accepted from a peer.
 type NodeWork = { Source: NodeIdentity; Local: bool; Status: string; Note: string; Value: WorkSnapshot option }
