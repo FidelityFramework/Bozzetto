@@ -142,6 +142,7 @@ module AuditPacketEval =
       match c.HardwareAndKernelModuleCount with
       | None -> yield "hardwareAndKernelModuleCount"
       | Some v when v < 0 -> yield "hardwareAndKernelModuleCount (must be >= 0)"
+      | Some 0 when c.SpatialExecuted.IsNone -> yield "spatialExecuted"
       | Some _ -> ()
       match c.Cvc5Spawns with
       | None -> yield "cvc5Spawns"

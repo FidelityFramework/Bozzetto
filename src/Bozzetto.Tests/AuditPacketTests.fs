@@ -215,7 +215,7 @@ let private runGitOrFailAsync (repoDir: string) (args: string list) = task {
 }
 
 let private validCanaryJson =
-  """{"target":"01_HelloWorldDirect","frontEndMs":1900,"proofDischargeMs":200,"totalWallMs":3100,"peakRssMb":180,"nativeExitCode":0,"watchdogSurvivors":0,"gcAllocatedBytes":9000000,"phaseTimingsMs":{"obligations":410.0,"witness-publication":620.0},"phaseAllocBytes":{"obligations":4000000,"witness-publication":5000000},"counters":{"platformResolutionReads":1,"numericProjectionCalls":1,"memoryProjectionCalls":1,"spatialProjectionCalls":0,"hardwareModules":0,"kernelModules":0,"cvc5Spawns":4},"scaling":{"scale1x":{"allocBytes":1000000,"wallMs":120.0},"scale4x":{"allocBytes":4050000,"wallMs":490.0},"passes":[{"pass":"WitnessSegmentation","alloc1x":500000,"alloc4x":2050000}]}}"""
+  """{"target":"01_HelloWorldDirect","frontEndMs":1900,"proofDischargeMs":200,"totalWallMs":3100,"peakRssMb":180,"nativeExitCode":0,"watchdogSurvivors":0,"gcAllocatedBytes":9000000,"phaseTimingsMs":{"obligations":410.0,"witness-publication":620.0},"phaseAllocBytes":{"obligations":4000000,"witness-publication":5000000},"counters":{"platformResolutionReads":1,"numericProjectionCalls":1,"memoryProjectionCalls":1,"spatialProjectionCalls":0,"spatialExecuted":false,"hardwareModules":0,"kernelModules":0,"cvc5Spawns":4},"scaling":{"scale1x":{"allocBytes":1000000,"wallMs":120.0},"scale4x":{"allocBytes":4050000,"wallMs":490.0},"passes":[{"pass":"WitnessSegmentation","alloc1x":500000,"alloc4x":2050000}]}}"""
 
 let private validSpecBallastJson =
   """{"fusionMethod":"hybrid","results":[{"pageTitle":"Zone A Pure Core","sectionTitle":"Core Boundary","pageUrl":"https://clef-lang.com/spec/zone-a","contentType":"spec","snippet":"Zone A compiler passes remain pure and host-independent."}]}"""
@@ -713,6 +713,15 @@ let auditPacketTests =
         let spatialZero = { hello with HardwareAndKernelModuleCount = Some 0; SpatialProjectionCalls = Some 1; SpatialExecuted = Some true }
         let evalSpatial = evaluateVetoes { baseInput with CanaryCandidate = Ok(Some spatialZero) }
         evalSpatial.Vetoes |> Expect.contains "Spatial with 0 kernel modules vetoes" (MechanicalVeto.SpatialExecutedWithZeroKernelModules 1)
+
+        let spatialFanOutOnly = { spatialZero with SpatialProjectionCalls = Some 0 }
+        let evalSpatialFanOut = evaluateVetoes { baseInput with CanaryCandidate = Ok(Some spatialFanOutOnly) }
+        evalSpatialFanOut.Vetoes |> Expect.contains "Spatial settlement with zero publication calls still vetoes" (MechanicalVeto.SpatialExecutedWithZeroKernelModules 1)
+
+        let checkedSpatialAbsence = { spatialFanOutOnly with SpatialExecuted = Some false }
+        missingCanaryMetrics checkedSpatialAbsence |> Expect.isEmpty "recorded absence with zero modules has complete metrics"
+        let unobservedSpatialExecution = { checkedSpatialAbsence with SpatialExecuted = None }
+        missingCanaryMetrics unobservedSpatialExecution |> Expect.contains "zero publication calls require settlement execution evidence" "spatialExecuted"
 
         let exitAndTestFail = { hello with NativeExitCode = Some 1; CompileExitCode = Some 2; FailedTestCompile = Some true }
         let evalExit = evaluateVetoes { baseInput with CanaryCandidate = Ok(Some exitAndTestFail) }
