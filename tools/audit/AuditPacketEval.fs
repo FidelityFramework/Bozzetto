@@ -360,7 +360,10 @@ module AuditPacketEval =
         | _ -> []
 
     let exitVetoes =
-      [ match cand.CompileExitCode with
+      [ match cand.CommandExitCode with
+        | Some code when code <> 0 -> yield MechanicalVeto.CanaryExitBreach("command", code)
+        | _ -> ()
+        match cand.CompileExitCode with
         | Some code when code <> 0 -> yield MechanicalVeto.CanaryExitBreach("compile", code)
         | _ -> ()
         match cand.NativeExitCode with

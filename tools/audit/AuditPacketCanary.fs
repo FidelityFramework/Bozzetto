@@ -208,6 +208,7 @@ module AuditPacketCanary =
                         && watchdogBreach.IsNone
                         && watchdogSurvivors.IsNone
                         && watchdogScanError.IsNone
+                      let commandExitCode = tryInt32Prop [ "commandExitCode"; "command_exit_code" ] root
                       { Target = tryNonBlankStringProp [ "target"; "canary"; "project" ] root |> Option.defaultValue ""
                         FrontEndMs = msFromMsOrSecs [ "frontEndMs"; "front_end_ms" ] [ "frontEndSeconds"; "front_end_seconds" ] root
                         FrontEndLimitMs = msFromMsOrSecs [ "frontEndLimitMs"; "front_end_limit_ms" ] [ "frontEndLimitSeconds"; "front_end_limit_seconds" ] root
@@ -219,10 +220,11 @@ module AuditPacketCanary =
                         RssLimitBytes = bytesFromBytesOrMb [ "rssLimitBytes"; "rss_limit_bytes" ] [ "rssLimitMb"; "rssLimitMB"; "rss_limit_mb" ] root
                         NativeExitCode = tryInt32Prop [ "nativeExitCode"; "native_exit_code"; "exitCode"; "exit_code" ] root
                         CompileExitCode = compileExitCode
+                        CommandExitCode = commandExitCode
                         WatchdogBreach = watchdogBreach
                         WatchdogSurvivors = watchdogSurvivors
                         WatchdogScanError = watchdogScanError
-                        WatchdogCleared = watchdogCleared
+                        WatchdogCleared = watchdogCleared && (commandExitCode |> Option.forall ((=) 0))
                         TotalAllocBytes = tryInt64Prop [ "totalAllocBytes"; "total_alloc_bytes"; "gcAllocatedBytes"; "gc_allocated_bytes" ] root
                         PhaseTimingsMs = phaseTimings
                         PhaseAllocBytes = phaseAllocs
@@ -245,21 +247,34 @@ module AuditPacketCanary =
 
   let private parseCanaryText (raw: string) : Result<CanaryReceipt, PacketParseError> =
     let normalized = raw.Replace("\r\n", "\n")
-    let watchdogLineOpt =
+    let only = function [| value |] -> Some value | _ -> None
+    let watchdogLines =
       normalized.Split('\n')
-      |> Array.tryFind (fun (l: string) -> l.TrimStart().StartsWith("WATCHDOG ", StringComparison.Ordinal))
-    let feMatch = Regex.Match(normalized, @"\[FrontEnd:1\]\s+([\d.]+)\s*(s|ms)")
-    let pdMatch = Regex.Match(normalized, @"\[FrontEnd\.ProofDischarge:3\]\s+([\d.]+)\s*(s|ms)")
-    if watchdogLineOpt.IsNone && not feMatch.Success && not pdMatch.Success then
+      |> Array.filter (fun l -> l.TrimStart().StartsWith("WATCHDOG ", StringComparison.Ordinal))
+    let watchdogLineOpt = only watchdogLines
+    let uniqueMatch pattern =
+      Regex.Matches(normalized, pattern) |> Seq.cast<Match> |> Seq.truncate 2 |> Seq.toArray |> only
+    let phaseCompletion name =
+      let elapsed = @"(?<elapsed>\d+(?:\.\d+)?)[ \t]*(?<unit>ms|s)"
+      uniqueMatch (@"(?m)^[ \t]*\[" + Regex.Escape(name) + @":\d+\][ \t]+(?:Done \(" + elapsed + @"\)|" + elapsed + @")[ \t]*$")
+    let feMatch = phaseCompletion "FrontEnd"
+    let pdMatch = phaseCompletion "FrontEnd.ProofDischarge"
+    if watchdogLines.Length = 0 && feMatch.IsNone && pdMatch.IsNone then
       Error PacketParseError.UnrecognizedCanaryFormat
     else
-      let toMs (m: Match) =
-        if not m.Success then None
-        else
-          match Double.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture) with
-          | true, v -> if m.Groups[2].Value = "ms" then Some v else Some(v * 1000.0)
-          | _ -> None
-      let totalMs, rssBytes, breach, exitCode, survivors, scanError =
+      let toMs completion =
+        completion |> Option.bind (fun (m: Match) ->
+          match Double.TryParse(m.Groups["elapsed"].Value, NumberStyles.Float, CultureInfo.InvariantCulture) with
+          | true, v -> if m.Groups["unit"].Value = "ms" then Some v else Some(v * 1000.0)
+          | _ -> None)
+      let tryExitCode (text: string) =
+        match Int32.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture) with
+        | true, code -> Some code
+        | _ -> None
+      let readExitCode name =
+        uniqueMatch (@"(?m)^[ \t]*" + name + @"=([^\n]*)$")
+        |> Option.bind (fun m -> tryExitCode (m.Groups[1].Value.Trim()))
+      let totalMs, rssBytes, breach, commandExitCode, survivors, scanError =
         match watchdogLineOpt with
         | None -> None, None, None, None, None, None
         | Some wdLine ->
@@ -273,12 +288,10 @@ module AuditPacketCanary =
             rxVal @"\bpeakRssBytes=(\d+)\b"
             |> Option.bind (fun s -> match Int64.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture) with true, v -> Some v | _ -> None)
           let br = rxVal @"\bbreach=(\S+)" |> normalizeOptionalNoneToken
-          let ex =
-            rxVal @"\bexitCode=(-?\d+)\b"
-            |> Option.bind (fun s -> match Int32.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture) with true, v -> Some v | _ -> None)
+          let commandExit = rxVal @"\bexitCode=(\S+)" |> Option.bind tryExitCode
           let surv = rxVal @"\bsurvivors=(.+?)(?:\s+scanError=|$)" |> normalizeWatchdogSurvivors
           let scanErr = rxVal @"\bscanError=(.+)$" |> normalizeOptionalNoneToken
-          ms, rss, br, ex, surv, scanErr
+          ms, rss, br, commandExit, surv, scanErr
       let targetOpt =
         let m = Regex.Match(normalized, @"(?:^|\s)(?:target|canary|project)\s*[:=]\s*(\S+)", RegexOptions.IgnoreCase)
         if m.Success then nonEmptyOpt m.Groups[1].Value else None
@@ -300,14 +313,15 @@ module AuditPacketCanary =
         WallLimitMs = None
         PeakRssBytes = rssBytes
         RssLimitBytes = None
-        NativeExitCode = exitCode
-        CompileExitCode = None
+        NativeExitCode = readExitCode "nativeExitCode"
+        CompileExitCode = readExitCode "compileExitCode"
+        CommandExitCode = commandExitCode
         WatchdogBreach = breach
         WatchdogSurvivors = survivors
         WatchdogScanError = scanError
         WatchdogCleared =
           watchdogLineOpt |> Option.exists (fun l -> l.Contains("survivors="))
-          && breach.IsNone && survivors.IsNone && scanError.IsNone
+          && commandExitCode = Some 0 && breach.IsNone && survivors.IsNone && scanError.IsNone
         TotalAllocBytes = None
         PhaseTimingsMs = phaseTimings
         PhaseAllocBytes = []

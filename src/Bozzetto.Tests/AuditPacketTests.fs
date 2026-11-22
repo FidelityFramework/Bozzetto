@@ -36,6 +36,7 @@ let private cleanCanaryReceipt (target: string) : CanaryReceipt = {
   RssLimitBytes = Some(512L * 1_048_576L)
   NativeExitCode = Some 0
   CompileExitCode = Some 0
+  CommandExitCode = Some 0
   WatchdogBreach = None
   WatchdogSurvivors = None
   WatchdogScanError = None
@@ -574,6 +575,81 @@ let auditPacketTests =
     ]
 
     testList "Part 5 soundness: required metrics, watchdog survivors/scanError, and non-relaxable governing caps" [
+
+      testCase "canary text keeps an interrupted compiler invocation separate from native exit" <| fun _ ->
+        let stopped =
+          String.concat "\n" [
+            "target=01_HelloWorldDirect"
+            "[12:43:01.514] [FrontEnd:1] Clef → PSG (Type Checking & Semantic Graph)..."
+            "[CCS phase] program-storage 6.800s"
+            "WATCHDOG rootPid=3901165 pgid=3901165 elapsedMs=15164 peakRssMB=302.1 peakRssBytes=316805120 breach=wall_limit_exceeded(15.13s>=15.00s) exitCode=124 survivors=none" ]
+          |> parseCanaryReceipt
+          |> Result.defaultWith (fun e -> failtestf "%s" (PacketParseError.describe e))
+        stopped.FrontEndMs |> Expect.isNone "a started front end has no completion"
+        stopped.ProofDischargeMs |> Expect.isNone "proof discharge was not observed"
+        stopped.NativeExitCode |> Expect.isNone "the watchdog did not observe a native exit"
+        stopped.CompileExitCode |> Expect.isNone "the wrapper exit is not a compiler exit"
+        stopped.CommandExitCode |> Expect.equal "the wrapper exit is retained" (Some 124)
+        stopped.TotalWallMs |> Expect.equal "whole command elapsed" (Some 15164.0)
+        stopped.WatchdogBreach |> Expect.equal "watchdog recorded a wall breach" (Some "wall_limit_exceeded(15.13s>=15.00s)")
+
+      testCase "canary text accepts Composer completion lines and distinct explicit exits" <| fun _ ->
+        let completed =
+          String.concat "\n" [
+            "target=01_HelloWorldDirect"
+            "[FrontEnd:1] Done (5150.125ms)"
+            "[FrontEnd.ProofDischarge:5] Done (387.305ms)"
+            "compileExitCode=0"
+            "nativeExitCode=3"
+            "WATCHDOG rootPid=101 pgid=101 elapsedMs=6400 peakRssBytes=167772160 breach=none exitCode=3 survivors=none" ]
+          |> parseCanaryReceipt
+          |> Result.defaultWith (fun e -> failtestf "%s" (PacketParseError.describe e))
+        completed.FrontEndMs |> Expect.equal "Composer front-end completion" (Some 5150.125)
+        completed.ProofDischargeMs |> Expect.equal "Composer proof completion with an invocation-local span ID" (Some 387.305)
+        completed.CompileExitCode |> Expect.equal "explicit compiler exit" (Some 0)
+        completed.NativeExitCode |> Expect.equal "explicit native exit" (Some 3)
+
+      testCase "canary text accepts legacy phase timings with spaces" <| fun _ ->
+        let legacy =
+          parseCanaryReceipt "  [FrontEnd:1] 5.15s\r\n  [FrontEnd.ProofDischarge:3] 387.305ms"
+          |> Result.defaultWith (fun e -> failtestf "%s" (PacketParseError.describe e))
+        legacy.FrontEndMs |> Expect.equal "legacy seconds" (Some 5150.0)
+        legacy.ProofDischargeMs |> Expect.equal "legacy milliseconds" (Some 387.305)
+
+      testCase "canary text refuses a failed whole command even when the observed compiler and program exited zero" <| fun _ ->
+        let wrapperFailed =
+          String.concat "\n" [
+            "target=01_HelloWorldDirect"
+            "compileExitCode=0"
+            "nativeExitCode=0"
+            "WATCHDOG rootPid=101 pgid=101 elapsedMs=6400 peakRssBytes=167772160 breach=none exitCode=1 survivors=none" ]
+          |> parseCanaryReceipt
+          |> Result.defaultWith (fun e -> failtestf "%s" (PacketParseError.describe e))
+        wrapperFailed.CompileExitCode |> Expect.equal "the compiler was observed to exit zero" (Some 0)
+        wrapperFailed.NativeExitCode |> Expect.equal "the program was observed to exit zero" (Some 0)
+        wrapperFailed.WatchdogCleared |> Expect.isFalse "the whole command exited with failure"
+        wrapperFailed.CommandExitCode |> Expect.equal "the command failure remains observable" (Some 1)
+        let input = cleanPacketInput ()
+        let candidate = { cleanCanaryReceipt "01_HelloWorldDirect" with CommandExitCode = wrapperFailed.CommandExitCode }
+        let verdict = evaluateVetoes { input with CanaryCandidate = Ok(Some candidate) }
+        verdict.Vetoes |> Expect.contains "nonzero command exit vetoes even in a complete receipt" (MechanicalVeto.CanaryExitBreach("command", 1))
+
+      testCase "canary text refuses to choose between repeated observations" <| fun _ ->
+        let repeated =
+          String.concat "\n" [
+            "[FrontEnd:1] Done (5150.125ms)"
+            "[FrontEnd.ProofDischarge:5] Done (387.305ms)"
+            "[FrontEnd.ProofDischarge:9] Done (1017.500ms)"
+            "nativeExitCode=0"
+            "nativeExitCode=139"
+            "WATCHDOG rootPid=101 pgid=101 elapsedMs=6400 peakRssBytes=167772160 breach=none exitCode=0 survivors=none"
+            "WATCHDOG rootPid=102 pgid=102 elapsedMs=6500 peakRssBytes=167772160 breach=none exitCode=139 survivors=none" ]
+          |> parseCanaryReceipt
+          |> Result.defaultWith (fun e -> failtestf "%s" (PacketParseError.describe e))
+        repeated.ProofDischargeMs |> Expect.isNone "two proof completions cannot be extrapolated to one"
+        repeated.NativeExitCode |> Expect.isNone "two native results are ambiguous"
+        repeated.CommandExitCode |> Expect.isNone "two wrapper results are ambiguous"
+        repeated.WatchdogCleared |> Expect.isFalse "two command outcomes cannot clear a single run"
 
       testCase "negative controls: empty canary {} has no target fallback and lists every missing required metric; malformed scalingPasses and watchdog survivors rejected" <| fun _ ->
         let emptyCanary = parseCanaryReceipt "{}" |> Result.defaultWith (fun e -> failtestf "%s" (PacketParseError.describe e))

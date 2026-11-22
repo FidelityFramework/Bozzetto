@@ -341,6 +341,7 @@ module AuditPacketTypes =
     RssLimitBytes: int64 option
     NativeExitCode: int option
     CompileExitCode: int option
+    CommandExitCode: int option
     WatchdogBreach: string option
     WatchdogSurvivors: string option
     WatchdogScanError: string option

@@ -454,6 +454,7 @@ module AuditPacketRender =
           sprintf "| Peak RSS | %s | %s | %s |" (fmtOptBytesMb b.PeakRssBytes) (fmtOptBytesMb c.PeakRssBytes) (deltaInt64Str b.PeakRssBytes c.PeakRssBytes)
           sprintf "| Native exit code | %s | %s | %s |" (fmtOptInt b.NativeExitCode) (fmtOptInt c.NativeExitCode) (deltaIntStr b.NativeExitCode c.NativeExitCode)
           sprintf "| Compile exit code | %s | %s | %s |" (fmtOptInt b.CompileExitCode) (fmtOptInt c.CompileExitCode) (deltaIntStr b.CompileExitCode c.CompileExitCode)
+          sprintf "| Command exit code | %s | %s | %s |" (fmtOptInt b.CommandExitCode) (fmtOptInt c.CommandExitCode) (deltaIntStr b.CommandExitCode c.CommandExitCode)
           sprintf "| Total `GC.GetAllocatedBytes` | %s | %s | %s |" (fmtOptBytes b.TotalAllocBytes) (fmtOptBytes c.TotalAllocBytes) (deltaInt64Str b.TotalAllocBytes c.TotalAllocBytes)
           sprintf "| `PlatformResolution.read*` | %s | %s | %s |" (fmtOptInt b.PlatformResolutionReads) (fmtOptInt c.PlatformResolutionReads) (deltaIntStr b.PlatformResolutionReads c.PlatformResolutionReads)
           sprintf "| `NumericPublication.project` | %s | %s | %s |" (fmtOptInt b.NumericProjectionCalls) (fmtOptInt c.NumericProjectionCalls) (deltaIntStr b.NumericProjectionCalls c.NumericProjectionCalls)
