@@ -103,6 +103,7 @@ let private commands = [
   RetireWorker worker
   ObserveResources 120
   ObserveResources 0
+  StopLeasedWork { Source = { Node = "local"; Incarnation = "live" }; Journal = "journal"; Sequence = 7L; RunId = "run" }
 ]
 
 let private completions = [
@@ -114,6 +115,7 @@ let private completions = [
   SessionClosed
   WorkerRetired
   SnapshotSent
+  LeasedWorkStopped
 ]
 
 let private events = [
@@ -844,6 +846,7 @@ let tests =
           Some(RequestBody.PrepareCompilerChange address.Worker)
           None // Resource observations never reach the compiler worker.
           None
+          None // Leased Stop belongs to the daemon's command owner.
         ]
       }
 
@@ -1958,6 +1961,36 @@ let observationTests =
         second.Hangup()
       do! settle runningFirst
       do! settle runningSecond
+      stopping.Cancel()
+      graph.Stop()
+      stopping.Dispose()
+    }
+
+    testTask "leased stop addresses only the current local daemon incarnation" {
+      let stopping = new CancellationTokenSource()
+      let composer = FakeComposer()
+      let graph = workGraph ()
+      let requests = ResizeArray<LeasedWorkTarget>()
+      let stop target = async { requests.Add target; return Ok () }
+      let observe _ _ _ = async { return invalidOp "A stop cannot start observation." }
+      let sources = { composer.Sources with Facts = { Register = graph.Register; Current = graph.Current; Refresh = ignore } }
+      let hub = Hub(sources, quiet, stopping.Token, unpaused, (ClockGate()).Tick,
+                    observation = (graph, pa, observe), stopLocalWork = stop)
+      let socket = FakeSocket()
+      let running = hub.RunAsync(socket, CancellationToken.None)
+      let selected = { Source = pa.Source; Journal = "journal"; Sequence = 7L; RunId = "run" }
+      try
+        for correlation, source in [ 1, b; 2, { pa.Source with Incarnation = "stale" } ] do
+          socket.Deliver(frame correlation (StopLeasedWork { selected with Source = source }))
+          let! _ = readUntil socket (List.exists (function Refused v -> v.Correlation = correlation && v.Code = "stop_refused" | _ -> false))
+          ()
+        requests |> Seq.toList |> Expect.isEmpty "peer and stale selectors never reach local authority"
+        socket.Deliver(frame 3 (StopLeasedWork selected))
+        let! _ = readUntil socket (List.exists (function Accepted v -> v.Correlation = 3 && v.Completion = LeasedWorkStopped | _ -> false))
+        requests |> Seq.toList |> Expect.equal "only the exact local selector is forwarded" [ selected ]
+      finally
+        socket.Hangup()
+      do! settle running
       stopping.Cancel()
       graph.Stop()
       stopping.Dispose()

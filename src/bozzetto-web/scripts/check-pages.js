@@ -186,16 +186,18 @@ async function check() {
   };
   await assertFleetMetrics('controller', {
     leases: ['0 / 4', '0 PID-verified'], queue: ['0 queued'], ram: ['avail /', 'peak', 'memory Normal'],
-    'active-op': ['Idle'], 'compiler-sep': ['Composer sessions: 0 open']
+    'active-op': ['Idle']
   });
   await assertFleetMetrics('one', {
     leases: ['1 / 4', '1 PID-verified'], queue: ['1 queued', 'oldest'], ram: ['avail /', 'peak'],
-    'active-op': ['clef', 'test_suite_run', 'PID 6543', 'elapsed '], 'compiler-sep': ['Composer sessions: 0 open']
+    'active-op': ['clef', 'test_suite_run', 'PID 6543', 'elapsed ']
   });
   await assertFleetMetrics('two', {
     leases: ['0 / ?', '0 PID-verified'], queue: ['0 queued'], ram: ['RAM telemetry unavailable'], 'active-op': ['Idle']
   });
   assert.doesNotMatch(await evaluate(work, `${fleetCard('two')}.innerText`), /0 \/ 4|\b0(?:\.0)? B\b|\bNormal\b/, 'legacy cap, RAM and pressure stay unavailable');
+  assert.doesNotMatch(await evaluate(work, `${fleet}.innerText`), /Composer sessions:/, 'session counts stay in compiler controls');
+  assert.equal(await evaluate(work, `${fleet}.querySelector('progress, .fleet-work-stop button') === null`), true, 'generic remote work has no comparable compile or local stop capability');
   const unavailableFleet = await evaluate(work, `${fleetCard('three')}.innerText`);
   assert.ok(unavailableFleet.includes('Capacity unavailable — no idle state inferred.'), 'unobserved node reports unavailable capacity');
   assert.doesNotMatch(unavailableFleet, /0 \/ [\d?]|0 queued|\b0(?:\.0)? B\b|\bIdle\b/, 'unobserved capacity has no fabricated counts or idle status');
@@ -451,7 +453,7 @@ async function check() {
     await evaluate(work, `(() => { window.__fleetOneCard = ${fleetCard('one')}; })()`);
     await openProject('SecondAgentProject', 102);
     await waitFor(work, "document.body.innerText.includes('SideBySide.fidproj') && document.body.innerText.includes('SecondAgentProject.fidproj')");
-    await waitFor(work, `${fleetText('one', 'active-op')}?.includes('Idle') && ${fleetText('controller', 'compiler-sep')}?.includes('Composer sessions: 2 open')`);
+    await waitFor(work, `${fleetText('one', 'active-op')}?.includes('Idle')`);
     await assertFleetMetrics('one', {leases: ['0 / 4', '0 PID-verified'], queue: ['0 queued'], 'active-op': ['Idle']});
     assert.equal(await evaluate(work, `window.__fleetOneCard === ${fleetCard('one')}`), true, 'ONE settles on the same fleet card and document');
     assert.deepEqual(pageTraffic(work), workTrafficBeforePush, 'fleet updates require no Work fetch, XHR or bridge command');
@@ -727,6 +729,42 @@ async function check() {
     assert.equal((await inspect(session)).overflow, false, `${name} fits a narrow viewport`);
     if (session === work) assert.equal(await evaluate(work, fleetFits), true, 'fleet capacity fits the 480px viewport');
   }
+  // Activate the local compile after the passive observation checks. The mock validates every field of the stop target.
+  await evaluate(work, `(() => {
+    const input = document.querySelector('input[placeholder="/absolute/path/Project.fidproj"]');
+    input.closest('details').open = true;
+    input.value = '/mock/tile-compile.fidproj'; input.dispatchEvent(new Event('input', {bubbles:true}));
+    input.parentElement.querySelector('button').click();
+  })()`);
+  const local = fleetCard('controller');
+  const meter = `${local}.querySelector('progress')`;
+  const stop = `${local}.querySelector('.fleet-work-stop button')`;
+  const status = `${local}.querySelector('.fleet-work-stop [role="status"]')`;
+  await waitFor(work, `${meter}?.getAttribute('aria-valuetext')?.includes(' over') && ${stop}?.innerText === 'Stop'`);
+  assert.equal(await evaluate(work, `${meter}.max`), 8000, 'only the successful exact compile in the same lease lane supplies the eight-second baseline');
+  assert.ok(await evaluate(work, `${meter}.classList.contains('progress-warning') && ${meter}.value === ${meter}.max`), 'overrun is visible and the meter stays bounded');
+  assert.equal(await evaluate(work, `[...${fleet}.querySelectorAll('.fleet-work-stop button')].length`), 1, 'only the eligible local lease has a stop button');
+  const activeLocal = await evaluate(work, `[...${nodeCard('controller')}.querySelectorAll('.node-active')].map(row => row.textContent).join(' ')`);
+  assert.match(activeLocal, /ordinary-running\.fidproj/, 'controller contains the live lease without stop capability');
+  assert.match(activeLocal, /expired-authorized\.fidproj/, 'controller contains an authorized row whose lease has expired');
+  assert.match(await evaluate(work, fleetText('two', 'active-op')), /remote-authorized\.fidproj/, 'the remote injected capability is attached to a live direct compile');
+  assert.equal(await evaluate(work, `${fleetCard('two')}.querySelector('progress, .fleet-work-stop button') === null`), true, 'foreign capability grants no control and unknown compile duration grants no meter');
+  const compileEvidence = await evaluate(work, `({baselineMs:${meter}.max, label:${meter}.getAttribute('aria-valuetext'), button:${stop}.getAttribute('aria-label')})`);
+  const stopFeedback = [];
+  for (const result of ['stop_refused: The owned isolated process incarnation can no longer be verified.', 'process group stopped']) {
+    await evaluate(work, `${stop}.click()`);
+    await waitFor(work, `${stop}?.disabled && ${status}?.textContent.includes('Stopping')`);
+    await waitFor(work, `${status}?.textContent.includes(${JSON.stringify(result)})`);
+    stopFeedback.push(await evaluate(work, `${status}.textContent`));
+    if (result.startsWith('stop_refused')) {
+      await waitFor(work, `${meter}?.max === 3000`);
+      assert.match(await evaluate(work, `${meter}.getAttribute('aria-valuetext')`), /last compile 3s/, 'the existing measured row follows newly supplied comparable history');
+    }
+
+  }
+  assert.match(await evaluate(work, fleetText('controller', 'active-op')), /ordinary-running\.fidproj/, 'the local remaining direct compile is visible after settlement');
+  assert.equal(await evaluate(work, `${stop} === null && ${meter} === null`), true, 'ordinary live and expired authorized leases grant no stop, and unrelated history supplies no estimate');
+  await writeFile(join(evidence, 'fleet-compile-control.json'), JSON.stringify({compileEvidence, refreshedBaselineMs:3000, stopFeedback, ordinaryLocalLive:true, expiredLocalCapability:true, foreignCapability:true, unmatchedCompileHasNoMeter:true}, null, 2));
   assert.deepEqual(browserErrors, [], 'no browser runtime errors');
   console.log(`Page checks passed: live retrieval on both pages (#43), live pushed health transition (#36), short local dates (#14), Dashboard dwell and live fleet capacity (#40), retained disclosure state, isolated views, live collapsed store, native information controls, navigation, shared-owner command, reload, 900/480 px layouts. Evidence: ${evidence}`);
 }

@@ -191,7 +191,12 @@ let mapRoutes (app: WebApplication) (hub: UiBridge.Hub) =
           if request.Topic = "work" then
             let frameOf (state: NodeWork) =
               match state.Status, state.Value with
-              | "available", Some snapshot -> PeerWork snapshot
+              | "available", Some snapshot ->
+                // The observation feed has no authority to stop the worker's leased commands.
+                let entries =
+                  snapshot.Operations.Entries
+                  |> Array.map (fun entry -> if entry.Code = RunningStoppable then { entry with Code = "running" } else entry)
+                PeerWork { snapshot with Operations = { snapshot.Operations with Entries = entries } }
               | _ -> PeerUnavailable state.Note
             let current, joined = hub.RegisterLocalWork(frameOf >> enqueue)
             subscription <- Some joined

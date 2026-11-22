@@ -509,6 +509,146 @@ let leasedCommandTests =
             |> Expect.isEmpty "invalid requests create no durable authority"
           })
     }
+    testTask "stop targets only the opted-in isolated command and keeps its admission until settlement" {
+      if OperatingSystem.IsLinux() then
+        do! withCommandServer true (fun client supervisor _ -> task {
+          let holder = "http-command-owner"
+          let lease = granted holder ExpensiveWorkLease.Kind.FullBuild
+          let start isolated marked =
+            let command = { commandBody lease with RunId = Guid.NewGuid().ToString "N"; StartedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }
+            let psi = Diagnostics.ProcessStartInfo((if isolated then "/usr/bin/setsid" else "/bin/sh"), UseShellExecute = false, RedirectStandardOutput = true)
+            if isolated then psi.ArgumentList.Add "/bin/sh"
+            for arg in ["-c"; "echo ready && exec /bin/sleep 20"] do psi.ArgumentList.Add arg
+            if marked then psi.Environment["BOZZETTO_LEASED_RUN_ID"] <- command.RunId
+            else psi.Environment.Remove("BOZZETTO_LEASED_RUN_ID") |> ignore
+            let child = Diagnostics.Process.Start psi
+            child.StandardOutput.ReadLine() |> Expect.equal "fixture entered its isolated process group" "ready"
+            child, { command with ProcessId = child.Id; Executable = "/bin/sleep"; Arguments = [|"20"|] }
+          let child, selected = start true true
+          let other, unmarked = start true false
+          let shared, sharedGroup = start false true
+          use child = child
+          use other = other
+          use shared = shared
+          try
+            let! startSelected = post client "start" selected
+            let seq = requireSuccess startSelected
+            let! startOther = post client "start" unmarked
+            let otherSeq = requireSuccess startOther
+            let! startShared = post client "start" sharedGroup
+            let sharedSeq = requireSuccess startShared
+            let journal = supervisor.Journal.Incarnation
+            let stop id row run = supervisor.StopLeasedCommand(id,row,run) |> Async.StartAsTask
+            supervisor.CurrentLivenessSnapshot().StoppableRunIds |> Expect.equal "only the marker-bearing root opted in" (Set.singleton selected.RunId)
+            for id, row, run, reason in
+              [ "stale", seq, selected.RunId, "The operation journal is unavailable or has changed."
+                journal, otherSeq, selected.RunId, "The selected running leased command is no longer current."
+                journal, seq, unmarked.RunId, "The selected running leased command is no longer current."
+                journal, sharedSeq, sharedGroup.RunId, "The command did not register an owned isolated process for stopping."
+                journal, otherSeq, unmarked.RunId, "The command did not register an owned isolated process for stopping." ] do
+              let! refused = stop id row run
+              refused |> Expect.equal "wrong identity or registration refused" (Error reason)
+            (child.HasExited || other.HasExited || shared.HasExited) |> Expect.isFalse "all refusals leave every fixture root running"
+            let! joined = Task.WhenAll([|stop journal seq selected.RunId; stop journal seq selected.RunId|])
+            joined |> Expect.equal "both requests join the same fenced cleanup" [|Ok (); Ok ()|]
+            child.WaitForExit(2000) |> Expect.isTrue "the exact root exited"
+            other.HasExited |> Expect.isFalse "the other registered root remains alive"
+            supervisor.CurrentLivenessSnapshot().StoppableRunIds |> Expect.isEmpty "a latched stop cannot be offered again"
+            LeaseWatch.matchesLive holder ExpensiveWorkLease.Kind.FullBuild (ExpensiveWorkLease.LeaseId.ofWire lease)
+            |> Expect.isTrue "the runner retains admission through reporting"
+            let result: CommandWire.CommandObservationResult =
+              { FinishedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); ExitCode = child.ExitCode; StandardOutput = ""; StandardError = ""
+                OutputTruncated = false; ErrorTruncated = false }
+            let! terminal = post client "finish" { selected with Observation = CommandWire.CommandFinished result }
+            requireSuccess terminal |> Expect.equal "the runner settles its original operation" seq
+            let! late = stop journal seq selected.RunId
+            late |> Expect.equal "terminal observations cannot be signalled" (Error "The selected running leased command is no longer current.")
+          finally
+            for fixture in [child;other;shared] do
+              if not fixture.HasExited then fixture.Kill(true)
+              fixture.WaitForExit()
+        })
+    }
+    testTask "stop joins only the selected process group and refuses a lost root or lease" {
+      if OperatingSystem.IsLinux() then
+        do! withCommandServer true (fun client supervisor _ -> task {
+          let holder = "http-command-owner"
+          let lease = granted holder ExpensiveWorkLease.Kind.FullBuild
+          let leaseId = ExpensiveWorkLease.LeaseId.ofWire lease
+          let journal = supervisor.Journal.Incarnation
+          let otherHolder = "http-command-sibling"
+          let otherLease = granted otherHolder ExpensiveWorkLease.Kind.FullBuild
+          let start owner grant =
+            let command = { commandBody grant with Holder = owner; RunId = Guid.NewGuid().ToString "N"; StartedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }
+            let script = "sleep 30 & a=$!; sleep 30 & echo $$ $a $!; wait"
+            let psi = Diagnostics.ProcessStartInfo("/usr/bin/setsid", UseShellExecute = false, RedirectStandardOutput = true)
+            for arg in ["/bin/sh"; "-c"; script] do psi.ArgumentList.Add arg
+            psi.Environment["BOZZETTO_LEASED_RUN_ID"] <- command.RunId
+            let root = Diagnostics.Process.Start psi
+            // Shell output names only the test's children; acquire handles now for independent cleanup after a failed kill.
+            let ids =
+              try root.StandardOutput.ReadLine().Split(' ') |> Array.map int
+              with _ ->
+                if not root.HasExited then root.Kill(true)
+                root.WaitForExit()
+                root.Dispose()
+                reraise ()
+            ids[0] |> Expect.equal "the shell owns the isolated group" root.Id
+            let children = [for pid in ids[1..] -> Diagnostics.Process.GetProcessById pid]
+            let cleanup =
+              { new IDisposable with
+                  member _.Dispose() =
+                    for proc in children @ [root] do
+                      if not proc.HasExited then proc.Kill()
+                      let stopped () =
+                        Bozzetto.Server.LinuxProcessEdge.readLinuxProc proc.Id
+                        |> Option.forall (ProcessWatchdog.isLiveRecord >> not)
+                      let gone = Threading.SpinWait.SpinUntil(Func<bool> stopped, 3000)
+                      proc.Dispose()
+                      gone |> Expect.isTrue "every fixture process terminated" }
+            cleanup, root, Set.ofArray ids, {command with ProcessId = root.Id; Executable = "/bin/sh"; Arguments = [|"-c"; script|] }
+          let liveGroup pid =
+            match Bozzetto.Server.LinuxProcessEdge.readLinuxProcesses false with
+            | Error reason -> failtestf "Cannot inspect test-owned process groups: %A" reason
+            | Ok ps -> ps |> List.choose (fun p -> if p.Pgid = pid && ProcessWatchdog.isLiveRecord p then Some p.Pid else None) |> Set.ofList
+          let beginCommand cmd = task {
+            let! response = post client "start" cmd
+            return requireSuccess response
+          }
+          let stop seq (cmd: CommandWire.CommandObservationRequest) =
+            supervisor.StopLeasedCommand(journal,seq,cmd.RunId) |> Async.StartAsTask
+          let aCleanup, a, aPids, first = start holder lease
+          use _a = aCleanup
+          let bCleanup, b, bPids, second = start otherHolder otherLease
+          use _b = bCleanup
+          let! firstSeq = beginCommand first
+          let! secondSeq = beginCommand second
+          aPids.Count |> Expect.equal "the selected root owns two children" 3
+          bPids.Count |> Expect.equal "the sibling root owns two children" 3
+          liveGroup a.Id |> Expect.equal "all three selected processes run before stop" aPids
+          liveGroup b.Id |> Expect.equal "all three sibling processes run before stop" bPids
+          supervisor.CurrentLivenessSnapshot().StoppableRunIds |> Expect.equal "both rows opted in" (Set.ofList [first.RunId; second.RunId])
+          let! stopped = stop firstSeq first
+          stopped |> Expect.equal "exact group cleaned up" (Ok ())
+          liveGroup a.Id |> Expect.isEmpty "no live member of the selected group remains"
+          liveGroup b.Id |> Expect.equal "the other opted-in group is intact" bPids
+          supervisor.CurrentLivenessSnapshot().StoppableRunIds |> Expect.equal "only the sibling can still be selected" (Set.singleton second.RunId)
+          LeaseWatch.matchesLive holder ExpensiveWorkLease.Kind.FullBuild leaseId |> Expect.isTrue "the runner keeps its admission"
+          let cCleanup, c, cPids, vanished = start holder lease
+          use _c = cCleanup
+          let! goneSeq = beginCommand vanished
+          supervisor.CurrentLivenessSnapshot().StoppableRunIds.Contains vanished.RunId |> Expect.isTrue "the disappearing root was admitted"
+          c.Kill()
+          c.WaitForExit()
+          let! stale = stop goneSeq vanished
+          stale |> Expect.equal "revalidate the bound incarnation immediately before signalling" (Error "The owned isolated process incarnation can no longer be verified.")
+          liveGroup c.Id |> Expect.equal "stale stop leaves both surviving children untouched" (Set.remove c.Id cPids)
+          LeaseWatch.releaseOwned otherHolder (ExpensiveWorkLease.LeaseId.ofWire otherLease) |> ignore
+          let! lost = stop secondSeq second
+          lost |> Expect.equal "receipt no longer owns admission" (Error "The command no longer holds its original live lease.")
+          liveGroup b.Id |> Expect.equal "releasing admission cannot target the remaining group" bPids
+        })
+    }
     testTask "an unavailable durable journal cannot acknowledge a running command" {
       do!
         withCommandServer false (fun client _ _ ->

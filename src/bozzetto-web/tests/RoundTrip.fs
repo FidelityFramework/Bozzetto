@@ -112,6 +112,7 @@ let private commands = [
   ObserveResources 0
   ObserveNodeResources { Node = "one"; Seconds = 120 }
   ReadNodeTranscript { Source = { Node = "one"; Incarnation = "epoch-one" }; Journal = "journal"; Sequence = 7L; Stream = Stdout; Offset = 0L; MaxBytes = MaxTranscriptPageBytes }
+  StopLeasedWork { Source = { Node = "controller"; Incarnation = "epoch-controller" }; Journal = "journal"; Sequence = 9007199254740993L; RunId = "run-id" }
   RequestSnapshot
   OpenProject "/abs/Ünï 🎼.fidproj"
   OpenProject ""
@@ -133,6 +134,7 @@ let private completions = [
   SessionClosed
   WorkerRetired
   SnapshotSent
+  LeasedWorkStopped
 ]
 
 let private dwellBoard =

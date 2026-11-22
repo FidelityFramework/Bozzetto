@@ -968,7 +968,32 @@ let private elapsedText (startMs: float) (endMs: float) =
 let private hasRamTelemetry (capacity: NodeCapacityView) =
   capacity.machineTotal > 0. || capacity.resident > 0. || capacity.peakResident > 0. || capacity.memoryPressure <> ""
 
-let private fleetCapacityGrid (stores: Stores) (connected: unit -> bool) =
+let private directCompile (op: NodeOperationView) =
+  let args = op.arguments
+  let command =
+    match fileName op.executable with
+    | "Composer" -> 0
+    | "dotnet" when args.Length > 0 && args[0].StartsWith("/") && fileName args[0] = "Composer.dll" -> 1
+    | _ -> -1
+  op.hasLease && op.leaseKind <> "" && op.project <> "" && command >= 0 && args.Length > command + 1
+  && args[command] = "compile" && args[command + 1].StartsWith("/")
+  && args[command + 1].EndsWith(".fidproj", System.StringComparison.Ordinal)
+
+let private lastCompileDuration (node: NodeWorkView) (op: NodeOperationView) =
+  if node.status <> "available" || node.journal = "" || node.storageError <> ""
+     || op.code <> "running" || op.startedAt <= 0. || not (directCompile op) then None
+  else
+    node.operations
+    |> Array.filter (fun prior ->
+      prior.hasLease && prior.ok && prior.code <> "running" && prior.startedAt > 0.
+      && prior.at > prior.startedAt && prior.at <= op.startedAt
+      && prior.sequence <> op.sequence && prior.leaseKind = op.leaseKind && prior.operation = op.operation && prior.project = op.project
+      && prior.executable = op.executable && prior.arguments = op.arguments)
+    |> Array.sortByDescending _.at
+    |> Array.tryHead
+    |> Option.map (fun prior -> prior.at - prior.startedAt)
+
+let private fleetCapacityGrid (stores: Stores) (connected: unit -> bool) (stop: NodeWorkView -> NodeOperationView -> unit) =
   comp (fun () ->
     let nodeRank (node: NodeWorkView) =
       if node.local then 0
@@ -1003,6 +1028,19 @@ let private fleetCapacityGrid (stores: Stores) (connected: unit -> bool) =
     let tile (node: unit -> NodeWorkView) =
       comp (fun () ->
         let active = Api.createMemo (fun _ -> activeOperations (node ()))
+        let currentTime () = stores.StartedAt.Value + stores.Uptime.Value
+        let comparison = Api.createMemo (fun _ ->
+          active.Value |> Array.tryHead |> Option.bind (fun op ->
+            lastCompileDuration (node ()) op |> Option.map (fun baseline -> op.sequence, op.startedAt, baseline)))
+        let measuredCompile () =
+          match comparison.Value with
+          | Some ((_, start, _) as row) when connected () && stores.Uptime.Value >= 0. && currentTime () >= start -> [| row |]
+          | _ -> [||]
+        let eligible (op: NodeOperationView) =
+          let n = node ()
+          connected () && n.local && n.status = "available" && op.canStop && op.code = "running"
+          && op.hasLease && op.runId <> "" && n.journal <> "" && stores.Uptime.Value >= 0.
+          && (n.leases |> Array.exists (fun lease -> lease.id = op.leaseId && lease.expiresAt > currentTime ()))
         let capacity () = (node ()).capacity
         let availability () = if connected () then (node ()).status else "controller disconnected"
         div [| cls "fleet-node-card card card-compact panel min-w-0"; attrRx "data-node" (fun () -> (node ()).id) |] [|
@@ -1058,9 +1096,39 @@ let private fleetCapacityGrid (stores: Stores) (connected: unit -> bool) =
                     h4 [| cls "text-xs font-semibold opacity-70" |] [| text "Active operation" |]
                     para [||] [| rx (fun () -> operationText (node ()) active.Value) |]
                   |]
-                  para [| cls "fleet-compiler-sep mt-auto border-t border-base-content/10 pt-2 text-xs opacity-70" |] [|
-                    rx (fun () -> "Composer sessions: " + string (openNodeSessions (node ())).Length + " open · worker " + (node ()).worker.state)
-                  |]
+                  each (fun (sequence, _, _) -> sequence) measuredCompile (fun row ->
+                    let baseline () = let _, _, previous = row () in previous
+                    let elapsedNow () = let _, start, _ = row () in currentTime () - start
+                    let caption () =
+                      let used = elapsedNow ()
+                      duration used + " elapsed · last compile " + duration (baseline ())
+                      + (if used > baseline () then " · " + duration (used - baseline ()) + " over" else "")
+                    div [| cls "fleet-compile-time flex flex-col gap-1 text-xs" |] [|
+                      el "progress" [|
+                        clsRx (fun () -> if elapsedNow () > baseline () then "progress progress-warning w-full" else "progress progress-info w-full")
+                        aria "label" "Elapsed time compared with last successful matching compile"
+                        attrRx "max" (fun () -> string (baseline ()))
+                        attrRx "value" (fun () -> string (min (baseline ()) (elapsedNow ())))
+                        attrRx "aria-valuetext" caption
+                      |] [||]
+                      span [||] [| rx caption |]
+                    |])
+                  each (fun (op: NodeOperationView) -> op.sequence) (fun () -> (node ()).operations |> Array.filter (fun op ->
+                    eligible op || stores.Pending.Value.ContainsKey (stopWorkKey (node ()) op)
+                    || stores.Outcomes.Value.ContainsKey (stopWorkKey (node ()) op))) (fun op ->
+                    let key () = stopWorkKey (node ()) (op ())
+                    let pending () = stores.Pending.Value.ContainsKey (key ())
+                    div [| cls "fleet-work-stop flex flex-wrap items-center gap-2" |] [|
+                      show (fun () -> eligible (op ())) (fun () ->
+                        button [| cls "btn btn-error btn-outline btn-xs"; attr "type" "button"
+                                  attrRx "aria-label" (fun () -> "Stop " + (op ()).operation + " on " + (node ()).id)
+                                  flagRx "disabled" pending
+                                  on "click" (fun _ -> if eligible (op ()) && not (pending ()) then stop (node ()) (op ())) |] [| text "Stop" |])
+                      span [| attr "role" "status"; aria "live" "polite"
+                              clsRx (fun () -> if stores.Outcomes.Value.TryFind (key ()) |> Option.exists (fun outcome -> not outcome.ok) then "text-xs text-error" else "text-xs") |] [|
+                        rx (fun () -> if pending () then "Stopping…" else stores.Outcomes.Value.TryFind (key ()) |> Option.map _.text |> Option.defaultValue "")
+                      |]
+                    |])
                 |])
               (fun () ->
                 div [| cls "text-sm opacity-70" |] [|
@@ -1443,7 +1511,9 @@ let app () : V =
         if workPage then
           div [| cls "grid grid-cols-1 xl:grid-cols-3 gap-4 p-4" |] [|
             div [| cls "xl:col-span-3" |] [| rebalanceAdvisoryBanner stores |]
-            div [| cls "xl:col-span-3" |] [| fleetCapacityGrid stores connected |]
+            div [| cls "xl:col-span-3" |] [| fleetCapacityGrid stores connected (fun node operation ->
+              dispatch (StopLeasedWork { Source = { Node = node.id; Incarnation = node.incarnation }
+                                         Journal = node.journal; Sequence = int64 operation.sequence; RunId = operation.runId })) |]
             details [| flag "open" true; cls "xl:col-span-3 controller-compiler" |] [|
               summary [| cls "cursor-pointer text-sm font-semibold" |] [| text "Controller compiler controls" |]
               div [| cls "grid grid-cols-1 xl:grid-cols-3 gap-4 mt-3" |] [|

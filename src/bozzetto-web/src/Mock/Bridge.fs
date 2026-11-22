@@ -248,6 +248,9 @@ let private leases () =
     Queued = queued |> Seq.map (fun (wait, _, _) -> wait) |> Seq.toArray
   }
 
+let private compileProject = "/mock/tile-compile.fidproj"
+let mutable private compileStopAttempts = 0
+
 let mutable private workRevision = 0L
 let private workNodes () =
   workRevision <- workRevision + 1L
@@ -328,11 +331,57 @@ let private workNodes () =
         CheckoutSynced = Some true
       }
   }
+  let idleTwo =
+    { remote with Operations = { remote.Operations with Entries = [| { history[0] with Project = "/mock/recent-two-hour"; AtMs = int64 startedAt - 7200000L }; abandonedRecent; abandonedOlder |] } }
+  let controller, two =
+    if sessions |> Seq.exists (fun s -> s.Status.Project = compileProject && not s.Status.Closed) then
+      let start = int64 startedAt - 24000L
+      let lease = { Kind = "full_build"; LeaseId = "compile-lease"; RunId = "compile-current"; Executable = "/mock/dotnet"
+                    Arguments = [| "/mock/Composer.dll"; "compile"; compileProject |]; ProcessId = 6427; StartedAtMs = start }
+      let stopped = compileStopAttempts >= 2
+      let current = { run with Sequence = 208L; Project = compileProject; Operation = lease.Kind; Lease = Some lease
+                               AtMs = if stopped then int64 (nowMs ()) else start
+                               Ok = false; Code = (if stopped then "command_failed" else RunningStoppable); Message = ""; Run = None }
+      let previous = { current with Sequence = 205L; AtMs = start - 10000L; Ok = true; Code = ""
+                                    Lease = Some { lease with LeaseId = "prior"; RunId = "prior-run"; StartedAtMs = start - 18000L }
+                                    Run = history[0].Run }
+      let updatedHistory =
+        if compileStopAttempts = 0 then [| previous |]
+        else [| { previous with Sequence = 204L; AtMs = start - 4000L
+                                Lease = Some { lease with LeaseId = "recent-prior"; RunId = "recent-prior"; StartedAtMs = start - 7000L } }; previous |]
+      let otherCommand = { previous with Sequence = 206L; AtMs = start - 5000L
+                                         Lease = Some { lease with LeaseId = "other"; RunId = "other-run"; StartedAtMs = start - 7000L
+                                                                   Arguments = Array.append lease.Arguments [| "--timing" |] } }
+      let otherLane = { previous with Sequence = 203L; AtMs = start - 500L
+                                      Lease = Some { lease with Kind = "test_suite_run"; LeaseId = "other-lane"; RunId = "other-lane-run"; StartedAtMs = start - 2500L } }
+      let failed = { previous with Sequence = 207L; AtMs = start - 1000L; Ok = false; Code = "command_failed"; Run = run.Run }
+      let activeLease = { Id = lease.LeaseId; Kind = lease.Kind; Holder = "fixture compiler"; GrantedAtMs = start; ExpiresAtMs = int64 (nowMs ()) + 120000L }
+      let direct seq id code =
+        let project = "/mock/" + id + ".fidproj"
+        let command = { lease with LeaseId = id; RunId = id + "-run"; ProcessId = 6400 + int seq; Arguments = [| "/mock/Composer.dll"; "compile"; project |] }
+        { current with Sequence = seq; Project = project; Code = code; Lease = Some command }
+      let ordinary = direct 209L "ordinary-running" "running"
+      let expired = direct 210L "expired-authorized" RunningStoppable
+      let ordinaryLease = { activeLease with Id = "ordinary-running" }
+      let expiredLease = { activeLease with Id = "expired-authorized"; ExpiresAtMs = start + 1000L }
+      let localLeases =
+        Array.concat [ snapshot.Leases.Active; [| ordinaryLease; expiredLease |]; (if stopped then [||] else [| activeLease |]) ]
+      let local =
+        { snapshot with
+            Leases = { snapshot.Leases with Active = localLeases }
+            Capacity = snapshot.Capacity |> Option.map (fun capacity -> { capacity with PidVerifiedLeases = capacity.PidVerifiedLeases + (if stopped then 1 else 2) })
+            Operations = { snapshot.Operations with Entries = Array.append [| current; ordinary; expired; otherLane; failed; otherCommand |] updatedHistory } }
+      let remoteRun = direct 211L "remote-authorized" RunningStoppable
+      let remoteView =
+        { idleTwo with Leases = { idleTwo.Leases with Active = [| { activeLease with Id = "remote-authorized" } |] }
+                       Operations = { idleTwo.Operations with Entries = Array.append [| remoteRun |] idleTwo.Operations.Entries } }
+      local, remoteView
+    else snapshot, idleTwo
   WorkNodes { Revision = workRevision; Nodes = [|
-    { Source = { Node = "controller"; Incarnation = "mock-controller" }; Local = true; Status = "available"; Note = "Synthetic controller fixture"; Value = Some snapshot }
+    { Source = { Node = "controller"; Incarnation = "mock-controller" }; Local = true; Status = "available"; Note = "Synthetic controller fixture"; Value = Some controller }
     { Source = { Node = "one"; Incarnation = "mock-one" }; Local = false; Status = "available"; Note = "Synthetic remote build fixture"; Value = Some busy }
     { Source = { Node = "two"; Incarnation = "mock-two" }; Local = false; Status = "available"; Note = "Synthetic observed idle fixture"
-      Value = Some { remote with Operations = { remote.Operations with Entries = [| { history[0] with Project = "/mock/recent-two-hour"; AtMs = int64 startedAt - 7200000L }; abandonedRecent; abandonedOlder |] } } }
+      Value = Some two }
     { Source = { Node = "three"; Incarnation = "mock-three" }; Local = false; Status = "unavailable"; Note = "Synthetic disconnected fixture"; Value = None }
   |] }
 
@@ -473,6 +522,20 @@ let private handle (send: byte array -> unit) (frame: CommandFrame) =
   match frame.Command with
   | ObserveResources _ ->
     refuse send correlation noTarget "unsupported" "Host resource acquisition is available only on the Linux daemon, not the mock."
+  | StopLeasedWork target ->
+    if target.Source.Node <> "controller" || target.Source.Incarnation <> "mock-controller" || target.Journal <> "mock-journal"
+       || target.Sequence <> 208L || target.RunId <> "compile-current" || compileStopAttempts >= 2
+       || not (sessions |> Seq.exists (fun s -> s.Status.Project = compileProject && not s.Status.Closed)) then
+      refuse send correlation noTarget "stop_refused" "The selected running leased command is no longer current."
+    else
+      compileStopAttempts <- compileStopAttempts + 1
+      after 180 (fun () ->
+        if compileStopAttempts = 1 then
+          refuse send correlation noTarget "stop_refused" "The owned isolated process incarnation can no longer be verified."
+          broadcast (workNodes ())
+        else
+          broadcast (workNodes ())
+          accept send correlation noTarget LeasedWorkStopped)
   | ReadNodeTranscript request ->
     let outcome =
       if request.Journal <> "mock-journal" || request.Sequence <> 7L then TranscriptRefused("missing_entry", "The selected stored entry is unavailable.")

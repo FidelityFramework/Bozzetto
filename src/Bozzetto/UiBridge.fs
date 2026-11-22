@@ -164,7 +164,7 @@ module Project =
   /// Compiler operations and leased process observations as a page shows them,
   /// stamped by the publication that produced it. The caller travels as the
   /// adapter's label, which is all it is.
-  let operationsWithLiveness (lastLivenessVerifiedAtMs: string -> int64 option) (revision: int64) (journal: ComposerJournal.Journal) : OperationsBoard =
+  let operationsWithLiveness (liveness: LeasedLivenessSnapshot) (revision: int64) (journal: ComposerJournal.Journal) : OperationsBoard =
     { OperationsBoard.Revision = revision
       Incarnation = journal.Incarnation
       StorageError = journal.StorageError
@@ -177,11 +177,15 @@ module Project =
               let livenessNote =
                 match entry.Context with
                 | ComposerJournal.Context.LeasedCommand cmd ->
-                  match lastLivenessVerifiedAtMs cmd.RunId with
+                  match Map.tryFind cmd.RunId liveness.VerifiedAtMs with
                   | Some ms -> sprintf "owner liveness verified %s" (DateTimeOffset.FromUnixTimeMilliseconds(ms).ToString("O"))
                   | None -> ""
                 | _ -> ""
-              false, "running", livenessNote
+              let code =
+                match entry.Context with
+                | ComposerJournal.Context.LeasedCommand cmd when Set.contains cmd.RunId liveness.StoppableRunIds -> RunningStoppable
+                | _ -> "running"
+              false, code, livenessNote
             | ComposerJournal.Outcome.Succeeded -> true, "", ""
             | ComposerJournal.Outcome.Refused(code, message) -> false, ComposerClientJson.refusalCode code, message
             | ComposerJournal.Outcome.Failed message -> false, "exception", message
@@ -206,7 +210,7 @@ module Project =
         |> List.toArray }
 
   let operations (revision: int64) (journal: ComposerJournal.Journal) : OperationsBoard =
-    operationsWithLiveness (fun _ -> None) revision journal
+    operationsWithLiveness LeasedLivenessSnapshot.empty revision journal
 
   let transcript (read: ComposerJournal.TranscriptRequest -> Result<ComposerJournal.TranscriptPage, ComposerJournal.TranscriptRefusal>) (request: TranscriptReadRequest) =
     let stream =
@@ -233,6 +237,7 @@ module Project =
   let workSummary (value: WorkSnapshot) =
     let active entry =
       entry.Code = "running"
+      || entry.Code = RunningStoppable
       || entry.Code = "unknown"
       || (entry.Lease |> Option.exists (fun command -> value.Leases.Active |> Array.exists (fun lease -> lease.Id = command.LeaseId)))
     let recent =
@@ -367,7 +372,7 @@ module Project =
   /// which the bridge answers itself.
   let toRequest (command: Command) : RequestBody option =
     match command with
-    | RequestSnapshot | ObserveResources _ | ObserveNodeResources _ | ReadNodeTranscript _ -> None
+    | RequestSnapshot | ObserveResources _ | ObserveNodeResources _ | ReadNodeTranscript _ | StopLeasedWork _ -> None
     // The supervisor chooses the worker for an open; the address is empty,
     // as composer_open_project sends it.
     | OpenProject project -> Some(RequestBody.Open(workerAddress { WorkerTarget.Host = ""; Epoch = "" }, project))
@@ -1087,7 +1092,7 @@ module Facts =
       elif work = operationsWork then
         match fact 1UL, fact 2UL with
         | Some(Fact.Journal journal), Some(Fact.Liveness liveness) ->
-          Payload.Value(Operations(Project.operationsWithLiveness (fun runId -> Map.tryFind runId liveness.VerifiedAtMs) stamp journal))
+          Payload.Value(Operations(Project.operationsWithLiveness liveness stamp journal))
         | other -> invalidOp (sprintf "Bridge facts: Operations read %A" other)
       elif Map.containsKey work observationWorks then
         match fact 1UL with
@@ -1983,7 +1988,7 @@ let private observeMachine (value: HostResources) =
     |> ignore
   | _ -> ()
 
-type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationToken, pause: TimeSpan -> Async<unit>, uptime: Async<int64>, ?observation: Facts.Graph * Facts.ObservationProducer * (string -> int -> (string -> unit) -> Async<IDisposable>), ?localTranscript: TranscriptReadRequest -> TranscriptReadOutcome, ?peerTranscript: TranscriptReadRequest -> CancellationToken -> Async<TranscriptReadOutcome>) =
+type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationToken, pause: TimeSpan -> Async<unit>, uptime: Async<int64>, ?observation: Facts.Graph * Facts.ObservationProducer * (string -> int -> (string -> unit) -> Async<IDisposable>), ?localTranscript: TranscriptReadRequest -> TranscriptReadOutcome, ?peerTranscript: TranscriptReadRequest -> CancellationToken -> Async<TranscriptReadOutcome>, ?stopLocalWork: LeasedWorkTarget -> Async<Result<unit, string>>) =
   let resources = ResourceMonitor.create observeMachine
   let connections = ConcurrentDictionary<int64, Outbox>()
   let heartbeatSinks = ConcurrentDictionary<int64, UptimeTick -> unit>()
@@ -2061,6 +2066,16 @@ type Hub(sources: BridgeSources, options: BridgeOptions, stopping: CancellationT
           | None -> return TranscriptRefused("node_unavailable", "Node operation history is unavailable.")
       }
       return [ Outbound.ofEvent(NodeTranscript { Source = request.Source; Correlation = frame.Correlation; Outcome = outcome }) ]
+    | StopLeasedWork target ->
+      let! result =
+        match observation, stopLocalWork with
+        | Some(_, producer, _), Some stop when target.Source = producer.Source -> stop target
+        | _ -> async { return Error "Select a current operation on this daemon." }
+      let event =
+        match result with
+        | Ok () -> Accepted { Correlation = frame.Correlation; Target = UiBridgeCodec.noTarget; Completion = LeasedWorkStopped }
+        | Error reason -> Refused(UiBridgeCodec.frameRefusal frame.Correlation "stop_refused" reason)
+      return [ Outbound.ofEvent event ]
     | _ -> return! executeCompiler frame connection
   }
 
@@ -2344,7 +2359,8 @@ let private createObservedCore (supervisor: ComposerSupervisor) (mcpPort: int) (
   let hub = Hub(
     BridgeSources.ofSupervisor supervisor DaemonInfo.version startedAtMs facts, BridgeOptions.defaults, stopping,
     (fun interval -> Async.Sleep(int interval.TotalMilliseconds)), UptimeClock.system startedAtMs,
-    observation = (graph, producer, observePeer), localTranscript = readLocalTranscript, peerTranscript = readPeerTranscript)
+    observation = (graph, producer, observePeer), localTranscript = readLocalTranscript, peerTranscript = readPeerTranscript,
+    stopLocalWork = (fun target -> supervisor.StopLeasedCommand(target.Journal, target.Sequence, target.RunId)))
   hub.Start()
   hub
 

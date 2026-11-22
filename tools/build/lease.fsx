@@ -192,6 +192,8 @@ match parsed with
       start.UseShellExecute <- false
       start.RedirectStandardOutput <- true
       start.RedirectStandardError <- true
+      let runId = Guid.NewGuid().ToString("N")
+      start.Environment["BOZZETTO_LEASED_RUN_ID"] <- runId
       if options.CanaryPreset.IsSome then
         if String.IsNullOrEmpty(Environment.GetEnvironmentVariable "CLEF_PHASE_TIMING") then
           start.Environment["CLEF_PHASE_TIMING"] <- "1"
@@ -305,7 +307,7 @@ match parsed with
           Project = project
           Kind = kind
           LeaseId = leaseId
-          RunId = Guid.NewGuid().ToString("N")
+          RunId = runId
           Executable = command
           Arguments = List.toArray args
           ProcessId = child.Id

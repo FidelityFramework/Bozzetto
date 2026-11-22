@@ -58,6 +58,13 @@ type NodeTranscript = { Source: NodeIdentity; Correlation: int32; Outcome: Trans
 type PeerTranscriptRequest = { ProtocolVersion: int32; Request: TranscriptReadRequest }
 type PeerTranscriptReply = { Source: NodeIdentity; Outcome: TranscriptReadOutcome }
 
+type LeasedWorkTarget = {
+  Source: NodeIdentity
+  Journal: string
+  Sequence: int64
+  RunId: string
+}
+
 /// What the UI asks of the backend. The backend is the update function.
 type Command =
   /// Push Snapshot, Health and Leases now.
@@ -78,6 +85,7 @@ type Command =
   /// (composer_retire_worker).
   | RetireWorker of WorkerTarget
   | ReadNodeTranscript of TranscriptReadRequest
+  | StopLeasedWork of LeasedWorkTarget
 
 /// One frame from the UI: a command and the correlation the UI chose for it
 /// (positive, unique per page lifetime). Its outcome echoes the correlation.
@@ -160,6 +168,7 @@ type Completion =
   | SessionClosed
   | WorkerRetired
   | SnapshotSent
+  | LeasedWorkStopped
 
 type CommandAcceptance = {
   Correlation: int32
@@ -333,6 +342,10 @@ type AgentWorkBoard = {
 /// A run's output as the daemon journaled it; `Dropped` marks a transcript
 /// given up for space, its entry kept.
 type OperationCompiler = { Generation: int64; SourceVersion: string }
+
+[<Literal>]
+let RunningStoppable = "running_stoppable"
+
 type LeasedCommandInfo = {
   Kind: string
   /// Non-secret display identity, matching the grant board; never a release token.

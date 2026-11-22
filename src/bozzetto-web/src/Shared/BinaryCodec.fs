@@ -312,6 +312,19 @@ let private peerTranscriptReply : Codec<PeerTranscriptReply> = {
     { Source = source; Outcome = transcriptOutcome.Read r }
 }
 
+let private leasedWorkTarget : Codec<LeasedWorkTarget> = {
+  Write = fun w value ->
+    nodeIdentity.Write w value.Source
+    text.Write w value.Journal
+    wide.Write w value.Sequence
+    text.Write w value.RunId
+  Read = fun r ->
+    let source = nodeIdentity.Read r
+    let journal = text.Read r
+    let sequence = wide.Read r
+    { Source = source; Journal = journal; Sequence = sequence; RunId = text.Read r }
+}
+
 let private command : Codec<Command> = {
   Write = fun w value ->
     match value with
@@ -326,6 +339,7 @@ let private command : Codec<Command> = {
     | CloseSession item -> uint.Write w 8; sessionTarget.Write w item
     | RetireWorker item -> uint.Write w 9; workerTarget.Write w item
     | ReadNodeTranscript item -> uint.Write w 10; transcriptReadRequest.Write w item
+    | StopLeasedWork item -> uint.Write w 11; leasedWorkTarget.Write w item
   Read = fun r ->
     match uint.Read r with
     | 0 -> RequestSnapshot
@@ -339,6 +353,7 @@ let private command : Codec<Command> = {
     | 8 -> CloseSession(sessionTarget.Read r)
     | 9 -> RetireWorker(workerTarget.Read r)
     | 10 -> ReadNodeTranscript(transcriptReadRequest.Read r)
+    | 11 -> StopLeasedWork(leasedWorkTarget.Read r)
     | _ -> fail "unknown Command tag"
 }
 
@@ -469,6 +484,7 @@ let private completion : Codec<Completion> = {
     | SessionClosed -> uint.Write w 5
     | WorkerRetired -> uint.Write w 6
     | SnapshotSent -> uint.Write w 7
+    | LeasedWorkStopped -> uint.Write w 8
   Read = fun r ->
     match uint.Read r with
     | 0 -> SessionOpened
@@ -479,6 +495,7 @@ let private completion : Codec<Completion> = {
     | 5 -> SessionClosed
     | 6 -> WorkerRetired
     | 7 -> SnapshotSent
+    | 8 -> LeasedWorkStopped
     | _ -> fail "unknown Completion tag"
 }
 
@@ -1298,6 +1315,11 @@ let private validateCommand (frame: CommandFrame) =
       Error "seconds: expected 0 through 120"
     | ObserveNodeResources request when String.IsNullOrWhiteSpace request.Node -> Error "node: required"
     | ReadNodeTranscript request -> validateTranscript request |> Result.map (fun _ -> frame)
+    | StopLeasedWork target
+        when [target.Source.Node; target.Source.Incarnation; target.Journal; target.RunId]
+            |> List.exists (fun value -> String.IsNullOrWhiteSpace value || value.Length > 128) ->
+      Error "leased work identity: required and at most 128 characters"
+    | StopLeasedWork target when target.Sequence <= 0L -> Error "leased work sequence: expected a positive int64"
     | _ -> Ok frame
 
 let private validatePeer (request: PeerObserveRequest) =

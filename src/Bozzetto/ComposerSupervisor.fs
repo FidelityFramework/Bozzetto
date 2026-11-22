@@ -5,6 +5,8 @@ open System.Collections.Generic
 open System.IO
 open System.Threading
 open System.Threading.Tasks
+open Bozzetto
+open Bozzetto.Server
 open Bozzetto.Providers
 open Bozzetto.Composer.Protocol
 
@@ -87,10 +89,17 @@ module ComposerState =
 type LeasedLivenessSnapshot = {
   Serial: int64
   VerifiedAtMs: Map<string, int64>
+  StoppableRunIds: Set<string>
+}
+
+type private StopBinding = {
+  StartTicks: int64
+  Isolated: bool
+  Pending: Task<Result<unit,string>> option
 }
 
 module LeasedLivenessSnapshot =
-  let empty : LeasedLivenessSnapshot = { Serial = 0L; VerifiedAtMs = Map.empty }
+  let empty : LeasedLivenessSnapshot = { Serial = 0L; VerifiedAtMs = Map.empty; StoppableRunIds = Set.empty }
 
 /// Shared typed compiler owner. JSON exists only at external client adapters.
 type ComposerSupervisor internal (
@@ -137,11 +146,66 @@ type ComposerSupervisor internal (
     | None -> empty
     | Some(Ok stored) -> stored
     | Some(Error reason) -> { empty with StorageError = Some reason }
+  // Only this daemon's first admission can capture an opted-in process incarnation.
+  // Durable rows restored after restart remain observable without a process handle.
+  let mutable stopBindings : Map<string, StopBinding> = Map.empty
+
+  let liveGrant caller (command: ComposerJournal.LeasedCommand) =
+    let kind =
+      match command.Kind with
+      | ComposerJournal.LeasedKind.Build -> ExpensiveWorkLease.Kind.FullBuild
+      | ComposerJournal.LeasedKind.Test -> ExpensiveWorkLease.Kind.TestSuiteRun
+    Features.LeaseWatch.matchesLive caller kind (ExpensiveWorkLease.LeaseId.ofWire command.LeaseId)
+
+  let markedRoot (command: ComposerJournal.LeasedCommand) =
+    let pid = command.ProcessId
+    match LinuxProcessEdge.readLinuxProc pid, LinuxProcessEdge.readLinuxProc Environment.ProcessId with
+    | Some root, Some daemon when ProcessWatchdog.isLiveRecord root && root.StartTimeTicks > 0L
+                                 && (root.StartTimeMsOpt |> Option.exists (fun started -> abs (started - command.StartedAtMs) <= ProcessWatchdog.startTimeToleranceMs)) ->
+      try
+        let marker = "BOZZETTO_LEASED_RUN_ID=" + command.RunId
+        let optedIn = File.ReadAllText($"/proc/{pid}/environ").Split(char 0) |> Array.contains marker
+        if optedIn then
+          let isolated = root.Pgid = pid && ProcessWatchdog.safeTargetPgid (Some pid) (Some daemon.Pgid) = Some pid
+          Some (root.StartTimeTicks, isolated)
+        else None
+      with
+      | :? IOException | :? UnauthorizedAccessException -> None
+    | _ -> None
+
+  let stopTarget journalId sequence runId =
+    if journal.StorageError.IsSome || journal.Incarnation <> journalId then Error "The operation journal is unavailable or has changed."
+    else
+      match journal.Entries |> List.tryFind (fun entry -> entry.Sequence = sequence) with
+      | Some { Outcome = ComposerJournal.Outcome.Running; Context = ComposerJournal.Context.LeasedCommand cmd; Caller = caller } when cmd.RunId = runId ->
+        match Map.tryFind runId stopBindings with
+        | Some _ when not (liveGrant caller cmd) -> Error "The command no longer holds its original live lease."
+        | Some binding when binding.Isolated || binding.Pending.IsSome -> Ok(cmd, binding)
+        | _ -> Error "The command did not register an owned isolated process for stopping."
+      | _ -> Error "The selected running leased command is no longer current."
+
   let mutable lastLivenessVerifiedAtMs: Map<string, int64> = Map.empty
   let mutable firstAbsentObservedAtMs: Map<string, int64> = Map.empty
-  let mutable livenessSerial = 0L
+  let mutable publishedLiveness = LeasedLivenessSnapshot.empty
   let journalChanged = Event<unit>()
   let livenessChanged = Event<LeasedLivenessSnapshot>()
+
+  let refreshLiveness () =
+    let actionable =
+      if stopBindings.IsEmpty then Set.empty
+      else
+        journal.Entries |> List.choose (fun entry ->
+          match entry.Outcome, entry.Context with
+          | ComposerJournal.Outcome.Running, ComposerJournal.Context.LeasedCommand cmd ->
+            match Map.tryFind cmd.RunId stopBindings with
+            | Some { Isolated = true; Pending = None } when liveGrant entry.Caller cmd -> Some cmd.RunId
+            | _ -> None
+          | _ -> None) |> Set.ofList
+    if publishedLiveness.VerifiedAtMs = lastLivenessVerifiedAtMs && publishedLiveness.StoppableRunIds = actionable then None
+    else
+      publishedLiveness <- { Serial = publishedLiveness.Serial + 1L; VerifiedAtMs = lastLivenessVerifiedAtMs; StoppableRunIds = actionable }
+      Some publishedLiveness
+  let notifyLiveness update = update |> Option.iter (fun snap -> try livenessChanged.Trigger snap with _ -> ())
 
   let changed () =
     lock gate (fun () -> revision <- revision + 1L)
@@ -749,7 +813,53 @@ type ComposerSupervisor internal (
     result
 
   member this.BeginLeasedCommand(caller: string, project: string, command: ComposerJournal.LeasedCommand) =
-    this.ChangeLeasedCommand(fun store -> store.BeginCommand caller project command)
+    let result = this.ChangeLeasedCommand(fun store ->
+      store.BeginCommand caller project command
+      |> Result.map (fun (stored, entry) ->
+        if entry.Sequence > journal.Sequence && entry.Outcome = ComposerJournal.Outcome.Running && liveGrant caller command then
+          markedRoot command |> Option.iter (fun (ticks, isolated) ->
+            stopBindings <- Map.add command.RunId { StartTicks = ticks; Isolated = isolated; Pending = None } stopBindings)
+        stored, entry))
+    if Result.isOk result then lock gate refreshLiveness |> notifyLiveness
+    result
+
+  member _.StopLeasedCommand(journalId: string, sequence: int64, runId: string) : Async<Result<unit,string>> = async {
+    let admitted = lock gate (fun () ->
+      stopTarget journalId sequence runId
+      |> Result.bind (fun (command, binding) ->
+        match binding.Pending with
+        | Some action -> Ok action
+        | None when markedRoot command <> Some(binding.StartTicks, true) ->
+          stopBindings <- Map.add runId { binding with Isolated = false } stopBindings
+          Error "The owned isolated process incarnation can no longer be verified."
+        | None ->
+          let stop = async {
+            let! outcome = LinuxProcessEdge.terminateFencedProcessGroupAsync command.ProcessId (Some command.ProcessId) binding.StartTicks 500
+            match outcome with
+            | ProcessWatchdog.TerminationOutcome.Cleared -> return Ok ()
+            | ProcessWatchdog.TerminationOutcome.Survivors(pids, errors) -> return Error $"Command group cleanup found survivors or signal errors: {pids}, {errors}."
+            | ProcessWatchdog.TerminationOutcome.Unverified reason -> return Error (ProcessWatchdog.describeProcScanError reason)
+          }
+          // A browser disconnect cannot interrupt the fenced cleanup already admitted.
+          let action = Async.StartAsTask(stop, cancellationToken = CancellationToken.None)
+          stopBindings <- Map.add runId { binding with Pending = Some action } stopBindings
+          Ok action))
+    lock gate refreshLiveness |> notifyLiveness
+    match admitted with
+    | Error reason -> return Error reason
+    | Ok action ->
+      let! outcome = Async.Catch(Async.AwaitTask action)
+      let result = match outcome with Choice1Of2 value -> value | Choice2Of2 error -> Error error.Message
+      if Result.isError result then
+        lock gate (fun () ->
+          match stopTarget journalId sequence runId with
+          | Ok(command, ({ Pending = Some current } as binding)) when obj.ReferenceEquals(current, action) ->
+            if markedRoot command = Some(binding.StartTicks, true) then
+              stopBindings <- Map.add runId { binding with Pending = None } stopBindings
+          | _ -> ()
+          refreshLiveness ()) |> notifyLiveness
+      return result
+  }
 
   member this.SettleLeasedCommand(caller: string, project: string, command: ComposerJournal.LeasedCommand, result: ComposerJournal.CommandResult) =
     let outcome = this.ChangeLeasedCommand(fun store -> store.SettleCommand caller project command result)
@@ -757,14 +867,12 @@ type ComposerSupervisor internal (
       match outcome with
       | Ok _ ->
         lock gate (fun () ->
+          stopBindings <- Map.remove command.RunId stopBindings
           firstAbsentObservedAtMs <- Map.remove command.RunId firstAbsentObservedAtMs
-          if Map.containsKey command.RunId lastLivenessVerifiedAtMs then
-            lastLivenessVerifiedAtMs <- Map.remove command.RunId lastLivenessVerifiedAtMs
-            livenessSerial <- livenessSerial + 1L
-            Some { Serial = livenessSerial; VerifiedAtMs = lastLivenessVerifiedAtMs }
-          else None)
+          lastLivenessVerifiedAtMs <- Map.remove command.RunId lastLivenessVerifiedAtMs
+          refreshLiveness ())
       | Error _ -> None
-    livenessUpdate |> Option.iter (fun snap -> try livenessChanged.Trigger snap with _ -> ())
+    notifyLiveness livenessUpdate
     outcome
 
   // Last Unix ms when OS liveness actually confirmed a running leased command alive.
@@ -775,7 +883,7 @@ type ComposerSupervisor internal (
   // Immutable monotonic owner-liveness publication for Fidelity.FSharp.Incremental consumers.
   member _.LivenessChanged : IObservable<LeasedLivenessSnapshot> = livenessChanged.Publish
   member _.CurrentLivenessSnapshot() : LeasedLivenessSnapshot =
-    lock gate (fun () -> { Serial = livenessSerial; VerifiedAtMs = lastLivenessVerifiedAtMs })
+    lock gate (fun () -> publishedLiveness)
 
   // Snapshot of active/unknown leased commands pairing OS liveness verification timestamps
   // with live lease heartbeat expiries (distinct from transport snapshot age).
@@ -838,6 +946,17 @@ type ComposerSupervisor internal (
       match result with
       | ComposerJournal.ReconcileResult.StorageFailure _ -> result
       | ComposerJournal.ReconcileResult.Reconciled(stored, abandoned, unknown, verifiedAlive) ->
+        // Probe only this reconciliation's still-live registrations, outside the supervisor lock.
+        // A measured first admission may precede setsid; only that same incarnation can mature.
+        let bindings = lock gate (fun () -> stopBindings)
+        let isolated =
+          let alive = Set.ofList verifiedAlive
+          stored.Entries |> List.choose (fun entry ->
+            match entry.Context with
+            | ComposerJournal.Context.LeasedCommand cmd when Set.contains cmd.RunId alive ->
+              Map.tryFind cmd.RunId bindings |> Option.map (fun binding ->
+                cmd.RunId, markedRoot cmd = Some(binding.StartTicks, true))
+            | _ -> None) |> Map.ofList
         let publishJournal, livenessPublish = lock gate (fun () ->
           let updated = stored.Sequence > journal.Sequence
           if updated then journal <- stored
@@ -849,7 +968,13 @@ type ComposerSupervisor internal (
               | ComposerJournal.Outcome.Unknown _, ComposerJournal.Context.LeasedCommand cmd -> Some cmd.RunId
               | _ -> None)
             |> Set.ofList
-          let beforeLiveness = lastLivenessVerifiedAtMs
+          stopBindings <-
+            stopBindings |> Map.filter (fun runId _ -> Set.contains runId pendingRunIds)
+            |> Map.map (fun runId binding ->
+              match Map.tryFind runId bindings with
+              | Some original when original.StartTicks = binding.StartTicks && binding.Pending.IsNone ->
+                { binding with Isolated = Map.tryFind runId isolated |> Option.defaultValue false }
+              | _ -> binding)
           let mutable nextLiveness =
             lastLivenessVerifiedAtMs |> Map.filter (fun runId _ -> Set.contains runId pendingRunIds)
           firstAbsentObservedAtMs <-
@@ -864,15 +989,10 @@ type ComposerSupervisor internal (
             nextLiveness <- Map.remove cmd.RunId nextLiveness
             firstAbsentObservedAtMs <- Map.remove cmd.RunId firstAbsentObservedAtMs
           lastLivenessVerifiedAtMs <- nextLiveness
-          let livenessSnap =
-            if nextLiveness <> beforeLiveness then
-              livenessSerial <- livenessSerial + 1L
-              Some { Serial = livenessSerial; VerifiedAtMs = nextLiveness }
-            else None
-          updated, livenessSnap)
+          updated, refreshLiveness ())
         for cmd in abandoned do
           releaseLease cmd.LeaseId
-        livenessPublish |> Option.iter (fun snap -> try livenessChanged.Trigger snap with _ -> ())
+        notifyLiveness livenessPublish
         if publishJournal then
           try journalChanged.Trigger() with _ -> ()
         result

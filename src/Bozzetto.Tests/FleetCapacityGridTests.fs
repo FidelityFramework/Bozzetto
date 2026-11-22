@@ -503,15 +503,24 @@ let tests =
         graph.Pool({ Serial = 1L; Active = [ gRunning; gUnknown ]; Queue = [] }) |> Expect.isOk "pool"
         // Place older settled rows both before and after newer rows in storage order; Sequence must decide.
         graph.Journal({ Sequence = 4L; Incarnation = "j-seq"; Entries = [ settledRunning; activeRunning; activeUnknown; settledUnknown ]; StorageError = None }) |> Expect.isOk "journal"
-        graph.Liveness({ Serial = 1L; VerifiedAtMs = Map.empty }) |> Expect.isOk "unverified liveness"
+        graph.Liveness({ LeasedLivenessSnapshot.empty with Serial = 1L }) |> Expect.isOk "unverified liveness"
         graph.PublishLocalWork(producer, emptySnap, dto0.AddSeconds(5.0).ToUnixTimeMilliseconds()) |> Expect.isOk "publish unverified"
         let before = capOf ()
         before.PidVerifiedLeases |> Expect.equal "0 verified before liveness probe" 0
         before.UnverifiedLeases |> Expect.equal "newest Running + newest Unknown stay unverified, not stale" 2
         before.StalePidLeases |> Expect.equal "older settled runs under same grant never trigger stale PID" 0
-        graph.Liveness({ Serial = 2L; VerifiedAtMs = Map.ofList [ "run-2", dto0.AddSeconds(6.0).ToUnixTimeMilliseconds() ] }) |> Expect.isOk "verified liveness"
+        graph.Liveness({ LeasedLivenessSnapshot.empty with
+                            Serial = 2L
+                            VerifiedAtMs = Map.ofList [ "run-2", dto0.AddSeconds(6.0).ToUnixTimeMilliseconds() ]
+                            StoppableRunIds = Set.singleton "run-2" }) |> Expect.isOk "verified liveness"
         graph.PublishLocalWork(producer, emptySnap, dto0.AddSeconds(6.0).ToUnixTimeMilliseconds()) |> Expect.isOk "publish verified"
         let after = capOf ()
+        let operations =
+          graph.Current()
+          |> List.pick (function WorkNodes board -> board.Nodes |> Array.tryFind (fun node -> node.Source = localSource) | _ -> None)
+          |> fun node -> node.Value |> Option.get |> fun state -> state.Operations.Entries
+        operations |> Array.tryFind (fun row -> row.Code = RunningStoppable) |> Option.map _.Sequence
+        |> Expect.equal "only the exact bound run advertises Stop" (Some 2L)
         after.PidVerifiedLeases |> Expect.equal "verified newest Running counts as PID-verified" 1
         after.UnverifiedLeases |> Expect.equal "newest Unknown remains unverified" 1
         after.StalePidLeases |> Expect.equal "still 0 stale PIDs" 0

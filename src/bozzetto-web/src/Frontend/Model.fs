@@ -167,8 +167,8 @@ type WaitView = {| id: string; kind: string; holder: string; requestedAt: float 
 
 type NodeOperationView = {|
   id: string; sequence: string; label: string; caller: string; code: string; ok: bool; project: string; operation: string; outcome: string; message: string; at: float
-  hasRun: bool; exitCode: int; dropped: bool; hasLease: bool; leaseId: string; runId: string
-  executable: string; arguments: string array; pid: int; startedAt: float
+  hasRun: bool; exitCode: int; dropped: bool; hasLease: bool; leaseId: string; leaseKind: string; runId: string
+  executable: string; arguments: string array; pid: int; startedAt: float; canStop: bool
 |}
 type TranscriptView = {|
   node: string; incarnation: string; journal: string; sequence: string; stream: TranscriptStream
@@ -379,11 +379,18 @@ let sessionKey (target: SessionTarget) =
 let targetOf (session: SessionView) : SessionTarget =
   { SessionTarget.Worker = { WorkerTarget.Host = session.host; Epoch = session.epoch }; Session = session.session }
 
+let private leasedWorkKey node journal sequence =
+  "stop-work:" + node + ":" + journal + ":" + sequence
+
+let stopWorkKey (node: NodeWorkView) (operation: NodeOperationView) =
+  leasedWorkKey node.id node.journal operation.sequence
+
 // Which UI element a command's pending state and outcome belong to.
 let commandKey (command: Command) =
   match command with
   | ObserveResources _ | ObserveNodeResources _ -> "resources"
   | ReadNodeTranscript _ -> "transcript"
+  | StopLeasedWork target -> leasedWorkKey target.Source.Node target.Journal (string target.Sequence)
   | RequestSnapshot -> "snapshot"
   | OpenProject _ -> OpenKey
   | Reserve edit -> sessionKey edit.Target
@@ -397,6 +404,7 @@ let commandLabel (command: Command) =
   match command with
   | ObserveResources _ | ObserveNodeResources _ -> "observe resources"
   | ReadNodeTranscript _ -> "read transcript"
+  | StopLeasedWork _ -> "stop work"
   | RequestSnapshot -> "refresh"
   | OpenProject _ -> "open"
   | Reserve _ -> "reserve"
@@ -599,17 +607,21 @@ let private nodeView (node: NodeWork) : NodeWorkView =
      storageError = node.Value |> Option.bind (fun v -> v.Operations.StorageError) |> Option.defaultValue ""
      transcriptsOmitted = node.Value |> Option.exists _.TranscriptsOmitted
      operations = node.Value |> Option.map (fun v -> v.Operations.Entries |> Array.map (fun e ->
-       let outcome = if e.Code = "running" then "running" elif e.Ok then "completed" else e.Code + ": " + e.Message
-       {| id = string e.Sequence; sequence = string e.Sequence; caller = e.CallerLabel; code = e.Code; ok = e.Ok; hasRun = e.Run.IsSome; dropped = e.Run |> Option.exists _.Dropped
+       let canStop = e.Code = RunningStoppable
+       let code = if canStop then "running" else e.Code
+       let outcome = if code = "running" then "running" elif e.Ok then "completed" else code + ": " + e.Message
+       {| id = string e.Sequence; sequence = string e.Sequence; caller = e.CallerLabel; code = code; ok = e.Ok; hasRun = e.Run.IsSome; dropped = e.Run |> Option.exists _.Dropped
           project = e.Project; operation = e.Operation; outcome = outcome; message = e.Message; at = float e.AtMs
           exitCode = e.Run |> Option.map _.ExitCode |> Option.defaultValue 0
           hasLease = e.Lease.IsSome
           leaseId = e.Lease |> Option.map _.LeaseId |> Option.defaultValue ""
+          leaseKind = e.Lease |> Option.map _.Kind |> Option.defaultValue ""
           runId = e.Lease |> Option.map _.RunId |> Option.defaultValue ""
           executable = e.Lease |> Option.map _.Executable |> Option.defaultValue ""
           arguments = e.Lease |> Option.map _.Arguments |> Option.defaultValue [||]
           pid = e.Lease |> Option.map _.ProcessId |> Option.defaultValue 0
           startedAt = e.Lease |> Option.map (fun l -> float l.StartedAtMs) |> Option.defaultValue 0.
+          canStop = canStop
           label = clockTime (float e.AtMs) + " · " + e.Operation + " · " + e.Project + " · " + outcome |})) |> Option.defaultValue [||] |}
 
 // ── Signal writes ──────────────────────────────────────────────────────────
@@ -729,6 +741,7 @@ let private completionText (c: Completion) =
     + string (a.Regions |> Array.filter (fun r -> r.Object = "reused") |> Array.length) + " reused"
   | RunFinished exitCode -> "run finished, exit " + string exitCode
   | WorkCanceled -> "canceled; artifact authority withdrawn"
+  | LeasedWorkStopped -> "process group stopped"
   | SessionClosed -> "closed; cleanup started"
   | WorkerRetired -> "worker retired; reopen projects on a fresh epoch"
   | SnapshotSent -> "refreshed"
@@ -790,7 +803,7 @@ let apply (stores: Stores) (d: Dispatcher) (event: Event) =
       | EditReserved reservation -> setLocal stores.Reservations target (Some reservation)
       | WorkCanceled | SessionClosed -> setLocal stores.Reservations target None
       | WorkerRetired -> set stores.Reservations Map.empty
-      | SessionOpened | ReservationBuilt _ | RunFinished _ | SnapshotSent -> ()
+      | SessionOpened | ReservationBuilt _ | RunFinished _ | SnapshotSent | LeasedWorkStopped -> ()
       let text = label + ": " + completionText accepted.Completion
       if accepted.Completion = SnapshotSent then ()
       elif key = OpenKey then log stores [ target; OpenKey ] true text
