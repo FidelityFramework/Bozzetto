@@ -364,6 +364,21 @@ module AuditPacketTypes =
     ExplicitScalingSlope: float option
     ScalingPasses: ScalingPassMetric list
     FailedTestCompile: bool option
+    // Strict `schemaVersion: 1` receipt evidence (Bozzetto #39 / Composer #192 #12617).
+    // All are None / empty for unversioned legacy receipts.
+    SchemaVersion: int option
+    ProjectionScope: string option
+    LegacyProjectionSites: int option
+    Cvc5SpawnsByPhase: (string * int) list
+    Cvc5ToolIdentity: string option
+    TelemetryTransport: string option
+    TelemetryDropped: int64 option
+    TelemetryDrain: string option
+    TelemetryObservations: int64 option
+    TelemetryProducerOverheadBytes: int64 option
+    TelemetryProducerOverheadTicks: int64 option
+    BudgetAccepted: bool option
+    BudgetBreaches: string list
   }
 
   type CanaryComparison = {
@@ -423,6 +438,7 @@ module AuditPacketTypes =
     | SpatialExecutedWithZeroKernelModules of spatialCalls: int
     | ScalingSlopeExceeded of passName: string * slope: float * limit: float
     | Cvc5SpawnSpike of spawns: int * cap: int * reason: string
+    | ProjectionCoverageLegacySites of legacySites: int
     | CanaryWallBreach of actualMs: float * limitMs: float
     | CanaryPhaseWallBreach of phase: string * actualMs: float * limitMs: float
     | CanaryPhaseAllocRegression of phaseName: string * baseBytes: int64 * candBytes: int64 * pctIncrease: float
@@ -452,6 +468,8 @@ module AuditPacketTypes =
         sprintf "Spatial* executed (%d call(s)) with 0 hardware/kernel modules" spatialCalls
       | MechanicalVeto.ScalingSlopeExceeded(passName, slope, limit) ->
         sprintf "Scaling slope alloc(4x)/alloc(1x) on %s is %.2f (> %.1f limit)" passName slope limit
+      | MechanicalVeto.ProjectionCoverageLegacySites legacySites ->
+        sprintf "projectionCoverage.legacySites = %d (> 0): strict Phase 1 readiness requires zero legacy projection sites" legacySites
       | MechanicalVeto.Cvc5SpawnSpike(spawns, cap, reason) ->
         sprintf "cvc5 spawn spike: %d spawns (> %d cap; %s)" spawns cap reason
       | MechanicalVeto.CanaryWallBreach(actualMs, limitMs) ->

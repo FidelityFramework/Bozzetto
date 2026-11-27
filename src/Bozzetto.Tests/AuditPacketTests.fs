@@ -59,6 +59,19 @@ let private cleanCanaryReceipt (target: string) : CanaryReceipt = {
   ExplicitScalingSlope = None
   ScalingPasses = [ { PassName = "WitnessSegmentation"; Alloc1xBytes = 500_000L; Alloc4xBytes = 2_050_000L; Slope = 4.1 } ]
   FailedTestCompile = Some false
+  SchemaVersion = None
+  ProjectionScope = None
+  LegacyProjectionSites = None
+  Cvc5SpawnsByPhase = []
+  Cvc5ToolIdentity = None
+  TelemetryTransport = None
+  TelemetryDropped = None
+  TelemetryDrain = None
+  TelemetryObservations = None
+  TelemetryProducerOverheadBytes = None
+  TelemetryProducerOverheadTicks = None
+  BudgetAccepted = None
+  BudgetBreaches = []
 }
 
 let private sampleRawSarif =
@@ -940,6 +953,388 @@ let auditPacketTests =
         match parseCanaryReceipt """{"target":"01_HelloWorldDirect","failedTestCompile":"true"}""" with
         | Error(PacketParseError.InvalidJsonField("Canary receipt JSON", "failedTestCompile", _)) -> ()
         | other -> failtestf "string failedTestCompile must fail parse, got %A" other
+    ]
+
+    testList "Part 5 strict schemaVersion: 1 canary receipt contract" [
+
+      // Canonical schemaVersion: 1 fixture aligned with the Composer #192 producer shape.
+      let strictReceipt =
+        """{"schemaVersion":1,"target":"01_HelloWorldDirect","compileExitCode":0,"nativeExitCode":0,"totalAllocBytes":12000000,"phaseTimingsMs":{"obligations":410.0,"witness-publication":620.0},"phaseAllocBytes":{"obligations":4000000,"witness-publication":5000000},"counters":{"platformResolutionReads":1,"numericProjectionCalls":1,"memoryProjectionCalls":1,"spatialProjectionCalls":0,"spatialExecuted":false,"hardwareModules":0,"kernelModules":0,"projectionCoverage":{"scope":"driver-path","legacySites":0},"cvc5Spawns":4,"uniqueObligations":12,"cvc5SpawnsByPhase":{"obligations":4},"cvc5ToolIdentity":"cvc5-1.2.1-sha256:abc123"},"scaling":{"scale1xAllocBytes":2000000,"scale4xAllocBytes":8000000,"scalingSlope":4.0,"scale1xWallMs":120.0,"scale4xWallMs":490.0,"scalingPasses":[{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":2000000,"slope":4.0}]},"telemetry":{"transport":"synchronous","dropped":0,"drain":"NotApplicable","observations":14,"producerOverheadBytes":2048,"producerOverheadTicks":310},"budget":{"accepted":true,"breaches":[]},"totalWallMs":3100.0,"frontEndMs":1850.0,"proofDischargeMs":240.0,"peakRssBytes":199712256,"watchdogSurvivors":0}"""
+
+      let parseReceipt (raw: string) : Result<CanaryReceipt, PacketParseError> = parseCanaryReceipt raw
+
+      let strictPairInput (receipt: CanaryReceipt) : BlindAuditPacketInput =
+        { cleanPacketInput () with CanaryBase = Ok(Some receipt); CanaryCandidate = Ok(Some receipt) }
+
+      testCase "positive control: canonical schemaVersion 1 receipt matching Composer producer parses completely and evaluates with no veto" <| fun _ ->
+        match parseReceipt strictReceipt with
+        | Error err -> failtestf "canonical schemaVersion 1 receipt must parse: %s" (PacketParseError.describe err)
+        | Ok receipt ->
+          receipt.SchemaVersion |> Expect.equal "schemaVersion is recorded as 1" (Some 1)
+          receipt.NumericProjectionCalls |> Expect.equal "canonical numericProjectionCalls is read" (Some 1)
+          receipt.MemoryProjectionCalls |> Expect.equal "canonical memoryProjectionCalls is read" (Some 1)
+          receipt.Cvc5Spawns |> Expect.equal "canonical cvc5Spawns is read" (Some 4)
+          receipt.Cvc5SpawnsByPhase |> Expect.equal "optional cvc5SpawnsByPhase is preserved" [ "obligations", 4 ]
+          receipt.Cvc5ToolIdentity |> Expect.equal "optional cvc5ToolIdentity is preserved" (Some "cvc5-1.2.1-sha256:abc123")
+          receipt.ProjectionScope |> Expect.equal "projectionCoverage.scope is read" (Some "driver-path")
+          receipt.LegacyProjectionSites |> Expect.equal "projectionCoverage.legacySites is read" (Some 0)
+          receipt.TelemetryTransport |> Expect.equal "telemetry.transport is read" (Some "synchronous")
+          receipt.TelemetryDropped |> Expect.equal "telemetry.dropped is read as int64" (Some 0L)
+          receipt.TelemetryDrain |> Expect.equal "telemetry.drain is read as string" (Some "NotApplicable")
+          receipt.TelemetryObservations |> Expect.equal "optional telemetry.observations is preserved" (Some 14L)
+          receipt.TelemetryProducerOverheadBytes |> Expect.equal "optional telemetry.producerOverheadBytes is preserved" (Some 2048L)
+          receipt.TelemetryProducerOverheadTicks |> Expect.equal "optional telemetry.producerOverheadTicks is preserved" (Some 310L)
+          receipt.BudgetAccepted |> Expect.equal "optional budget.accepted is preserved" (Some true)
+          receipt.BudgetBreaches |> Expect.isEmpty "optional budget.breaches is empty"
+          missingCanaryMetrics receipt |> Expect.isEmpty "a strict receipt carries every required budget metric"
+          let verdict = evaluateVetoes (strictPairInput receipt)
+          verdict.Completeness.IsComplete |> Expect.isTrue "strict schemaVersion 1 receipt makes the packet complete"
+          verdict.Vetoes |> Expect.isEmpty "within-budget strict receipt produces no veto"
+
+        // Minimal required-only schemaVersion 1 receipt (all optional fields omitted) must parse cleanly.
+        let minimalRequiredReceipt =
+          """{"schemaVersion":1,"target":"01_HelloWorldDirect","compileExitCode":0,"totalAllocBytes":12000000,"phaseTimingsMs":{"obligations":410.0},"phaseAllocBytes":{"obligations":4000000},"counters":{"platformResolutionReads":1,"numericProjectionCalls":1,"memoryProjectionCalls":1,"spatialProjectionCalls":0,"spatialExecuted":false,"hardwareModules":0,"kernelModules":0,"projectionCoverage":{"scope":"driver-path","legacySites":0},"cvc5Spawns":4,"uniqueObligations":12},"scaling":{"scale1xAllocBytes":2000000,"scale4xAllocBytes":8000000,"scalingSlope":4.0,"scalingPasses":[{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":2000000,"slope":4.0}]},"telemetry":{"transport":"synchronous","dropped":0,"drain":"NotApplicable"}}"""
+        match parseReceipt minimalRequiredReceipt with
+        | Error err -> failtestf "minimal required-only schemaVersion 1 receipt must parse: %s" (PacketParseError.describe err)
+        | Ok receipt ->
+          receipt.SchemaVersion |> Expect.equal "minimal receipt schemaVersion is 1" (Some 1)
+          receipt.NativeExitCode |> Expect.isNone "omitted optional nativeExitCode is None"
+          receipt.Cvc5SpawnsByPhase |> Expect.isEmpty "omitted optional cvc5SpawnsByPhase is empty"
+          receipt.Cvc5ToolIdentity |> Expect.isNone "omitted optional cvc5ToolIdentity is None"
+          receipt.BudgetAccepted |> Expect.isNone "omitted optional budget is None"
+
+        // Producer parity: owner-site scope, async-two-lane transport, Drained(...) string,
+        // and scalingSlope equal to max per-pass slope rather than overall ratio.
+        let asyncProducerReceipt =
+          strictReceipt
+            .Replace("\"scope\":\"driver-path\"", "\"scope\":\"owner-site\"")
+            .Replace("\"transport\":\"synchronous\",\"dropped\":0,\"drain\":\"NotApplicable\"", "\"transport\":\"async-two-lane\",\"dropped\":0,\"drain\":\"Drained(12ms)\"")
+            .Replace("\"scalingSlope\":4.0", "\"scalingSlope\":5.0")
+            .Replace(
+              """[{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":2000000,"slope":4.0}]""",
+              """[{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":2500000,"slope":5.0},{"pass":"Obligations","alloc1xBytes":1500000,"alloc4xBytes":5500000,"slope":3.6667}]""")
+        match parseReceipt asyncProducerReceipt with
+        | Error err -> failtestf "async-two-lane owner-site receipt with max-pass scalingSlope must parse: %s" (PacketParseError.describe err)
+        | Ok receipt ->
+          receipt.ProjectionScope |> Expect.equal "owner-site scope accepted" (Some "owner-site")
+          receipt.TelemetryTransport |> Expect.equal "async-two-lane transport accepted" (Some "async-two-lane")
+          receipt.TelemetryDrain |> Expect.equal "Drained(...) string accepted" (Some "Drained(12ms)")
+          (evaluateVetoes (strictPairInput receipt)).Vetoes |> Expect.isEmpty "max-pass slope <= 6.0 produces no veto"
+
+      testCase "exact-reason negative (B1): per-pass and overall scaling slopes are computed from bytes and mismatch or zero-baseline growth is refused" <| fun _ ->
+        let lyingPass =
+          strictReceipt.Replace(
+            """{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":2000000,"slope":4.0}""",
+            """{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":50000000,"slope":4.0}""")
+        match parseReceipt lyingPass with
+        | Ok receipt -> failtestf "forged per-pass slope 4.0 for 100x allocation growth must be refused, got %A" receipt.ScalingPasses
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names slope" "slope"
+          detail |> Expect.stringContains "exact reason reports computed ratio" "100.0000"
+        | Error err -> failtestf "expected slope disagreement error, got %s" (PacketParseError.describe err)
+
+        let zeroBaselinePass =
+          strictReceipt.Replace(
+            """{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":2000000,"slope":4.0}""",
+            """{"pass":"WitnessSegmentation","alloc1xBytes":0,"alloc4xBytes":100,"slope":0.0}""")
+        match parseReceipt zeroBaselinePass with
+        | Ok receipt -> failtestf "zero-baseline growth (0 -> 100) with slope 0.0 must be refused, got %A" receipt.ScalingPasses
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "zero-baseline refusal names slope" "slope"
+          detail |> Expect.stringContains "exact reason reports +Infinity" "+Infinity"
+        | Error err -> failtestf "expected zero-baseline slope error, got %s" (PacketParseError.describe err)
+
+        let lyingRootSlope = strictReceipt.Replace("\"scalingSlope\":4.0", "\"scalingSlope\":1.5")
+        match parseReceipt lyingRootSlope with
+        | Ok _ -> failtest "declared scalingSlope disagreeing with both overall ratio and max pass slope must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "root slope refusal names scalingSlope" "scalingSlope"
+          detail |> Expect.stringContains "root slope refusal states disagreement" "disagrees"
+        | Error err -> failtestf "expected scalingSlope disagreement error, got %s" (PacketParseError.describe err)
+
+        let zeroBaselineRoot =
+          strictReceipt
+            .Replace("\"scale1xAllocBytes\":2000000,\"scale4xAllocBytes\":8000000,\"scalingSlope\":4.0",
+                     "\"scale1xAllocBytes\":0,\"scale4xAllocBytes\":100,\"scalingSlope\":0.0")
+        match parseReceipt zeroBaselineRoot with
+        | Ok _ -> failtest "zero-baseline overall growth (0 -> 100) with scalingSlope 0.0 must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "zero-baseline overall refusal names scalingSlope" "scalingSlope"
+          detail |> Expect.stringContains "exact reason reports +Infinity" "+Infinity"
+        | Error err -> failtestf "expected zero-baseline overall error, got %s" (PacketParseError.describe err)
+
+        // Consistent high per-pass slope (> 6.0) parses cleanly and triggers per-pass veto.
+        let highPass =
+          strictReceipt
+            .Replace("\"scalingSlope\":4.0", "\"scalingSlope\":8.0")
+            .Replace(
+              """{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":2000000,"slope":4.0}""",
+              """{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":4000000,"slope":8.0}""")
+        match parseReceipt highPass with
+        | Error err -> failtestf "consistent 8.0x per-pass receipt must parse for diagnosis: %s" (PacketParseError.describe err)
+        | Ok receipt ->
+          (evaluateVetoes (strictPairInput receipt)).Vetoes
+          |> Expect.contains "per-pass 8.0x allocation ratio trips ScalingSlopeExceeded"
+            (MechanicalVeto.ScalingSlopeExceeded("WitnessSegmentation", 8.0, 6.0))
+
+        // Consistent high overall slope (> 6.0) parses cleanly and triggers overall veto.
+        let slopeOver =
+          strictReceipt
+            .Replace("\"scale4xAllocBytes\":8000000", "\"scale4xAllocBytes\":14000000")
+            .Replace("\"scalingSlope\":4.0", "\"scalingSlope\":7.0")
+        match parseReceipt slopeOver with
+        | Error err -> failtestf "consistent 7.0x overall receipt must parse: %s" (PacketParseError.describe err)
+        | Ok receipt ->
+          (evaluateVetoes (strictPairInput receipt)).Vetoes
+          |> Expect.contains "overall scaling ratio 7.0 > 6.0 vetoes"
+            (MechanicalVeto.ScalingSlopeExceeded("Scale_4x/Scale_1x", 7.0, 6.0))
+
+      testCase "exact-reason negative (B2): duplicate JSON keys are refused across root, counters, scaling, passes, phase maps, telemetry, and budget" <| fun _ ->
+        let dupCounter =
+          strictReceipt.Replace("\"numericProjectionCalls\":1", "\"numericProjectionCalls\":3,\"numericProjectionCalls\":1")
+        match parseReceipt dupCounter with
+        | Ok receipt -> failtestf "duplicate numericProjectionCalls must be refused, got %A" receipt.NumericProjectionCalls
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names duplicated counter key" "numericProjectionCalls"
+          detail |> Expect.stringContains "exact reason names duplicate key" "duplicate JSON key"
+        | Error err -> failtestf "expected duplicate-key refusal, got %s" (PacketParseError.describe err)
+
+        let dupSchemaVersion =
+          strictReceipt.Replace("\"schemaVersion\":1", "\"schemaVersion\":1,\"schemaVersion\":0")
+        match parseReceipt dupSchemaVersion with
+        | Ok receipt -> failtestf "duplicate schemaVersion must never downgrade to legacy, got %A" receipt.SchemaVersion
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names duplicated schemaVersion" "schemaVersion"
+          detail |> Expect.stringContains "exact reason names duplicate key" "duplicate JSON key"
+        | Error err -> failtestf "expected duplicate schemaVersion refusal, got %s" (PacketParseError.describe err)
+
+        let dupPhaseAlloc =
+          strictReceipt.Replace("\"obligations\":4000000", "\"obligations\":9000000,\"obligations\":4000000")
+        match parseReceipt dupPhaseAlloc with
+        | Ok _ -> failtest "duplicate key in phaseAllocBytes must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names duplicated phase key" "obligations"
+          detail |> Expect.stringContains "exact reason names duplicate key" "duplicate JSON key"
+        | Error err -> failtestf "expected duplicate phaseAllocBytes key refusal, got %s" (PacketParseError.describe err)
+
+        let dupPassKey =
+          strictReceipt.Replace("\"slope\":4.0}", "\"slope\":100.0,\"slope\":4.0}")
+        match parseReceipt dupPassKey with
+        | Ok _ -> failtest "duplicate key inside scalingPasses entry must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names duplicated pass key" "slope"
+          detail |> Expect.stringContains "exact reason names duplicate key" "duplicate JSON key"
+        | Error err -> failtestf "expected duplicate scaling pass key refusal, got %s" (PacketParseError.describe err)
+
+        let dupTelemetryKey =
+          strictReceipt.Replace("\"dropped\":0", "\"dropped\":5,\"dropped\":0")
+        match parseReceipt dupTelemetryKey with
+        | Ok _ -> failtest "duplicate key in telemetry block must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names duplicated telemetry key" "dropped"
+          detail |> Expect.stringContains "exact reason names duplicate key" "duplicate JSON key"
+        | Error err -> failtestf "expected duplicate telemetry key refusal, got %s" (PacketParseError.describe err)
+
+        let dupBudgetKey =
+          strictReceipt.Replace("\"accepted\":true", "\"accepted\":false,\"accepted\":true")
+        match parseReceipt dupBudgetKey with
+        | Ok _ -> failtest "duplicate key in budget block must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names duplicated budget key" "accepted"
+          detail |> Expect.stringContains "exact reason names duplicate key" "duplicate JSON key"
+        | Error err -> failtestf "expected duplicate budget key refusal, got %s" (PacketParseError.describe err)
+
+        let dupCoverageKey =
+          strictReceipt.Replace("\"legacySites\":0", "\"legacySites\":3,\"legacySites\":0")
+        match parseReceipt dupCoverageKey with
+        | Ok _ -> failtest "duplicate key in projectionCoverage must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names duplicated coverage key" "legacySites"
+          detail |> Expect.stringContains "exact reason names duplicate key" "duplicate JSON key"
+        | Error err -> failtestf "expected duplicate coverage key refusal, got %s" (PacketParseError.describe err)
+
+        let dupSpawnsByPhase =
+          strictReceipt.Replace("\"cvc5SpawnsByPhase\":{\"obligations\":4}", "\"cvc5SpawnsByPhase\":{\"obligations\":9,\"obligations\":4}")
+        match parseReceipt dupSpawnsByPhase with
+        | Ok _ -> failtest "duplicate key in cvc5SpawnsByPhase must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names duplicated cvc5SpawnsByPhase key" "obligations"
+          detail |> Expect.stringContains "exact reason names duplicate key" "duplicate JSON key"
+        | Error err -> failtestf "expected duplicate cvc5SpawnsByPhase key refusal, got %s" (PacketParseError.describe err)
+
+        let dupPassName =
+          strictReceipt.Replace(
+            """[{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":2000000,"slope":4.0}]""",
+            """[{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":2000000,"slope":4.0},{"pass":"WitnessSegmentation","alloc1xBytes":500000,"alloc4xBytes":2000000,"slope":4.0}]""")
+        match parseReceipt dupPassName with
+        | Ok _ -> failtest "duplicate scaling pass name must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names duplicated pass" "pass"
+          detail |> Expect.stringContains "exact reason names duplicate scaling pass" "duplicate scaling pass"
+        | Error err -> failtestf "expected duplicate pass name refusal, got %s" (PacketParseError.describe err)
+
+      testCase "exact-reason negative (B3): invalid schemaVersion, unversioned v1 blocks, and real legacySites > 0 veto preserving diagnosis" <| fun _ ->
+        for label, replacement, expectedField in [
+          "explicit schemaVersion 0", "\"schemaVersion\":0", "schemaVersion"
+          "unsupported schemaVersion 2", "\"schemaVersion\":2", "schemaVersion"
+          "negative schemaVersion -1", "\"schemaVersion\":-1", "schemaVersion"
+          "string schemaVersion", "\"schemaVersion\":\"1\"", "schemaVersion"
+          "fractional schemaVersion", "\"schemaVersion\":1.0", "schemaVersion"
+          "null schemaVersion", "\"schemaVersion\":null", "schemaVersion"
+          "string legacy alias schema_version", "\"schema_version\":\"1\"", "schema_version"
+          "int legacy alias schema_version", "\"schema_version\":1", "schema_version"
+          "zero legacy alias schema_version", "\"schema_version\":0", "schema_version"
+        ] do
+          let mutated = strictReceipt.Replace("\"schemaVersion\":1", replacement)
+          match parseReceipt mutated with
+          | Ok receipt -> failtestf "%s must be refused, got SchemaVersion=%A" label receipt.SchemaVersion
+          | Error(PacketParseError.InvalidJsonField(_, field, _)) ->
+            field |> Expect.equal (sprintf "%s refusal names %s" label expectedField) expectedField
+          | Error err -> failtestf "%s expected InvalidJsonField, got %s" label (PacketParseError.describe err)
+
+        // Stripping schemaVersion from a receipt carrying v1-only blocks must fail closed.
+        let unversionedWithTelemetry =
+          """{"target":"01_HelloWorldDirect","telemetry":{"transport":"synchronous","dropped":0,"drain":"NotApplicable"}}"""
+        match parseReceipt unversionedWithTelemetry with
+        | Ok _ -> failtest "unversioned receipt carrying telemetry must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names telemetry" "telemetry"
+          detail |> Expect.stringContains "exact reason requires schemaVersion 1" "schemaVersion 1"
+        | Error err -> failtestf "expected telemetry refusal on unversioned receipt, got %s" (PacketParseError.describe err)
+
+        let unversionedWithCoverage =
+          """{"target":"01_HelloWorldDirect","counters":{"numericProjectionCalls":1,"projectionCoverage":{"scope":"driver-path","legacySites":3}}}"""
+        match parseReceipt unversionedWithCoverage with
+        | Ok _ -> failtest "unversioned receipt carrying projectionCoverage must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+          field |> Expect.equal "refusal names projectionCoverage" "projectionCoverage"
+          detail |> Expect.stringContains "exact reason requires schemaVersion 1" "schemaVersion 1"
+        | Error err -> failtestf "expected projectionCoverage refusal on unversioned receipt, got %s" (PacketParseError.describe err)
+
+        // Strict schemaVersion 1 receipt with legacySites = 2 parses cleanly so diagnosis
+        // data is preserved AND AuditPacketEval fires MechanicalVeto.ProjectionCoverageLegacySites.
+        let legacySitesTwo = strictReceipt.Replace("\"legacySites\":0", "\"legacySites\":2")
+        match parseReceipt legacySitesTwo with
+        | Error err -> failtestf "schemaVersion 1 receipt with legacySites=2 must parse for diagnosis: %s" (PacketParseError.describe err)
+        | Ok receipt ->
+          receipt.LegacyProjectionSites |> Expect.equal "parsed LegacyProjectionSites is Some 2" (Some 2)
+          receipt.NumericProjectionCalls |> Expect.equal "diagnostic counters remain intact" (Some 1)
+          receipt.TotalAllocBytes |> Expect.equal "diagnostic allocations remain intact" (Some 12_000_000L)
+          let verdict = evaluateVetoes (strictPairInput receipt)
+          verdict.Completeness.IsComplete |> Expect.isTrue "diagnostic packet remains complete"
+          verdict.Vetoes
+          |> Expect.contains "real parsed legacySites = 2 trips ProjectionCoverageLegacySites veto"
+            (MechanicalVeto.ProjectionCoverageLegacySites 2)
+          let rendered = renderPacket verdict
+          rendered |> Expect.stringContains "rendered packet states legacySites veto" "projectionCoverage.legacySites = 2"
+          rendered |> Expect.stringContains "rendered packet preserves Part 5 diagnostics" "WitnessSegmentation"
+
+        // Negative legacySites is malformed and refused at parse time.
+        let negLegacySites = strictReceipt.Replace("\"legacySites\":0", "\"legacySites\":-1")
+        match parseReceipt negLegacySites with
+        | Ok _ -> failtest "negative legacySites must be refused"
+        | Error(PacketParseError.InvalidJsonField(_, field, _)) ->
+          field |> Expect.equal "negative legacySites refusal names legacySites" "legacySites"
+        | Error err -> failtestf "expected InvalidJsonField for negative legacySites, got %s" (PacketParseError.describe err)
+
+        // Real parsed schemaVersion 1 receipt with numericProjectionCalls = 2 trips ProjectionCountExceeded.
+        let projOverReceipt = strictReceipt.Replace("\"numericProjectionCalls\":1", "\"numericProjectionCalls\":2")
+        match parseReceipt projOverReceipt with
+        | Error err -> failtestf "projection-count-over strict receipt must parse for diagnosis: %s" (PacketParseError.describe err)
+        | Ok receipt ->
+          (evaluateVetoes (strictPairInput receipt)).Vetoes
+          |> Expect.contains "real parsed numericProjectionCalls = 2 vetoes"
+            (MechanicalVeto.ProjectionCountExceeded("NumericPublication.project", 2))
+
+      testCase "exact-reason negative: missing required fields, legacy aliases, unknown keys, and invalid scope/transport/drain are refused" <| fun _ ->
+        // Missing required counters and top-level containers
+        for label, snippet, expectedField in [
+          "missing cvc5Spawns", "\"cvc5Spawns\":4,", "cvc5Spawns"
+          "missing numericProjectionCalls", "\"numericProjectionCalls\":1,", "numericProjectionCalls"
+          "missing hardwareModules", "\"hardwareModules\":0,", "hardwareModules"
+          "missing kernelModules", "\"kernelModules\":0,", "kernelModules"
+          "missing spatialExecuted", "\"spatialExecuted\":false,", "spatialExecuted"
+          "missing uniqueObligations", "\"uniqueObligations\":12,", "uniqueObligations"
+          "missing projectionCoverage", "\"projectionCoverage\":{\"scope\":\"driver-path\",\"legacySites\":0},", "projectionCoverage"
+          "missing telemetry", "\"telemetry\":{\"transport\":\"synchronous\",\"dropped\":0,\"drain\":\"NotApplicable\",\"observations\":14,\"producerOverheadBytes\":2048,\"producerOverheadTicks\":310},", "telemetry"
+          "missing scaling", "\"scaling\":{\"scale1xAllocBytes\":2000000,\"scale4xAllocBytes\":8000000,\"scalingSlope\":4.0,\"scale1xWallMs\":120.0,\"scale4xWallMs\":490.0,\"scalingPasses\":[{\"pass\":\"WitnessSegmentation\",\"alloc1xBytes\":500000,\"alloc4xBytes\":2000000,\"slope\":4.0}]},", "scaling"
+        ] do
+          let mutated = strictReceipt.Replace(snippet, "")
+          match parseReceipt mutated with
+          | Ok _ -> failtestf "%s must be refused" label
+          | Error(PacketParseError.MissingJsonField(_, field)) ->
+            field |> Expect.equal (sprintf "%s refusal names %s" label expectedField) expectedField
+          | Error err -> failtestf "%s expected MissingJsonField '%s', got %s" label expectedField (PacketParseError.describe err)
+
+        // Legacy aliases must report InvalidJsonField naming the alias and canonical key (checked BEFORE missing-field!)
+        for label, oldText, newText, expectedAlias, expectedCanonical in [
+          "counter alias numeric_projection_calls", "\"numericProjectionCalls\":1", "\"numeric_projection_calls\":1", "numeric_projection_calls", "numericProjectionCalls"
+          "container alias projections", "\"counters\":{", "\"projections\":{", "projections", "counters"
+          "bare exitCode alias", "\"nativeExitCode\":0", "\"exitCode\":0", "exitCode", "nativeExitCode"
+          "scaling pass alias passName", "\"pass\":\"WitnessSegmentation\"", "\"passName\":\"WitnessSegmentation\"", "passName", "pass"
+        ] do
+          let mutated = strictReceipt.Replace(oldText, newText)
+          match parseReceipt mutated with
+          | Ok _ -> failtestf "%s must be refused" label
+          | Error(PacketParseError.InvalidJsonField(_, field, detail)) ->
+            field |> Expect.equal (sprintf "%s refusal names alias %s" label expectedAlias) expectedAlias
+            detail |> Expect.stringContains (sprintf "%s exact reason names canonical %s" label expectedCanonical) expectedCanonical
+          | Error err -> failtestf "%s expected alias InvalidJsonField, got %s" label (PacketParseError.describe err)
+
+        // Undefined keys & flat root counters
+        let unknownKey = strictReceipt.Replace("\"cvc5Spawns\":4", "\"cvc5Spawns\":4,\"cvc5_launches\":4")
+        match parseReceipt unknownKey with
+        | Error(PacketParseError.InvalidJsonField(_, field, _)) -> field |> Expect.equal "names undefined key" "cvc5_launches"
+        | other -> failtestf "expected undefined key refusal, got %A" other
+
+        let flatRootCounter = strictReceipt.Replace("\"target\":\"01_HelloWorldDirect\"", "\"target\":\"01_HelloWorldDirect\",\"numericProjectionCalls\":1")
+        match parseReceipt flatRootCounter with
+        | Error(PacketParseError.InvalidJsonField(_, field, _)) -> field |> Expect.equal "names flat root counter" "numericProjectionCalls"
+        | other -> failtestf "expected flat root counter refusal, got %A" other
+
+        // Domain checks on scope, transport, and string drain
+        for label, oldText, newText, expectedField in [
+          "unrecognized projectionCoverage.scope", "\"scope\":\"driver-path\"", "\"scope\":\"ad-hoc\"", "scope"
+          "blank projectionCoverage.scope", "\"scope\":\"driver-path\"", "\"scope\":\"   \"", "scope"
+          "unrecognized telemetry.transport", "\"transport\":\"synchronous\"", "\"transport\":\"stderr\"", "transport"
+          "integer telemetry.drain", "\"drain\":\"NotApplicable\"", "\"drain\":0", "drain"
+        ] do
+          let mutated = strictReceipt.Replace(oldText, newText)
+          match parseReceipt mutated with
+          | Ok _ -> failtestf "%s must be refused" label
+          | Error(PacketParseError.InvalidJsonField(_, field, _)) ->
+            field |> Expect.equal (sprintf "%s refusal names %s" label expectedField) expectedField
+          | Error err -> failtestf "%s expected InvalidJsonField, got %s" label (PacketParseError.describe err)
+
+      testCase "positive legacy compatibility control: unversioned legacy receipts without v1 blocks keep tolerant aliases" <| fun _ ->
+        let legacyAliasReceipt =
+          """{"target":"01_HelloWorldDirect","frontEndMs":1900,"proofDischargeMs":200,"totalWallMs":3100,"peakRssMb":180,"nativeExitCode":0,"watchdogSurvivors":0,"gcAllocatedBytes":9000000,"phaseTimingsMs":{"obligations":410.0},"phaseAllocBytes":{"obligations":4000000},"counters":{"numeric_projection_calls":1,"cvc5Spawns":4},"scaling":{"scale1x":{"allocBytes":1000000,"wallMs":120.0},"scale4x":{"allocBytes":4050000,"wallMs":490.0},"passes":[{"pass":"WitnessSegmentation","alloc1x":500000,"alloc4x":2050000}]}}"""
+        match parseReceipt legacyAliasReceipt with
+        | Error err -> failtestf "unversioned legacy receipt must still parse: %s" (PacketParseError.describe err)
+        | Ok receipt ->
+          receipt.SchemaVersion |> Expect.equal "legacy receipt has no schema version" None
+          receipt.NumericProjectionCalls |> Expect.equal "legacy alias spelling is still honoured" (Some 1)
+          receipt.LegacyProjectionSites |> Expect.isNone "legacy receipt has no projectionCoverage"
+
+      testCase "fault-injection negative control: evaluator enforces computed per-pass ratios even if a faulty parser stores a deceptive slope" <| fun _ ->
+        let baseStrict =
+          parseReceipt strictReceipt
+          |> Result.defaultWith (fun e -> failtestf "base strict receipt must parse: %s" (PacketParseError.describe e))
+        let deceptivePass =
+          { baseStrict with
+              ScalingPasses = [ { PassName = "WitnessSegmentation"; Alloc1xBytes = 500_000L; Alloc4xBytes = 50_000_000L; Slope = 4.0 } ] }
+        let deceptiveVerdict = evaluateVetoes (strictPairInput deceptivePass)
+        deceptiveVerdict.Vetoes
+        |> Expect.contains "evaluator computes 100.0 ratio from bytes rather than trusting deceptive Slope = 4.0"
+          (MechanicalVeto.ScalingSlopeExceeded("WitnessSegmentation", 100.0, 6.0))
+
+        let zeroDenomDeceptive =
+          { baseStrict with
+              ScalingPasses = [ { PassName = "ZeroBaselinePass"; Alloc1xBytes = 0L; Alloc4xBytes = 100L; Slope = 0.0 } ] }
+        let zeroVerdict = evaluateVetoes (strictPairInput zeroDenomDeceptive)
+        zeroVerdict.Vetoes
+        |> List.exists (function MechanicalVeto.ScalingSlopeExceeded("ZeroBaselinePass", s, 6.0) -> Double.IsPositiveInfinity s | _ -> false)
+        |> Expect.isTrue "evaluator treats 0 -> 100 allocation growth as +Infinity regardless of deceptive Slope = 0.0"
     ]
 
     testList "Part 1 & Part 6 soundness: comments, wiki rulings, retrieval revision coverage, --outside-index, and Spec Ballast" [

@@ -327,6 +327,15 @@ module AuditPacketEval =
         else []
       | _ -> []
 
+    // Strict Phase 1 readiness gate (Bozzetto #39 / Composer #192 #12617):
+    // schemaVersion 1 receipts parse projectionCoverage.legacySites cleanly so
+    // the full receipt stays intact for diagnosis, and any legacySites > 0
+    // fires a mechanical veto.
+    let projectionCoverageVeto =
+      match cand.LegacyProjectionSites with
+      | Some n when n > 0 -> [ MechanicalVeto.ProjectionCoverageLegacySites n ]
+      | _ -> []
+
     let slopeVetoes =
       let overall =
         match computeOverallScalingSlope cand with
@@ -336,8 +345,9 @@ module AuditPacketEval =
       let perPass =
         cand.ScalingPasses
         |> List.choose (fun p ->
-          if Double.IsNaN p.Slope || Double.IsInfinity p.Slope || p.Slope > 6.0 then
-            Some(MechanicalVeto.ScalingSlopeExceeded(p.PassName, p.Slope, 6.0))
+          let effectiveSlope = effectiveScalingPassSlope p
+          if Double.IsNaN effectiveSlope || Double.IsInfinity effectiveSlope || effectiveSlope > 6.0 then
+            Some(MechanicalVeto.ScalingSlopeExceeded(p.PassName, effectiveSlope, 6.0))
           else None)
       overall @ perPass
 
@@ -430,6 +440,7 @@ module AuditPacketEval =
 
     projVetoes
     @ spatialZeroVeto
+    @ projectionCoverageVeto
     @ slopeVetoes
     @ cvc5Veto
     @ exitVetoes
